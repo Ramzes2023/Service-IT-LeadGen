@@ -106,7 +106,7 @@ def _public_samples(report: dict, max_samples: int = 8) -> list[dict]:
         if not isinstance(sample, dict):
             raise ValueError("EIS_AUDIT_SAMPLE_INVALID")
         reason = sample.get("reason")
-        if reason not in allowed_reasons:
+        if not isinstance(reason, str) or reason not in allowed_reasons:
             raise ValueError("EIS_AUDIT_SAMPLE_REASON_INVALID")
         record = {"reason": reason}
         for field, limit in (("rss_title", 180), ("procurement_subject", 250)):

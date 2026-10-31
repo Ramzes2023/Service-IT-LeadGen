@@ -17,6 +17,7 @@ from html import unescape
 import json
 from pathlib import Path
 import re
+import ssl
 from urllib.parse import parse_qs, urlsplit
 
 from defusedxml import ElementTree
@@ -193,12 +194,23 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
     }
 
 
-def fetch(*, url: str, client: httpx.Client | None = None, today: date | None = None) -> dict:
+def fetch(*, url: str, client: httpx.Client | None = None, today: date | None = None, ca_bundle: str | None = None) -> dict:
     """Exactly one authorized official GET. No SSL bypass or redirect following."""
     _url(url, feed=True)
     own = client is None
     if own:
-        client = httpx.Client(timeout=20.0, follow_redirects=False, trust_env=False)
+        verify = True
+        if ca_bundle is not None:
+            p = Path(ca_bundle)
+            if (not p.is_file() or p.suffix.lower() not in (".pem", ".crt")
+                    or not 1 <= p.stat().st_size <= 512 * 1024):
+                raise ValueError("EIS_CA_BUNDLE_INVALID")
+            try:
+                verify = ssl.create_default_context(cafile=str(p))
+            except (OSError, ssl.SSLError):
+                raise ValueError("EIS_CA_BUNDLE_INVALID") from None
+        client = httpx.Client(timeout=20.0, follow_redirects=False,
+                              trust_env=False, verify=verify)
     try:
         try:
             with client.stream("GET", url, headers={"Accept": "application/rss+xml, application/atom+xml, application/xml",
@@ -238,14 +250,17 @@ def main() -> None:
     modes.add_argument("--url", help="Exact official RSS link copied from EIS search interface")
     modes.add_argument("--rss-file", help="Previously saved original official EIS RSS XML")
     parser.add_argument("--feed-url", help="Original EIS RSS URL, mandatory with --rss-file")
+    parser.add_argument("--ca-bundle", help="Optional trusted PEM CA bundle from official source; TLS checks remain enabled")
     parser.add_argument("--output", default="exports/eis_rss_research.json")
     args = parser.parse_args()
     try:
         if args.url:
             if args.feed_url:
                 raise ValueError("EIS_EXTRA_FEED_URL_FORBIDDEN")
-            report = fetch(url=args.url)
+            report = fetch(url=args.url, ca_bundle=args.ca_bundle)
         else:
+            if args.ca_bundle:
+                raise ValueError("EIS_CA_BUNDLE_NOT_FOR_OFFLINE_XML")
             if not args.feed_url:
                 raise ValueError("EIS_ORIGINAL_FEED_URL_REQUIRED")
             source = Path(args.rss_file)

@@ -39,7 +39,7 @@ try {
       'tests/test_eis_windows_tls.py','tests/test_eis_source_diagnostics.py',
       'tests/test_eis_search_integrity.py','tests/test_eis_targeted_1c.py',
       'tests/test_eis_108_review.py','tests/test_eis_108_triage.py',
-      'tests/test_eis_daily.py'
+      'tests/test_eis_daily.py','tests/test_eis_daily_health.py'
     )
     & $Python -m pytest -q -p no:cacheprovider @Tests
     if ($LASTEXITCODE -ne 0) { throw 'EIS_DAILY_OFFLINE_TESTS_FAILED' }
@@ -47,6 +47,11 @@ try {
     & $Python -m leadpilot.eis_daily --source-report $PreviousReport --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) {
         throw 'EIS_DAILY_LIVE_OR_STORAGE_FAILED'
+    }
+    Write-Output 'EIS_DAILY_STAGE=INDEPENDENT_DB_CSV_HEALTH_AUDIT'
+    & $Python -m leadpilot.eis_daily_health --state-dir $StateDir
+    if ($LASTEXITCODE -ne 0) {
+        throw 'EIS_DAILY_INDEPENDENT_HEALTH_FAILED'
     }
     Write-Output ('EIS_DAILY_PERSISTENT_STATE_DIR=' + $StateDir)
     Write-Output 'EIS_DAILY_OPERATOR_EXIT=0; CRM_WRITES=NO; QUALIFIED_B2B_LEADS=0'

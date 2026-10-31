@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from leadpilot import eis_daily_health as h
-from tests.test_eis_daily import original, fake_download, TODAY
+from test_eis_daily import original, fake_download, TODAY
 from leadpilot import eis_daily
 
 

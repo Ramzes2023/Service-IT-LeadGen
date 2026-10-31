@@ -1,6 +1,7 @@
 """Company-portal Bitrix24 metadata audit. Read-only and no customer records.
 
-Calls ONLY: crm.category.list, crm.item.fields, crm.type.list.
+Calls ONLY read-only metadata methods: crm.category.list, crm.item.fields,
+crm.type.list and crm.status.list.
 Never accesses CRM items, contacts, tasks, deals, timeline or robots.
 Use only an administrator-authorized webhook with the CRM scope.
 Webhook is passed only through the process environment and never printed.
@@ -18,8 +19,8 @@ from urllib.parse import urlsplit
 import httpx
 
 PORTAL = "serviseit.bitrix24.ru"
-ALLOWLIST = frozenset({"crm.category.list", "crm.item.fields", "crm.type.list"})
-ENTITIES = {1: "lead", 2: "deal", 4: "company"}
+ALLOWLIST = frozenset({"crm.category.list", "crm.item.fields", "crm.type.list", "crm.status.list"})
+ENTITIES = {1: "lead", 2: "deal", 3: "contact", 4: "company"}
 MAX_BYTES = 512_000
 AUDIT_VERSION = "mvp-bitrix24-metadata-v1"
 
@@ -84,6 +85,59 @@ def offline_blueprint() -> dict:
     }
 
 
+def _fields_summary(result: object) -> dict:
+    fields = result.get("fields") if isinstance(result, dict) else None
+    if not isinstance(fields, dict):
+        return {"visible_codes_count": 0, "has_inn_uf_candidate": False,
+                "user_field_codes": []}
+    codes = [key for key in fields if isinstance(key, str)
+             and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,80}", key)]
+    return {
+        "visible_codes_count": len(codes),
+        "has_inn_uf_candidate": any("INN" in key.upper() for key in codes),
+        "user_field_codes": sorted(key for key in codes if key.upper().startswith("UF_CRM"))[:100],
+    }
+
+
+def _read_categories(client: httpx.Client, base: str, entity_type_id: int,
+                     report: dict) -> list[dict]:
+    status, result = _post_read(client, base, "crm.category.list",
+                                {"entityTypeId": entity_type_id})
+    report["methods"][f"crm.category.list.{entity_type_id}"] = status
+    categories = result.get("categories") if status == "OK" and isinstance(result, dict) else None
+    if not isinstance(categories, list):
+        return []
+    normalized = []
+    for item in categories[:50]:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("id")
+        if type(cid) is int and 0 <= cid <= 99999999:
+            normalized.append({"id": cid, "name": safe_name(item.get("name"))})
+    report["category_list_paginated"][str(entity_type_id)] = len(categories) >= 50
+    return normalized
+
+
+def _read_stages(client: httpx.Client, base: str, entity_type_id: int,
+                 category_id: int, report: dict) -> list[dict]:
+    entity_code = (f"DEAL_STAGE_{category_id}" if entity_type_id == 2 else
+                   f"DYNAMIC_{entity_type_id}_STAGE_{category_id}")
+    status, result = _post_read(client, base, "crm.status.list",
+                                {"filter": {"ENTITY_ID": entity_code}})
+    key = f"crm.status.list.{entity_code}"
+    report["methods"][key] = status
+    if status != "OK" or not isinstance(result, list):
+        return []
+    stages = []
+    for item in result[:100]:
+        if (isinstance(item, dict) and item.get("ENTITY_ID") == entity_code
+                and isinstance(item.get("STATUS_ID"), str)):
+            stages.append({"id": safe_name(item["STATUS_ID"]),
+                           "name": safe_name(item.get("NAME")),
+                           "semantics": safe_name(item.get("SEMANTICS"))})
+    return stages
+
+
 def audit(webhook: str, *, client: httpx.Client | None = None) -> dict:
     base = validate_webhook(webhook)
     own = client is None
@@ -98,36 +152,18 @@ def audit(webhook: str, *, client: httpx.Client | None = None) -> dict:
         "permissions_inferred_from_menu": False,
         "safe_test_space": "NOT_VERIFIED",
         "methods": {}, "deal_categories": [], "smart_processes": [],
-        "entity_fields": {},
+        "entity_fields": {}, "category_list_paginated": {},
     }
     try:
-        status, result = _post_read(client, base, "crm.category.list", {"entityTypeId": 2})
-        report["methods"]["crm.category.list"] = status
-        if status == "OK" and isinstance(result, dict) and isinstance(result.get("categories"), list):
-            for item in result["categories"][:50]:
-                if not isinstance(item, dict):
-                    continue
-                cid = item.get("id")
-                if type(cid) is int and 0 <= cid <= 99999999:
-                    report["deal_categories"].append({
-                        "id": cid, "name": safe_name(item.get("name"))
-                    })
-            report["deal_category_list_paginated"] = len(result["categories"]) >= 50
+        report["deal_categories"] = _read_categories(client, base, 2, report)
+        for category in report["deal_categories"]:
+            category["stages"] = _read_stages(client, base, 2, category["id"], report)
         for entity_id, name in ENTITIES.items():
             status, result = _post_read(client, base, "crm.item.fields", {
                 "entityTypeId": entity_id, "useOriginalUfNames": "Y"
             })
             report["methods"]["crm.item.fields." + name] = status
-            safe_fields = []
-            if status == "OK" and isinstance(result, dict) and isinstance(result.get("fields"), dict):
-                for key in result["fields"]:
-                    if isinstance(key, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,80}", key):
-                        safe_fields.append(key)
-            report["entity_fields"][name] = {
-                "visible_codes_count": len(safe_fields),
-                "has_inn_uf_candidate": any("INN" in key.upper() for key in safe_fields),
-                "user_field_codes": sorted(key for key in safe_fields if key.upper().startswith("UF_CRM"))[:100],
-            }
+            report["entity_fields"][name] = _fields_summary(result if status == "OK" else None)
         status, result = _post_read(client, base, "crm.type.list", {})
         report["methods"]["crm.type.list"] = status
         if status == "OK" and isinstance(result, dict) and isinstance(result.get("types"), list):
@@ -136,13 +172,22 @@ def audit(webhook: str, *, client: httpx.Client | None = None) -> dict:
                     continue
                 eid = item.get("entityTypeId")
                 if type(eid) is int and eid >= 128:
-                    report["smart_processes"].append({
-                        "entityTypeId": eid, "title": safe_name(item.get("title"))
+                    process = {"entityTypeId": eid, "title": safe_name(item.get("title")),
+                               "fields": {}, "categories": []}
+                    field_status, field_result = _post_read(client, base, "crm.item.fields", {
+                        "entityTypeId": eid, "useOriginalUfNames": "Y"
                     })
+                    report["methods"][f"crm.item.fields.smart_process.{eid}"] = field_status
+                    process["fields"] = _fields_summary(field_result if field_status == "OK" else None)
+                    process["categories"] = _read_categories(client, base, eid, report)
+                    for category in process["categories"]:
+                        category["stages"] = _read_stages(client, base, eid, category["id"], report)
+                    report["smart_processes"].append(process)
         mandatory = [
-            report["methods"].get("crm.category.list"),
+            report["methods"].get("crm.category.list.2"),
             report["methods"].get("crm.item.fields.lead"),
             report["methods"].get("crm.item.fields.deal"),
+            report["methods"].get("crm.item.fields.contact"),
             report["methods"].get("crm.item.fields.company"),
         ]
         report["status"] = (

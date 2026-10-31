@@ -50,6 +50,10 @@ def test_mocked_portal_metadata_audit_no_customer_access():
         assert request.url.host == "serviseit.bitrix24.ru"
         payload = json.loads(request.content)
         if method == "crm.category.list":
+            if payload["entityTypeId"] == 128:
+                return httpx.Response(200, json={"result": {"categories": [
+                    {"id": 3, "name": "Карточки обращений"},
+                ]}})
             assert payload == {"entityTypeId": 2}
             return httpx.Response(200, json={"result": {"categories": [
                 {"id": 0, "name": "Общая"},
@@ -58,7 +62,7 @@ def test_mocked_portal_metadata_audit_no_customer_access():
                 {"id": 11, "name": "info@private.example"},
             ]}})
         if method == "crm.item.fields":
-            assert payload["entityTypeId"] in (1, 2, 4)
+            assert payload["entityTypeId"] in (1, 2, 3, 4, 128)
             assert payload["useOriginalUfNames"] == "Y"
             return httpx.Response(200, json={"result": {"fields": {
                 "title": {"title": "Real customer phone +7 999 999-99-99"},
@@ -71,6 +75,13 @@ def test_mocked_portal_metadata_audit_no_customer_access():
                 {"entityTypeId": 128, "title": "Тестовые лиды"},
                 {"entityTypeId": 2, "title": "Неподходящий системный тип"},
             ]}})
+        if method == "crm.status.list":
+            entity_code = payload["filter"]["ENTITY_ID"]
+            return httpx.Response(200, json={"result": [
+                {"ENTITY_ID": entity_code, "STATUS_ID": "NEW", "NAME": "Новая"},
+                {"ENTITY_ID": entity_code, "STATUS_ID": "PRIVATE", "NAME": "owner@example.org"},
+                {"ENTITY_ID": "OTHER", "STATUS_ID": "HIDDEN", "NAME": "Не та стадия"},
+            ]})
         raise AssertionError("Forbidden API method: " + method)
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
@@ -85,8 +96,12 @@ def test_mocked_portal_metadata_audit_no_customer_access():
     assert len(result["smart_processes"]) == 1
     assert result["smart_processes"][0]["entityTypeId"] == 128
     assert result["entity_fields"]["deal"]["user_field_codes"] == ["UF_CRM_1699"]
-    assert called == ["crm.category.list", "crm.item.fields", "crm.item.fields",
-                      "crm.item.fields", "crm.type.list"]
+    assert result["entity_fields"]["contact"]["user_field_codes"] == ["UF_CRM_1699"]
+    assert [s["id"] for s in result["deal_categories"][1]["stages"]] == ["NEW", "PRIVATE"]
+    assert result["smart_processes"][0]["fields"]["user_field_codes"] == ["UF_CRM_1699"]
+    assert [s["id"] for s in result["smart_processes"][0]["categories"][0]["stages"]] == ["NEW", "PRIVATE"]
+    assert result["deal_categories"][1]["stages"][1]["name"] == "[название скрыто]"
+    assert called.count("crm.status.list") == 5
     assert "SecretToken" not in str(result)
     assert "Real customer phone" not in str(result)
 
@@ -112,6 +127,8 @@ def test_write_method_forbidden_before_any_network():
             _post_read(client, WEBHOOK, "crm.lead.add", {})
         with pytest.raises(ValueError, match="NOT_ALLOWED"):
             _post_read(client, WEBHOOK, "crm.item.list", {})
+        with pytest.raises(ValueError, match="NOT_ALLOWED"):
+            _post_read(client, WEBHOOK, "crm.deal.add", {})
 
 
 def test_offline_blueprint_has_no_external_effects():

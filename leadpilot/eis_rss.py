@@ -122,21 +122,34 @@ def _parse_publication(raw: str) -> str | None:
             return None
 
 
-def _is_1c_external_service(title: str, subject: str | None) -> bool:
-    # A labelled object of procurement overrides a generic auction RSS title.
-    # Forbid matching the irrelevant EIS 'Искомое слово' field.
-    source = subject if subject is not None else title
+def _scope_reason(title: str, subject: str | None) -> str | None:
+    """A *reason*, never a positive buyer or sales-intent verification.
+
+    The EIS 'Искомое слово' search label must never count as procurement
+    subject. A generic RSS auction title is not proof of a 1C purchase.
+    None indicates only a research-level explicit external-1C service signal.
+    """
+    raw = subject if subject is not None else title
     if subject is None and re.match(
             r"^(?:Электронный аукцион|Запрос котировок|Закупка, осуществляемая|"
             r"Открытый конкурс|Запрос предложений)\b", title, flags=re.I):
-        return False
-    t = _plain(source, 700).casefold().replace("ё", "е")
-    if not t or "битрикс" in t:
-        return False
+        return "SUBJECT_LABEL_MISSING"
+    t = _plain(raw, 700).casefold().replace("ё", "е")
+    if not t or t in {"null", "none", "не указано", "-"}:
+        return "SUBJECT_EMPTY"
+    if "битрикс" in t:
+        return "BITRIX_OUT_OF_SCOPE"
     if re.search(r"\b(?:без|не\s+предусмотрен[а-я]*)\s+(?:оказания\s+)?услуг\s+(?:по\s+)?(?:сопровожд|поддержк|внедрен|настройк)", t):
-        return False
-    return (bool(re.search(r"(?<![a-zа-я0-9])1[сc](?![a-zа-я0-9])", t))
-            and any(word in t for word in SERVICE_WORDS))
+        return "SERVICE_NEGATED"
+    if not re.search(r"(?<![a-zа-я0-9])1[сc](?![a-zа-я0-9])", t):
+        return "NO_1C_IN_PURCHASE_SUBJECT"
+    if not any(word in t for word in SERVICE_WORDS):
+        return "NO_EXTERNAL_SERVICE_IN_PURCHASE_SUBJECT"
+    return None
+
+
+def _is_1c_external_service(title: str, subject: str | None) -> bool:
+    return _scope_reason(title, subject) is None
 
 
 def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
@@ -163,13 +176,28 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
     today = today or date.today()
     counts = Counter()
     unique = {}
+    scope_samples = []
+    sample_reason_counts = Counter()
     for item in entries:
         counts["items_seen"] += 1
         title = _plain(_text(item, "title"), 700)
         raw_description = _text(item, "description") or _text(item, "summary")
         subject = _official_subject(raw_description)
-        if not _is_1c_external_service(title, subject):
+        reason = _scope_reason(title, subject)
+        if reason is not None:
             counts["not_explicit_external_1c_service"] += 1
+            counts["scope_" + reason.lower()] += 1
+            # Representative public purchase-object text, never buyer
+            # contacts, cookies, credentials or an RSS search query.
+            # Three per reason (at most 15) for human parser debugging.
+            if sample_reason_counts[reason] < 3 and len(scope_samples) < 15:
+                sample_reason_counts[reason] += 1
+                scope_samples.append({
+                    "reason": reason,
+                    "rss_title": title[:180],
+                    "procurement_subject": subject[:250] if subject is not None else None,
+                    "notice_link_present": bool(_text(item, "link")),
+                })
             continue
         link = _text(item, "link")
         if not link:
@@ -230,6 +258,8 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
         "search_rss_url": feed_url,
         "checked_on": today.isoformat(),
         "counts": dict(counts),
+        "scope_rejection_samples": scope_samples,
+        "scope_audit": "PUBLIC_TITLES_ONLY_MAX_15_UNVERIFIED_NEVER_LEADS",
         "items": list(unique.values()),
         "gate": "OFFICIAL_NOTICE_BUYER_INN_FNS_REGION_DEADLINE_SCOPE_CONTACT_CRM_DUPLICATES",
         "warning": "EIS procurement buyers are NOT presumed small businesses; 44-FZ/223-FZ supplier SME status is not buyer size. A tender is not permission to contact.",

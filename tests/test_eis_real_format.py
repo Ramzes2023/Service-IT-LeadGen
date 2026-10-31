@@ -104,7 +104,8 @@ def test_scope_rejection_has_separate_reason_and_capped_public_sample(subject, r
     assert result["counts"]["candidates_for_identity_review"] == 0
     assert len(result["scope_rejection_samples"]) == 1
     row = result["scope_rejection_samples"][0]
-    assert row["reason"] == reason and row["procurement_subject"] == subject
+    expected_subject = "" if subject == "null" else subject
+    assert row["reason"] == reason and row["procurement_subject"] == expected_subject
     assert result["crm_writes"] == "NO" and result["outbound_messages"] == "NO"
 
 

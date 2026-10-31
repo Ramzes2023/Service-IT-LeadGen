@@ -95,20 +95,22 @@ def _parse_response(data: object) -> list:
     return body["vacancies"]
 
 
-def scan(*, region="77", term="1С", limit=20, client=None) -> dict:
+def scan(*, region="77", term="1С", limit=20, offset=0, client=None) -> dict:
     """One bounded GET; caller decides whether to import public results."""
     if region not in REGIONS:
         raise ValueError("Unsupported region code")
     if term not in KEYWORDS:
         raise ValueError("Unsupported term")
-    if not (1 <= limit <= 50):
+    if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= 50):
         raise ValueError("Maximum 50 items per bounded scan")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0 or offset > 200:
+        raise ValueError("Offset must be an integer from 0 to 200")
     # Bounded allowlisted destination; no arbitrary URL input or HTTP downgrade.
     own = client is None
     client = client or httpx.Client(timeout=20.0, follow_redirects=False)
     try:
         url = f"{API_BASE}/{region}"
-        response = client.get(url, params={"text": term, "offset": 0, "limit": limit},
+        response = client.get(url, params={"text": term, "offset": offset, "limit": limit},
                               headers={"Accept": "application/json", "User-Agent": "ServiceITLeadGenResearch/0.3"})
         if response.status_code != 200:
             raise RuntimeError(f"Trudvsem source unavailable (HTTP {response.status_code}); no data imported")
@@ -116,7 +118,7 @@ def scan(*, region="77", term="1С", limit=20, client=None) -> dict:
         normalized = [parse_vacancy(r, region) for r in records]
         valid = [r for r in normalized if r is not None]
         return {"source": "trudvsem-open-vacancies", "region": REGIONS[region],
-                "term": term, "fetched": len(records), "valid_signals": len(valid),
+                "term": term, "offset": offset, "fetched": len(records), "valid_signals": len(valid),
                 "with_inn": sum(bool(r["inn"]) for r in valid),
                 "signals": valid, "mode": "PUBLIC_SIGNAL_READ_ONLY"}
     finally:

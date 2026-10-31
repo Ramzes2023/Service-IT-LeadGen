@@ -5,12 +5,13 @@ param(
     [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$RssUrl,
     [string]$FnsFile = '',
     [string]$BuyerFacts = '',
-    [string]$CaBundle = ''
+    [string]$CaBundle = '',
+    [string]$PythonPath = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $Repo '.venv\Scripts\python.exe'
+$Python = if ($PythonPath) { $PythonPath } else { Join-Path $Repo '.venv\Scripts\python.exe' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'SERVICEIT_EIS_PYTHON_MISSING'
 }

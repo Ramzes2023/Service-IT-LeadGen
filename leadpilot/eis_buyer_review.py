@@ -108,6 +108,8 @@ def review(eis_file: str | Path, fns_file: str | Path, operator_file: str | Path
             raise ValueError("EIS_BUYER_INN_INVALID")
         if (not isinstance(row["buyer_region"], str)
                 or not 1 <= len(row["buyer_region"]) <= 100
+                or not isinstance(row["procurement_status"], str)
+                or not isinstance(row["scope_status"], str)
                 or row["procurement_status"] not in STATUSES
                 or row["scope_status"] not in SCOPES):
             raise ValueError("EIS_OPERATOR_CLASSIFICATION_INVALID")

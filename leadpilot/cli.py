@@ -24,6 +24,10 @@ def run():
     command = sub.add_parser("suppress"); command.add_argument("inn"); command.add_argument("channel"); command.add_argument("reason")
     command = sub.add_parser("crm-preview"); command.add_argument("--output", default="exports/bitrix_preview.json")
     sub.add_parser("finance-example")
+    command = sub.add_parser("manager-briefs")
+    command.add_argument("--output", default="exports/manager_briefs.json")
+    command.add_argument("--limit", type=int, default=20)
+    command.add_argument("--today", default=None)
     command = sub.add_parser("ai-preview"); command.add_argument("text")
     sub.add_parser("ai-config-check")
     source = sub.add_parser("source-scan")
@@ -63,6 +67,13 @@ def run():
         suppress(args.db, args.inn, args.channel, args.reason)
         qualify(args.db)
         print("SUPPRESSION_APPLIED=YES")
+    elif args.command == "manager-briefs":
+        from .manager_briefs import export_manager_briefs
+        from datetime import date
+        result = export_manager_briefs(args.db, args.output,
+                today=date.fromisoformat(args.today) if args.today else None,
+                limit=args.limit)
+        print("MANAGER_BRIEFS=" + json.dumps(result, ensure_ascii=False))
     elif args.command == "crm-preview":
         print("PREVIEW_ONLY_NOT_SENT=" + str(export_preview(args.db, args.output)))
         print("FILE=" + args.output)

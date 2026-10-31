@@ -88,3 +88,19 @@ flowchart TD
 - Два ранее упавших `tests/test_architecture_demo.py` запускают `simulate()` в `TemporaryDirectory` и тем самым служат регрессией для Windows file-lock cleanup.
 
 **Fix STATUS = COMMITTED, WINDOWS_RETEST_PENDING.** До нового реального Windows прогона нельзя объявлять `ARCH_SHOWCASE_ACCEPTANCE=PASS`. Старая версия скачанного ZIP закреплена на старом SHA; для повторной проверки использовать новый архив, предоставленный после этого исправления.
+
+
+## 31.10.2026 — WinError 32 при завершении временной SQLite (исправление после второго воспроизведения)
+
+На Windows пользователь дважды воспроизвёл `PermissionError [WinError 32]` при завершении `TemporaryDirectory`:
+- первый запуск: **9 passed, 2 failed**;
+- второй запуск после частичного исправления `architecture_demo.py`: **14 passed, 2 failed**. Это **не PASS**.
+- ошибка указывала на временный путь `%TEMP%\\serviceit-architecture-demo-*\\demo.sqlite3`, который удерживался открытым.
+
+**Точная первопричина:** в *ранее существующем* `leadpilot/core.py` функции `initialize`, `get_leads` и `metrics` использовали `with sqlite3.connect(...) as con`. Менеджер контекста `sqlite3.Connection` завершает транзакцию, но **не закрывает подключение**; поэтому с открытым дескриптором Windows не удаляет файл. Раннее исправление только `architecture_demo`/новых модулей было неполным.
+
+Ремонт в этой ветке: импорт `contextlib.closing`, замена **трёх** ключевых контекстов на `with closing(sqlite3.connect(...)) as con`; существующий `core.transaction` уже имел явный `finally: con.close()` и не изменён. Это не меняет структуру таблиц/нормализацию/скоринг; только освобождение read/initialization-соединений после использования.
+
+Добавлен `tests/test_sqlite_windows_cleanup.py`: `TrackedSQLiteConnection` записывает все открытые соединения через monkeypatch `sqlite3.connect`; `close()` ставит флаг. Три сценария проверяют (1) `initialize/get_leads/metrics` на пустой базе, (2) **весь `architecture_demo.simulate()`**, (3) `ingest+qualify+get_leads+metrics` с синтетическими данными. Наличие любого соединения без `close()` блокирует регрессию даже на Linux. Оператор `RUN_SERVICEIT_ARCHITECTURE_DEMO.ps1` теперь требует прохождения этих тестов ДО создания HTML.
+
+**Важно:** патч сохранён в GitHub, повторной Windows-приёмки ещё нет. Условие завершения: `SERVICEIT_ARCH_PREBITRIX=PASS_SYNTHETIC_ONLY`, отсутствие `WinError 32`, сохранение HTML/JSON и никаких CRM/других источников.

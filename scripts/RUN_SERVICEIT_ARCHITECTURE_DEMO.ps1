@@ -18,7 +18,7 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
 Push-Location -LiteralPath $Repo
 try {
     Write-Output 'SERVICEIT_ARCH_DEMO=TEST_START; MODE=SYNTHETIC_ONLY; CRM_WRITES=NO'
-    $Tests=@('tests/test_workflow_ops.py', 'tests/test_manager_workspace_demo.py', 'tests/test_architecture_demo.py')
+    $Tests=@('tests/test_sqlite_windows_cleanup.py', 'tests/test_workflow_ops.py', 'tests/test_manager_workspace_demo.py', 'tests/test_architecture_demo.py')
     & $PythonPath -m pytest -q -p no:cacheprovider @Tests
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_ARCH_DEMO_TESTS_FAILED' }
     Write-Output 'SERVICEIT_ARCH_DEMO=GENERATING_STATIC_HTML'

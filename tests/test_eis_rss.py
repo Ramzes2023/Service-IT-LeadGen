@@ -146,3 +146,8 @@ def test_safe_json_snapshot_never_overwritten(tmp_path, monkeypatch):
         save(r, "exports/a.json")
     with pytest.raises(ValueError, match="EXPORTS"):
         save(r, "data/a.json")
+
+
+def test_ca_bundle_not_bypassed():
+    with pytest.raises(ValueError, match="CA_BUNDLE_INVALID"):
+        fetch(url=FEED, ca_bundle="nonexistent-ca.pem")

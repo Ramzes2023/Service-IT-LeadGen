@@ -32,7 +32,7 @@ def readonly_preflight(webhook=None, client=None):
                             json={"entityTypeId": 1} if method == "crm.item.fields" else {})
                 response.raise_for_status()
                 data = response.json()
-                if "error" in data or "result" not in data:
+                if not isinstance(data, dict) or "error" in data or "result" not in data:
                     results[method] = "API_ERROR_OR_PERMISSION_MISSING"
                 else:
                     results[method] = "READ_OK"

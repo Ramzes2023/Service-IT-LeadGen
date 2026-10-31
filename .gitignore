@@ -16,16 +16,15 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+/.integration-tmp/
 .coverage
 htmlcov/
 .mypy_cache/
 .ruff_cache/
 
 # Local operational data (including WAL/SHM)
-data/**
-!data/.gitkeep
-exports/**
-!exports/.gitkeep
+/data/
+/exports/
 *.sqlite
 *.sqlite3
 *.db

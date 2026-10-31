@@ -24,12 +24,22 @@ def run():
     command = sub.add_parser("suppress"); command.add_argument("inn"); command.add_argument("channel"); command.add_argument("reason")
     command = sub.add_parser("crm-preview"); command.add_argument("--output", default="exports/bitrix_preview.json")
     sub.add_parser("finance-example")
+    command = sub.add_parser("manager-briefs")
+    command.add_argument("--output", default="exports/manager_briefs.json")
+    command.add_argument("--limit", type=int, default=20)
+    command.add_argument("--today", default=None)
+    command = sub.add_parser("evidence-briefs")
+    command.add_argument("--fns", required=True)
+    for field in ("requests", "facts", "contacts"):
+        command.add_argument("--" + field)
+    sub.add_parser("acceptance-demo")
     command = sub.add_parser("ai-preview"); command.add_argument("text")
     sub.add_parser("ai-config-check")
     source = sub.add_parser("source-scan")
     source.add_argument("--region", choices=["77", "50", "06"], default="77")
     source.add_argument("--term", choices=["1С", "системный администратор", "IT-инженер"], default="1С")
     source.add_argument("--limit", type=int, default=15)
+    source.add_argument("--offset", type=int, default=0)
     source.add_argument("--import-to-local", action="store_true")
     source.add_argument("--output", default="exports/trudvsem_probe.json")
     sub.add_parser("source-candidates")
@@ -39,6 +49,15 @@ def run():
     command.add_argument("--include-public-vacancy", action="store_true",
                          help="Send only the public job title to AI, not company or contacts")
     args = parser.parse_args()
+    if args.command == "acceptance-demo":
+        from .integration_demo import demonstrate
+        print(json.dumps(demonstrate(), ensure_ascii=True, indent=2))
+        return
+    if args.command == "evidence-briefs":
+        from .manager_briefs import build_evidence_briefs
+        print(json.dumps(build_evidence_briefs(args.fns, requests=args.requests,
+                         facts=args.facts, contacts=args.contacts), ensure_ascii=True, indent=2))
+        return
     initialize(args.db)
     if args.command == "init":
         print("DB_INITIALIZED=" + args.db)
@@ -62,6 +81,13 @@ def run():
         suppress(args.db, args.inn, args.channel, args.reason)
         qualify(args.db)
         print("SUPPRESSION_APPLIED=YES")
+    elif args.command == "manager-briefs":
+        from .manager_briefs import export_manager_briefs
+        from datetime import date
+        result = export_manager_briefs(args.db, args.output,
+                today=date.fromisoformat(args.today) if args.today else None,
+                limit=args.limit)
+        print("MANAGER_BRIEFS=" + json.dumps(result, ensure_ascii=False))
     elif args.command == "crm-preview":
         print("PREVIEW_ONLY_NOT_SENT=" + str(export_preview(args.db, args.output)))
         print("FILE=" + args.output)
@@ -78,13 +104,19 @@ def run():
     elif args.command == "source-scan":
         # No contacts, CRM writes or messages. Public business data only.
         try:
-            outcome = scan(region=args.region, term=args.term, limit=args.limit)
+            outcome = scan(region=args.region, term=args.term, limit=args.limit, offset=args.offset)
         except Exception as exc:
-            print("SOURCE_STATUS=UNAVAILABLE; NO_REAL_RECORDS_CLAIMED; " + type(exc).__name__)
+            safe_codes = {"API_NON_JSON_RESPONSE", "API_SCHEMA_MISMATCH"}
+            code = str(exc) if type(exc) is RuntimeError and str(exc) in safe_codes else type(exc).__name__
+            print("SOURCE_STATUS=UNAVAILABLE; NO_REAL_RECORDS_CLAIMED; ERROR_CODE=" + code)
             raise SystemExit(2)
-        path = Path(args.output)
+        path = Path(args.output).resolve()
+        if (not path.is_relative_to(Path("exports").resolve())
+                or path.suffix.lower() != ".json"):
+            raise ValueError("Source scan output must be JSON inside exports/")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
+        with path.open("x", encoding="utf-8") as out:
+            json.dump(outcome, out, ensure_ascii=False, indent=2)
         print(f'SOURCE_STATUS=RESPONSE_OK; FETCHED={outcome["fetched"]}; SIGNALS={outcome["valid_signals"]}; WITH_INN={outcome["with_inn"]}')
         print('OUTPUT=' + str(path))
         if args.import_to_local:

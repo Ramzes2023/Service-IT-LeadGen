@@ -132,7 +132,7 @@ def test_stale_or_http_signal_never_selected(tmp_path):
     assert result["counts"]["stale_or_untrusted_source"] == 2
 
 
-@pytest.mark.parametrize("offset", [-1, 201, 1.5, True])
+@pytest.mark.parametrize("offset", [-1, 50, 201, 1.5, True])
 def test_source_scan_rejects_invalid_offset(offset):
     with pytest.raises(ValueError, match="Offset"):
         scan(offset=offset)
@@ -140,14 +140,14 @@ def test_source_scan_rejects_invalid_offset(offset):
 
 def test_source_scan_sends_requested_offset_to_documented_api():
     def handler(request):
-        assert request.url.params["offset"] == "50"
+        assert request.url.params["offset"] == "1"
         assert request.url.params["limit"] == "50"
         return httpx.Response(200, json={"status": "200",
             "results": {"vacancies": []}})
     client = httpx.Client(transport=httpx.MockTransport(handler))
     try:
-        result = scan(region="77", term="1С", limit=50, offset=50, client=client)
-        assert result["offset"] == 50 and result["fetched"] == 0
+        result = scan(region="77", term="1С", limit=50, offset=1, client=client)
+        assert result["offset"] == 1 and result["fetched"] == 0
     finally:
         client.close()
 
@@ -157,3 +157,19 @@ def test_missing_region_snapshot_is_not_silently_treated_as_no_new(tmp_path):
     (folder / "trudvsem_50.json").unlink()
     with pytest.raises(ValueError, match="Missing, corrupted"):
         plan(folder, prior, today=TODAY)
+
+
+def test_trudvsem_http200_non_json_is_classified_without_response_body():
+    def responder(request):
+        return httpx.Response(200, text="<html>temporary response</html>")
+    with httpx.Client(transport=httpx.MockTransport(responder)) as client:
+        with pytest.raises(RuntimeError, match="API_NON_JSON_RESPONSE"):
+            scan(region="77", term="1С", offset=1, limit=50, client=client)
+
+
+def test_trudvsem_http200_schema_change_is_classified_without_guessing():
+    def responder(request):
+        return httpx.Response(200, json={"status": "200", "results": {}})
+    with httpx.Client(transport=httpx.MockTransport(responder)) as client:
+        with pytest.raises(RuntimeError, match="API_SCHEMA_MISMATCH"):
+            scan(region="77", term="1С", offset=1, limit=50, client=client)

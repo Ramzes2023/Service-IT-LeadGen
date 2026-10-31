@@ -153,7 +153,8 @@ def test_csv_formula_injection_protection(tmp_path, monkeypatch):
     save(result, "exports/report.json", "exports/report.csv")
     with Path("exports/report.csv").open(encoding="utf-8-sig", newline="") as stream:
         records = list(csv.DictReader(stream))
-    assert records[0]["company_name"].startswith("'=")
+    modified = next(row for row in records if row["inn"] == FIRST)
+    assert modified["company_name"].startswith("'=")
 
 
 @pytest.mark.parametrize("offsets", [[0, 0], [0, 50], [True, 1]])

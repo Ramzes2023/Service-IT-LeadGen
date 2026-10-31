@@ -160,3 +160,31 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\Serv
 **Исправление кода не проверено на Windows.** Если после него задача остаётся `Queued`, дальнейшая причина может быть в security principal, отключенном журнале TaskScheduler Operational, других системных ограничениях/политиках. Это требует отдельной диагностики, а не ложного заявления о завершённой интеграции ЕИС.
 
 Источники по поведению Windows: Microsoft Learn `New-ScheduledTaskSettingsSet`, `DisallowStartIfOnBatteries`, `Troubleshoot scheduled tasks not running`.
+
+
+## 31.10.2026 — подтверждённый PASS настоящей задачи Windows
+
+**Проблема Queued устранена и проверена реальным запуском.** Оператор выполнил пакет `ServiceIT_EIS_FIX_QUEUED_20261031.zip` с pinned GitHub SHA `26495ba91d3871c1aa2fab7d3d93f7a2a5f62694`. Фактический консольный вывод:
+
+```text
+EIS_REPAIR_TASK_BACKUP=C:\Users\ramze\AppData\Local\ServiceIT\EIS-Scheduler-Repair\task-before-20261031T182805902Z.xml
+EIS_REPAIR_STATE_BEFORE=Queued
+EIS_REPAIR_POWER_BLOCK_BEFORE=True
+EIS_REPAIR_STOP_ON_BATTERY_BEFORE=True
+EIS_REPAIR_BATTERY_STATUS=1
+EIS_REPAIR_POWER_BLOCK_AFTER=False
+EIS_REPAIR_STOP_ON_BATTERY_AFTER=False
+EIS_REPAIR_STATE_AFTER=Ready
+EIS_REPAIR_ACTION_TRIGGER_USER_UNCHANGED=YES
+EIS_REPAIR_PROBE=START_REQUESTED
+EIS_REPAIR_PROBE_PASS_LOG=C:\Users\ramze\AppData\Local\ServiceIT\EIS-Daily-Operational\scheduled-20261031T182809Z.txt
+EIS_REPAIR_PROBE=PASS
+EIS_REPAIR_FINISHED=YES; ONLY_SCHEDULER_SETTINGS_CHANGED=YES; CRM_WRITES=NO
+EIS_FIX_QUEUED_EXIT=0
+```
+
+Обе запрещающие настройки батареи были активны; `BatteryStatus=1` соответствует разряду/работе от батареи. После снятия ограничений задача стала `Ready`. Сценарий проверил новый `scheduled-*.txt` на **обе строки**: `EIS_SCHEDULED_EXIT=0` и `EIS_HEALTH_STATUS=PASS`; итог `EIS_REPAIR_PROBE=PASS`.
+
+**Итоговый статус: подтверждённый операционный источник EIS RSS с работоспособной системой ежедневного запуска Windows** (запланировано на 09:30 по времени Windows; требуется, чтобы пользователь был вошедшим в Windows: Interactive). Реально проверены два ручных цикла (228 и 236 тестов), SQLite + повторная дедупликация и хотя бы один успешный автоматический тестовый запуск. Не утверждать, будто автоматически уже проходили все будущие ежедневные запуски.
+
+**Ограничение состава данных не снято:** исходная RSS-ссылка включает `fz44=on`, а 108 закупок имеют только текстовые признаки публичных заказчиков. RSS не доказывает активный deadline, официальный статус процедуры, корректный регион и точный buyer INN/FNS. Поэтому `EIS_DATA_QUALITY_GATE=OPEN`, `qualified_b2b_leads=0`, `crm_writes=NO`. Не смешивать готовность транспорта/планировщика с коммерческой квалификацией и не отправлять эти извещения в Bitrix24 автоматически. Дальнейшие улучшения выполняются только для ЕИС.

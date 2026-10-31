@@ -76,8 +76,18 @@ def _cell_values(xml: bytes, shared: list[str]) -> dict[tuple[int, str], str]:
 
 def read_fns_xlsx(path: str | Path, *, today: date | None = None) -> tuple[date, dict[str, dict]]:
     p = Path(path)
-    if not p.is_file() or p.suffix.lower() != ".xlsx" or p.stat().st_size > MAX_ZIP_BYTES:
-        raise ValueError("Expected a small XLSX file downloaded from the FNS batch-search UI")
+    if not p.is_file():
+        raise FileNotFoundError(f"FNS_XLSX_NOT_FOUND: {p}. Check the actual download name and directory.")
+    if p.suffix.lower() != ".xlsx":
+        raise ValueError(f"FNS_XLSX_INVALID_EXTENSION: expected .xlsx, got {p.suffix!r}")
+    size = p.stat().st_size
+    if size == 0:
+        raise ValueError("FNS_XLSX_EMPTY_FILE: downloaded workbook has zero bytes")
+    if size > MAX_ZIP_BYTES:
+        raise ValueError(
+            f"FNS_XLSX_TOO_LARGE: {size} bytes; limit is {MAX_ZIP_BYTES}. "
+            "Use a small filtered FNS export instead of the nationwide workbook."
+        )
     with ZipFile(p) as z:
         names = set(z.namelist())
         if "xl/worksheets/sheet1.xml" not in names:

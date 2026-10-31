@@ -24,10 +24,18 @@ PUBLIC_PREFIX = re.compile(
     r"ГОСУДАРСТВЕННОЙ|ФИНАНСОВ|ОБРАЗОВАНИЯ)\b|"
     r"МИНИСТЕРСТВО\b|ПРАВИТЕЛЬСТВО\b|"
     r"ФЕДЕРАЛЬНАЯ\s+СЛУЖБА\b|"
-    r"ГОСУДАРСТВЕННОЕ\s+СОБРАНИЕ\b)"
+    r"ГОСУДАРСТВЕННОЕ\s+СОБРАНИЕ\b|"
+    r"(?:ВОРОНЕЖСКИЙ\s+ОБЛАСТНОЙ\s+)?СУД\b|"
+    r"АРБИТРАЖНЫЙ\s+СУД\b|"
+    r"КОМИТЕТ\s+ПО\s+(?:ГРАДОСТРОИТЕЛЬСТВУ|ОБРАЗОВАНИЮ|ФИНАНСАМ)\b|"
+    r"УПРАВЛЕНИЕ\s+(?:СУДЕБНОГО\s+ДЕПАРТАМЕНТА|КУЛЬТУРЫ)\b|"
+    r"ГОСУДАРСТВЕННАЯ\s+ИНСПЕКЦИЯ\b|"
+    r"АППАРАТ\s+ГЛАВЫ\s+АДМИНИСТРАЦИИ\b|"
+    r"ГЛАВНОЕ\s+СЛЕДСТВЕННОЕ\s+УПРАВЛЕНИЕ\b)"
 )
 PUBLIC_MARKER = re.compile(
-    r"(?:\b(?:ФГБУ|ФКУ|ФБУ|ГБУ|ГКУ|МБУ|МКУ|ГАУ|МАУ|"
+    r"(?:\bФЕДЕРАЛЬНОГО\s+ГОСУДАРСТВЕННОГО\s+БЮДЖЕТНОГО\s+УЧРЕЖДЕНИЯ\b|"
+    r"\b(?:ФГБУ|ФКУ|ФБУ|ГБУ|ГКУ|МБУ|МКУ|ГАУ|МАУ|
     r"ГБУЗ|ГКУЗ|ФГБОУ|ГБОУ|ГУП|МУП|ОГКУ|ОГБУ|КГБУ|"
     r"МКОУ|МБОУ|УФСИН|ФСИН)\b|"
     r"\b(?:ГОСУДАРСТВЕННОЕ|МУНИЦИПАЛЬНОЕ|КАЗЕННОЕ|КАЗЁННОЕ|"
@@ -136,6 +144,7 @@ def triage(report: dict) -> dict:
                  if buyer_hint == "POSSIBLE_PUBLIC_SECTOR_BUYER"
                  else "FNS_BUYER_INN_AND_GEOGRAPHY_REVIEW_REQUIRED")
         out.append({
+            "workstream": "OFFICIAL_TENDER_OPPORTUNITY_REVIEW_NOT_MIKHAIL_SME_LEAD",
             "notice_id": row.get("notice_id"),
             "official_notice_url": url,
             "published_on": published,
@@ -165,6 +174,8 @@ def triage(report: dict) -> dict:
                    "purchase_hints": count("purchase_evidence_hint"),
                    "public_sector_text_hints": sum(
                        x["buyer_evidence_hint"] == "POSSIBLE_PUBLIC_SECTOR_BUYER" for x in out),
+                   "mikhail_sme_b2b_ready": 0,
+                   "official_tender_research_notices": len(out),
                    "confirmed_small_business_buyers": 0,
                    "qualified_b2b_leads": 0,
                    "crm_ready": 0},
@@ -189,7 +200,7 @@ def save(report: dict, json_file: str, csv_file: str) -> tuple[Path, Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
     with json_target.open("x", encoding="utf8") as output:
         json.dump(report, output, ensure_ascii=False, indent=2)
-    cols = ("notice_id", "published_on", "procurement_subject",
+    cols = ("workstream", "notice_id", "published_on", "procurement_subject",
             "buyer_name_rss_unverified", "buyer_evidence_hint",
             "purchase_evidence_hint", "manual_work_queue",
             "official_notice_url", "review_holds", "qualified_lead",

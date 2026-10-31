@@ -76,3 +76,20 @@ def test_potential_candidates_do_not_mean_qualified_leads(base):
     res = diagnose(base)
     assert res["status"] == "RESEARCH_ITEMS_FOUND_BUYER_STILL_UNVERIFIED"
     assert res["qualified_leads"] == 0
+
+
+def test_detailed_reason_counters_are_reported_without_promoting_leads(base):
+    base["counts"].update(
+        items_seen=200,
+        not_explicit_external_1c_service=200,
+        scope_subject_label_missing=150,
+        scope_no_1c_in_purchase_subject=30,
+        scope_no_external_service_in_purchase_subject=20,
+    )
+    base["scope_rejection_samples"] = [{"reason": "SUBJECT_LABEL_MISSING"}]
+    result = diagnose(base)
+    assert result["status"] == "ALL_ITEMS_FAILED_EXPLICIT_EXTERNAL_1C_SCOPE"
+    assert result["scope_breakdown"]["subject_label_missing"] == 150
+    assert result["scope_breakdown"]["no_external_service_in_purchase_subject"] == 20
+    assert result["scope_sample_count"] == 1
+    assert result["crm_ready"] is False

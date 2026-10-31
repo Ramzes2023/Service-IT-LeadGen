@@ -64,14 +64,14 @@ def _task_url(raw: str) -> tuple[str, str]:
         raw = "https://1clancer.ru" + raw
     try:
         u = urlsplit(raw)
-        if (u.scheme != "https" or u.hostname not in PUBLIC_TASK_DOMAINS
+        if (u.scheme not in ("http", "https") or u.hostname not in PUBLIC_TASK_DOMAINS
                 or u.username or u.password or u.port not in (None, 443)
                 or u.query or u.fragment):
             raise ValueError("CLANCER_TASK_URL_NOT_PUBLIC")
         m = re.fullmatch(r"/task/([1-9]\d{2,10})/?", u.path)
         if not m:
             raise ValueError("CLANCER_NOT_A_TASK")
-        # Normalize host aliases and optional trailing slash for deduplication.
+        # Published RSS may contain legacy http:// task links. We do NOT fetch\n        # them over HTTP: canonicalize only an exact allowed host/task ID to\n        # HTTPS for human opening, while network RSS GET stays HTTPS-only.
         identifier = m.group(1)
         return "https://1clancer.ru/task/" + identifier, identifier
     except ValueError as err:
@@ -128,7 +128,7 @@ def parse(xml: bytes, *, today: date | None = None) -> dict:
     items = []
     for entry in entries:
         title = _text(_field(entry, "title"), 280)
-        raw_link = _field(entry, "link")
+        raw_link = _field(entry, "link") or _field(entry, "guid")
         try:
             link, task_id = _task_url(raw_link)
         except ValueError:

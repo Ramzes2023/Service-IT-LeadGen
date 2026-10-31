@@ -96,3 +96,29 @@ def test_malformed_fingerprint_rejected():
     a["all_notices_fingerprint_sha256"] = "not-a-sha"
     with pytest.raises(ValueError, match="FINGERPRINT"):
         s.compare_reports(a, report([]))
+
+
+def test_empty_real_rss_parser_preserves_numeric_zero_for_search_control():
+    from leadpilot.eis_rss import parse_feed
+    from datetime import date
+    original = report(["https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber=12345678901234567890"])
+    empty_xml = b"<rss version='2.0'><channel><title>empty</title></channel></rss>"
+    empty = parse_feed(empty_xml, feed_url=PRIMARY, today=date(2026, 10, 31))
+    assert empty["counts"]["items_seen"] == 0
+    assert type(empty["counts"]["items_seen"]) is int
+    assert empty["all_notices_fingerprint_count"] == 0
+    assert empty["all_notices_fingerprint_sha256"] is None
+    assert s.compare_reports(original, empty)["status"] == "NEGATIVE_CONTROL_EMPTY_SEARCH_MAY_BE_APPLIED"
+
+
+def test_historical_empty_rss_snapshot_without_counter_is_also_safe():
+    empty_from_legacy = report([])
+    del empty_from_legacy["counts"]["items_seen"]
+    assert s.compare_reports(report(["one"]), empty_from_legacy)["status"] == "NEGATIVE_CONTROL_EMPTY_SEARCH_MAY_BE_APPLIED"
+
+
+def test_present_malformed_items_seen_remains_rejected():
+    empty = report([])
+    empty["counts"]["items_seen"] = None
+    with pytest.raises(ValueError, match="INVALID_COUNT"):
+        s.compare_reports(report(["one"]), empty)

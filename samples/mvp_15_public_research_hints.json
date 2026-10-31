@@ -1,0 +1,142 @@
+{
+  "mode": "PUBLIC_RESEARCH_HINTS",
+  "review_date": "2026-10-31",
+  "disclaimer": "Public lead identity/sector hints only. Do NOT assume FNS category, CRM approval, outreach permission, or completed human review.",
+  "items": [
+    {
+      "inn": "5003079216",
+      "name": "ООО «Грэйт Фудз Инк.»",
+      "action": "VERIFY_FNS",
+      "note": "Сведения о малом размере не подтверждены; оптовая торговля, проверить актуальную категорию.",
+      "source_url": "https://www.tbank.ru/business/contractor/legal/1105003003170/",
+      "source_level": "THIRD_PARTY",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7702319337",
+      "name": "ООО «СуперДжоб»",
+      "action": "DEFER_SCOPE",
+      "note": "По опубликованной карточке: среднее предприятие, не целевая малая компания.",
+      "source_url": "https://companies.rbc.ru/id/1027700404797-ooo-superdzhob/",
+      "source_level": "THIRD_PARTY",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7709969870",
+      "name": "ООО «РДВ-СОФТ»",
+      "action": "DEFER_SCOPE",
+      "note": "Крупный HR/IT-оператор по численности; уточнить МСП-категорию непосредственно в ФНС.",
+      "source_url": "https://kontragent.vbr.ru/company/ooo-rdvsoft-5147746474134/",
+      "source_level": "THIRD_PARTY",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7722000820",
+      "name": "МТУСИ",
+      "action": "DEFER_SCOPE",
+      "note": "ФГБОУ высшего образования; отдельный сегмент, не пилот малого бизнеса.",
+      "source_url": "https://vvf.mtuci.ru/upload/iblock/0ae/nsuj6iz91x1jhydn3r466th3vy737092.pdf",
+      "source_level": "PUBLIC_INSTITUTION",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7724850252",
+      "name": "ООО ТД «Подшипник Трейд»",
+      "action": "LEGAL_REVIEW",
+      "note": "Справочник указывает малое предприятие; совпадающий ИНН также в OFAC SDN. Проверка применимости ограничений обязательна перед коммерческими действиями.",
+      "source_url": "https://sanctionssearch.ofac.treas.gov/Details.aspx?id=45692",
+      "source_level": "OFFICIAL_REGULATOR",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7732107883",
+      "name": "АО «Ред Вингс»",
+      "action": "DEFER_SCOPE",
+      "note": "Авиакомпания; соответствует другому коммерческому сегменту, не фокус микро/малых.",
+      "source_url": "https://favt.gov.ru/dejatelnost-letnaya-eksplutacia-reestry-ekspluatantov-aon/",
+      "source_level": "OFFICIAL_REGULATOR",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "5005033619",
+      "name": "ООО «Эй-Джи Строймаркет» (Боларс)",
+      "action": "DEFER_SCOPE",
+      "note": "Справочник ФНС-данных указывает среднее предприятие, срез сентябрь 2026.",
+      "source_url": "https://firmoteka.ru/5005033619",
+      "source_level": "THIRD_PARTY",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7731018133",
+      "name": "АО «НПО «МРТЗ»",
+      "action": "DEFER_SCOPE",
+      "note": "Производственное предприятие, нужно отдельно подтверждать размер и применимость пилота.",
+      "source_url": "https://base.garant.ru/72139244/172a6d689833ce3e42dc0a8a7b3cddf9/",
+      "source_level": "PUBLIC_LEGAL_DOCUMENT",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7706729736",
+      "name": "АО «Гринатом»",
+      "action": "DEFER_SCOPE",
+      "note": "Дочернее предприятие группы Росатом с масштабной IT-деятельностью, не типичный клиент малого бизнеса.",
+      "source_url": "https://www.cbr.ru/rbr/insideDKO/doc?id=29607",
+      "source_level": "OFFICIAL_REGULATOR",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7720673002",
+      "name": "АО «НПП «Салют»",
+      "action": "VERIFY_FNS",
+      "note": "Промышленное предприятие; официальный размер и профиль услуг 1С не подтверждены.",
+      "source_url": "https://e-disclosure.azipi.ru/organization/personal-pages/1212063/",
+      "source_level": "ISSUER_DISCLOSURE",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7727081943",
+      "name": "ЗАО фирма «Черёмушки»",
+      "action": "DEFER_SCOPE",
+      "note": "Коммерческий справочник указывает среднее предприятие, срез сентябрь 2026.",
+      "source_url": "https://firmoteka.ru/7727081943",
+      "source_level": "THIRD_PARTY",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "3528007105",
+      "name": "АО «Северсталь-инфоком»",
+      "action": "DEFER_SCOPE",
+      "note": "Зарегистрирована в Вологодской области, специализированная IT-компания; проверить источник вакансии и фактическую географию.",
+      "source_url": "https://e-disclosure.azipi.ru/organization/personal-pages/700128/",
+      "source_level": "ISSUER_DISCLOSURE",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "9701112870",
+      "name": "ГБУ «Мостранспроект»",
+      "action": "DEFER_SCOPE",
+      "note": "Государственное бюджетное учреждение, другой сегмент закупок/продаж.",
+      "source_url": "https://companies.rbc.ru/id/1187746589359-gosudarstvennoe-byudzhetnoe-uchrezhdenie-goroda-moskvyi-nauchno-issledovatelskij-i-proektnyij-institut-gorodskogo-transporta-goroda-moskvyi-mostransproekt/",
+      "source_level": "THIRD_PARTY",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7728767728",
+      "name": "АО «Системы управления»",
+      "action": "DEFER_SCOPE",
+      "note": "Связано с Ростехом согласно госресурсу о научных организациях; не микро/малый пилот.",
+      "source_url": "https://tls.vak2.minobrnauki.gov.ru/org-info/970350",
+      "source_level": "OFFICIAL_REGULATOR",
+      "checked_on": "2026-10-31"
+    },
+    {
+      "inn": "7720522853",
+      "name": "АО «Объединённая энергетическая компания»",
+      "action": "DEFER_SCOPE",
+      "note": "Энергетическая компания с большим объёмом закупок; не целевой микробизнес.",
+      "source_url": "https://www.cbr.ru/rbr/insideDKO/doc?id=52919",
+      "source_level": "OFFICIAL_REGULATOR",
+      "checked_on": "2026-10-31"
+    }
+  ]
+}

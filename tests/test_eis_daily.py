@@ -183,9 +183,10 @@ def test_cli_success_reports_real_state_and_no_crm(tmp_path, monkeypatch, capsys
     import sys
     source = original(tmp_path)
     state = tmp_path / "state"
+    actual_run_daily = d.run_daily
     def local_run(source_report, state_dir):
-        return d.run_daily(source_report, state_dir, today=TODAY,
-                           downloader=fake_download(1))
+        return actual_run_daily(source_report, state_dir, today=TODAY,
+                                downloader=fake_download(1))
     monkeypatch.setattr(d, "run_daily", local_run)
     monkeypatch.setattr(sys, "argv", [
         "eis_daily", "--source-report", str(source),

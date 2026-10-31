@@ -122,7 +122,7 @@ def test_explicit_1c_service_is_never_sampled_as_rejected():
 
 
 def test_rejection_public_samples_capped_at_three_per_reason():
-    from defusedxml import ElementTree
+    from xml.etree import ElementTree
     xml = eis_rss(subject="Поставка и доставка кабельной продукции")
     root = ElementTree.fromstring(xml)
     channel = root.find("channel")

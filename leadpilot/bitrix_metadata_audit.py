@@ -44,8 +44,8 @@ def safe_name(value: object) -> str:
     """Avoid embedding arbitrary payloads, URLs, contacts or control sequences."""
     if not isinstance(value, str) or len(value) > 90 or not value.strip():
         return "[название скрыто]"
-    if (re.search(r"@|https?://|\\b(?:\\+?7|8)[0-9\\s()\\-]{10,}", value, re.I)
-            or re.search(r"[\\x00-\\x1f\\x7f]", value)):
+    if (re.search(r"@|https?://|\b(?:\+?7|8)[0-9\s()\-]{10,}", value, re.I)
+            or re.search(r"[\x00-\x1f\x7f]", value)):
         return "[название скрыто]"
     return value.strip()
 

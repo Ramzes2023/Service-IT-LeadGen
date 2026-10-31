@@ -137,3 +137,16 @@ def test_offline_blueprint_has_no_external_effects():
     assert blueprint["customer_records_read"] == 0
     assert blueprint["production_support_funnel"] == "PRESERVE_AND_DO_NOT_WRITE"
     assert blueprint["mode"] == "OFFLINE_PLAN_NO_NETWORK"
+
+
+def test_live_audit_runner_is_ascii_safe_for_windows_powershell_51():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "scripts" /
+              "RUN_SERVICEIT_BITRIX_METADATA_AUDIT.ps1")
+    raw = script.read_bytes()
+    assert all(byte < 128 for byte in raw)
+    source = raw.decode("ascii")
+    assert "Read-Host" in source and "-AsSecureString" in source
+    assert "BITRIX_METADATA_OPERATOR_APPROVAL_REQUIRED" in source
+    assert "crm.item.fields" not in source  # PowerShell runner delegates to the audited module.

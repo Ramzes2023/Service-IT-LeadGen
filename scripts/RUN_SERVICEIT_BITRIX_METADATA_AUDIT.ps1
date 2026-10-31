@@ -26,9 +26,9 @@ try {
     if ($Live) {
         Write-Output 'SERVICEIT_BITRIX_LIVE=READ_ONLY_METADATA; COMPANY_RECORDS=NOT_REQUESTED'
         Write-Output 'WARNING: A Bitrix webhook can grant broader rights than this script uses.'
-        $authorization = Read-Host 'Администратор разрешил REST-аудит метаданных? Напишите YES (иначе остановка)'
+        $authorization = Read-Host 'Has an administrator approved the read-only metadata audit? Type YES to continue'
         if ($authorization -cne 'YES') { throw 'BITRIX_METADATA_OPERATOR_APPROVAL_REQUIRED' }
-        $secret = Read-Host 'Вставьте НА ЭТОМ ПК входящий webhook URL (он не сохраняется)' -AsSecureString
+        $secret = Read-Host 'Enter the authorized webhook URL on this PC (input is hidden)' -AsSecureString
         $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
         try {
             $env:BITRIX24_AUDIT_WEBHOOK = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)

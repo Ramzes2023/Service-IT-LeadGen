@@ -25,6 +25,11 @@ def test_architecture_demo_is_repeatable_and_separate_from_real_sources():
         assert result["existing_client_hold"] == "HOLD"
         assert result["stop_list_hold"] == "HOLD"
         assert result["workflow_audit_events"] > 5
+        assert result["manager_task"] == "DEMO_TASK_CREATED_LOCALLY"
+        assert result["manager_followup"] == "FOLLOW_UP"
+        assert result["repeat_task"] == "DEMO_TASK_ALREADY_EXISTS"
+        assert result["manager_task_overview"]["tasks"]["FOLLOW_UP"] == 1
+        assert result["manager_task_overview"]["real_contacts"] == 0
         assert result["real_bitrix24"] == "NOT_CONNECTED"
         assert result["actual_contracts_revenue_mrr"] == "NOT_VERIFIED"
     assert a["company_count"] == b["company_count"]

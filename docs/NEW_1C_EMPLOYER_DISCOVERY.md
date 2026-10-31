@@ -6,18 +6,18 @@
 
 Это изменение делает **следующую итерацию исследований** воспроизводимой. Источник — официальный API «Работа России», где задокументированы `text`, `offset`, `limit`, региональный поиск. Код делает только один GET на один регион за команду; ограничены `limit <= 50` и `offset <= 200`, без скачивания анкет/HR-контактов. Источник: https://trudvsem.ru/opendata/api (доступность на дату запуска может меняться).
 
-## Этап 1: два отдельных источника, следующий сегмент выдачи
+## Этап 1: расширить первую страницу до 50 вакансий (начать с offset 0)
 
 На Windows из ветки нового PR сначала выполните pytest. Затем создайте **новую папку**, чтобы не перезаписывать старые snapshots:
 
-    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 77 --term 1С --limit 50 --offset 50 --output exports/round2_offset50/trudvsem_77.json
-    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 50 --term 1С --limit 50 --offset 50 --output exports/round2_offset50/trudvsem_50.json
+    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 77 --term 1С --limit 50 --offset 0 --output exports/round2_offset0/trudvsem_77.json
+    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 50 --term 1С --limit 50 --offset 0 --output exports/round2_offset0/trudvsem_50.json
 
-Эти команды не указывают `--import-to-local`, поэтому лишь сохраняют результаты для предварительной проверки. Если официальный API ответит ошибкой, вывод SOURCE_STATUS=UNAVAILABLE; никаких вакансий не выдавать за найденные. Для page 0 вместо offset 50 использовать offset 0 и новую папку exports/round2_offset0/.
+Эти команды не указывают `--import-to-local`, поэтому лишь сохраняют результаты для предварительной проверки. Если официальный API ответит ошибкой, вывод SOURCE_STATUS=UNAVAILABLE; никаких вакансий не выдавать за найденные. Сначала используйте offset 0 и limit 50: первые 15 ранее уже были изучены, но позиции 16–50 ещё могут содержать новые организации. Если понадобятся следующие результаты, повторите с offset 50 в **новой** папке exports/round2_offset50/ (не перезаписывать снимки offset 0).
 
 ## Этап 2: отобрать только НОВЫЕ ИНН и подготовить ФНС
 
-    .\.venv\Scripts\python.exe -m leadpilot.new_1c_fns_precheck --snapshots exports/round2_offset50 --prior-fns exports/fns_official_reconciliation.json --output exports/round2_offset50_precheck.json --inn-list exports/round2_offset50_inns.txt
+    .\.venv\Scripts\python.exe -m leadpilot.new_1c_fns_precheck --snapshots exports/round2_offset0 --prior-fns exports/fns_official_reconciliation.json --output exports/round2_offset0_precheck.json --inn-list exports/round2_offset0_inns.txt
 
 Модуль проверит 10-значный контрольный ИНН / 12-значный ИНН ИП, официальный URL вакансии, тип 1c_vacancy, дату сигнала (последние 45 дней), регион Москва/МО, повторения по ИНН. **Все 15 уже проверенных ФНС ИНН исключаются** из повторного списка. Если новых кандидатов нет, вернёт NO_NEW_INNS и **не создаст искусственный пустой список**.
 

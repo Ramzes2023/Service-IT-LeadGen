@@ -95,7 +95,7 @@ def test_invalid_feed_rejected_before_fetch(feed):
 
 def test_unsafe_entities_rejected():
     payload = b'<!DOCTYPE rss [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><rss><channel><item>&xxe;</item></channel></rss>'
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises(ValueError, match="EIS_FEED_XML_INVALID"):
         parse_feed(payload, feed_url=FEED, today=TODAY)
 
 

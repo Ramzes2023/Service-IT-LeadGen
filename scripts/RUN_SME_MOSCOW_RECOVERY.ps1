@@ -9,7 +9,7 @@ try {
 
     $expectedBranch = 'feat/sme-first-fns-discovery-20261031'
     $currentBranch = (& git branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $currentBranch -ne $expectedBranch) {
+    if ($LASTEXITCODE -ne 0 -or @('main', $expectedBranch) -notcontains $currentBranch) {
         throw "WRONG_GIT_BRANCH"
     }
 

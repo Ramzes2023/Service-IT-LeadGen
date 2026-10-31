@@ -136,3 +136,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\Serv
 Также `scripts/VERIFY_SERVICEIT_EIS_SCHEDULED.ps1` усилен: теперь **fail-closed**, если State Queued/Running, LastTaskResult не нуль или последний `scheduled-*.txt` старше последнего запуска; ранее однажды успешный журнал мог дать ложный PASS после нового неуспешного scheduled run. Это будущий verifier, а существующий установленный Task Scheduler action пока закреплён за уже принятой версией `f15d029...`.
 
 **Следующая приёмка:** получить и разобрать точные Task Scheduler Operational events и условия запуска, затем исправить только подтверждённый корневой блокер расписания. Не изменять источник/SQLite, Bitrix24, другие платформы.
+
+
+## 31.10.2026 — queued Task Scheduler: power-condition blocker under test
+
+Сведения последней реальной диагностики оператора:
+- `EIS_TASK_STATE=Queued`; время последней попытки 31.10.2026 19:16:32 local (+01:00); `LastTaskResult=0` **без доказательства фактической работы**;
+- `EIS_TASK_SCHEDULED_LOG_COUNT=0` (ни одного `scheduled-*.txt`);
+- `EIS_TASK_SETTING_DisallowStartIfOnBatteries=True`;
+- `EIS_TASK_SETTING_StopIfGoingOnBatteries=True`;
+- `EIS_TASK_SETTING_RunOnlyIfIdle=False`, `RunOnlyIfNetworkAvailable=False`, `StartWhenAvailable=True`, `MultipleInstances=IgnoreNew`;
+- задача под `ramze`, `LogonType=Interactive`, текущий Windows пользователь `RS\\ramze`;
+- `powershell.exe` и целевой `RUN_SERVICEIT_EIS_SCHEDULED.ps1` существуют, последний закреплённый SHA рабочей версии `f15d029fd9df769670d11d7383bd0abb90308074`;
+- `Microsoft-Windows-TaskScheduler/Operational` был **выключен**, поэтому первопричину из журнала Windows подтвердить невозможно.
+
+Вероятный препятствующий фактор — настройки питания. Microsoft документирует `DisallowStartIfOnBatteries=true` как запрет запуска при работе от батареи, однако мы **не получили доказательства фактического питания от батареи**. Для безопасной проверки добавлен `scripts/REPAIR_SERVICEIT_EIS_BATTERY_QUEUE.ps1`:
+1. Только после явного `-ApplyFix` проверяет TaskName, количество действий/триггеров, имя PS1, hash pinned исходного репозитория и LogonType.
+2. Сохраняет XML-конфигурацию задачи до изменения в `%LOCALAPPDATA%\\ServiceIT\\EIS-Scheduler-Repair\\task-before-*.xml`.
+3. Меняет **только параметры ScheduledTask.Settings**: `AllowStartIfOnBatteries`, `DontStopIfGoingOnBatteries`, сохраняя `StartWhenAvailable`, `IgnoreNew`, `ExecutionTimeLimit=5 min`. Проверяет неизменность principal, команды и trigger.
+4. С `-TestRun` запрашивает ровно один запуск этой же задачи и ограниченно проверяет **новый** `scheduled-*.txt` на `EIS_SCHEDULED_EXIT=0` + `EIS_HEALTH_STATUS=PASS`. Если нет такого журнала, выводит `EIS_REPAIR_PROBE=NOT_YET_VERIFIED`, **не** утверждает успех. Работа с официальным ЕИС RSS остаётся единственным источником; Битрикс24 и VALYQON не трогаются.
+5. Оба исходных файла установки задачи тоже исправлены на аналогичные безопасные параметры батареи, чтобы ошибка не повторилась.
+
+**Исправление кода не проверено на Windows.** Если после него задача остаётся `Queued`, дальнейшая причина может быть в security principal, отключенном журнале TaskScheduler Operational, других системных ограничениях/политиках. Это требует отдельной диагностики, а не ложного заявления о завершённой интеграции ЕИС.
+
+Источники по поведению Windows: Microsoft Learn `New-ScheduledTaskSettingsSet`, `DisallowStartIfOnBatteries`, `Troubleshoot scheduled tasks not running`.

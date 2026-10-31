@@ -69,7 +69,33 @@ def _url(raw: object, *, feed: bool) -> str:
 
 
 def _plain(raw: str, max_chars: int = 1200) -> str:
-    return " ".join(unescape(re.sub(r"<[^>]*>", " ", raw or "")).split())[:max_chars]
+    # EIS escapes its HTML fragments inside RSS XML, sometimes twice.
+    text = unescape(unescape(raw or ""))
+    return " ".join(re.sub(r"<[^>]*>", " ", text).split())[:max_chars]
+
+
+_SUBJECT_LABEL = (
+    r"(?:Наименование объекта закупки|Наименование предмета договора|"
+    r"Наименование закупки|Предмет закупки|Предмет договора)"
+)
+
+
+def _official_subject(raw_description: str) -> str | None:
+    """Read ONLY the labelled procurement subject, never the search query.
+
+    Real EIS RSS titles are often 'Электронный аукцион №...' while the
+    procurement subject is an HTML-escaped labelled field in description.
+    None = absent; empty = explicitly null/unspecified.
+    """
+    fragment = unescape(unescape(raw_description or ""))[:25000]
+    found = re.search(
+        _SUBJECT_LABEL + r"\s*:\s*(?:</(?:strong|b|span)>\s*)*(.*?)(?=<br\s*/?>|</p>|$)",
+        fragment, flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not found:
+        return None
+    subject = _plain(found.group(1), 700)
+    return "" if subject.casefold() in {"null", "none", "не указано", "-"} else subject
 
 
 def _text(node, tag: str) -> str:
@@ -95,15 +121,21 @@ def _parse_publication(raw: str) -> str | None:
             return None
 
 
-def _is_1c_external_service(title: str, description: str) -> bool:
-    t = _plain(title, 700).casefold().replace("ё", "е")
-    d = _plain(description, 1200).casefold().replace("ё", "е")
-    if "битрикс" in t or ("битрикс" in d and "1с" not in t and "1c" not in t):
+def _is_1c_external_service(title: str, subject: str | None) -> bool:
+    # A labelled object of procurement overrides a generic auction RSS title.
+    # Forbid matching the irrelevant EIS 'Искомое слово' field.
+    source = subject if subject is not None else title
+    if subject is None and re.match(
+            r"^(?:Электронный аукцион|Запрос котировок|Закупка, осуществляемая|"
+            r"Открытый конкурс|Запрос предложений)\\b", title, flags=re.I):
         return False
-    if re.search(r"\b(?:без|не\s+предусмотрен[а-я]*)\s+(?:оказания\s+)?услуг\s+(?:по\s+)?(?:сопровожд|поддержк|внедрен|настройк)", t):
+    t = _plain(source, 700).casefold().replace("ё", "е")
+    if not t or "битрикс" in t:
+        return False
+    if re.search(r"\\b(?:без|не\\s+предусмотрен[а-я]*)\\s+(?:оказания\\s+)?услуг\\s+(?:по\\s+)?(?:сопровожд|поддержк|внедрен|настройк)", t):
         return False
     return (bool(re.search(r"(?<![a-zа-я0-9])1[сc](?![a-zа-я0-9])", t))
-            and any(x in t for x in SERVICE_WORDS))
+            and any(word in t for word in SERVICE_WORDS))
 
 
 def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
@@ -133,8 +165,9 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
     for item in entries:
         counts["items_seen"] += 1
         title = _plain(_text(item, "title"), 700)
-        description = _plain(_text(item, "description") or _text(item, "summary"), 1200)
-        if not _is_1c_external_service(title, description):
+        raw_description = _text(item, "description") or _text(item, "summary")
+        subject = _official_subject(raw_description)
+        if not _is_1c_external_service(title, subject):
             counts["not_explicit_external_1c_service"] += 1
             continue
         link = _text(item, "link")
@@ -167,8 +200,11 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
             "source_name": SOURCE_NAME,
             "source_url": link,
             "signal_id": uid,
-            "title": title,
-            "evidence_excerpt": description[:650] if description else title[:650],
+            "title": subject if subject else title,
+            "rss_title": title,
+            "procurement_subject_from_rss": subject,
+            "buyer_name_rss_unverified": _plain(_text(item, "author"), 250) or None,
+            "evidence_excerpt": (subject if subject else title)[:650],
             "published_on": published,
             "discovered_on": today.isoformat(),
             "research_status": status,

@@ -175,6 +175,9 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
         raise ValueError("EIS_FEED_TOO_MANY_ITEMS")
     today = today or date.today()
     counts = Counter()
+    # Explicitly preserve an empty official RSS as numeric zero. Counter()
+    # otherwise omits this key and breaks two-feed search integrity checks.
+    counts["items_seen"] = len(entries)
     unique = {}
     all_notice_urls = set()
     scope_samples = []
@@ -191,7 +194,6 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
             all_notice_urls.add(_url(raw_link, feed=False))
         except ValueError:
             pass
-        counts["items_seen"] += 1
         title = _plain(_text(item, "title"), 700)
         raw_description = _text(item, "description") or _text(item, "summary")
         subject = _official_subject(raw_description)

@@ -117,8 +117,14 @@ def _update_db(db: sqlite3.Connection, rows: list[dict], day: date) -> tuple[boo
     db.execute("BEGIN IMMEDIATE")
     try:
         db.execute(SCHEMA)
-        existing = db.execute("SELECT COUNT(*) FROM official_notices").fetchone()[0]
-        baseline = existing == 0
+        db.execute("CREATE TABLE IF NOT EXISTS operation_meta "
+                   "(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        # A successful *empty* initial feed is still an initialized baseline.
+        # Counting notice rows alone would misclassify the next new tender.
+        initialized = db.execute(
+            "SELECT value FROM operation_meta WHERE key='baseline_completed'"
+        ).fetchone()
+        baseline = initialized is None
         new = []
         for row in rows:
             url = row["official_notice_url"]
@@ -142,6 +148,9 @@ def _update_db(db: sqlite3.Connection, rows: list[dict], day: date) -> tuple[boo
                      row["buyer_name_rss_unverified"], row["buyer_evidence_hint"],
                      row["purchase_evidence_hint"], url),
                 )
+        if baseline:
+            db.execute("INSERT INTO operation_meta (key, value) VALUES (?, ?)",
+                       ("baseline_completed", day.isoformat()))
         return baseline, new
     except Exception:
         db.rollback()

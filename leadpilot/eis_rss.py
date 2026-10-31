@@ -15,6 +15,7 @@ from email.utils import parsedate_to_datetime
 import hashlib
 from html import unescape
 import json
+import os
 from pathlib import Path
 import re
 import ssl
@@ -236,29 +237,55 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
     }
 
 
+def _tls_verifier(ca_bundle: str | None, *, windows_store: bool | None = None) -> ssl.SSLContext | bool:
+    """Use OS-trusted roots on Windows instead of HTTPX's certifi-only default.
+
+    Loading only certificates trusted by Windows does not bypass hostname or
+    certificate verification. A manually verified additional CA may be PEM or
+    DER (.crt), and is loaded into the same secure context, never into a global
+    machine store. Without Windows/explicit CA, retain HTTPX's certifi default.
+    """
+    if windows_store is None:
+        windows_store = os.name == "nt"
+    if ca_bundle is None:
+        return ssl.create_default_context() if windows_store else True
+    p = Path(ca_bundle)
+    if (not p.is_file() or p.suffix.lower() not in (".pem", ".crt", ".cer")
+            or not 1 <= p.stat().st_size <= 512 * 1024):
+        raise ValueError("EIS_CA_BUNDLE_INVALID")
+    try:
+        raw = p.read_bytes()
+        if b"-----BEGIN CERTIFICATE-----" in raw:
+            certificates = raw.decode("ascii")
+        else:
+            certificates = ssl.DER_cert_to_PEM_cert(raw)
+        context = ssl.create_default_context()
+        context.load_verify_locations(cadata=certificates)
+    except (OSError, UnicodeError, ValueError, ssl.SSLError):
+        raise ValueError("EIS_CA_BUNDLE_INVALID") from None
+    return context
+
+
 def fetch(*, url: str, client: httpx.Client | None = None, today: date | None = None, ca_bundle: str | None = None) -> dict:
     """Exactly one authorized official GET. No SSL bypass or redirect following."""
     _url(url, feed=True)
     own = client is None
     if own:
-        verify = True
-        if ca_bundle is not None:
-            p = Path(ca_bundle)
-            if (not p.is_file() or p.suffix.lower() not in (".pem", ".crt")
-                    or not 1 <= p.stat().st_size <= 512 * 1024):
-                raise ValueError("EIS_CA_BUNDLE_INVALID")
-            try:
-                verify = ssl.create_default_context(cafile=str(p))
-            except (OSError, ssl.SSLError):
-                raise ValueError("EIS_CA_BUNDLE_INVALID") from None
+        verify = _tls_verifier(ca_bundle)
         client = httpx.Client(timeout=20.0, follow_redirects=False,
                               trust_env=False, verify=verify)
     try:
         try:
             with client.stream("GET", url, headers={"Accept": "application/rss+xml, application/atom+xml, application/xml",
                                                     "User-Agent": "ServiceITLeadGen-EISResearch/0.1"}) as response:
+                if 300 <= response.status_code < 400:
+                    raise RuntimeError("EIS_SOURCE_UNAVAILABLE_OR_REDIRECT_HTTP_" + str(response.status_code))
+                if response.status_code == 401 or response.status_code == 403:
+                    raise RuntimeError("EIS_HTTP_AUTH_OR_FORBIDDEN_" + str(response.status_code))
+                if response.status_code == 429:
+                    raise RuntimeError("EIS_HTTP_RATE_LIMIT_429")
                 if response.status_code != 200:
-                    raise RuntimeError("EIS_SOURCE_UNAVAILABLE_OR_REDIRECT")
+                    raise RuntimeError("EIS_HTTP_STATUS_" + str(response.status_code))
                 media = response.headers.get("content-type", "").lower()
                 if not any(x in media for x in ("xml", "rss", "atom")):
                     raise RuntimeError("EIS_RESPONSE_NOT_XML")
@@ -267,6 +294,15 @@ def fetch(*, url: str, client: httpx.Client | None = None, today: date | None = 
                     body.extend(chunk)
                     if len(body) > MAX_FEED_BYTES:
                         raise RuntimeError("EIS_FEED_TOO_LARGE")
+        except httpx.TimeoutException:
+            raise RuntimeError("EIS_NETWORK_TIMEOUT") from None
+        except httpx.ConnectError as exc:
+            # Distinguish certificate trust from DNS/proxy/connectivity failures.
+            # Never expose exception text, hostname details or certificate data.
+            raw = str(exc).upper()
+            if any(code in raw for code in ("CERTIFICATE_VERIFY_FAILED", "CERTIFICATE VERIFY FAILED", "UNKNOWN CA", "SELF SIGNED CERTIFICATE")):
+                raise RuntimeError("EIS_TLS_TRUST_FAILED") from None
+            raise RuntimeError("EIS_NETWORK_CONNECTION_FAILED") from None
         except httpx.HTTPError:
             raise RuntimeError("EIS_TRANSPORT_OR_TLS_ERROR") from None
         return parse_feed(bytes(body), feed_url=url, today=today)

@@ -25,7 +25,8 @@ try {
       'tests/test_eis_manager_queue.py',
       'tests/test_eis_bitrix_sandbox.py',
       'tests/test_eis_transport_diagnostics.py',
-      'tests/test_eis_windows_tls.py'
+      'tests/test_eis_windows_tls.py',
+      'tests/test_eis_source_diagnostics.py'
     )
     foreach ($Test in $Tests) {
         if (-not (Test-Path -LiteralPath $Test -PathType Leaf)) {
@@ -56,6 +57,9 @@ try {
     }
     Write-Output ('SERVICEIT_EIS_RSS_SOURCE=' + (Resolve-Path -LiteralPath $Source).Path)
     Write-Output ('SERVICEIT_EIS_RESEARCH_CANDIDATES=' + $Parsed.counts.candidates_for_identity_review)
+    Write-Output 'SERVICEIT_EIS_STAGE=RESEARCH_COVERAGE_EXPLANATION'
+    & $Python -m leadpilot.eis_source_diagnostics --report $Source
+    if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_EIS_SOURCE_COVERAGE_DIAGNOSTICS_FAILED' }
     if (([bool]$FnsFile) -xor ([bool]$BuyerFacts)) {
         throw 'SERVICEIT_EIS_FNS_AND_BUYER_FACTS_MUST_BOTH_BE_PROVIDED'
     }

@@ -1,5 +1,6 @@
 """Synthetic human-review triage and observed public buyer names from EIS RSS."""
 import csv
+import hashlib
 import json
 
 import pytest
@@ -63,10 +64,11 @@ def _report(buyer="ООО Альфа",title="Оказание услуг по с
         "counts": {"unique_notices_to_review": 1, "qualified_b2b_leads": 0,
                    "crm_ready": 0, "exact_inn_fns_verified": 0},
         "items": [
-            {"official_notice_url": NOTICE, "notice_id": "synthetic",
+            {"official_notice_url": NOTICE, "notice_id": hashlib.sha256(NOTICE.encode()).hexdigest()[:24],
              "published_on": "2026-10-30", "title": title,
              "buyer_name_rss_unverified": buyer, "buyer_inn": "",
              "fns_size": "UNVERIFIED", "crm_ready": False,
+             "buyer_region": "UNVERIFIED", "deadline": "UNVERIFIED",
              "review_status": "RESEARCH_ONLY_NOT_A_QUALIFIED_LEAD"},
         ]
     }

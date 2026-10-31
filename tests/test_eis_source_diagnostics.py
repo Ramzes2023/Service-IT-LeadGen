@@ -1,6 +1,6 @@
 """Only synthetic feed summary counts. Never claim real buyer intent."""
 import pytest
-from leadpilot.eis_source_diagnostics import diagnose
+from leadpilot.eis_source_diagnostics import diagnose, _public_samples
 
 
 @pytest.fixture
@@ -93,3 +93,35 @@ def test_detailed_reason_counters_are_reported_without_promoting_leads(base):
     assert result["scope_breakdown"]["no_external_service_in_purchase_subject"] == 20
     assert result["scope_sample_count"] == 1
     assert result["crm_ready"] is False
+
+
+
+def test_public_samples_ascii_escape_preserves_cyrillic(tmp_path):
+    import json
+    data = {
+        "scope_rejection_samples": [
+            {"reason": "NO_1C_IN_PURCHASE_SUBJECT",
+             "rss_title": "Электронный аукцион №1",
+             "procurement_subject": "Оказание медицинских услуг",
+             "notice_link_present": True,
+             "unsafe_extra": "https://private.example/secret"}
+        ]
+    }
+    records = _public_samples(data)
+    assert len(records) == 1
+    text = json.dumps(records, ensure_ascii=True)
+    assert r"\u042d" in text
+    assert "\\u041e" in text
+    assert "secret" not in text and "https://" not in text
+    assert "????" not in text
+
+
+def test_public_sample_max_eight_and_reject_unsafe_fields():
+    valid = {"reason": "SUBJECT_LABEL_MISSING", "rss_title": "Procurement",
+             "procurement_subject": None}
+    result = _public_samples({"scope_rejection_samples": [dict(valid) for _ in range(12)]})
+    assert len(result) == 8
+    with pytest.raises(ValueError):
+        _public_samples({"scope_rejection_samples": [
+            {"reason": "PRODUCTION_READY", "rss_title": "X", "procurement_subject": None}
+        ]})

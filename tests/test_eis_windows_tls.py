@@ -1,5 +1,6 @@
 """TLS trust regression on the EIS HTTPX transport; no live requests."""
 import ssl
+from pathlib import Path
 
 import pytest
 
@@ -41,3 +42,29 @@ def test_os_context_used_by_default_on_windows(monkeypatch):
         eis_rss.fetch(
             url="https://zakupki.gov.ru/epz/order/extendedsearch/rss.html?searchString=1C"
         )
+
+
+def test_explicit_verified_pem_certificate_supported(tmp_path):
+    import certifi
+    import re
+    text = Path(certifi.where()).read_text(encoding="ascii")
+    match = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", text, flags=re.S)
+    assert match is not None
+    path = tmp_path / "official_like.pem"
+    path.write_text(match.group(0) + "\n", encoding="ascii")
+    context = eis_rss._tls_verifier(str(path), windows_store=False)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+def test_explicit_verified_der_certificate_supported(tmp_path):
+    import certifi
+    import re
+    text = Path(certifi.where()).read_text(encoding="ascii")
+    match = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", text, flags=re.S)
+    assert match is not None
+    path = tmp_path / "official_like.crt"
+    path.write_bytes(ssl.PEM_cert_to_DER_cert(match.group(0)))
+    context = eis_rss._tls_verifier(str(path), windows_store=True)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True

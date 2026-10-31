@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import csv
 from datetime import date
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -98,6 +99,9 @@ def triage(report: dict) -> dict:
         url = row.get("official_notice_url")
         if not isinstance(url, str) or _url(url, feed=False) != url or url in seen:
             raise ValueError("EIS_TRIAGE_UNTRUSTED_OR_DUPLICATE_URL")
+        uid = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
+        if row.get("notice_id") != uid:
+            raise ValueError("EIS_TRIAGE_NOTICE_ID_MISMATCH")
         seen.add(url)
         title, buyer = row.get("title"), row.get("buyer_name_rss_unverified")
         if (not isinstance(title, str) or not 1 <= len(title) <= 700
@@ -105,6 +109,11 @@ def triage(report: dict) -> dict:
                 or row.get("buyer_inn") not in ("", None)
                 or row.get("fns_size") != "UNVERIFIED"
                 or row.get("crm_ready") is not False
+                or row.get("qualified_lead") is True
+                or row.get("manager_approved") is True
+                or row.get("outbound_authorized") is True
+                or row.get("buyer_region") != "UNVERIFIED"
+                or row.get("deadline") != "UNVERIFIED"
                 or row.get("review_status") != "RESEARCH_ONLY_NOT_A_QUALIFIED_LEAD"):
             raise ValueError("EIS_TRIAGE_UNVERIFIED_INPUT_REQUIRED")
         published = row.get("published_on")
@@ -112,8 +121,12 @@ def triage(report: dict) -> dict:
             raise ValueError("EIS_TRIAGE_DATE_INVALID")
         if published:
             try:
-                date.fromisoformat(published)
-            except ValueError:
+                age = (date.today() - date.fromisoformat(published)).days
+                if not 0 <= age <= 30:
+                    raise ValueError("EIS_TRIAGE_STALE_OR_FUTURE_NOTICE")
+            except ValueError as exc:
+                if str(exc).startswith("EIS_"):
+                    raise
                 raise ValueError("EIS_TRIAGE_DATE_INVALID") from None
         buyer_hint = _buyer_hint(buyer)
         subject_hint = _procurement_hint(title)

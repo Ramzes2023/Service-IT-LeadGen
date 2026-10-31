@@ -6,6 +6,7 @@ layer without claiming company approvals or permissions.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import date
 import json
 from pathlib import Path
@@ -204,7 +205,7 @@ def deliver_simulation(db_path: str | Path, *, service_available: bool,
 
 def report(db_path: str | Path) -> dict:
     """Aggregated, non-identifying manager + outbox KPIs."""
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         r = dict(con.execute(
             "SELECT decision,COUNT(*) FROM workflow_reviews GROUP BY decision"
         ).fetchall())

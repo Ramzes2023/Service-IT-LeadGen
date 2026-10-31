@@ -76,3 +76,15 @@ flowchart TD
 Добавлен `leadpilot/manager_workspace_demo.py`: локальные SQLite manager tasks, next action, due date, simulated `FOLLOW_UP`/feedback, idempotent event key, защита от повторного назначения по `(company_id,signal_id)`, повторная проверка существующего клиента/стоп-листа до события. **Только заранее обозначенные synthetic source names**; реальные источники и реальные CRM контакты намеренно не принимаются. В `architecture_demo.py` добавлен реальный прогон этой локальной имитации: назначение задачи, повторное касание, отсутствие дубля. Тесты `tests/test_manager_workspace_demo.py` добавлены к операторскому запуску.
 
 Эти действия закрывают **локальную архитектурную демонстрацию**, но не corporate task API и RBAC. Изолированная CRM остаётся отдельным обязательным этапом.
+
+
+## Windows host run 31.10.2026 — устранение реальной ошибки SQLite Temp cleanup
+
+**Нельзя считать старую host acceptance зелёной:** пользователь запустил предыдущий операторский архив `ServiceIT_ARCHITECTURE_SHOWCASE_OPERATOR_20261031.zip`, pinned исторический SHA `3dc9670...`. Вывод: `9 passed, 2 failed`; обе ошибки в `tests/test_architecture_demo.py` были `PermissionError [WinError 32]` при удалении `%TEMP%/serviceit-architecture-demo-*/demo.sqlite3`, то есть демонстрационный процесс сохранил открытый дескриптор SQLite до выхода из `TemporaryDirectory`. **Нет доказательств сбоя алгоритма дедупликации/Bitrix24/ЕИС**. На Windows конструкция `with sqlite3.connect(path) as con:` управляет транзакцией, **но не закрывает connection**.
+
+Исправлено в этом PR:
+- `leadpilot/architecture_demo.py`: оба локальных соединения закрываются через `contextlib.closing`; вместо вызова `core.metrics` (использующего обычный SQLite transaction context manager) статический synthetic reporting делает прямые `SELECT` в явно закрываемом соединении, **не меняя core.py**.
+- `leadpilot/workflow_ops.py` и `leadpilot/manager_workspace_demo.py`: `report`/`overview` закрывают SQLite через `closing`.
+- Два ранее упавших `tests/test_architecture_demo.py` запускают `simulate()` в `TemporaryDirectory` и тем самым служат регрессией для Windows file-lock cleanup.
+
+**Fix STATUS = COMMITTED, WINDOWS_RETEST_PENDING.** До нового реального Windows прогона нельзя объявлять `ARCH_SHOWCASE_ACCEPTANCE=PASS`. Старая версия скачанного ZIP закреплена на старом SHA; для повторной проверки использовать новый архив, предоставленный после этого исправления.

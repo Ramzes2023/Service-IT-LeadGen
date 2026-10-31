@@ -110,3 +110,34 @@ def preflight(config: EISSmartProcessConfig,
     finally:
         if own:
             client.close()
+
+
+def main() -> None:
+    """Explicit read-only preflight. Webhook stays in local environment, never CLI."""
+    import argparse
+    import os
+    p = argparse.ArgumentParser(description="EIS manager smart-process Bitrix read-only preflight")
+    p.add_argument("--entity-type-id", type=int, required=True)
+    p.add_argument("--category-id", type=int, required=True)
+    p.add_argument("--category-name", required=True)
+    p.add_argument("--buyer-inn-field", required=True)
+    args = p.parse_args()
+    try:
+        cfg = EISSmartProcessConfig(
+            webhook=os.environ.get("BITRIX24_TEST_WEBHOOK", ""),
+            entity_type_id=args.entity_type_id,
+            category_id=args.category_id,
+            category_name=args.category_name,
+            buyer_inn_field=args.buyer_inn_field,
+        )
+        result = preflight(cfg)
+    except (PreflightError, ValueError):
+        print("EIS_BITRIX_PREFLIGHT=BLOCKED; CONFIG_OR_PERMISSION_ERROR; CRM_WRITES=NO")
+        raise SystemExit(2)
+    print("EIS_BITRIX_PREFLIGHT=" + json.dumps(result, ensure_ascii=True))
+    if result["status"] != "READ_OK_WRITE_AND_DUPLICATE_GATES_CLOSED":
+        raise SystemExit(2)
+
+
+if __name__ == "__main__":
+    main()

@@ -104,3 +104,29 @@ flowchart TD
 Добавлен `tests/test_sqlite_windows_cleanup.py`: `TrackedSQLiteConnection` записывает все открытые соединения через monkeypatch `sqlite3.connect`; `close()` ставит флаг. Три сценария проверяют (1) `initialize/get_leads/metrics` на пустой базе, (2) **весь `architecture_demo.simulate()`**, (3) `ingest+qualify+get_leads+metrics` с синтетическими данными. Наличие любого соединения без `close()` блокирует регрессию даже на Linux. Оператор `RUN_SERVICEIT_ARCHITECTURE_DEMO.ps1` теперь требует прохождения этих тестов ДО создания HTML.
 
 **Важно:** патч сохранён в GitHub, повторной Windows-приёмки ещё нет. Условие завершения: `SERVICEIT_ARCH_PREBITRIX=PASS_SYNTHETIC_ONLY`, отсутствие `WinError 32`, сохранение HTML/JSON и никаких CRM/других источников.
+
+
+## 31.10.2026 — подтверждена независимая Windows-приёмка локальной архитектуры
+
+Оператор запустил закреплённую версию `ea48d90394f07e86230923b3a1e80efbac2ba1b0` в отдельном worktree. Это **реальный пользовательский лог**:
+
+```text
+SERVICEIT_ARCH_CODE_SHA=ea48d90394f07e86230923b3a1e80efbac2ba1b0
+SERVICEIT_ARCH_DEMO=TEST_START; MODE=SYNTHETIC_ONLY; CRM_WRITES=NO
+................... [100%]
+19 passed in 2.72s
+ARCH_SHOWCASE=CREATED_LOCAL_SYNTHETIC_ONLY
+MANAGER_REVIEW_AND_RETRY=SIMULATED_PASS; CRM_WRITES=NO; REAL_LEADS=0
+SERVICEIT_ARCH_DEMO=PASS_LOCAL_SYNTHETIC_ONLY; REAL_CRM=DISCONNECTED
+SERVICEIT_ARCH_ACCEPTANCE_EXIT=0
+SERVICEIT_ARCH_SQLITE_CLOSE_REGRESSION=PASS_IF_TESTS_GREEN
+SERVICEIT_ARCH_PREBITRIX=PASS_SYNTHETIC_ONLY; CRM_WRITES=NO; CONTACTS=NONE
+```
+
+Результаты показаны в `%LOCALAPPDATA%\\ServiceIT\\Architecture-Acceptance\\run-20261031T190602349Z\\exports\\architecture_showcase.html`, локальный JSON в соседнем файле. Два предыдущих прогона с `WinError32` имели 9/14 passed + 2 failed и **не были успешными**. Третий прогон, после исправления именно `core.initialize/get_leads/metrics`, действительно PASS, временная база успешно очищена.
+
+**Что теперь закрыто:** только локальная синтетическая архитектурная приёмка; включая постоянное хранение решений менеджера, защиту от дублей в симуляции, задачи и follow-up в симуляции, повторную обработку и stop checks, безопасный HTML showcase, регрессионный контроль SQLite close.
+
+**Что не доказано этим PASS:** реальный доступ и полномочия Bitrix24, API записи, CRM matching existing clients/opt-outs, production RBAC, корпоративные call/email/bot events, реальные пользовательские данные, финансовые договоры/РВП и production deployment. Проект по-прежнему не должен создавать реальные CRM-лиды или контакты автоматически. Приглашение в `serviseit.bitrix24.ru` получено, но корпоративный портал не был проверен изнутри.
+
+Приёмка локальной части подтверждена именно зафиксированным pinned SHA. Позднейшие коммиты в PR потребуют собственной повторной проверки, если затронут логику.

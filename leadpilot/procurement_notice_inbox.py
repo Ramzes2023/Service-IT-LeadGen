@@ -108,13 +108,14 @@ def _text(msg):
             continue
         if isinstance(content, str):
             (plain if part.get_content_type() == "text/plain" else html).append(content)
-    if plain:
-        return "\n".join(plain)[:MAX_TEXT], []
+    # Both MIME alternatives matter: a link can exist only in an HTML href.
+    body = "\n".join(plain)[:MAX_TEXT]
     if html:
         p = _HTML()
         p.feed("\n".join(html)[:MAX_TEXT])
-        return " ".join(p.text)[:MAX_TEXT], p.links[:30]
-    return "", []
+        body = (body + "\n" + " ".join(p.text))[:MAX_TEXT]
+        return body, p.links[:30]
+    return body, []
 
 
 def read_email(path):

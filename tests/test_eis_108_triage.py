@@ -123,3 +123,52 @@ def test_exclusive_csv_and_excel_injection(tmp_path,monkeypatch):
     assert first["buyer_name_rss_unverified"].startswith("'=")
     with pytest.raises(ValueError):
         t.save(report, "exports/review.json", "exports/review.csv")
+
+
+def test_cli_accepts_utf8_bom_review_json_and_writes_real_exports(tmp_path, monkeypatch, capsys):
+    """Regression for actual Windows crash: LookupError unknown encoding utf8-sig."""
+    import sys
+    from pathlib import Path
+
+    source = tmp_path / "previous_review.json"
+    # Windows-produced JSON may have UTF-8 BOM; main must load either form.
+    source.write_text(json.dumps(_report("АДМИНИСТРАЦИЯ ГОРОДА МОСКВЫ"),
+                                 ensure_ascii=False), encoding="utf-8-sig")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "leadpilot.eis_108_triage",
+        "--review-json", str(source),
+        "--json", "exports/triage.json",
+        "--csv", "exports/triage.csv",
+    ])
+    t.main()
+    result = json.loads((tmp_path / "exports/triage.json").read_text(
+        encoding="utf-8"))
+    assert result["counts"]["unique_notices"] == 1
+    assert result["counts"]["public_sector_text_hints"] == 1
+    assert result["counts"]["qualified_b2b_leads"] == 0
+    assert result["counts"]["crm_ready"] == 0
+    assert result["crm_writes"] == "NO"
+    assert (tmp_path / "exports/triage.csv").exists()
+    output = capsys.readouterr().out
+    assert "EIS_TRIAGE_FINISHED=YES" in output
+    assert "EIS_TRIAGE_COUNTS=" in output
+
+
+def test_cli_invalid_input_returns_safe_error_without_exports(tmp_path, monkeypatch, capsys):
+    import sys
+
+    broken = tmp_path / "invalid.json"
+    broken.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "leadpilot.eis_108_triage",
+        "--review-json", str(broken),
+        "--json", "exports/triage.json",
+        "--csv", "exports/triage.csv",
+    ])
+    with pytest.raises(SystemExit) as error:
+        t.main()
+    assert error.value.code == 2
+    assert "EIS_TRIAGE=BLOCKED" in capsys.readouterr().out
+    assert not (tmp_path / "exports/triage.json").exists()

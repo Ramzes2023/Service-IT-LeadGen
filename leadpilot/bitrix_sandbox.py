@@ -123,9 +123,11 @@ def suggested_blueprint() -> dict:
     return {
         "mode": "PROPOSAL_ONLY", "crm_writes": "NO", "entityTypeId": ENTITY_TYPE_DEAL,
         "category_name": SANDBOX_NAME,
-        "stages": ["Новый сигнал", "Проверка данных и дублей", "AI-гипотеза",
-                   "Проверка менеджера", "Контакт разрешён / в работе",
-                   "Передано в продажи", "Отказ / неподходящий"],
+        "pre_interest_entity": "CRM_LEAD",
+        "pre_interest_isolation": "LOCAL_UNTIL_ADMIN_APPROVES_SAFE_CRM_LEADS",
+        "deal_created_only_after_confirmed_interest": True,
+        "stages": ["Есть интерес", "КП/расчёт", "Переговоры",
+                   "Согласование", "Успешно реализовано", "Закрыто без продажи"],
         "custom_fields_to_request": [
             "Локальный ID", "ИНН (текст)", "Регион", "Источник сигнала (URL)",
             "Дата сигнала", "Подтверждающая цитата", "Предполагаемая услуга",

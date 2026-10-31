@@ -30,6 +30,7 @@ def run():
     source.add_argument("--region", choices=["77", "50", "06"], default="77")
     source.add_argument("--term", choices=["1С", "системный администратор", "IT-инженер"], default="1С")
     source.add_argument("--limit", type=int, default=15)
+    source.add_argument("--offset", type=int, default=0)
     source.add_argument("--import-to-local", action="store_true")
     source.add_argument("--output", default="exports/trudvsem_probe.json")
     sub.add_parser("source-candidates")
@@ -78,13 +79,17 @@ def run():
     elif args.command == "source-scan":
         # No contacts, CRM writes or messages. Public business data only.
         try:
-            outcome = scan(region=args.region, term=args.term, limit=args.limit)
+            outcome = scan(region=args.region, term=args.term, limit=args.limit, offset=args.offset)
         except Exception as exc:
             print("SOURCE_STATUS=UNAVAILABLE; NO_REAL_RECORDS_CLAIMED; " + type(exc).__name__)
             raise SystemExit(2)
-        path = Path(args.output)
+        path = Path(args.output).resolve()
+        if (not path.is_relative_to(Path("exports").resolve())
+                or path.suffix.lower() != ".json"):
+            raise ValueError("Source scan output must be JSON inside exports/")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
+        with path.open("x", encoding="utf-8") as out:
+            json.dump(outcome, out, ensure_ascii=False, indent=2)
         print(f'SOURCE_STATUS=RESPONSE_OK; FETCHED={outcome["fetched"]}; SIGNALS={outcome["valid_signals"]}; WITH_INN={outcome["with_inn"]}')
         print('OUTPUT=' + str(path))
         if args.import_to_local:

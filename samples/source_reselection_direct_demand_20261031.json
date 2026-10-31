@@ -1,0 +1,131 @@
+{
+  "schema": "SERVICE_IT_SOURCE_RESELECTION_V1",
+  "date": "2026-10-31",
+  "mvp_scope": {
+    "region": [
+      "Москва",
+      "Московская область"
+    ],
+    "buyer_size": [
+      "MICRO",
+      "SMALL"
+    ],
+    "service_priority": [
+      "1C_SUPPORT",
+      "IT_OUTSOURCING",
+      "KKT_MARKING"
+    ]
+  },
+  "all_service_categories": [
+    "1C_SUPPORT",
+    "IT_OUTSOURCING",
+    "KKT_MARKING",
+    "TRADE_EQUIPMENT",
+    "EDO_SIGNATURE",
+    "CRM_BITRIX",
+    "SERVERS_NETWORKS",
+    "INTEGRATIONS",
+    "BOTS_AI"
+  ],
+  "primary_candidate_sources": [
+    {
+      "id": "b2b_center_commercial",
+      "site": "https://www.b2b-center.ru/search/industry/crm-sistemy/",
+      "signal": "explicit_commercial_buyers_request",
+      "identity": "sometimes_full_buyer_inn",
+      "fit": "FIRST_SCREEN",
+      "api_for_source": "NOT_CONFIRMED",
+      "operator_approval_required": true
+    },
+    {
+      "id": "workspace_tenders",
+      "site": "https://workspace.ru/tenders/crm/",
+      "signal": "explicit_external_service_tender",
+      "identity": "often_hidden_until_platform_response",
+      "fit": "FIRST_SCREEN",
+      "api_for_source": "NOT_CONFIRMED",
+      "operator_approval_required": true,
+      "access_gate": "PRO_OR_BUYER_INVITE"
+    }
+  ],
+  "secondary_candidate_sources": [
+    {
+      "id": "1cl_su_tasks",
+      "site": "https://1cl.su/help/",
+      "signal": "explicit_1c_task",
+      "identity": "often_pseudonymous",
+      "fit": "SECONDARY",
+      "api_for_source": "NOT_CONFIRMED"
+    },
+    {
+      "id": "infostart_orders",
+      "site": "https://infostart.ru/journal/news/mir-1s/",
+      "signal": "explicit_1c_orders",
+      "identity": "TO_BE_VERIFIED",
+      "fit": "SECONDARY",
+      "api_for_source": "NOT_CONFIRMED"
+    },
+    {
+      "id": "bidzaar",
+      "site": "https://bidzaar.com/connector-api",
+      "signal": "procurement_requests",
+      "identity": "buyer_known_in_some_pages",
+      "fit": "LATER_ENTERPRISE_OR_OTHER_REGION",
+      "api_for_supplier_search": "NOT_CONFIRMED"
+    }
+  ],
+  "legacy_source": {
+    "id": "trudvsem_open_vacancies",
+    "fit": "INDIRECT_SIGNAL_ONLY",
+    "not_primary": true
+  },
+  "audit_status": {
+    "live_source_access_confirmed": false,
+    "full_buyer_fns_verified": 0,
+    "qualified_live_leads": 0,
+    "bitrix_writes": "NO",
+    "outreach": "NO"
+  },
+  "public_examples": [
+    {
+      "source": "workspace_tenders",
+      "url": "https://workspace.ru/tenders/vnedrenie-ii-sistemy-ucheta-syrya-sklada-i-proizvodstva-dlya-proizvoditelya-sellera-wb-i-ozon-19030/",
+      "posted": "2026-10-14",
+      "deadline": "2026-11-13",
+      "status": "IDENTITY_REGION_FNS_PENDING",
+      "suitable_lead": false
+    },
+    {
+      "source": "b2b_center_commercial",
+      "url": "https://www.b2b-center.ru/search/number/l4616274-4-12-1/",
+      "buyer_inn": "7727448045",
+      "posted": "2026-09-25",
+      "deadline": "2026-10-20",
+      "status": "EXPIRED",
+      "suitable_lead": false
+    },
+    {
+      "source": "b2b_center_commercial",
+      "url": "https://www.b2b-center.ru/search/industry/crm-sistemy/",
+      "buyer_inn": "3662288844",
+      "posted": "2026-10-29",
+      "deadline": "2026-11-05",
+      "status": "NON_TARGET_VORONEZH",
+      "suitable_lead": false
+    },
+    {
+      "source": "bidzaar",
+      "url": "https://bidzaar.com/app/process/light/01a18ce6-e7c9-7f95-83bb-5df6eb6389ed",
+      "posted": "2026-10-30",
+      "deadline": "2026-11-06",
+      "status": "NON_TARGET_TAMBOV_ENTERPRISE",
+      "suitable_lead": false
+    },
+    {
+      "source": "1cl_su_tasks",
+      "url": "https://1cl.su/task/79628",
+      "status": "ANONYMOUS_B2B_IDENTITY_REGION_PENDING",
+      "suitable_lead": false
+    }
+  ]
+}

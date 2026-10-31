@@ -5,6 +5,7 @@ authorize access to company CRM, calling, email, or messaging.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import date
 import json
 from pathlib import Path
@@ -152,7 +153,7 @@ def record_simulated_result(db_path: str | Path, task_id: int, *,
 
 
 def overview(db_path: str | Path) -> dict:
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         tasks = dict(con.execute(
             "SELECT state,COUNT(*) FROM demo_manager_tasks GROUP BY state").fetchall())
         events = dict(con.execute(

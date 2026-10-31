@@ -95,7 +95,7 @@ $Args = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
     $SourceReport + '" -StateDir "' + $StateDir + '"'
 $Action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $Args
 $Trigger = New-ScheduledTaskTrigger -Daily -At $Time
-$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Description 'Service IT official EIS public RSS; current user only; no CRM/outbound' | Out-Null
 $Registered = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
 $RegisteredInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction Stop

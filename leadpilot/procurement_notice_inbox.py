@@ -122,7 +122,9 @@ def read_email(path):
     path = Path(path)
     if not path.is_file() or not 0 < path.stat().st_size <= MAX_EMAIL_BYTES:
         raise NoticeError("EMAIL_MISSING_OR_TOO_LARGE")
-    msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+    raw_bytes = path.read_bytes()
+    msg = BytesParser(policy=policy.default).parsebytes(raw_bytes)
+    fingerprint = hashlib.sha256(raw_bytes).hexdigest()
     source = _source(msg.get("From", ""))
     if not source:
         raise NoticeError("UNRECOGNIZED_SENDER_DOMAIN")

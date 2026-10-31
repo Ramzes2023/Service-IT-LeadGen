@@ -11,9 +11,10 @@ import argparse
 from datetime import date
 import json
 from pathlib import Path
+import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .eis_rss import _url, fetch
+from .eis_rss import _url, fetch, SOURCE_NAME
 
 CONTROL = "SERVICEIT_NEVER_MATCH_EXTERNAL_1C_TEST_8392571046"
 MAX_INPUT_BYTES = 2 * 1024 * 1024
@@ -40,6 +41,7 @@ def compare_reports(original: dict, control: dict) -> dict:
     for report in (original, control):
         if (not isinstance(report, dict)
                 or report.get("mode") != "EIS_OFFICIAL_RSS_RESEARCH_ONLY"
+                or report.get("source") != SOURCE_NAME
                 or report.get("crm_writes") != "NO"
                 or report.get("outbound_messages") != "NO"
                 or not isinstance(report.get("counts"), dict)):
@@ -54,8 +56,8 @@ def compare_reports(original: dict, control: dict) -> dict:
         raise ValueError("EIS_SEARCH_INVALID_COUNT")
     if ac > a or bc > b:
         raise ValueError("EIS_SEARCH_INCONSISTENT_COUNTS")
-    if (ah is not None and (not isinstance(ah, str) or len(ah) != 64)
-            or bh is not None and (not isinstance(bh, str) or len(bh) != 64)):
+    if (ah is not None and (not isinstance(ah, str) or not re.fullmatch(r"[0-9a-f]{64}", ah))
+            or bh is not None and (not isinstance(bh, str) or not re.fullmatch(r"[0-9a-f]{64}", bh))):
         raise ValueError("EIS_SEARCH_INVALID_FINGERPRINT")
     if a == 0 and b == 0:
         status = "INCONCLUSIVE_BOTH_EMPTY"
@@ -103,7 +105,9 @@ def main() -> None:
         prior = json.loads(source.read_text(encoding="utf-8-sig"))
         if (not isinstance(prior, dict)
                 or prior.get("mode") != "EIS_OFFICIAL_RSS_RESEARCH_ONLY"
-                or prior.get("crm_writes") != "NO"):
+                or prior.get("source") != SOURCE_NAME
+                or prior.get("crm_writes") != "NO"
+                or prior.get("outbound_messages") != "NO"):
             raise ValueError("EIS_SEARCH_PREVIOUS_REPORT_UNTRUSTED")
         url = prior.get("search_rss_url")
         if not isinstance(url, str):

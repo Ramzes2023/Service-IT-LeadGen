@@ -49,7 +49,7 @@ $ScriptArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
     $PreviousReport + '" -StateDir "' + $StateDir + '"'
 $Action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $ScriptArgs
 $Trigger = New-ScheduledTaskTrigger -Daily -At $Time
-$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 # Install for the current user only, without stored credentials.
 Register-ScheduledTask -TaskName $Task -Action $Action -Trigger $Trigger -Settings $Settings -Description 'Official public EIS 1C RSS; no CRM writes, no emails' -Force | Out-Null
 $Installed = Get-ScheduledTask -TaskName $Task -ErrorAction Stop

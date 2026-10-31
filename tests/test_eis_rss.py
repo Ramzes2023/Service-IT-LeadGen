@@ -151,3 +151,54 @@ def test_safe_json_snapshot_never_overwritten(tmp_path, monkeypatch):
 def test_ca_bundle_not_bypassed():
     with pytest.raises(ValueError, match="CA_BUNDLE_INVALID"):
         fetch(url=FEED, ca_bundle="nonexistent-ca.pem")
+
+
+def test_relative_44fz_link_is_normalized_to_official_https():
+    relative = NOTICE.removeprefix("https://zakupki.gov.ru")
+    r = parse_feed(rss([(TITLE, relative, "Fri, 30 Oct 2026 11:00:00 +0300")]),
+                   feed_url=FEED, today=TODAY)
+    assert r["counts"]["candidates_for_identity_review"] == 1
+    assert r["items"][0]["source_url"] == NOTICE
+    assert r["items"][0]["crm_ready"] is False
+
+
+def test_relative_and_absolute_44fz_links_are_one_notice():
+    relative = NOTICE.removeprefix("https://zakupki.gov.ru")
+    when = "Fri, 30 Oct 2026 11:00:00 +0300"
+    r = parse_feed(rss([(TITLE, relative, when), (TITLE, NOTICE, when)]),
+                   feed_url=FEED, today=TODAY)
+    assert r["counts"]["duplicate_notices"] == 1
+    assert len(r["items"]) == 1
+
+
+@pytest.mark.parametrize("link", [
+    "/223/purchase/public/purchase/info/common-info.html?regNumber=32601234567",
+    "https://zakupki.gov.ru/223/purchase/public/purchase/info/common-info.html?regNumber=32601234567",
+    "/epz/order/notice/printForm/view.html?regNumber=01234567890123456789",
+])
+def test_supported_official_notice_variants_remain_research_only(link):
+    r = parse_feed(rss([(TITLE, link, "Fri, 30 Oct 2026 11:00:00 +0300")]),
+                   feed_url=FEED, today=TODAY)
+    assert len(r["items"]) == 1
+    assert r["items"][0]["source_url"].startswith("https://zakupki.gov.ru/")
+    assert r["items"][0]["buyer_inn"] is None
+    assert r["items"][0]["lead_score"] is None
+    assert r["counts"]["qualified_small_business_leads"] == 0
+
+
+@pytest.mark.parametrize("link", [
+    "//evil.example/epz/order/notice/ea44/view/common-info.html?regNumber=01234567890123456789",
+    "/../epz/order/notice/ea44/view/common-info.html?regNumber=01234567890123456789",
+    "/223/purchase/public/purchase/info/common-info.html?regNumber=not-an-inn",
+    "http://zakupki.gov.ru/223/purchase/public/purchase/info/common-info.html?regNumber=32601234567",
+])
+def test_relative_link_normalization_never_trusts_foreign_or_insecure_urls(link):
+    r = parse_feed(rss([(TITLE, link, "Fri, 30 Oct 2026 11:00:00 +0300")]),
+                   feed_url=FEED, today=TODAY)
+    assert r["items"] == []
+    assert r["counts"]["unverified_notice_link"] == 1
+
+
+def test_relative_rss_endpoint_remains_forbidden():
+    with pytest.raises(ValueError):
+        _url("/epz/order/extendedsearch/rss.html?searchString=1C", feed=True)

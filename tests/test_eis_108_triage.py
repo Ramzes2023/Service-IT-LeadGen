@@ -172,3 +172,37 @@ def test_cli_invalid_input_returns_safe_error_without_exports(tmp_path, monkeypa
     assert error.value.code == 2
     assert "EIS_TRIAGE=BLOCKED" in capsys.readouterr().out
     assert not (tmp_path / "exports/triage.json").exists()
+
+
+# These are names in the *actual* 2026-10-31 108-notice operator sample,
+# previously incorrectly grouped as "buyer legal form unverified".
+MISSED_PUBLIC_BUYERS_FROM_LIVE_OPERATOR_REPORT = (
+    "ВОРОНЕЖСКИЙ ОБЛАСТНОЙ СУД",
+    "КОМИТЕТ ПО ГРАДОСТРОИТЕЛЬСТВУ, ЗЕМЕЛЬНЫМ И ИМУЩЕСТВЕННЫМ ОТНОШЕНИЯМ АДМИНИСТРАЦИИ ШПАКОВСКОГО МУНИЦИПАЛЬНОГО ОКРУГА СТАВРОПОЛЬСКОГО КРАЯ",
+    'ХАБАРОВСКИЙ ФИЛИАЛ ФЕДЕРАЛЬНОГО ГОСУДАРСТВЕННОГО БЮДЖЕТНОГО УЧРЕЖДЕНИЯ "НАЦИОНАЛЬНЫЙ МЕДИЦИНСКИЙ ИССЛЕДОВАТЕЛЬСКИЙ ЦЕНТР ОТОРИНОЛАРИНГОЛОГИИ"',
+    "АРБИТРАЖНЫЙ СУД ДАЛЬНЕВОСТОЧНОГО ОКРУГА",
+    "УПРАВЛЕНИЕ СУДЕБНОГО ДЕПАРТАМЕНТА В ЕВРЕЙСКОЙ АВТОНОМНОЙ ОБЛАСТИ",
+    "ХАБАРОВСКИЙ ФИЛИАЛ ФЕДЕРАЛЬНОГО ГОСУДАРСТВЕННОГО БЮДЖЕТНОГО УЧРЕЖДЕНИЯ НАЦИОНАЛЬНЫЙ МЕДИЦИНСКИЙ ИССЛЕДОВАТЕЛЬСКИЙ ЦЕНТР",
+    "ГОСУДАРСТВЕННАЯ ИНСПЕКЦИЯ ПО НАДЗОРУ ЗА ТЕХНИЧЕСКИМ СОСТОЯНИЕМ САМОХОДНЫХ МАШИН И ДРУГИХ ВИДОВ ТЕХНИКИ АМУРСКОЙ ОБЛАСТИ",
+    "АППАРАТ ГЛАВЫ АДМИНИСТРАЦИИ ГОРОДА БАЙКОНУР",
+    "КОМИТЕТ ПО ОБРАЗОВАНИЮ АДМИНИСТРАЦИИ ГОРОДСКОГО ОКРУГА ЗАТО СИБИРСКИЙ АЛТАЙСКОГО КРАЯ",
+    "КОМИТЕТ ПО ФИНАНСАМ АДМИНИСТРАЦИИ ГОРОДСКОГО ОКРУГА ЗАТО СИБИРСКИЙ АЛТАЙСКОГО КРАЯ",
+    "УПРАВЛЕНИЕ КУЛЬТУРЫ АДМИНИСТРАЦИИ СЕВЕРО-ЕНИСЕЙСКОГО МУНИЦИПАЛЬНОГО ОКРУГА",
+    "ГЛАВНОЕ СЛЕДСТВЕННОЕ УПРАВЛЕНИЕ СЛЕДСТВЕННОГО КОМИТЕТА РОССИЙСКОЙ ФЕДЕРАЦИИ ПО ГОРОДУ САНКТ-ПЕТЕРБУРГУ",
+)
+
+
+@pytest.mark.parametrize("buyer", MISSED_PUBLIC_BUYERS_FROM_LIVE_OPERATOR_REPORT)
+def test_twelve_previously_unverified_live_public_buyers_held_out_of_sme_queue(buyer):
+    assert t._buyer_hint(buyer) == "POSSIBLE_PUBLIC_SECTOR_BUYER"
+
+
+def test_eis_official_procurement_always_separated_from_mikhail_sme_marketing_leads():
+    source = t._buyer_hint("ООО Гипотетический поставщик")
+    assert source == "LEGAL_FORM_LOOKS_COMMERCIAL_SIZE_UNVERIFIED"
+    report = t.triage(_report("ООО Гипотетический поставщик"))
+    assert report["rows"][0]["workstream"] == (
+        "OFFICIAL_TENDER_OPPORTUNITY_REVIEW_NOT_MIKHAIL_SME_LEAD")
+    assert report["counts"]["mikhail_sme_b2b_ready"] == 0
+    assert report["counts"]["official_tender_research_notices"] == 1
+    assert report["counts"]["qualified_b2b_leads"] == 0

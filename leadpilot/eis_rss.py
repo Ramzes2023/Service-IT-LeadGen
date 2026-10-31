@@ -38,6 +38,9 @@ def _url(raw: object, *, feed: bool) -> str:
     if not isinstance(raw, str) or not 15 <= len(raw) <= 4000 or re.search(r"[\s\\\x00-\x1f]", raw):
         raise ValueError("EIS_URL_INVALID")
     try:
+        # RSS may use official site-root notice links: never protocol-relative.
+        if not feed and raw.startswith("/") and not raw.startswith("//"):
+            raw = "https://" + EIS_HOST + raw
         u = urlsplit(raw)
         if (u.scheme != "https" or u.hostname != EIS_HOST or u.username or u.password
                 or u.port not in (None, 443) or u.fragment):
@@ -46,7 +49,10 @@ def _url(raw: object, *, feed: bool) -> str:
             if u.path not in FEED_PATHS or not u.query:
                 raise ValueError("EIS_RSS_SEARCH_URL_REQUIRED")
             return raw
-        if not u.path.startswith("/epz/order/notice/") or not u.path.endswith(".html"):
+        valid_44 = u.path.startswith("/epz/order/notice/") and u.path.endswith(".html")
+        valid_223 = (u.path.startswith("/223/purchase/public/purchase/info/")
+                     and u.path.endswith(".html"))
+        if not (valid_44 or valid_223):
             raise ValueError("EIS_NOTICE_URL_REQUIRED")
         params = parse_qs(u.query, keep_blank_values=False)
         valid_number = any(

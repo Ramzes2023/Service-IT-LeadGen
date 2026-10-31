@@ -118,3 +118,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\Serv
 Успехом является **`EIS_SCHEDULE_VERIFY_EVIDENCE=PASS`** вместе с реальным последним логом `scheduled-*.txt` из `%LOCALAPPDATA%\\ServiceIT\\EIS-Daily-Operational`. Если скрипт покажет `NO_COMPLETED_SCHEDULED_LOG_YET` или `PENDING_OR_FAILED`, нельзя объявлять рабочее расписание принятым — нужно проанализировать `Get-ScheduledTaskInfo` и исходный лог.
 
 Дальнейшая работа — строго **только ЕИС**: независимая проверка official notice статуса, дедлайна, покупательского ИНН и региона по оригинальным карточкам и доказанный официальный RSS фильтр Москва/МО/223-ФЗ. Реальная сегодняшняя RSS проба — 44-ФЗ без подтверждённого региона; 108 извещений ≠ 108 подтверждённых коммерческих лидов Микаилу.
+
+
+## 31.10.2026 — Task Scheduler выдал Queued, scheduled-лог отсутствует
+
+Новый реальный лог владельца после `Start-ScheduledTask`:
+
+- `EIS_SCHEDULE_VERIFY_STATE=Queued`, `EIS_SCHEDULE_VERIFY_LAST=2026-10-31T19:16:32+01:00`;
+- `EIS_SCHEDULE_VERIFY_LAST_RESULT=0`;
+- `EIS_SCHEDULE_VERIFY_EVIDENCE=NO_COMPLETED_SCHEDULED_LOG_YET`;
+- в `%LOCALAPPDATA%\ServiceIT\EIS-Daily-Operational` отсутствует `scheduled-*.txt`.
+
+**Нельзя принимать это как успешную автоматическую эксплуатацию**: отсутствие журнала доказывает отсутствие программного подтверждения выполнения `RUN_SERVICEIT_EIS_SCHEDULED.ps1`, несмотря на `LastTaskResult=0`. Сама ЕИС до этого дважды успешно выполнялась вручную, SQLite проверена.
+
+На текущей ветке добавлен `scripts/DIAGNOSE_SERVICEIT_EIS_SCHEDULED.ps1`, читающий только Task Scheduler состояние, Principal/LogonType, Settings (battery, network, idle, missed), Actions (исполняемые пути, наличие PS1), последние события `Microsoft-Windows-TaskScheduler/Operational` и журналы в папке состояния. Не меняет задачу и не делает сетевых запросов ЕИС. Получение сведений из журнала может требовать прав оператора. **Диагностика ещё не запущена на Windows**; код ошибки Queue нельзя угадывать и исправлять вслепую.
+
+Также `scripts/VERIFY_SERVICEIT_EIS_SCHEDULED.ps1` усилен: теперь **fail-closed**, если State Queued/Running, LastTaskResult не нуль или последний `scheduled-*.txt` старше последнего запуска; ранее однажды успешный журнал мог дать ложный PASS после нового неуспешного scheduled run. Это будущий verifier, а существующий установленный Task Scheduler action пока закреплён за уже принятой версией `f15d029...`.
+
+**Следующая приёмка:** получить и разобрать точные Task Scheduler Operational events и условия запуска, затем исправить только подтверждённый корневой блокер расписания. Не изменять источник/SQLite, Bitrix24, другие платформы.

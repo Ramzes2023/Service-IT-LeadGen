@@ -130,3 +130,21 @@ SERVICEIT_ARCH_PREBITRIX=PASS_SYNTHETIC_ONLY; CRM_WRITES=NO; CONTACTS=NONE
 **Что не доказано этим PASS:** реальный доступ и полномочия Bitrix24, API записи, CRM matching existing clients/opt-outs, production RBAC, корпоративные call/email/bot events, реальные пользовательские данные, финансовые договоры/РВП и production deployment. Проект по-прежнему не должен создавать реальные CRM-лиды или контакты автоматически. Приглашение в `serviseit.bitrix24.ru` получено, но корпоративный портал не был проверен изнутри.
 
 Приёмка локальной части подтверждена именно зафиксированным pinned SHA. Позднейшие коммиты в PR потребуют собственной повторной проверки, если затронут логику.
+
+
+## 31.10.2026 — полный Windows regression PASS: 292 теста
+
+**Проверено пользователем в изолированном worktree pinned SHA `ea48d90394f07e86230923b3a1e80efbac2ba1b0`.** Реальный Windows PowerShell лог:
+
+```text
+pytest -q -p no:cacheprovider tests --basetemp=<уникальный пользовательский каталог>
+292 passed in 10.01s
+python -m compileall -q leadpilot tests
+git diff --check main...HEAD
+SERVICEIT_FULL_ARCHITECTURE_ACCEPTANCE=PASS
+CRM_WRITES=NO; REAL_SOURCES_UNCHANGED
+```
+
+Это подтверждает совместимость всей существующей локальной тестовой базы с исправлениями WinError 32 и новыми операциями менеджера на указанном снимке. Тестирование не означает, что GitHub Actions CI, production деплой, реальное создание Лидов/Задач, роли и роботы Bitrix24, корпоративная телефония/боты или реальные продажи приняты. Source adapters, EIS и VALYQON не изменялись при этой приёмке. Тестовый портал `serviseit.bitrix24.ru` известен из приглашения 31 октября, но пользователь ещё не выполнил согласованный вход и API-проверку.
+
+**Границы:** LOCAL_ARCHITECTURE_ACCEPTED=YES (pinned SHA); REAL_BITRIX24_ACCEPTANCE=PENDING; PRODUCTION_MVP=NOT_ACCEPTED; QUALIFIED_REAL_LEADS=0.

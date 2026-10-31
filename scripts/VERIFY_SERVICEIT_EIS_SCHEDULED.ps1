@@ -15,6 +15,14 @@ Write-Output ('EIS_SCHEDULE_VERIFY_STATE=' + $Task.State)
 Write-Output ('EIS_SCHEDULE_VERIFY_NEXT=' + $Info.NextRunTime.ToString('o'))
 Write-Output ('EIS_SCHEDULE_VERIFY_LAST=' + $Info.LastRunTime.ToString('o'))
 Write-Output ('EIS_SCHEDULE_VERIFY_LAST_RESULT=' + $Info.LastTaskResult)
+if ([string]$Task.State -eq 'Queued' -or [string]$Task.State -eq 'Running') {
+    Write-Output 'EIS_SCHEDULE_VERIFY_EVIDENCE=NOT_COMPLETED_TASK_QUEUED_OR_RUNNING'
+    exit 2
+}
+if ($Info.LastTaskResult -ne 0) {
+    Write-Output 'EIS_SCHEDULE_VERIFY_EVIDENCE=LAST_TASK_RESULT_NONZERO'
+    exit 2
+}
 $Latest = $null
 if (Test-Path -LiteralPath $StateDir -PathType Container) {
     $Latest = Get-ChildItem -LiteralPath $StateDir -File -Filter 'scheduled-*.txt' |
@@ -25,6 +33,10 @@ if (-not $Latest) {
     exit 2
 }
 Write-Output ('EIS_SCHEDULE_VERIFY_LATEST_LOG=' + $Latest.FullName)
+if ($Latest.LastWriteTime -lt $Info.LastRunTime.AddMinutes(-2)) {
+    Write-Output 'EIS_SCHEDULE_VERIFY_EVIDENCE=STALE_LOG_NOT_LATEST_TASK_RUN'
+    exit 2
+}
 $Lines = Get-Content -LiteralPath $Latest.FullName -Encoding UTF8
 $Finished = @($Lines | Where-Object { $_ -eq 'EIS_SCHEDULED_EXIT=0' }).Count -gt 0
 $Healthy = @($Lines | Where-Object { $_ -like 'EIS_HEALTH_STATUS=PASS*' }).Count -gt 0

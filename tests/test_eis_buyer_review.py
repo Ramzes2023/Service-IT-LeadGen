@@ -5,6 +5,7 @@ Mocks FNS reader intentionally: never claims an actual firm has live 1C demand.
 import hashlib
 import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -156,7 +157,8 @@ def test_safe_save_under_exports_no_overwrite(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     path = b.save(r, "exports/eis_qualified_review.json")
     assert json.loads((tmp_path / "exports/eis_qualified_review.json").read_text(encoding="utf8"))["counts"]["crm_ready"] == 0
-    assert path.endswith("exports/eis_qualified_review.json")
+    assert Path(path).name == "eis_qualified_review.json"
+    assert Path(path).parent == (tmp_path / "exports")
     with pytest.raises(ValueError, match="EXPORTS"):
         b.save(r, "exports/eis_qualified_review.json")
     with pytest.raises(ValueError, match="EXPORTS"):

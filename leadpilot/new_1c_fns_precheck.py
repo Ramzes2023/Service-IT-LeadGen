@@ -78,6 +78,11 @@ def plan(snapshots: str | Path, prior_fns: str | Path, *,
         raise ValueError("max_new must be 1-100")
     known = _known_inns(Path(prior_fns), now)
     signals, source_stats = read_snapshots(Path(snapshots), today=now)
+    source_errors = [key for key, value in source_stats.items()
+                     if value and key.startswith(("missing_file_", "corrupt_file_", "bad_schema_"))]
+    if source_errors:
+        raise ValueError("Missing, corrupted or incompatible saved source snapshots: "
+                         + ", ".join(sorted(source_errors)))
     counters = Counter()
     unique = {}
     for sig in signals:

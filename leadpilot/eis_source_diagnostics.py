@@ -87,9 +87,42 @@ def diagnose(report: dict) -> dict:
     }
 
 
+def _public_samples(report: dict, max_samples: int = 8) -> list[dict]:
+    """Public titles only, from a trusted local EIS parser report.
+
+    Do not print URLs, buyer details, contacts, search credentials or source
+    document bodies. ASCII escaping survives legacy Windows PowerShell pipes.
+    """
+    samples = report.get("scope_rejection_samples", [])
+    if not isinstance(samples, list) or len(samples) > 15:
+        raise ValueError("EIS_AUDIT_SAMPLES_INVALID")
+    allowed_reasons = {
+        "SUBJECT_LABEL_MISSING", "SUBJECT_EMPTY", "BITRIX_OUT_OF_SCOPE",
+        "SERVICE_NEGATED", "NO_1C_IN_PURCHASE_SUBJECT",
+        "NO_EXTERNAL_SERVICE_IN_PURCHASE_SUBJECT",
+    }
+    result = []
+    for sample in samples[:max_samples]:
+        if not isinstance(sample, dict):
+            raise ValueError("EIS_AUDIT_SAMPLE_INVALID")
+        reason = sample.get("reason")
+        if reason not in allowed_reasons:
+            raise ValueError("EIS_AUDIT_SAMPLE_REASON_INVALID")
+        record = {"reason": reason}
+        for field, limit in (("rss_title", 180), ("procurement_subject", 250)):
+            value = sample.get(field)
+            if value is not None and (not isinstance(value, str) or len(value) > limit):
+                raise ValueError("EIS_AUDIT_SAMPLE_TEXT_INVALID")
+            record[field] = value
+        result.append(record)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Explain EIS 0 candidates from saved JSON, offline")
     parser.add_argument("--report", required=True, help="Local exports/eis_source_*.json")
+    parser.add_argument("--show-public-samples", action="store_true",
+                        help="Print at most 8 public RSS titles as ASCII-escaped JSON")
     args = parser.parse_args()
     p = Path(args.report)
     try:
@@ -97,10 +130,13 @@ def main() -> None:
             raise ValueError("EIS_AUDIT_REPORT_MISSING_OR_OVERSIZED")
         report = json.loads(p.read_text(encoding="utf-8-sig"))
         summary = diagnose(report)
+        samples = _public_samples(report) if args.show_public_samples else []
     except (ValueError, OSError, UnicodeError) as err:
         print("EIS_COVERAGE_AUDIT=BLOCKED; REASON=" + str(err)[:80])
         raise SystemExit(2)
     print("EIS_COVERAGE_AUDIT=" + json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    if args.show_public_samples:
+        print("EIS_PUBLIC_SAMPLES_ASCII=" + json.dumps(samples, ensure_ascii=True, sort_keys=True))
 
 
 if __name__ == "__main__":

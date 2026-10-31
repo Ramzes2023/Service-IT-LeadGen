@@ -5,6 +5,7 @@ local core logic. No HTTP listener, no CRM requests, no messages, no calls.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import date, timedelta
 from html import escape
 import json
@@ -12,12 +13,33 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import sqlite3
 
-from .core import ingest, qualify, suppress, metrics
+from .core import ingest, qualify, suppress
 from .workflow_ops import review, stage_simulation, deliver_simulation, report
 from .manager_workspace_demo import (
     initialize as initialize_workspace, assign as assign_demo_task,
     record_simulated_result, overview as demo_task_overview,
 )
+
+def _metrics_closed(db: Path) -> dict:
+    """Summarize synthetic SQLite without lingering Windows file handles.
+
+    Unlike sqlite3's transaction context manager, contextlib.closing always
+    calls close() before the TemporaryDirectory cleanup begins.
+    """
+    with closing(sqlite3.connect(db)) as con:
+        counts = dict(con.execute(
+            "SELECT priority,COUNT(*) FROM qualifications GROUP BY priority"
+        ).fetchall())
+        staged = con.execute("SELECT COUNT(*) FROM source_candidates").fetchone()[0]
+    return {
+        "companies": sum(counts.values()), "by_status": counts,
+        "manager_queue": counts.get("high", 0) + counts.get("medium", 0),
+        "suppressed": counts.get("suppressed", 0),
+        "manual_review": counts.get("manual_review", 0),
+        "staged_needs_inn": staged,
+        "mode": "SYNTHETIC_ONLY_NO_EXTERNAL_CRM",
+    }
+
 
 CARDS = (
     ("Lead intake", "Companies and independent signals; exact INN never merges on shared phone/domain"),
@@ -58,7 +80,7 @@ def simulate() -> dict:
             "existing_customer": True,
         })
         qualify(db, today=now.isoformat())
-        with sqlite3.connect(db) as con:
+        with closing(sqlite3.connect(db)) as con:
             signals = [
                 r[0] for r in con.execute(
                     "SELECT id FROM signals WHERE company_id=? ORDER BY id", (a["company_id"],)
@@ -97,12 +119,12 @@ def simulate() -> dict:
         existing_held = stage_simulation(db, b["company_id"], b_signal, today=now)
         suppress(db, sample["inn"], "all", "Синтетическое прекращение рекламы")
         stopped_held = stage_simulation(db, a["company_id"], signals[0], today=now)
-        with sqlite3.connect(db) as con:
+        with closing(sqlite3.connect(db)) as con:
             company_count = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
             signal_count = con.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
             audit_count = con.execute("SELECT COUNT(*) FROM workflow_audit").fetchone()[0]
         counts = report(db)
-        board = metrics(db)
+        board = _metrics_closed(db)
         return {
             "mode": "SYNTHETIC_ARCHITECTURE_DEMO_ONLY",
             "built_on": now.isoformat(), "source_connections_made": 0,

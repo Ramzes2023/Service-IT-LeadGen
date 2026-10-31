@@ -194,10 +194,20 @@ def test_output_restricted_and_csv_escaped(tmp_path):
         save(r, Path("tests") / "forbidden.json", Path("tests") / "forbidden.csv")
     from leadpilot.sme_vacancy_audit import _excel_safe
     assert _excel_safe("\t=malicious").startswith("'")
-    save(r, tmp_path / "queue.json", tmp_path / "queue.csv")
-    assert json.loads((tmp_path / "queue.json").read_text(encoding="utf8"))["counts"]["qualified_leads"] == 0
-    with pytest.raises(ValueError):
-        save(r, tmp_path / "queue.json", tmp_path / "queue.csv")
+    # The production export contract is anchored at the repository's exports/.
+    # Keep the test portable: pytest's tmp_path may be outside the repository
+    # (GitHub Actions, Linux, and Windows default temp directories).
+    from tempfile import TemporaryDirectory
+    from leadpilot import review_pipeline
+    export_root = Path(review_pipeline.__file__).resolve().parents[1] / "exports"
+    export_root.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="review-pipeline-test-", dir=export_root) as target:
+        directory = Path(target)
+        result_json, result_csv = directory / "queue.json", directory / "queue.csv"
+        save(r, result_json, result_csv)
+        assert json.loads(result_json.read_text(encoding="utf8"))["counts"]["qualified_leads"] == 0
+        with pytest.raises(ValueError):
+            save(r, result_json, result_csv)
 
 
 def test_manual_fact_is_hypothesis_not_purchase(tmp_path):

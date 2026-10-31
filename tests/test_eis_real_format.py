@@ -88,3 +88,48 @@ def test_html_does_not_persuade_bot_to_promote_government_buyer_to_sme():
     assert r["counts"]["qualified_small_business_leads"] == 0
     assert r["counts"]["crm_ready"] == 0
     assert r["crm_writes"] == "NO" and r["outbound_messages"] == "NO"
+
+
+@pytest.mark.parametrize("subject,reason", [
+    ("Поставка компьютерной техники", "NO_1C_IN_PURCHASE_SUBJECT"),
+    ("Поставка лицензии программы 1С:Предприятие", "NO_EXTERNAL_SERVICE_IN_PURCHASE_SUBJECT"),
+    ("Оказание услуг по поддержке 1С-Битрикс24", "BITRIX_OUT_OF_SCOPE"),
+    ("null", "SUBJECT_EMPTY"),
+    ("Поставка лицензий без услуг сопровождения 1С:Предприятие", "SERVICE_NEGATED"),
+])
+def test_scope_rejection_has_separate_reason_and_capped_public_sample(subject, reason):
+    result = parse_feed(eis_rss(subject=subject), feed_url=FEED_URL, today=TODAY)
+    assert result["counts"]["not_explicit_external_1c_service"] == 1
+    assert result["counts"]["scope_" + reason.lower()] == 1
+    assert result["counts"]["candidates_for_identity_review"] == 0
+    assert len(result["scope_rejection_samples"]) == 1
+    row = result["scope_rejection_samples"][0]
+    assert row["reason"] == reason and row["procurement_subject"] == subject
+    assert result["crm_writes"] == "NO" and result["outbound_messages"] == "NO"
+
+
+def test_generic_title_without_subject_explains_missing_label():
+    report = parse_feed(eis_rss(subject=None), feed_url=FEED_URL, today=TODAY)
+    assert report["counts"]["scope_subject_label_missing"] == 1
+    assert report["scope_rejection_samples"][0]["procurement_subject"] is None
+
+
+def test_explicit_1c_service_is_never_sampled_as_rejected():
+    report = parse_feed(eis_rss(subject=SERVICE), feed_url=FEED_URL, today=TODAY)
+    assert report["counts"]["candidates_for_identity_review"] == 1
+    assert report["scope_rejection_samples"] == []
+
+
+def test_rejection_public_samples_capped_at_three_per_reason():
+    from defusedxml import ElementTree
+    xml = eis_rss(subject="Поставка и доставка кабельной продукции")
+    root = ElementTree.fromstring(xml)
+    channel = root.find("channel")
+    item = channel.find("item")
+    for _ in range(8):
+        channel.append(ElementTree.fromstring(ElementTree.tostring(item)))
+    result = parse_feed(ElementTree.tostring(root), feed_url=FEED_URL, today=TODAY)
+    assert result["counts"]["items_seen"] == 9
+    assert result["counts"]["scope_no_1c_in_purchase_subject"] == 9
+    assert len(result["scope_rejection_samples"]) == 3
+    assert result["counts"]["qualified_small_business_leads"] == 0

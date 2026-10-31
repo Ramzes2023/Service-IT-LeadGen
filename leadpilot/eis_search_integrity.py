@@ -46,8 +46,10 @@ def compare_reports(original: dict, control: dict) -> dict:
                 or report.get("outbound_messages") != "NO"
                 or not isinstance(report.get("counts"), dict)):
             raise ValueError("EIS_SEARCH_UNTRUSTED_RSS_RESEARCH")
-    a = original["counts"].get("items_seen")
-    b = control["counts"].get("items_seen")
+    # Older RSS snapshots omit items_seen on an actually empty channel.
+    # Zero is the only safe default; non-integer present values still fail.
+    a = original["counts"].get("items_seen", 0)
+    b = control["counts"].get("items_seen", 0)
     ac = original.get("all_notices_fingerprint_count")
     bc = control.get("all_notices_fingerprint_count")
     ah = original.get("all_notices_fingerprint_sha256")

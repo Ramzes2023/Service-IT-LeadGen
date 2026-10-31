@@ -26,7 +26,9 @@ try {
     # ASCII-only source is required for Windows PowerShell 5.1 (UTF-8 without BOM).
     # Build Cyrillic CAPITAL ES (U+0421) by code point, not as source text.
     $term = '1' + [char]0x0421
-    if ($term -cne ('1' + [char]0x0421)) { throw 'QUERY_TERM_ENCODING_INVALID' }
+    if ($term.Length -ne 2 -or [int][char]$term[1] -ne 0x0421) {
+        throw 'QUERY_TERM_ENCODING_INVALID'
+    }
 
     $next = 'exports/round2_offset1'
     foreach ($region in @('77','50')) {

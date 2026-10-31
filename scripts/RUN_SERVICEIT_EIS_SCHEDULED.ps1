@@ -27,6 +27,16 @@ try {
             Add-Content -LiteralPath $Log -Encoding UTF8 -Value $Line
         }
     $FinalCode = $LASTEXITCODE
+    if ($FinalCode -eq 0) {
+        'EIS_SCHEDULED_STAGE=INDEPENDENT_STATE_HEALTH' | Tee-Object -FilePath $Log -Append
+        & $PythonPath -m leadpilot.eis_daily_health --state-dir $StateDir 2>&1 |
+            ForEach-Object {
+                $Line = [string]$_
+                Write-Output $Line
+                Add-Content -LiteralPath $Log -Encoding UTF8 -Value $Line
+            }
+        $FinalCode = $LASTEXITCODE
+    }
 } finally {
     Pop-Location
 }

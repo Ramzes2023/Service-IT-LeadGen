@@ -23,6 +23,11 @@ try {
         }
     }
 
+    # ASCII-only source is required for Windows PowerShell 5.1 (UTF-8 without BOM).
+    # Build Cyrillic CAPITAL ES (U+0421) by code point, not as source text.
+    $term = '1' + [char]0x0421
+    if ($term -cne ('1' + [char]0x0421)) { throw 'QUERY_TERM_ENCODING_INVALID' }
+
     $next = 'exports/round2_offset1'
     foreach ($region in @('77','50')) {
         $file = "$next/trudvsem_$region.json"
@@ -31,7 +36,7 @@ try {
             continue
         }
         Write-Host "PAGE1_REQUEST_REGION=$region; PAGE_INDEX=1; LIMIT=50"
-        & $py -m leadpilot.cli --db data/research.sqlite3 source-scan --region $region --term '1С' --limit 50 --offset 1 --output $file
+        & $py -m leadpilot.cli --db data/research.sqlite3 source-scan --region $region --term $term --limit 50 --offset 1 --output $file
         if ($LASTEXITCODE -ne 0) {
             throw "SOURCE_SCAN_FAILED_REGION_$region; NO_NEW_RECORDS_CLAIMED"
         }

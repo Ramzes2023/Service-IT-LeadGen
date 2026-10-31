@@ -24,7 +24,8 @@ try {
       'tests/test_eis_buyer_review.py',
       'tests/test_eis_manager_queue.py',
       'tests/test_eis_bitrix_sandbox.py',
-      'tests/test_eis_transport_diagnostics.py'
+      'tests/test_eis_transport_diagnostics.py',
+      'tests/test_eis_windows_tls.py'
     )
     foreach ($Test in $Tests) {
         if (-not (Test-Path -LiteralPath $Test -PathType Leaf)) {

@@ -176,9 +176,21 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
     today = today or date.today()
     counts = Counter()
     unique = {}
+    all_notice_urls = set()
     scope_samples = []
     sample_reason_counts = Counter()
     for item in entries:
+        # All valid original notice URLs are fingerprinted regardless of
+        # commercial relevance. This enables a negative-control search test
+        # without storing buyer identities or rejected tender records.
+        raw_link = _text(item, "link")
+        if not raw_link:
+            raw_link = next((c.attrib.get("href", "") for c in item
+                            if c.tag.rsplit("}", 1)[-1] == "link"), "")
+        try:
+            all_notice_urls.add(_url(raw_link, feed=False))
+        except ValueError:
+            pass
         counts["items_seen"] += 1
         title = _plain(_text(item, "title"), 700)
         raw_description = _text(item, "description") or _text(item, "summary")
@@ -258,6 +270,10 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
         "search_rss_url": feed_url,
         "checked_on": today.isoformat(),
         "counts": dict(counts),
+        "all_notices_fingerprint_sha256": (
+            hashlib.sha256("\n".join(sorted(all_notice_urls)).encode("utf-8")).hexdigest()
+            if all_notice_urls else None),
+        "all_notices_fingerprint_count": len(all_notice_urls),
         "scope_rejection_samples": scope_samples,
         "scope_audit": "PUBLIC_TITLES_ONLY_MAX_15_UNVERIFIED_NEVER_LEADS",
         "items": list(unique.values()),

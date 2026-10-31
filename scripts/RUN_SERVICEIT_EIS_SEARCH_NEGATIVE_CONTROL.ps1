@@ -21,10 +21,15 @@ if (-not $SourceReport -or -not (Test-Path -LiteralPath $SourceReport -PathType 
 Push-Location -LiteralPath $Repo
 try {
     Write-Output 'EIS_SEARCH_STAGE=TEST'
-    $Tests = @('tests/test_eis_search_integrity.py',
-               'tests/test_eis_source_diagnostics.py',
+    $Tests = @('tests/test_eis_rss.py',
                'tests/test_eis_real_format.py',
-               'tests/test_eis_rss.py')
+               'tests/test_eis_buyer_review.py',
+               'tests/test_eis_manager_queue.py',
+               'tests/test_eis_bitrix_sandbox.py',
+               'tests/test_eis_transport_diagnostics.py',
+               'tests/test_eis_windows_tls.py',
+               'tests/test_eis_source_diagnostics.py',
+               'tests/test_eis_search_integrity.py')
     & $Python -m pytest -q -p no:cacheprovider @Tests
     if ($LASTEXITCODE -ne 0) { throw 'EIS_SEARCH_TEST_FAILED' }
     Write-Output 'EIS_SEARCH_STAGE=PRIOR_SAMPLE_ASCII'

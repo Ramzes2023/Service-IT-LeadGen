@@ -103,8 +103,8 @@ def scan(*, region="77", term="1С", limit=20, offset=0, client=None) -> dict:
         raise ValueError("Unsupported term")
     if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= 50):
         raise ValueError("Maximum 50 items per bounded scan")
-    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0 or offset > 200:
-        raise ValueError("Offset must be an integer from 0 to 200")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0 or offset > 4:
+        raise ValueError("Offset must be a page index from 0 to 4")
     # Bounded allowlisted destination; no arbitrary URL input or HTTP downgrade.
     own = client is None
     client = client or httpx.Client(timeout=20.0, follow_redirects=False)
@@ -114,7 +114,14 @@ def scan(*, region="77", term="1С", limit=20, offset=0, client=None) -> dict:
                               headers={"Accept": "application/json", "User-Agent": "ServiceITLeadGenResearch/0.3"})
         if response.status_code != 200:
             raise RuntimeError(f"Trudvsem source unavailable (HTTP {response.status_code}); no data imported")
-        records = _parse_response(response.json())
+        try:
+            payload = response.json()
+        except ValueError:
+            raise RuntimeError("API_NON_JSON_RESPONSE") from None
+        try:
+            records = _parse_response(payload)
+        except ValueError:
+            raise RuntimeError("API_SCHEMA_MISMATCH") from None
         normalized = [parse_vacancy(r, region) for r in records]
         valid = [r for r in normalized if r is not None]
         return {"source": "trudvsem-open-vacancies", "region": REGIONS[region],

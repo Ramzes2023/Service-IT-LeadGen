@@ -176,3 +176,40 @@ def test_empty_feed_first_pass_is_safe(tmp_path):
     assert result["counts"]["official_research_notices_in_latest_batch"] == 0
     assert result["counts"]["new_notices_since_previous_success"] == 0
     assert result["counts"]["qualified_small_b2b_leads"] == 0
+
+
+
+def test_cli_success_reports_real_state_and_no_crm(tmp_path, monkeypatch, capsys):
+    import sys
+    source = original(tmp_path)
+    state = tmp_path / "state"
+    def local_run(source_report, state_dir):
+        return d.run_daily(source_report, state_dir, today=TODAY,
+                           downloader=fake_download(1))
+    monkeypatch.setattr(d, "run_daily", local_run)
+    monkeypatch.setattr(sys, "argv", [
+        "eis_daily", "--source-report", str(source),
+        "--state-dir", str(state),
+    ])
+    d.main()
+    text = capsys.readouterr().out
+    assert "EIS_DAILY_STATUS=PASS; READY_B2B_LEADS=0; CRM_WRITES=NO" in text
+    assert '"new_notices_since_previous_success": 0' in text
+    assert (state / "eis_official_history.sqlite3").exists()
+
+
+def test_cli_failure_is_nonzero_and_does_not_claim_success(tmp_path, monkeypatch, capsys):
+    import sys
+    def blocked(source_report, state_dir):
+        raise RuntimeError("EIS_HTTP_RATE_LIMIT_429")
+    monkeypatch.setattr(d, "run_daily", blocked)
+    monkeypatch.setattr(sys, "argv", [
+        "eis_daily", "--source-report", str(tmp_path / "invalid"),
+        "--state-dir", str(tmp_path / "state"),
+    ])
+    with pytest.raises(SystemExit) as error:
+        d.main()
+    assert error.value.code == 2
+    output = capsys.readouterr().out
+    assert "EIS_DAILY=BLOCKED; ERROR=EIS_HTTP_RATE_LIMIT_429" in output
+    assert "EIS_DAILY_STATUS=PASS" not in output

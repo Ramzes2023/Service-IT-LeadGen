@@ -77,6 +77,12 @@ def build_manager_briefs(db_path: str | Path, *, today: date | None = None, limi
             "next_action": "Проверить данные и дубли в Битрикс24; подтвердить потребность вручную. "
                            "Контактировать только разрешённым законом и компанией способом.",
             "crm_writes": "NO",
+            "crm_ready": False, "outbound_authorized": False,
+            "business_size_verification": "NOT_VERIFIED_BY_LEGACY_SCORE",
+            "purchasing_intent": "UNVERIFIED",
+            "holds": ["FNS_SIZE_PENDING", "LEGAL_USE_PENDING", "CRM_DUPLICATE_PENDING",
+                      "EXISTING_CLIENT_CHECK_PENDING", "MANAGER_APPROVAL_PENDING"],
+            "suppressed_channels": lead["suppressed_channels"],
         })
     return {"mode": "HUMAN_REVIEW_ONLY", "generated_on": now.isoformat(),
             "total_briefs": len(results), "skipped": skipped,
@@ -95,3 +101,13 @@ def export_manager_briefs(db_path: str | Path, output: str | Path, *,
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"briefs": result["total_briefs"], "output": str(out),
             "crm_writes": "NO", "outreach_sent": "NO"}
+
+
+def build_evidence_briefs(fns, **inputs):
+    """Shared manager view of the FNS queue; no legacy score or approval transfer."""
+    from .review_pipeline import assemble
+    report = assemble(fns, **inputs)
+    return {"mode": "HUMAN_REVIEW_ONLY", "origin": "FNS_EVIDENCE_QUEUE",
+            "generated_on": report["checked_on"], "total_briefs": len(report["companies"]),
+            "briefs": report["companies"], "counts": report["counts"],
+            "crm_ready": False, "crm_writes": "NO", "outreach_sent": "NO"}

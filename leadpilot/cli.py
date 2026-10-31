@@ -28,6 +28,11 @@ def run():
     command.add_argument("--output", default="exports/manager_briefs.json")
     command.add_argument("--limit", type=int, default=20)
     command.add_argument("--today", default=None)
+    command = sub.add_parser("evidence-briefs")
+    command.add_argument("--fns", required=True)
+    for field in ("requests", "facts", "contacts"):
+        command.add_argument("--" + field)
+    sub.add_parser("acceptance-demo")
     command = sub.add_parser("ai-preview"); command.add_argument("text")
     sub.add_parser("ai-config-check")
     source = sub.add_parser("source-scan")
@@ -44,6 +49,15 @@ def run():
     command.add_argument("--include-public-vacancy", action="store_true",
                          help="Send only the public job title to AI, not company or contacts")
     args = parser.parse_args()
+    if args.command == "acceptance-demo":
+        from .integration_demo import demonstrate
+        print(json.dumps(demonstrate(), ensure_ascii=True, indent=2))
+        return
+    if args.command == "evidence-briefs":
+        from .manager_briefs import build_evidence_briefs
+        print(json.dumps(build_evidence_briefs(args.fns, requests=args.requests,
+                         facts=args.facts, contacts=args.contacts), ensure_ascii=True, indent=2))
+        return
     initialize(args.db)
     if args.command == "init":
         print("DB_INITIALIZED=" + args.db)

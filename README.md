@@ -1,5 +1,8 @@
 # Service IT LeadGen — test assignment / pilot
 
+Offline integration candidate: [readiness, validation and blockers](docs/INTEGRATION_READINESS_20261031.md).
+Synthetic manager demo: `python -m leadpilot.cli acceptance-demo` (no CRM or AI calls).
+
 **Отдельный от VALYQON AI репозиторий.** Прототип B2B лидогенерации по техническому заданию ООО «Сервис ИТ»: сигналы потребности → проверка компаний → AI-гипотеза → фиксированный Lead Score → подготовка данных для Битрикс24.
 
 Включено: FastAPI, SQLite, API вакансий «Работа России», проверка ИНН/свежести/дублей, GigaChat-2 c Quality Gate, `read-only` проверка тестового Битрикс24, PowerShell, pytest, GitHub Actions.

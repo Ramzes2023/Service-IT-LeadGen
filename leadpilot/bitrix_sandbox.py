@@ -75,6 +75,9 @@ def read_only_preflight(cfg: PreflightConfig, client: httpx.Client | None = None
               "entity_type": ENTITY_TYPE_DEAL, "sandbox_name": cfg.category_name,
               "sandbox_id": None, "status": "NOT_VERIFIED", "stages": [], "field_count": 0,
               "methods_called": []}
+    report.update(crm_ready=False, lead_isolation="NOT_VERIFIED",
+                  duplicate_check="PENDING", existing_client_check="PENDING",
+                  write_authorized=False)
     try:
         categories = _read_call(client, base, "crm.category.list", {"entityTypeId": ENTITY_TYPE_DEAL})
         report["methods_called"].append("crm.category.list")
@@ -145,10 +148,12 @@ def run(argv: list[str] | None = None):
     if args.blueprint == args.preflight:
         parser.error("Choose exactly one of --blueprint or --preflight")
     if args.blueprint:
-        print("BITRIX_SANDBOX_BLUEPRINT=" + json.dumps(suggested_blueprint(), ensure_ascii=False))
+        print("BITRIX_SANDBOX_BLUEPRINT=" + json.dumps(suggested_blueprint(), ensure_ascii=True))
         return
     raw_id = os.getenv("BITRIX24_SANDBOX_CATEGORY_ID", "").strip()
     try:
+        if raw_id and not re.fullmatch(r"[0-9]{1,12}", raw_id):
+            raise PreflightError("Category ID must be a positive integer")
         cfg = PreflightConfig(
             webhook=os.getenv("BITRIX24_TEST_WEBHOOK", ""),
             category_name=os.getenv("BITRIX24_SANDBOX_NAME", SANDBOX_NAME),
@@ -157,7 +162,7 @@ def run(argv: list[str] | None = None):
     except (PreflightError, ValueError) as exc:
         report = {"status": "CONFIG_ERROR", "error": str(exc),
                   "mode": "READ_ONLY", "crm_writes": "NO"}
-    print("BITRIX_SANDBOX_PREFLIGHT=" + json.dumps(report, ensure_ascii=False))
+    print("BITRIX_SANDBOX_PREFLIGHT=" + json.dumps(report, ensure_ascii=True))
     if report["status"] != "READ_ACCESS_CONFIRMED":
         raise SystemExit(2)
 

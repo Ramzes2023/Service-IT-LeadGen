@@ -20,4 +20,4 @@ jobs:
       - name: Compile source
         run: python -m compileall -q leadpilot
       - name: Run local tests
-        run: python -m pytest -q
+        run: python -m pytest -q -p no:cacheprovider tests --basetemp="${{ runner.temp }}/serviceit-pytest-${{ github.run_id }}-${{ github.run_attempt }}"

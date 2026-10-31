@@ -10,10 +10,10 @@ ROLES = {"researcher": "sources_only", "manager": "review_and_tasks",
 
 def preflight_contract(*, authorized=False, webhook=None, client=None):
     """Reuse diagnostics only with explicit authorization; reads cannot approve writes."""
-    if not authorized:
+    if authorized is not True:
         return {"status": "CRM_BLOCKED", "duplicate_check": "PENDING", "write_authorized": False}
-    from .bitrix_readonly import readonly_preflight
-    result = readonly_preflight(webhook=webhook, client=client)
+    from .bitrix_sandbox import PreflightConfig, read_only_preflight
+    result = read_only_preflight(PreflightConfig(webhook), client=client)
     return {"status": "CRM_BLOCKED", "duplicate_check": "PENDING",
             "write_authorized": False, "diagnostic": result}
 
@@ -52,6 +52,14 @@ class MemoryCRM:
         signals = [s for s in card.get("signals", []) if s.get("status") == "CURRENT_UNVERIFIED"]
         now = today or date.today()
         try:
+            if not 0 <= (now - date.fromisoformat(card["fns_snapshot"])).days <= 60:
+                return {"status": "SIMULATION_HOLD", "crm_ready": False}
+            if any(c.get("inn") != inn or c.get("opt_out") is not False
+                   or c.get("review_state") != "PENDING"
+                   or c.get("outbound_authorized") is not False
+                   or not 0 <= (now - date.fromisoformat(c["observed_on"])).days <= 30
+                   for c in card["channels"]):
+                return {"status": "SIMULATION_HOLD", "crm_ready": False}
             signals = [s for s in signals if date.fromisoformat(s["event_on"]) <= now <= date.fromisoformat(s["expires_on"])]
         except (KeyError, ValueError, TypeError):
             return {"status": "SIMULATION_HOLD", "crm_ready": False}

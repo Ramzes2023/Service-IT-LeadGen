@@ -81,7 +81,9 @@ def run():
         try:
             outcome = scan(region=args.region, term=args.term, limit=args.limit, offset=args.offset)
         except Exception as exc:
-            print("SOURCE_STATUS=UNAVAILABLE; NO_REAL_RECORDS_CLAIMED; " + type(exc).__name__)
+            safe_codes = {"API_NON_JSON_RESPONSE", "API_SCHEMA_MISMATCH"}
+            code = str(exc) if type(exc) is RuntimeError and str(exc) in safe_codes else type(exc).__name__
+            print("SOURCE_STATUS=UNAVAILABLE; NO_REAL_RECORDS_CLAIMED; ERROR_CODE=" + code)
             raise SystemExit(2)
         path = Path(args.output).resolve()
         if (not path.is_relative_to(Path("exports").resolve())

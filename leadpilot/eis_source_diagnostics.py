@@ -16,6 +16,10 @@ FILTERS = (
     "not_explicit_external_1c_service", "unverified_notice_link",
     "future_date_rejected", "stale_rejected", "duplicate_notices",
     "publication_date_unknown",
+    "scope_subject_label_missing", "scope_subject_empty",
+    "scope_bitrix_out_of_scope", "scope_service_negated",
+    "scope_no_1c_in_purchase_subject",
+    "scope_no_external_service_in_purchase_subject",
 )
 
 
@@ -73,6 +77,8 @@ def diagnose(report: dict) -> dict:
         "seen": seen,
         "research_candidates": n,
         "rejection_counts": {k: nums[k] for k in FILTERS},
+        "scope_breakdown": {k.removeprefix("scope_"): nums[k] for k in FILTERS if k.startswith("scope_")},
+        "scope_sample_count": len(report.get("scope_rejection_samples", [])) if isinstance(report.get("scope_rejection_samples", []), list) else 0,
         "source_profile": source_profile,
         "qualified_leads": 0,
         "crm_ready": False,

@@ -212,7 +212,7 @@ def main() -> None:
         source = Path(a.review_json)
         if not source.is_file() or not 1 <= source.stat().st_size <= MAX_BYTES:
             raise ValueError("EIS_TRIAGE_REVIEW_FILE_MISSING")
-        prior = json.loads(source.read_text(encoding="utf8-sig"))
+        prior = json.loads(source.read_text(encoding="utf-8-sig"))
         result = triage(prior)
         files = save(result, a.json, a.csv)
     except (OSError, UnicodeError, ValueError) as exc:

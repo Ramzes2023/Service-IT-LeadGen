@@ -1,4 +1,4 @@
-# Продолжение поиска 1С: объединить offset 0 и offset 50 перед ФНС
+# Продолжение поиска 1С: объединить offset 0 и offset 1 перед ФНС
 
 ## Подтверждённый результат предыдущего этапа
 
@@ -6,25 +6,25 @@
 
 ## Цель PR
 
-Проверить следующую страницу официального источника (offset 50), затем собрать единый список новых работодателей из двух страниц без повторений. Не перезаписывать `exports/round2_offset0`, уже созданную предыдущую выгрузку и три найденных ИНН.
+Проверить следующую страницу официального источника (offset 1), затем собрать единый список новых работодателей из двух страниц без повторений. Не перезаписывать `exports/round2_offset0`, уже созданную предыдущую выгрузку и три найденных ИНН.
 
-### Шаг 1: проверить тесты и сохранить offset 50
+### Шаг 1: проверить тесты и сохранить offset 1
 
 Из ветки этого PR в корне репозитория:
 
     .\.venv\Scripts\python.exe -m pytest -q
-    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 77 --term 1С --limit 50 --offset 50 --output exports/round2_offset50/trudvsem_77.json
-    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 50 --term 1С --limit 50 --offset 50 --output exports/round2_offset50/trudvsem_50.json
+    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 77 --term 1С --limit 50 --offset 1 --output exports/round2_offset1/trudvsem_77.json
+    .\.venv\Scripts\python.exe -m leadpilot.cli --db data/research.sqlite3 source-scan --region 50 --term 1С --limit 50 --offset 1 --output exports/round2_offset1/trudvsem_50.json
 
 Эти два запроса делают по одному ограниченному GET и сохраняют ответы. Данные работодателей в базу НЕ импортируются. Если исходный API недоступен, код сообщает SOURCE_STATUS=UNAVAILABLE и прекращает работу; ничего не выдаётся за полученный результат.
 
 ### Шаг 2: объединить offset 0 и 50
 
-    .\.venv\Scripts\python.exe -m leadpilot.multi_page_precheck --folders exports/round2_offset0 exports/round2_offset50 --offsets 0 50 --prior-fns exports/fns_official_reconciliation.json --output exports/round2_combined_precheck.json --inn-list exports/round2_combined_inns.txt
+    .\.venv\Scripts\python.exe -m leadpilot.multi_page_precheck --folders exports/round2_offset0 exports/round2_offset1 --offsets 0 1 --prior-fns exports/fns_official_reconciliation.json --output exports/round2_combined_precheck.json --inn-list exports/round2_combined_inns.txt
 
 Модуль требует **обе папки** и по два региональных файла в каждой, сверяет фактические offset/term/fetched/valid_signals/region/source, повторно применяет фильтры официального источника и контроль ИНН. Старые 15 ИНН исключены; если новые ИНН присутствуют на обеих страницах, они объединяются. При разных наименованиях работодателя для одного ИНН он уходит в `identity_conflicts_hold`, а не в список для передачи.
 
-В `exports/round2_combined_inns.txt` только ИНН: в нём будут и ранее найденные 3, и любые **дополнительные** новые ИНН из offset 50 (если они реально есть). Не складывайте два списка простым конкатенированием. Система сохраняет новый JSON и TXT без перезаписи; при повторе нужно указать новые выходные имена.
+В `exports/round2_combined_inns.txt` только ИНН: в нём будут и ранее найденные 3, и любые **дополнительные** новые ИНН из offset 1 (если они реально есть). Не складывайте два списка простым конкатенированием. Система сохраняет новый JSON и TXT без перезаписи; при повторе нужно указать новые выходные имена.
 
 ### Шаг 3: поиск по ФНС
 
@@ -34,8 +34,14 @@
 
 - Нет автоматического опроса ФНС, массового обхода страниц или неописанного API.
 - Не отправляем кандидатов в корпоративный Битрикс24, не вызываем AI, не пишем сообщения, не меняем VALYQON.
-- Нет новых подтверждённых компаний, пока не пришли реальные страницы offset 50 и результат ФНС.
+- Нет новых подтверждённых компаний, пока не пришли реальные страницы offset 1 и результат ФНС.
 - Для всех карточек `crm_ready=false`, `outbound_authorized=false`. В опубликованном GitHub нет реальных локальных снимков.
 - При отсутствующем или повреждённом регионе/неверном offset программа прекращает обработку, не считая его «нулевой выдачей».
 - Важно: новая проверка не доказывает, что вакансия 1С означает намерение купить внешнюю поддержку. Проверка дублей CRM, законных корпоративных контактов и нужной услуги потребуется отдельно.
-- Это Draft PR с новыми 12 pytest-сценариями. Ожидаемый Windows total 136 тестов, но до фактического запуска это НЕ подтверждено. GitHub Actions ещё нужно проверить (#7).
+- Пользователь подтвердил первоначальные 136 тестов на Windows, но сценарий offset=50 обнаружил реальную ошибку семантики пагинации. Исправлены оба модуля и тесты, ожидаемый новый pytest total 140 (требует запуска). GitHub Actions ещё нужно проверить (#7).
+
+## Исправление инцидента пагинации 31.10.2026
+
+`offset` в Trudvsem API — номер страницы, а не число пропущенных вакансий. В старой версии был ошибочно отправлен `offset=50`, после чего код получил `SOURCE_STATUS=UNAVAILABLE; ValueError` без сохранения файлов. Из-за выполнения последующих строк PowerShell вручную появилась ложная надпись `MULTIPAGE_FNS_BATCH=READY`. **Это был неуспешный запуск.** Исправленный запуск использует `--offset 1` (вторая страница), строго ограниченные индексы `0..4` и новый скрипт `scripts/RUN_1C_PAGE1_RECOVERY.ps1` с завершением при первой ошибке. Успех объявляется только при наличии реально созданного списка ИНН.
+
+На странице документации прежние аргументы исправлены. Отдельная запись: `docs/TRUDVSEM_PAGINATION_INCIDENT.md`.

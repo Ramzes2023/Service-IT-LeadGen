@@ -78,7 +78,7 @@ def test_invalid_review_never_becomes_manager_card(tmp_path, field, value):
     record[field] = value
     path = _audit(tmp_path, [record])
     if field in ("crm_ready", "manager_approved", "outbound_authorized", "lead_score"):
-        with pytest.raises(ValueError, match="PREAPPROVAL"):
+        with pytest.raises(ValueError, match="EIS_MANAGER_IMPORTED_APPROVAL_FORBIDDEN"):
             assemble(path, today=DAY)
     else:
         report = assemble(path, today=DAY)

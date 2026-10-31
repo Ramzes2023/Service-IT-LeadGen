@@ -4,7 +4,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$RssUrl
+    [string]$RssUrl,
+    [string]$CaBundle
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -23,7 +24,14 @@ try {
     $Stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
     $Output = 'exports/eis_research_' + $Stamp + '.json'
     Write-Output 'EIS_SERVICEIT_STAGE=ONE_OFFICIAL_RSS_GET'
-    & $Python -m leadpilot.eis_rss --url $RssUrl --output $Output
+    $RunArgs = @('-m', 'leadpilot.eis_rss', '--url', $RssUrl, '--output', $Output)
+    if ($CaBundle) {
+        if (-not (Test-Path -LiteralPath $CaBundle -PathType Leaf)) {
+            throw 'EIS_CA_BUNDLE_FILE_NOT_FOUND'
+        }
+        $RunArgs += @('--ca-bundle', $CaBundle)
+    }
+    & $Python @RunArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Output 'EIS_LIVE_CONNECTION=NOT_CONFIRMED; ZERO_QUALIFIED_LEADS_CLAIMED'
         throw 'EIS_OFFICIAL_RSS_NOT_VERIFIED'

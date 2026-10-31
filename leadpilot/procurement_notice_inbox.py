@@ -7,6 +7,7 @@ all records remain HOLD. Never creates leads or sends messages.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from email import policy
 from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime

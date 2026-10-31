@@ -44,14 +44,13 @@ try {
     & $Python -m leadpilot.eis_rss --url $RssUrl --output $output
     if ($LASTEXITCODE -ne 0) { throw 'EIS_SCOPE_LIVE_RSS_UNAVAILABLE' }
     Write-Output 'EIS_SCOPE_STAGE=BREAKDOWN'
-    & $Python -m leadpilot.eis_source_diagnostics --report $output
+    & $Python -m leadpilot.eis_source_diagnostics --report $output --show-public-samples
     if ($LASTEXITCODE -ne 0) { throw 'EIS_SCOPE_DIAGNOSIS_FAILED' }
     $report = Get-Content -LiteralPath $output -Encoding UTF8 -Raw | ConvertFrom-Json
     if ($report.crm_writes -ne 'NO' -or $report.outbound_messages -ne 'NO') {
         throw 'EIS_SCOPE_UNSAFE_REPORT'
     }
-    Write-Output 'EIS_SCOPE_SAMPLE_FIRST_8_PUBLIC_TITLES:'
-    @($report.scope_rejection_samples) | Select-Object -First 8 | ConvertTo-Json -Depth 4
+    Write-Output 'EIS_SCOPE_PUBLIC_SAMPLES=ASCII_ESCAPED_JSON_ABOVE'
     Write-Output ('EIS_SCOPE_REPORT=' + (Resolve-Path -LiteralPath $output).Path)
     Write-Output 'EIS_SCOPE_COMPLETE=YES; QUALIFIED_LEADS=0; CRM_WRITES=NO'
 } finally {

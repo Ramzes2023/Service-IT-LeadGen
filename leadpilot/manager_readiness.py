@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .enrichment_review import audit_checklist
 from .pilot_scope_review import audit as audit_scope
+from .research_triage import preview as preview_research
 
 
 def _load(path: str | Path, expected_mode: str) -> dict:
@@ -43,7 +44,7 @@ def _index(rows: list[dict], expected_status: str | None = None) -> dict[str, di
 
 
 def assemble(research: str | Path, enrichment: str | Path,
-             scope: str | Path) -> dict:
+             scope: str | Path, *, hints: str | Path | None = None) -> dict:
     """All three inputs must cover exactly the same INNs or report fails closed."""
     candidates = _index(
         _load(research, "OFFLINE_MVP_RESEARCH")["candidates"],
@@ -100,6 +101,18 @@ def assemble(research: str | Path, enrichment: str | Path,
             "outbound_authorized": False,
             "next_steps": missing,
         })
+    if hints is not None:
+        public_hints = preview_research(scope, hints)
+        by_inn = {item["inn"]: item for item in public_hints["items"]}
+        for row in rows:
+            hint = by_inn[row["inn"]]
+            row["public_research_action"] = hint["research_action"]
+            row["public_research_source"] = hint["research_source"]
+            row["public_research_note"] = hint["research_note"]
+            row["public_research_is_approved"] = False
+            if hint["research_action"] == "LEGAL_REVIEW":
+                row["next_steps"].insert(0,
+                    "Отдельная правовая проверка применимых ограничений до коммерческих действий")
     rows.sort(key=lambda x: (-x["score"], x["inn"]))
     return {
         "mode": "MANAGER_READINESS_OFFLINE",
@@ -132,8 +145,10 @@ def main():
     parser.add_argument("--enrichment", default="exports/mvp_enrichment_checklist.json")
     parser.add_argument("--scope", default="exports/mvp_scope_review.json")
     parser.add_argument("--output", default="exports/mvp_manager_readiness.json")
+    parser.add_argument("--hints", default=None,
+                        help="Optional public research hints, never trusted for CRM approval")
     args = parser.parse_args()
-    report = assemble(args.research, args.enrichment, args.scope)
+    report = assemble(args.research, args.enrichment, args.scope, hints=args.hints)
     path = write_report(report, args.output)
     print("MANAGER_READINESS=" + json.dumps({
         "file": str(path), "counts": report["counts"], "crm_writes": "NO",

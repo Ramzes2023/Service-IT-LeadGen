@@ -33,13 +33,13 @@ def pages(tmp_path, *, second=True):
                   "crm_ready":False,"outbound_authorized":False}]
     }),encoding="utf8")
     directories=[]
-    for offset in ([0, 50] if second else [0]):
+    for offset in ([0, 1] if second else [0]):
         folder=tmp_path/f"page_{offset}"
         folder.mkdir()
         for code,region in (("77","Москва"),("50","Московская область")):
             if offset==0 and code=="77":
                 entries=[sig(OLD,region),sig(NEW,region,suffix="1",day="2026-10-29")]
-            elif offset==50 and code=="50":
+            elif offset==1 and code=="50":
                 entries=[sig(NEW,region,suffix="2"),sig(THIRD,region)]
             else:
                 entries=[]
@@ -56,7 +56,7 @@ def pages(tmp_path, *, second=True):
 def test_two_pages_join_and_dedupe_with_newest_date(tmp_path):
     folders, fns = pages(tmp_path)
     old=fns.read_bytes()
-    r=combine_pages(folders,[0,50],fns,today=NOW)
+    r=combine_pages(folders,[0,1],fns,today=NOW)
     assert r["counts"]["pages_checked"]==2
     assert r["counts"]["unique_new_inns"]==2
     assert r["counts"]["selected_for_fns"]==2
@@ -67,7 +67,7 @@ def test_two_pages_join_and_dedupe_with_newest_date(tmp_path):
                for c in r["candidates"])
     candidate=next(c for c in r["candidates"] if c["inn"]==NEW)
     assert candidate["signal_url"].endswith("/2")
-    assert candidate["source_offsets"]==[0,50]
+    assert candidate["source_offsets"]==[0,1]
     assert "phone" not in candidate and "email" not in candidate
     assert fns.read_bytes()==old
 
@@ -79,14 +79,14 @@ def test_metadata_offset_mismatch_is_fatal(tmp_path):
     data["offset"]=0
     path.write_text(json.dumps(data),encoding="utf8")
     with pytest.raises(ValueError,match="metadata"):
-        combine_pages(folders,[0,50],fns,today=NOW)
+        combine_pages(folders,[0,1],fns,today=NOW)
 
 
 def test_missing_regional_snapshot_is_fatal(tmp_path):
     folders,fns=pages(tmp_path)
     (folders[0]/"trudvsem_77.json").unlink()
     with pytest.raises(ValueError,match="Missing"):
-        combine_pages(folders,[0,50],fns,today=NOW)
+        combine_pages(folders,[0,1],fns,today=NOW)
 
 
 def test_conflicting_company_identity_is_on_hold(tmp_path):
@@ -95,7 +95,7 @@ def test_conflicting_company_identity_is_on_hold(tmp_path):
     doc=json.loads(path.read_text("utf8"))
     doc["signals"][0]["name"]="Совершенно другое юридическое лицо"
     path.write_text(json.dumps(doc,ensure_ascii=False),encoding="utf8")
-    result=combine_pages(folders,[0,50],fns,today=NOW)
+    result=combine_pages(folders,[0,1],fns,today=NOW)
     assert result["identity_conflicts_hold"]==[NEW]
     assert result["counts"]["held_identity_conflicts"]==1
     assert [c["inn"] for c in result["candidates"]]==[THIRD]
@@ -120,7 +120,7 @@ def test_only_old_records_return_no_new(tmp_path, monkeypatch):
 def test_save_writes_legal_inns_only_without_overwrite(tmp_path,monkeypatch):
     monkeypatch.chdir(tmp_path)
     folders,fns=pages(tmp_path)
-    r=combine_pages(folders,[0,50],fns,today=NOW)
+    r=combine_pages(folders,[0,1],fns,today=NOW)
     out=save(r,"exports/next_fns.json","exports/next_inns.txt")
     assert out["saved"] is True
     assert set(Path("exports/next_inns.txt").read_text("utf8").splitlines())=={NEW,THIRD}
@@ -128,7 +128,7 @@ def test_save_writes_legal_inns_only_without_overwrite(tmp_path,monkeypatch):
         save(r,"exports/next_fns.json","exports/next_inns.txt")
 
 
-@pytest.mark.parametrize("offsets", [[0,0], [0,25], [0,201], [0,True]])
+@pytest.mark.parametrize("offsets", [[0,0], [0,25], [0,50], [0,201], [0,True]])
 def test_reject_invalid_offset_sets(tmp_path,offsets):
     folders,fns=pages(tmp_path)
     with pytest.raises(ValueError,match="offsets"):
@@ -142,7 +142,7 @@ def test_count_exceeding_50_is_rejected(tmp_path):
     obj["fetched"]=51
     path.write_text(json.dumps(obj),encoding="utf8")
     with pytest.raises(ValueError,match="metadata"):
-        combine_pages(folders,[0,50],fns,today=NOW)
+        combine_pages(folders,[0,1],fns,today=NOW)
 
 
 def test_single_offset_page_supported(tmp_path):

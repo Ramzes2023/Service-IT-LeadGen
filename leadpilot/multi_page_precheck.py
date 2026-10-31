@@ -14,7 +14,7 @@ from pathlib import Path
 from .new_1c_fns_precheck import plan, save
 
 REGIONS = {"77": "Москва", "50": "Московская область"}
-OFFSETS = {0, 50, 100, 150, 200}
+OFFSETS = {0, 1, 2, 3, 4}
 
 
 def combine_pages(folders: list[str | Path], offsets: list[int], prior_fns: str | Path,
@@ -25,7 +25,7 @@ def combine_pages(folders: list[str | Path], offsets: list[int], prior_fns: str 
             or not 1 <= len(folders) <= 5 or len(folders) != len(offsets)
             or any(type(x) is not int or x not in OFFSETS for x in offsets)
             or len(offsets) != len(set(offsets))):
-        raise ValueError("Provide 1-5 distinct pages with explicit offsets 0,50,...,200")
+        raise ValueError("Provide 1-5 distinct page indices: offsets 0,1,2,3,4")
     if type(max_new) is not int or not 1 <= max_new <= 100:
         raise ValueError("max_new must be an integer from 1 to 100")
 

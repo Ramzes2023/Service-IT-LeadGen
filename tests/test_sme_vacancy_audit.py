@@ -179,3 +179,15 @@ def test_public_source_http_links_do_not_qualify(tmp_path):
     result = audit(fns, folders, [0, 1], today=NOW)
     assert result["counts"]["companies_with_1c_vacancy_signal"] == 1
     assert result["counts"]["untrusted_or_http_url"] == 1
+
+
+def test_windows_recovery_script_is_ascii_and_does_not_fake_success():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "RUN_SME_VACANCY_AUDIT.ps1"
+    raw = script.read_bytes()
+    assert raw.isascii(), "PowerShell 5.1 needs ASCII-only content or an explicit BOM"
+    text = raw.decode("ascii")
+    assert "SME_VACANCY_AUDIT=FAILED" in text
+    assert "SME_VACANCY_AUDIT=SUCCESS" in text
+    assert "CRM_WRITES=NO" in text
+    assert "--folders $page0 $page1 --offsets 0 1" in text
+    assert "exit 1" in text

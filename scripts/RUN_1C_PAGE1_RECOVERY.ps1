@@ -7,7 +7,7 @@ try {
     Set-Location -LiteralPath $repo
     $branch = 'feat/1c-multipage-dedupe-fns-20261031'
     $current = (& git branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $current -ne $branch) {
+    if ($LASTEXITCODE -ne 0 -or @('main', $branch) -notcontains $current) {
         throw "WRONG_BRANCH: expected $branch"
     }
 

@@ -71,7 +71,9 @@ def _task_url(raw: str) -> tuple[str, str]:
         m = re.fullmatch(r"/task/([1-9]\d{2,10})/?", u.path)
         if not m:
             raise ValueError("CLANCER_NOT_A_TASK")
-        # Published RSS may contain legacy http:// task links. We do NOT fetch\n        # them over HTTP: canonicalize only an exact allowed host/task ID to\n        # HTTPS for human opening, while network RSS GET stays HTTPS-only.
+        # Published RSS may contain legacy http:// task links. We do NOT fetch
+        # them over HTTP: canonicalize only an exact allowed host/task ID to
+        # HTTPS for human opening, while network RSS GET stays HTTPS-only.
         identifier = m.group(1)
         return "https://1clancer.ru/task/" + identifier, identifier
     except ValueError as err:

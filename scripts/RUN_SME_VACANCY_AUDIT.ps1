@@ -7,7 +7,7 @@ try {
     Set-Location -LiteralPath $repo
     $requiredBranch = 'feat/sme-vacancy-demand-audit-20261031'
     $current = (& git branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $current -ne $requiredBranch) {
+    if ($LASTEXITCODE -ne 0 -or @('main', $requiredBranch) -notcontains $current) {
         throw 'WRONG_BRANCH'
     }
     $python = Join-Path $repo '.venv\Scripts\python.exe'

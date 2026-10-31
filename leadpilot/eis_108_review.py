@@ -139,15 +139,20 @@ def build_queue(summary_path: str | Path, *, today: date | None = None) -> dict:
         profile_rows.append({"profile_id": expected_id,
                              "items_seen": scanned, "research_candidates": expected,
                              "new_unique_notices": added})
-    total = _integer(doc.get("counts", {}).get("unique_research_notices"), 2000)
+    summary_counts = doc.get("counts")
+    if not isinstance(summary_counts, dict):
+        raise ValueError("EIS_REVIEW_SUMMARY_COUNTS_INVALID")
+    total = _integer(summary_counts.get("unique_research_notices"), 2000)
+    if (summary_counts.get("qualified_leads") != 0 or
+            summary_counts.get("crm_ready") != 0):
+        raise ValueError("EIS_REVIEW_SUMMARY_PREAPPROVED_FORBIDDEN")
     if total != len(unique):
         raise ValueError("EIS_REVIEW_SUMMARY_UNIQUE_COUNT_MISMATCH")
     rows = list(unique.values())
-    rows.sort(key=lambda x: (
-        x["public_sector_hint"] == "POSSIBLE_PUBLIC_INSTITUTION_REVIEW",
-        not bool(x["published_on"]), x["published_on"] or "0000",
-        x["notice_id"]
-    ), reverse=False)
+    # Recent items first within each group. Unverified private-looking buyers
+    # are reviewed before public-sector-looking organisations; not ranked as leads.
+    rows.sort(key=lambda x: x["published_on"], reverse=True)
+    rows.sort(key=lambda x: x["public_sector_hint"] == "POSSIBLE_PUBLIC_INSTITUTION_REVIEW")
     public_hints = sum(r["public_sector_hint"] == "POSSIBLE_PUBLIC_INSTITUTION_REVIEW"
                        for r in rows)
     return {
@@ -204,6 +209,16 @@ def main() -> None:
         print("EIS_REVIEW=BLOCKED; REASON=" + str(error).splitlines()[0][:100])
         raise SystemExit(2)
     print("EIS_REVIEW_COUNTS=" + json.dumps(report["counts"], ensure_ascii=True))
+    preview = [{
+        "notice_id": item["notice_id"],
+        "published_on": item["published_on"],
+        "title": item["title"],
+        "buyer_name_rss_unverified": item["buyer_name_rss_unverified"],
+        "public_sector_hint": item["public_sector_hint"],
+        "official_notice_url": item["official_notice_url"],
+    } for item in report["items"][:12]]
+    print("EIS_REVIEW_FIRST_12_OFFICIAL_NOTICES_ASCII=" + json.dumps(
+        preview, ensure_ascii=True, sort_keys=True))
     print("EIS_REVIEW_PROFILE_COUNTS=" + json.dumps(report["profiles"], ensure_ascii=True))
     print("EIS_REVIEW_JSON=" + str(filenames[0]))
     print("EIS_REVIEW_CSV=" + str(filenames[1]))

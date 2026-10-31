@@ -1,7 +1,7 @@
 """Offline-first lead qualification. No unsolicited messages, no automatic CRM writes."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import date, datetime
 from pathlib import Path
 import json
@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS crm_links (
 def initialize(db_path: str | Path):
     p = Path(db_path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(p) as con:
+    with closing(sqlite3.connect(p)) as con:
         con.executescript(SCHEMA)
 
 
@@ -323,7 +323,7 @@ def qualify(db_path, today=None):
 
 
 def get_leads(db_path, only_queue=False):
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute("""SELECT c.*,q.score,q.priority,q.score_version,q.recommended_service,
           q.explanation,q.ai_status,q.ai_suggestion
@@ -371,7 +371,7 @@ def metrics(db_path):
     counts = {}
     for lead in leads:
         counts[lead["priority"]] = counts.get(lead["priority"], 0) + 1
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con:
         staged_count = con.execute("SELECT COUNT(*) FROM source_candidates").fetchone()[0]
         real_signal_count = con.execute("SELECT COUNT(*) FROM signals WHERE source_name='trudvsem-open-vacancies'").fetchone()[0]
     return {"staged_needs_inn": staged_count, "real_signal_count": real_signal_count,

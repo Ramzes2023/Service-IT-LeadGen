@@ -1,0 +1,123 @@
+"""Synthetic human-review triage and observed public buyer names from EIS RSS."""
+import csv
+import json
+
+import pytest
+from leadpilot import eis_108_triage as t
+from leadpilot.eis_rss import SOURCE_NAME
+
+NOTICE = "https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber=0138200002926000037"
+
+SAMPLED_PUBLIC_BUYERS = (
+    "ЗАКОНОДАТЕЛЬНОЕ СОБРАНИЕ КАМЧАТСКОГО КРАЯ",
+    "АДМИНИСТРАЦИЯ ВНУТРИГОРОДСКОГО МУНИЦИПАЛЬНОГО ОБРАЗОВАНИЯ - МУНИЦИПАЛЬНОГО ОКРУГА ВЫХИНО-ЖУЛЕБИНО В ГОРОДЕ МОСКВЕ",
+    "ОБЛАСТНОЕ ГОСУДАРСТВЕННОЕ УЧРЕЖДЕНИЕ ГОСУДАРСТВЕННЫЙ АРХИВ САРАТОВСКОЙ ОБЛАСТИ",
+    "АДМИНИСТРАЦИЯ ГОРОДСКОГО ОКРУГА ГОРОД ВОРОНЕЖ",
+    "УПРАВЛЕНИЕ ЗАПИСИ АКТОВ ГРАЖДАНСКОГО СОСТОЯНИЯ КУЗБАССА",
+    "ДЕПАРТАМЕНТ АРХИТЕКТУРЫ ГОРОДА САЯНОГОРСКА",
+    "АДМИНИСТРАЦИЯ МАРИИНСКОГО МУНИЦИПАЛЬНОГО ОКРУГА",
+    "МУНИЦИПАЛЬНОЕ КАЗЁННОЕ УЧРЕЖДЕНИЕ",
+    "КАЗЁННОЕ УЧРЕЖДЕНИЕ НЕНЕЦКОГО АВТОНОМНОГО ОКРУГА",
+    "УПРАВЛЕНИЕ ФЕДЕРАЛЬНОЙ СЛУЖБЫ ИСПОЛНЕНИЯ НАКАЗАНИЙ ПО СМОЛЕНСКОЙ ОБЛАСТИ",
+    "КОМИТЕТ ФИНАНСОВ ГОРОДА КУРСКА",
+    "АДМИНИСТРАЦИЯ МУНИЦИПАЛЬНОГО ОБРАЗОВАНИЯ ТИХВИНСКИЙ РАЙОН",
+)
+
+
+@pytest.mark.parametrize("buyer", SAMPLED_PUBLIC_BUYERS)
+def test_public_buyer_not_mistaken_for_unverified_private_company(buyer):
+    assert t._buyer_hint(buyer) == "POSSIBLE_PUBLIC_SECTOR_BUYER"
+
+
+@pytest.mark.parametrize("buyer,expected", [
+    ("ООО Альфа", "LEGAL_FORM_LOOKS_COMMERCIAL_SIZE_UNVERIFIED"),
+    ("АО Бета", "LEGAL_FORM_LOOKS_COMMERCIAL_SIZE_UNVERIFIED"),
+    ("", "BUYER_NAME_MISSING"),
+    ("Незнакомая организация", "BUYER_LEGAL_FORM_UNVERIFIED"),
+])
+def test_legal_form_does_not_prove_size(buyer, expected):
+    assert t._buyer_hint(buyer) == expected
+
+
+@pytest.mark.parametrize("title,kind", [
+    ("Предоставление лицензий 1С: Кабинет сотрудника и Комплект ИТС",
+     "MIXED_LICENSE_AND_SERVICE_REVIEW"),
+    ("Поставка лицензий на программу 1С",
+     "LICENSE_SUPPLY_NOT_VERIFIED_EXTERNAL_SUPPORT"),
+    ("Информационно-технологическое сопровождение 1С ИТС",
+     "ITS_SUBSCRIPTION_OR_PACKAGE_REVIEW"),
+    ("Оказание услуг по сопровождению программных продуктов 1С",
+     "EXPLICIT_1C_SERVICE_REVIEW"),
+    ("Оказание услуг по доработке 1С",
+     "EXPLICIT_1C_SERVICE_REVIEW"),
+])
+def test_mixed_licensing_versus_genuine_work_title(title, kind):
+    assert t._procurement_hint(title) == kind
+
+
+def _report(buyer="ООО Альфа",title="Оказание услуг по сопровождению 1С"):
+    return {
+        "mode": "EIS_PREQUALIFICATION_EVIDENCE_REVIEW_ONLY",
+        "source": SOURCE_NAME,
+        "crm_writes": "NO", "outbound_messages": "NO",
+        "counts": {"unique_notices_to_review": 1, "qualified_b2b_leads": 0,
+                   "crm_ready": 0, "exact_inn_fns_verified": 0},
+        "items": [
+            {"official_notice_url": NOTICE, "notice_id": "synthetic",
+             "published_on": "2026-10-30", "title": title,
+             "buyer_name_rss_unverified": buyer, "buyer_inn": "",
+             "fns_size": "UNVERIFIED", "crm_ready": False,
+             "review_status": "RESEARCH_ONLY_NOT_A_QUALIFIED_LEAD"},
+        ]
+    }
+
+
+def test_no_fake_qualified_lead():
+    result = t.triage(_report("АДМИНИСТРАЦИЯ ГОРОДА МОСКВЫ"))
+    assert result["counts"]["public_sector_text_hints"] == 1
+    assert result["counts"]["qualified_b2b_leads"] == 0
+    assert result["counts"]["confirmed_small_business_buyers"] == 0
+    assert result["rows"][0]["manual_work_queue"] == "PUBLIC_BUYER_REVIEW_SEPARATELY"
+    assert result["rows"][0]["crm_ready"] is False
+    assert result["rows"][0]["outbound_authorized"] is False
+    assert "FNS_SIZE" in result["rows"][0]["review_holds"]
+
+
+def test_private_looking_legal_form_still_unverified_and_not_crm():
+    result = t.triage(_report())
+    assert result["rows"][0]["manual_work_queue"] == "FNS_BUYER_INN_AND_GEOGRAPHY_REVIEW_REQUIRED"
+    assert result["counts"]["qualified_b2b_leads"] == 0
+    assert result["counts"]["crm_ready"] == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("buyer_inn", "7700000000"),
+    ("fns_size", "MICRO"),
+    ("crm_ready", True),
+    ("review_status", "APPROVED"),
+    ("official_notice_url", "https://evil.example/notices/1"),
+])
+def test_untrusted_approval_or_url_rejected(field, value):
+    report = _report()
+    report["items"][0][field] = value
+    with pytest.raises(ValueError):
+        t.triage(report)
+
+
+def test_reject_summary_pretending_real_qualified_leads():
+    report = _report()
+    report["counts"]["qualified_b2b_leads"] = 1
+    with pytest.raises(ValueError, match="PREAPPROVAL"):
+        t.triage(report)
+
+
+def test_exclusive_csv_and_excel_injection(tmp_path,monkeypatch):
+    report = t.triage(_report("=HYPERLINK(1)"))
+    monkeypatch.chdir(tmp_path)
+    json_path, csv_path = t.save(report, "exports/review.json", "exports/review.csv")
+    assert json.loads(json_path.read_text(encoding="utf8"))["counts"]["crm_ready"] == 0
+    with csv_path.open(encoding="utf-8-sig", newline="") as f:
+        first = next(csv.DictReader(f))
+    assert first["buyer_name_rss_unverified"].startswith("'=")
+    with pytest.raises(ValueError):
+        t.save(report, "exports/review.json", "exports/review.csv")

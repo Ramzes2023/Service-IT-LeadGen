@@ -13,7 +13,11 @@ from tempfile import TemporaryDirectory
 import sqlite3
 
 from .core import ingest, qualify, suppress, metrics
-from .workflow_ops import initialize, review, stage_simulation, deliver_simulation, report
+from .workflow_ops import review, stage_simulation, deliver_simulation, report
+from .manager_workspace_demo import (
+    initialize as initialize_workspace, assign as assign_demo_task,
+    record_simulated_result, overview as demo_task_overview,
+)
 
 CARDS = (
     ("Lead intake", "Companies and independent signals; exact INN never merges on shared phone/domain"),
@@ -29,7 +33,7 @@ def simulate() -> dict:
     now = date.today()
     with TemporaryDirectory(prefix="serviceit-architecture-demo-") as directory:
         db = Path(directory) / "demo.sqlite3"
-        initialize(db)
+        initialize_workspace(db)
         sample = {
             "inn": "7700000009", "name": "ООО «ДЕМО-ПРОЕКТ 1»",
             "region": "Москва", "industry": "розничная торговля",
@@ -68,6 +72,22 @@ def simulate() -> dict:
                    reviewer_role="manager", reason="Синтетический менеджер проверил сигнал",
                    today=now)
             stage_simulation(db, a["company_id"], sid, today=now)
+        # Independent local manager follow-up journal; no real contact or task API.
+        task = assign_demo_task(
+            db, a["company_id"], signals[0], assignee_label="DEMO-MANAGER-1",
+            next_action="Проверить заявку и подготовить синтетическую демонстрацию",
+            due=now + timedelta(days=1), today=now,
+        )
+        followup = record_simulated_result(
+            db, task["task_id"], event_id="DEMO-EVENT-FOLLOWUP-001",
+            outcome="FOLLOW_UP", note="Синтетическое повторное касание; реального звонка не было",
+            next_due=now + timedelta(days=3), today=now,
+        )
+        repeated_task = assign_demo_task(
+            db, a["company_id"], signals[0], assignee_label="DEMO-MANAGER-1",
+            next_action="Проверить заявку и подготовить синтетическую демонстрацию",
+            due=now + timedelta(days=1), today=now,
+        )
         failure = deliver_simulation(db, service_available=False, today=now)
         recovered = deliver_simulation(db, service_available=True, today=now)
         duplicate_replay = deliver_simulation(db, service_available=True, today=now)
@@ -97,6 +117,10 @@ def simulate() -> dict:
             "duplicate_replay": duplicate_replay,
             "existing_client_hold": existing_held["status"],
             "stop_list_hold": stopped_held["status"],
+            "manager_task": task["status"],
+            "manager_followup": followup["state"],
+            "repeat_task": repeated_task["status"],
+            "manager_task_overview": demo_task_overview(db),
             "local_workflow": counts, "demo_metrics": board,
             "real_bitrix24": "NOT_CONNECTED",
             "manager_login_roles": "NOT_AUTHENTICATED_OUTSIDE_DEMO",
@@ -115,6 +139,7 @@ def render(result: dict) -> str:
     signal = result["signal_count"]
     simulated = result["recovered"]["simulated_completed"]
     a = result["workflow_audit_events"]
+    manager_tasks = sum(result["manager_task_overview"]["tasks"].values())
     return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Сервис ИТ — демонстрация архитектуры</title>
 <style>
@@ -142,12 +167,14 @@ h2{{font-size:20px;margin:32px 0 14px}}
 <div class="card"><span>Независимые сигналы</span><b>{signal}</b></div>
 <div class="card"><span>Имитаций доставки</span><b>{simulated}</b></div>
 <div class="card"><span>События аудита</span><b>{a}</b></div></div>
+<p>Задачи менеджера (локальный симулятор): <strong>{manager_tasks}</strong>. Статус последнего задания: <strong>{escape(result['manager_followup'])}</strong>.</p>
 <h2>Как устроен конвейер</h2><div class="flow">{tiles}</div>
 <h2>Сценарии приёмки</h2><section class="section"><table class="table">
 <tr><td>Тот же ИНН и тот же сигнал</td><td class="good">Не создаётся дубль</td></tr>
 <tr><td>Тот же ИНН, новый сигнал</td><td class="good">Сигнал сохраняется отдельно</td></tr>
 <tr><td>CRM временно недоступна (симуляция)</td><td class="good">Операция сохранена и повторена</td></tr>
 <tr><td>Повторная передача того же сигнала</td><td class="good">Не создаёт второй операции</td></tr>
+<tr><td>Менеджер назначил задачу и повторное касание</td><td class="good">События в локальном журнале</td></tr>
 <tr><td>Существующий клиент</td><td class="good">Передача остановлена</td></tr>
 <tr><td>Появление компании в стоп-листе</td><td class="good">Следующая передача заблокирована</td></tr>
 <tr><td>Синтетический Lead Score</td><td class="good">Формула и объяснение работают локально</td></tr>

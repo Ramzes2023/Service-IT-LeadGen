@@ -213,3 +213,15 @@ def test_cli_failure_is_nonzero_and_does_not_claim_success(tmp_path, monkeypatch
     output = capsys.readouterr().out
     assert "EIS_DAILY=BLOCKED; ERROR=EIS_HTTP_RATE_LIMIT_429" in output
     assert "EIS_DAILY_STATUS=PASS" not in output
+
+
+
+def test_successful_empty_baseline_next_new_notice_is_detected(tmp_path):
+    source = original(tmp_path)
+    state = tmp_path / "state"
+    empty = d.run_daily(source, state, today=TODAY, downloader=fake_download())
+    assert empty["counts"]["baseline_initialization"] is True
+    subsequent = d.run_daily(source, state, today=TODAY,
+                             downloader=fake_download(99))
+    assert subsequent["counts"]["baseline_initialization"] is False
+    assert subsequent["counts"]["new_notices_since_previous_success"] == 1

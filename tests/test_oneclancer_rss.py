@@ -130,3 +130,18 @@ def test_real_cli_from_saved_rss(tmp_path,monkeypatch,capsys):
 def test_unsafe_task_url(link):
     with pytest.raises(ValueError):
         c._task_url(link)
+
+
+def test_old_rss_http_link_is_only_canonicalized_not_fetched():
+    # Older published feeds can contain plaintext links. The only network
+    # request remains official HTTPS RSS; exported task URL is HTTPS.
+    r=c.parse(xml(link="http://1clancer.ru/task/79561"),today=TODAY)
+    assert r["items"][0]["source_url"]=="https://1clancer.ru/task/79561"
+
+
+def test_rss_guid_fallback_only_when_it_is_a_valid_task_url():
+    value=xml().decode().replace(
+        "<link>https://1clancer.ru/task/79561</link>",
+        "<guid>http://1clancer.ru/task/79561</guid>")
+    r=c.parse(value.encode(),today=TODAY)
+    assert r["counts"]["research_task_signals"]==1

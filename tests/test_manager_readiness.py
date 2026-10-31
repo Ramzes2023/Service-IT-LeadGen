@@ -102,3 +102,38 @@ def test_claimed_crm_duplicates_status_not_trusted(tmp_path, monkeypatch):
     result = assemble(*paths)
     assert any("не подтверждено" in msg for msg in result["companies"][0]["next_steps"])
     assert result["counts"]["ready_for_crm"] == 0
+
+
+def test_optional_public_hints_show_legal_hold_without_promoting_crm(tmp_path, monkeypatch):
+    paths = fixtures(tmp_path, monkeypatch)
+    hp = tmp_path / "research_hints.json"
+    today = date.today().isoformat()
+    hp.write_text(json.dumps({
+        "mode": "PUBLIC_RESEARCH_HINTS", "review_date": today,
+        "items": [{"inn": "7701234560", "name": "Synthetic organization",
+                   "action": "LEGAL_REVIEW", "note": "Needs separate compliance review",
+                   "source_url": "https://regulator.example.org/reference",
+                   "source_level": "OFFICIAL_REGULATOR", "checked_on": today}]
+    }), encoding="utf-8")
+    result = assemble(*paths, hints=hp)
+    row = result["companies"][0]
+    assert row["public_research_action"] == "LEGAL_REVIEW"
+    assert row["public_research_is_approved"] is False
+    assert row["crm_ready"] is False
+    assert row["outbound_authorized"] is False
+    assert "правовая проверка" in row["next_steps"][0]
+
+
+def test_optional_public_hints_must_match_exact_inn(tmp_path, monkeypatch):
+    paths = fixtures(tmp_path, monkeypatch)
+    hp = tmp_path / "bad_hints.json"
+    today = date.today().isoformat()
+    hp.write_text(json.dumps({
+        "mode": "PUBLIC_RESEARCH_HINTS", "review_date": today,
+        "items": [{"inn": "7701234561", "name": "Unrelated company name",
+                   "action": "DEFER_SCOPE", "note": "Another company, not this one",
+                   "source_url": "https://example.org/about",
+                   "source_level": "THIRD_PARTY", "checked_on": today}]
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="match"):
+        assemble(*paths, hints=hp)

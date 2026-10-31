@@ -127,12 +127,12 @@ def _is_1c_external_service(title: str, subject: str | None) -> bool:
     source = subject if subject is not None else title
     if subject is None and re.match(
             r"^(?:Электронный аукцион|Запрос котировок|Закупка, осуществляемая|"
-            r"Открытый конкурс|Запрос предложений)\\b", title, flags=re.I):
+            r"Открытый конкурс|Запрос предложений)\b", title, flags=re.I):
         return False
     t = _plain(source, 700).casefold().replace("ё", "е")
     if not t or "битрикс" in t:
         return False
-    if re.search(r"\\b(?:без|не\\s+предусмотрен[а-я]*)\\s+(?:оказания\\s+)?услуг\\s+(?:по\\s+)?(?:сопровожд|поддержк|внедрен|настройк)", t):
+    if re.search(r"\b(?:без|не\s+предусмотрен[а-я]*)\s+(?:оказания\s+)?услуг\s+(?:по\s+)?(?:сопровожд|поддержк|внедрен|настройк)", t):
         return False
     return (bool(re.search(r"(?<![a-zа-я0-9])1[сc](?![a-zа-я0-9])", t))
             and any(word in t for word in SERVICE_WORDS))

@@ -150,3 +150,10 @@ def test_source_scan_sends_requested_offset_to_documented_api():
         assert result["offset"] == 50 and result["fetched"] == 0
     finally:
         client.close()
+
+
+def test_missing_region_snapshot_is_not_silently_treated_as_no_new(tmp_path):
+    folder, prior = fixtures(tmp_path)
+    (folder / "trudvsem_50.json").unlink()
+    with pytest.raises(ValueError, match="Missing, corrupted"):
+        plan(folder, prior, today=TODAY)

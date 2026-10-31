@@ -257,8 +257,14 @@ def fetch(*, url: str, client: httpx.Client | None = None, today: date | None = 
         try:
             with client.stream("GET", url, headers={"Accept": "application/rss+xml, application/atom+xml, application/xml",
                                                     "User-Agent": "ServiceITLeadGen-EISResearch/0.1"}) as response:
+                if 300 <= response.status_code < 400:
+                    raise RuntimeError("EIS_SOURCE_UNAVAILABLE_OR_REDIRECT_HTTP_" + str(response.status_code))
+                if response.status_code == 401 or response.status_code == 403:
+                    raise RuntimeError("EIS_HTTP_AUTH_OR_FORBIDDEN_" + str(response.status_code))
+                if response.status_code == 429:
+                    raise RuntimeError("EIS_HTTP_RATE_LIMIT_429")
                 if response.status_code != 200:
-                    raise RuntimeError("EIS_SOURCE_UNAVAILABLE_OR_REDIRECT")
+                    raise RuntimeError("EIS_HTTP_STATUS_" + str(response.status_code))
                 media = response.headers.get("content-type", "").lower()
                 if not any(x in media for x in ("xml", "rss", "atom")):
                     raise RuntimeError("EIS_RESPONSE_NOT_XML")
@@ -267,6 +273,15 @@ def fetch(*, url: str, client: httpx.Client | None = None, today: date | None = 
                     body.extend(chunk)
                     if len(body) > MAX_FEED_BYTES:
                         raise RuntimeError("EIS_FEED_TOO_LARGE")
+        except httpx.TimeoutException:
+            raise RuntimeError("EIS_NETWORK_TIMEOUT") from None
+        except httpx.ConnectError as exc:
+            # Distinguish certificate trust from DNS/proxy/connectivity failures.
+            # Never expose exception text, hostname details or certificate data.
+            raw = str(exc).upper()
+            if any(code in raw for code in ("CERTIFICATE_VERIFY_FAILED", "CERTIFICATE VERIFY FAILED", "UNKNOWN CA", "SELF SIGNED CERTIFICATE")):
+                raise RuntimeError("EIS_TLS_TRUST_FAILED") from None
+            raise RuntimeError("EIS_NETWORK_CONNECTION_FAILED") from None
         except httpx.HTTPError:
             raise RuntimeError("EIS_TRANSPORT_OR_TLS_ERROR") from None
         return parse_feed(bytes(body), feed_url=url, today=today)

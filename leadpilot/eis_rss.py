@@ -20,6 +20,7 @@ import re
 from urllib.parse import parse_qs, urlsplit
 
 from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
 import httpx
 
 EIS_HOST = "zakupki.gov.ru"
@@ -105,7 +106,7 @@ def parse_feed(xml: bytes, *, feed_url: str, today: date | None = None) -> dict:
         raise ValueError("EIS_FEED_SIZE_INVALID")
     try:
         root = ElementTree.fromstring(xml)
-    except (ElementTree.ParseError, ValueError):
+    except (ElementTree.ParseError, DefusedXmlException, ValueError):
         raise ValueError("EIS_FEED_XML_INVALID") from None
     root_name = root.tag.rsplit("}", 1)[-1].lower()
     if root_name == "rss":

@@ -37,6 +37,31 @@ assert manager["reviewed_count"] == 1 and manager["unreviewed_count"] == 1
 assert manager["crm_writes"] == "NO"
 assert manager["actions_not_sent"][0]["params_template_without_item_id"]["fields"]["stageId"] == "DT1062_21:PREPARATION"
 print("SERVICEIT_1062_MANAGER_PREVIEW=PASS; SYNTHETIC_SIGNALS=2; REVIEWED=1; UF_FIELDS=16; REST_CALLS=0")
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from leadpilot.bitrix_1062_outbox import initialize, enqueue_synthetic_plan, claim_next, mark_uncertain, overview
+from leadpilot.bitrix_1062_reconcile import reconcile_uncertain_key
+with TemporaryDirectory(prefix="serviceit-1062-outbox-") as scratch:
+    db = Path(scratch) / "outbox.sqlite3"
+    initialize(db)
+    result = enqueue_synthetic_plan(db, mapped)
+    assert result["queued"] == 2
+    assert enqueue_synthetic_plan(db, mapped)["duplicate_skipped"] == 2
+    claimed = claim_next(db)
+    assert claimed and claimed["crm_writes"] == "NO"
+    mark_uncertain(db, claimed["idempotency_key"], reason_code="SIMULATED_TIMEOUT")
+    fields = claimed["params_preview_only"]["fields"]
+    item = dict(id=791, entityTypeId=1062, categoryId=21, stageId="DT1062_21:NEW",
+                title=fields["title"],
+                UF_CRM_13_SVCIT_IDEMPOTENCY_KEY=claimed["idempotency_key"])
+    def fake_read_only(method, params):
+        assert method in ("crm.item.list", "crm.item.get")
+        assert params["entityTypeId"] == 1062
+        return {"items": [item]} if method == "crm.item.list" else {"item": item}
+    assert reconcile_uncertain_key(db, fake_read_only, claimed["idempotency_key"])["status"] == "RECONCILED_REMOTE_READBACK"
+    assert overview(db)["states"]["VERIFIED"] == 1
+    assert overview(db)["crm_writes"] == "NO"
+print("SERVICEIT_1062_OUTBOX_PREVIEW=PASS; QUEUED=2; DEDUPE=YES; UNCERTAIN_RECOVERY=READ_ONLY; REST_CALLS=0")
 '@
     $Check | & $PythonPath -
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_1062_MANAGER_PREVIEW_FAILED' }

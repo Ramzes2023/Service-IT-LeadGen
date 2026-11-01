@@ -57,7 +57,7 @@ def _demo_item_checks(item: dict) -> dict[str, bool]:
     rather than relaxing it to pass a later CRM state accidentally.
     """
     expected_key = "DEMO-IDEMP-" + sha256(
-        f"{CONTRACT_VERSION}\\x007700000009\\x00DEMO-ITREQ-001".encode()
+        f"{CONTRACT_VERSION}\x007700000009\x00DEMO-ITREQ-001".encode()
     ).hexdigest()[:32]
     return {
         "item_id_matches": str(item.get("id")) == str(ITEM_ID),

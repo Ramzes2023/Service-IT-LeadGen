@@ -1,9 +1,10 @@
 """No-write Bitrix24 linked DEMO manager task contract."""
 from copy import deepcopy
+from hashlib import sha256
 
 import pytest
 
-from leadpilot.bitrix_1062_mapping import ALL_FIELD_CODES
+from leadpilot.bitrix_1062_mapping import ALL_FIELD_CODES, CONTRACT_VERSION
 from leadpilot.bitrix_1062_manager_task_preview import (
     DemoTaskGateBlocked, task_link_preflight,
 )
@@ -21,7 +22,9 @@ def fixture():
         "UF_CRM_13_SVCIT_SIGNAL_URL": "https://example.invalid/serviceit-demo/request/001",
         "UF_CRM_13_SVCIT_SIGNAL_ID": "DEMO-ITREQ-001",
         "UF_CRM_13_SVCIT_SIGNAL_KIND": "demo-synthetic",
-        "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-" + "a" * 32,
+        "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-" + sha256(
+            f"{CONTRACT_VERSION}\x007700000009\x00DEMO-ITREQ-001".encode()
+        ).hexdigest()[:32],
     }
     for code in ALL_FIELD_CODES:
         item.setdefault(code, 86 if code.endswith("LEAD_SCORE") else "DEMO SYNTHETIC")
@@ -131,4 +134,17 @@ def test_missing_one_of_sixteen_original_uf_fields_blocks():
 def test_task_crm_link_field_schema_invalid_blocks():
     f=fixture();f["task_fields"]["UF_CRM_TASK"]["type"]="string"
     with pytest.raises(DemoTaskGateBlocked,match="TASK_CRM_BINDING_FIELD_NOT_CRM_TYPE"):
+        run(f)
+
+
+@pytest.mark.parametrize("name", ["isAutomationEnabled", "isBizProcEnabled"])
+def test_unknown_automation_state_blocks(name):
+    f=fixture();f["process_type"].pop(name)
+    with pytest.raises(DemoTaskGateBlocked,match="SMART_PROCESS_AUTOMATION_MUST_BE_CONFIRMED_OFF"):
+        run(f)
+
+
+def test_another_well_formed_demo_key_rejected():
+    f=fixture();f["item"]["UF_CRM_13_SVCIT_IDEMPOTENCY_KEY"]="DEMO-IDEMP-"+"a"*32
+    with pytest.raises(DemoTaskGateBlocked,match="SYNTHETIC_KEY_MISMATCH"):
         run(f)

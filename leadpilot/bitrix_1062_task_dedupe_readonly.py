@@ -58,14 +58,22 @@ def _list_tasks(client: httpx.Client, base: str, field: str, match: str) -> list
             )
         except (httpx.HTTPError, ValueError, TypeError):
             _deny("TASK_LIST_UNAVAILABLE")
-        if response.status_code != 200 or len(response.content) > 128_000:
-            _deny("TASK_LIST_UNAVAILABLE")
+        if len(response.content) > 128_000:
+            _deny("TASK_LIST_RESPONSE_TOO_LARGE")
+        if response.status_code != 200:
+            if response.status_code in (400, 401, 403, 429):
+                _deny("TASK_LIST_HTTP_" + str(response.status_code))
+            _deny("TASK_LIST_HTTP_OTHER")
         try:
             raw = response.json()
         except (ValueError, TypeError):
             _deny("TASK_LIST_MALFORMED")
-        if not isinstance(raw, dict) or "error" in raw or not isinstance(raw.get("result"), dict):
-            _deny("TASK_LIST_UNAVAILABLE")
+        if not isinstance(raw, dict):
+            _deny("TASK_LIST_MALFORMED")
+        if "error" in raw:
+            _deny("TASK_LIST_API_ERROR")
+        if not isinstance(raw.get("result"), dict):
+            _deny("TASK_LIST_SCHEMA_CHANGED")
         data = raw["result"].get("tasks")
         if not isinstance(data, list) or len(data) > PAGE_SIZE:
             _deny("TASK_LIST_SCHEMA_CHANGED")
@@ -155,7 +163,10 @@ def main() -> None:
         code = str(exc)
         if code not in {
             "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE", "TASK_LIST_MALFORMED",
-            "TASK_LIST_SCHEMA_CHANGED", "TASK_ID_INVALID", "TASK_PAGINATION_DUPLICATE",
+            "TASK_LIST_SCHEMA_CHANGED", "TASK_LIST_HTTP_400", "TASK_LIST_HTTP_401",
+            "TASK_LIST_HTTP_403", "TASK_LIST_HTTP_429", "TASK_LIST_HTTP_OTHER",
+            "TASK_LIST_RESPONSE_TOO_LARGE", "TASK_LIST_API_ERROR",
+            "TASK_ID_INVALID", "TASK_PAGINATION_DUPLICATE",
             "TASK_TITLE_MISSING", "CRM_TASK_LINK_UNEXPECTED_SHAPE",
             "TASK_TITLE_FILTER_NOT_EXACT", "TASK_CRM_FILTER_IGNORED",
             "TASK_PAGINATION_UNVERIFIED", "TASK_RESULT_WINDOW_TOO_LARGE",

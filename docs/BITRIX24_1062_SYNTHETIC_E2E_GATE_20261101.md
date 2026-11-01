@@ -53,3 +53,32 @@ E2E_EXIT=0
 **Актуальная граница:** `BITRIX_LIVE_SCHEMA=VERIFIED`, `BITRIX_SYNTHETIC_LIVE_E2E=PASS_CLEAN`, `BITRIX_SOURCE_ADAPTER=NOT_CONNECTED`, `MANAGER_APPROVAL_AND_DEDUP_LIVE=NOT_VERIFIED`, `PRODUCTION_READY=NO`. Этим документом обновлены прежние исторические отметки `NOT_RUN`.
 
 Следующая задача — интеграционные тесты контракта в изолированном worktree, независимый обзор live-адаптера и отдельная проверка бизнес-процесса менеджера. Источники остаются вне объёма текущего этапа.
+
+
+## 01.11.2026 — Windows pinned acceptance 78a5e4e: 52 PASS, mapping complete
+
+User provided a real Windows isolated-worktree acceptance of `78a5e4ee65dccddaf3ec50f7fb720222dcd96457`, using the existing project virtualenv:
+
+```text
+52 passed in 0.40s
+SERVICEIT_1062_MAPPING_PREVIEW=PASS; SYNTHETIC_SIGNALS=2; UF_FIELDS=16; REST_CALLS=0
+SERVICEIT_1062_MAPPING_ACCEPTANCE=PASS_OFFLINE_ONLY; CRM_WRITES=NO; SOURCES=NO
+ACCEPTANCE_EXIT=0
+```
+
+This is independent verification that the mapping has 16 fields and correctly accepts 2 synthetic independent signals with no REST calls. The test was performed at a frozen SHA (detached worktree) and thus **does not automatically test subsequent commits**.
+
+## 01.11.2026 — new manager decision bridge in GitHub, independent acceptance pending
+
+The PR next adds `leadpilot/bitrix_1062_manager_bridge.py` and `tests/test_bitrix_1062_manager_bridge.py`, extending the existing `workflow_ops` vocabulary `relevant/irrelevant/needs_research` into offline-only future stage actions for `1062/21`.
+
+- `relevant` suggests `DT1062_21:SUCCESS` (signal approved for further work, **not a sale**).
+- `irrelevant` suggests `DT1062_21:FAIL`.
+- `needs_research` suggests `DT1062_21:PREPARATION`.
+- Fail-closed validation: `DEMO-IDEMP` key must correlate to an existing synthetic intent; one event per signal/event ID; local `DEMO-MANAGER` marker, decision, note and date rules; unknown fields/contacts rejected.
+- Generated payload intentionally has **no live Bitrix item ID**, no transport, no webhook and no live manager authorization claim. Any live update must first verify the actual item, user rights and current `DT1062_21:CLIENT` stage independently.
+- Windows `scripts/RUN_SERVICEIT_BITRIX_1062_MAPPING_ACCEPTANCE.ps1` updated to include manager bridge tests and an offline preview check.
+
+**Status of this NEW commit:** code has been committed to the feature branch, but independent full Windows tests and GitHub Actions CI for this revision remain unverified. Do not claim these changes PASS until an operator returns `SERVICEIT_1062_MANAGER_ACCEPTANCE=PASS_OFFLINE_ONLY` and the exit code. The previously verified 52 tests belong to older `78a5e4e`.
+
+**Next gates after this acceptance:** direct integration to persisted manager workflow, idempotent live CRM handoff adapter with read-after-write/recovery and admin RBAC approval, then staging/deployment verification. Continue to keep real sources, actual customers, commercial funnels, email and telephone out of scope.

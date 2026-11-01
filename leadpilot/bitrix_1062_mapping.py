@@ -13,6 +13,8 @@ import re
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from .bitrix_synthetic_text_guard import synthetic_action_is_safe
+
 PORTAL = "serviseit.bitrix24.ru"
 ENTITY_TYPE_ID = 1062
 CATEGORY_ID = 21
@@ -101,7 +103,7 @@ def _validate_card(operation: Mapping[str, Any], today: date) -> tuple[str, dict
             or not re.fullmatch(r"[A-Za-z0-9._-]{1,30}", ver)
             or svc not in {"1С", "IT-аутсорсинг", "ККТ"}
             or not isinstance(action, str) or not 8 <= len(action) <= 120
-            or "@" in action or "http" in action.lower() or "\n" in action or "\r" in action):
+            or not synthetic_action_is_safe(action)):
         _reject("SIGNAL_VALUES_INVALID")
     fields: dict[str, Any] = {
         "title": f"DEMO ServiceIT AI — {sid}",

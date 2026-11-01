@@ -129,7 +129,7 @@ def test_full_unpaginated_page_blocks():
 
 
 def test_invalid_scope_does_not_show_auth_body():
-    with pytest.raises(TaskDiscoveryBlocked,match="TASK_LIST_UNAVAILABLE") as exc:
+    with pytest.raises(TaskDiscoveryBlocked,match="TASK_LIST_HTTP_401") as exc:
         call(override="scope")
     assert HOOK not in str(exc.value)
 
@@ -138,3 +138,26 @@ def test_metadata_requires_same_demo_card():
     # Contract is separately tested in test_bitrix_1062_task_metadata.
     assert CRM_BINDING == "T426_3"
     assert "НЕ ЗВОНИТЬ" in TASK_TITLE
+
+
+
+@pytest.mark.parametrize("http_code,expected", [
+    (400, "TASK_LIST_HTTP_400"),
+    (403, "TASK_LIST_HTTP_403"),
+    (429, "TASK_LIST_HTTP_429"),
+    (502, "TASK_LIST_HTTP_OTHER"),
+])
+def test_task_list_http_status_is_sanitized(http_code, expected):
+    import httpx
+    from leadpilot.bitrix_1062_task_dedupe_readonly import _list_tasks
+    def handler(req):
+        assert req.url.path.endswith("/tasks.task.list.json")
+        return httpx.Response(http_code, json={
+            "error": "CUSTOM_SECRET_INFO_CANNOT_BE_EXPOSED",
+            "error_description": "PRIVATE", "webhook": HOOK,
+        })
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(TaskDiscoveryBlocked, match=expected) as exc:
+            _list_tasks(client, HOOK, "UF_CRM_TASK", CRM_BINDING)
+    assert HOOK not in str(exc.value)
+    assert "CUSTOM_SECRET_INFO" not in str(exc.value)

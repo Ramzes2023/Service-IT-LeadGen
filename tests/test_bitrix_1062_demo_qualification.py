@@ -72,6 +72,14 @@ def portal(tmp_path, *, item=None, apply=False, ai=False, ai_result=None, deny=N
         elif method == "crm.status.list":
             result = [{"ENTITY_ID":"DYNAMIC_1062_STAGE_21","CATEGORY_ID":21,
                        "STATUS_ID":"DT1062_21:NEW","SEMANTICS":None}]
+        elif method == "crm.item.fields":
+            assert body == {"entityTypeId":1062,"useOriginalUfNames":"Y"}
+            result = {"fields":{
+                SCORE_FIELD: {"type":"integer","isReadOnly":False,"isMultiple":False},
+                VERSION_FIELD: {"type":"string","isReadOnly":False,"isMultiple":False},
+                ACTION_FIELD: {"type":"text","isReadOnly":False,"isMultiple":False},
+                STOP_FIELD: {"type":"string","isReadOnly":False,"isMultiple":False},
+            }}
         else:
             raise AssertionError(method)
         if deny == method:
@@ -184,4 +192,9 @@ def test_model_ai_synthetic_only_and_not_real_contact(tmp_path):
 def test_api_access_denied_is_safe_block(tmp_path):
     with pytest.raises(DemoBridgeBlocked,match="DEMO_METADATA_NOT_READY"):
         portal(tmp_path,apply=True,deny="crm.item.get")
+    assert not (tmp_path/"ledger.sqlite").exists()
+
+def test_schema_denied_blocks_before_write_or_ledger(tmp_path):
+    with pytest.raises(DemoBridgeBlocked, match="DEMO_FIELD_SCHEMA_READ_FAILED"):
+        portal(tmp_path, apply=True, deny="crm.item.fields")
     assert not (tmp_path/"ledger.sqlite").exists()

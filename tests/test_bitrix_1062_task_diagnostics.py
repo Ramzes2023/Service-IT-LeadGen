@@ -88,6 +88,8 @@ def test_missing_task_scope_is_method_specific_and_does_not_echo_secret():
     assert out["task_scope_missing_possible"] is True
     typ = out["methods"]["crm.type.getByEntityTypeId"]
     assert typ["correct_entity_type"] is True
+    assert typ["userfield_use_enabled"] is True
+    assert typ["tasks_task_linked_field_enabled"] is True
     assert typ["task_link_enabled"] is True
     assert typ["automation_confirmed_off"] is True
     body = json.dumps(out)
@@ -170,3 +172,33 @@ def test_type_report_flags_disabled_task_link_even_without_task_scope():
     assert out["status"]=="BLOCKED_READ_ONLY"
     assert out["methods"]["crm.type.getByEntityTypeId"]["task_link_enabled"] is False
     assert out["task_scope_missing_possible"] is True
+
+
+
+@pytest.mark.parametrize("userfield,linked,expected_use,expected_link", [
+    ("N", {"TASKS_TASK|UF_CRM_TASK": "true"}, False, True),
+    ("Y", {"TASKS_TASK|UF_CRM_TASK": "false"}, True, False),
+    ("Y", {}, True, False),
+    ("Y", {"TASKS_TASK|UF_CRM_TASK": "Y"}, True, True),
+    (None, {"TASKS_TASK|UF_CRM_TASK": "true"}, False, True),
+])
+def test_distinct_spa_settings_are_reported_with_task_scope_denied(
+    userfield, linked, expected_use, expected_link,
+):
+    data=results()
+    typ=data["crm.type.getByEntityTypeId"]["type"]
+    typ["isUseInUserfieldEnabled"]=userfield
+    typ["linkedUserFields"]=linked
+    def handler(request):
+        method=request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
+        if method=="tasks.task.getFields":
+            return httpx.Response(401, json={"error":"INSUFFICIENT_SCOPE"})
+        return httpx.Response(200, json={"result":data[method]})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        out=diagnose_task_metadata(HOOK,client=client)
+    flags=out["methods"]["crm.type.getByEntityTypeId"]
+    assert flags["userfield_use_enabled"] is expected_use
+    assert flags["tasks_task_linked_field_enabled"] is expected_link
+    assert flags["task_link_enabled"] is (expected_use and expected_link)
+    assert out["methods"]["tasks.task.getFields"]["api_error_code"]=="INSUFFICIENT_SCOPE"
+    assert out["task_created"] is False

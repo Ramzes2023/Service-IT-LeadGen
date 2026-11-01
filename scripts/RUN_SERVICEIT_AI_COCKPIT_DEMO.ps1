@@ -4,11 +4,14 @@ param(
     [switch]$ApplyDemo,
     [switch]$GigaChatOptIn,
     [switch]$SyntheticPrivacyOptIn,
+    [string]$PythonPath = '',
     [string]$StateDir = (Join-Path $env:LOCALAPPDATA 'ServiceIT\AI-Cockpit-Demo-v1')
 )
 $ErrorActionPreference = 'Stop'
-$pythonForCockpit = $env:SERVICEIT_PYTHON_FOR_TESTS
-if (-not $pythonForCockpit) { throw 'Set SERVICEIT_PYTHON_FOR_TESTS to the approved interpreter.' }
+$pythonForCockpit = $PythonPath
+if (-not $pythonForCockpit) { $pythonForCockpit = $env:SERVICEIT_PYTHON_FOR_TESTS }
+if (-not $pythonForCockpit) { throw 'Specify -PythonPath to the existing approved interpreter.' }
+if (-not (Test-Path -LiteralPath $pythonForCockpit -PathType Leaf)) { throw 'APPROVED_PYTHON_NOT_FOUND' }
 if ($ApplyDemo -and -not $InspectLive) { throw 'Apply requires explicit InspectLive.' }
 if ($Mode -eq 'populate' -and $ApplyDemo -and (-not $GigaChatOptIn -or -not $SyntheticPrivacyOptIn)) {
     throw 'Populate requires GigaChatOptIn and SyntheticPrivacyOptIn.'

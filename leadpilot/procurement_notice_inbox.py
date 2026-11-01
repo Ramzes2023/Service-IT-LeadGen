@@ -148,6 +148,7 @@ def read_email(path):
         pass
     return {
         "source": source,
+        "email_sha256": fingerprint,
         "subject": subject,
         "message_date": timestamp,
         "original_notice_urls": urls,
@@ -166,7 +167,7 @@ def audit(paths):
     seen, notices = set(), []
     for path in paths:
         item = read_email(path)
-        key = (item["source"], tuple(item["original_notice_urls"]), item["subject"])
+        key = item["email_sha256"]
         if key not in seen:
             seen.add(key)
             notices.append(item)

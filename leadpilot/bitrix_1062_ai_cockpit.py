@@ -33,6 +33,7 @@ SPECS = {
 }
 WRITE_FIELDS = frozenset(PREFIX + k for k in SPECS)
 LAYOUT_SCOPE = {"entityTypeId": 1062, "scope": "P", "extras": {"categoryId": 21}}
+COMMON_LAYOUT_SCOPE = {**LAYOUT_SCOPE, "scope": "C"}
 ITEM_SCOPE = {"entityTypeId": 1062, "id": 3, "useOriginalUfNames": "Y"}
 READ_METHODS = frozenset({"crm.type.getByEntityTypeId", "userfieldconfig.list", "userfieldconfig.get",
                           "userfieldconfig.getTypes", "crm.item.fields", "crm.item.get", "crm.item.details.configuration.get"})
@@ -182,11 +183,32 @@ def provision(rest, *, state=None, apply=False):
     return inspect_schema(rest)
 
 
-def plan_layout(current, available):
-    require(isinstance(current, list) and bool(current), "LAYOUT_NULL_OR_AMBIGUOUS")
+def validate_layout_sections(value):
+    # Bitrix documents a genuine null for an unsaved personal/shared layout.
+    # Non-null empty or malformed data is *not* equivalent to unsaved.
+    require(isinstance(value, list) and bool(value), "LAYOUT_EMPTY_OR_AMBIGUOUS")
     require(all(isinstance(s, dict) and isinstance(s.get("name"), str) and s.get("name")
-                and isinstance(s.get("elements"), list) for s in current), "LAYOUT_SHAPE_AMBIGUOUS")
-    require(len({s["name"] for s in current}) == len(current), "LAYOUT_DUPLICATE_SECTION")
+                and isinstance(s.get("elements"), list) for s in value), "LAYOUT_SHAPE_AMBIGUOUS")
+    require(len({s["name"] for s in value}) == len(value), "LAYOUT_DUPLICATE_SECTION")
+
+
+def inspect_layout(rest):
+    """Read only. P=null inherits C or Bitrix defaults; never write shared scope."""
+    personal = rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE))
+    if personal is not None:
+        validate_layout_sections(personal)
+        return {"origin": "PERSONAL_SAVED", "personal": personal, "common": None, "base": personal}
+    common = rest("crm.item.details.configuration.get", deepcopy(COMMON_LAYOUT_SCOPE))
+    if common is None:
+        # REST cannot expose the built-in effective default sections. A later
+        # layout SET must not guess or replace them with a partial layout.
+        return {"origin": "UNSAVED_DEFAULT", "personal": None, "common": None, "base": None}
+    validate_layout_sections(common)
+    return {"origin": "INHERITED_COMMON", "personal": None, "common": common, "base": common}
+
+
+def plan_layout(current, available):
+    validate_layout_sections(current)
     desired = [FIELD_MAP["lead_score"], FIELD_MAP["score_version"], *(PREFIX + k for k in SPECS)]
     require(set(desired).issubset(available), "LAYOUT_FIELDS_MISSING")
     target = "serviceit_ai_analysis"
@@ -221,19 +243,28 @@ def configure_layout(rest, *, state=None, apply=False, scope="P", user_id=None):
     require(not schema["missing"], "PROVISION_FIRST")
     fields = rest("crm.item.fields", {"entityTypeId": 1062, "useOriginalUfNames": "Y"})
     require(isinstance(fields, dict) and isinstance(fields.get("fields"), dict), "ITEM_FIELDS_INVALID")
-    before = rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE))
-    after = plan_layout(before, fields["fields"])
+    layout = inspect_layout(rest)
+    require(layout["base"] is not None, "LAYOUT_DEFAULT_REQUIRES_MANUAL_BASELINE")
+    before = layout["personal"]  # may legitimately be None, never coerce to []
+    after = plan_layout(layout["base"], fields["fields"])
     if apply and before != after:
         require(state is not None, "STATE_REQUIRED")
-        state.backup("personal-layout", {"scope": LAYOUT_SCOPE, "data": before, "proposed": after})
-        require(rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE)) == before, "LAYOUT_CONCURRENT_CHANGE")
+        # Preserve BOTH the original personal state and inherited common base.
+        state.backup("personal-layout", {"scope": LAYOUT_SCOPE, "origin": layout["origin"],
+                                         "data": before, "common_base": layout["common"], "proposed": after})
+        require(rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE)) == before,
+                "LAYOUT_CONCURRENT_CHANGE")
+        if layout["origin"] == "INHERITED_COMMON":
+            require(rest("crm.item.details.configuration.get", deepcopy(COMMON_LAYOUT_SCOPE)) == layout["common"],
+                    "LAYOUT_COMMON_CONCURRENT_CHANGE")
         payload = {**deepcopy(LAYOUT_SCOPE), "data": after}
         state.reserve("layout:1062:21:P", payload)
         rest("crm.item.details.configuration.set", payload)
-        require(rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE)) == after, "LAYOUT_READBACK_UNCERTAIN_NO_RETRY")
+        require(rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE)) == after,
+                "LAYOUT_READBACK_UNCERTAIN_NO_RETRY")
         state.verified("layout:1062:21:P")
     return {"status": "PERSONAL_LAYOUT_APPLIED" if apply else "LAYOUT_PREVIEW", "changed": before != after,
-            "before": before, "after": after}
+            "origin": layout["origin"], "before": before, "after": after}
 
 
 def demo_assessment(item, today):
@@ -302,6 +333,22 @@ def populate(rest, *, state=None, apply=False, gigachat=False, privacy=False, cl
     return {"status": "DEMO_AI_REPORT_VERIFIED", "score": report.score, "task_created": False}
 
 
+def live_readonly_preview(rest, today=None):
+    """Never requires a saved personal layout merely to inspect an exact DEMO."""
+    schema = inspect_schema(rest)
+    layout = inspect_layout(rest)
+    item = rest("crm.item.get", deepcopy(ITEM_SCOPE)).get("item")
+    assessment = demo_assessment(item, today or date.today())
+    report = build_report(assessment, source_text=AI_TEXT, evidence_quote=AI_TEXT,
+                          reference="DEMO-ITREQ-001")
+    return {"status": "LIVE_READONLY_PREVIEW", "missing": schema["missing"],
+            "ai": "NOT_RUN", "report": report.to_dict(),
+            "layout_origin": layout["origin"],
+            "layout_sections": len(layout["base"]) if layout["base"] is not None else 0,
+            "personal_layout_saved": layout["personal"] is not None,
+            "personal_layout_can_be_planned": layout["base"] is not None}
+
+
 def main(argv=None):
     import argparse
     import os
@@ -343,14 +390,7 @@ def main(argv=None):
             output = populate(rest, state=state, apply=args.apply_demo, gigachat=args.gigachat_opt_in,
                               privacy=args.synthetic_privacy_opt_in)
         else:
-            schema = inspect_schema(rest)
-            current = rest("crm.item.details.configuration.get", deepcopy(LAYOUT_SCOPE))
-            require(isinstance(current, list) and current, "LAYOUT_NULL_OR_AMBIGUOUS")
-            item = rest("crm.item.get", deepcopy(ITEM_SCOPE)).get("item")
-            assessment = demo_assessment(item, date.today())
-            report = build_report(assessment, source_text=AI_TEXT, evidence_quote=AI_TEXT, reference="DEMO-ITREQ-001")
-            output = {"status": "LIVE_READONLY_PREVIEW", "missing": schema["missing"], "ai": "NOT_RUN",
-                      "report": report.to_dict(), "layout_sections": len(current)}
+            output = live_readonly_preview(rest)
         print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 
@@ -373,7 +413,9 @@ if __name__ == "__main__":
             "FIELD_LIST_AMBIGUOUS", "FIELD_LIST_SCOPE_INVALID",
             "DUPLICATE_FIELD", "ORIGINAL_FIELDS_MISSING",
             "FIELD_GET_INVALID", "STATE_REQUIRED",
-            "LAYOUT_NULL_OR_AMBIGUOUS", "LAYOUT_SHAPE_AMBIGUOUS",
+            "LAYOUT_NULL_OR_AMBIGUOUS", "LAYOUT_EMPTY_OR_AMBIGUOUS",
+            "LAYOUT_DEFAULT_REQUIRES_MANUAL_BASELINE",
+            "LAYOUT_COMMON_CONCURRENT_CHANGE", "LAYOUT_SHAPE_AMBIGUOUS",
             "LAYOUT_DUPLICATE_SECTION", "LAYOUT_FIELDS_MISSING",
             "LAYOUT_SECTION_CONFLICT", "LAYOUT_DUPLICATE_AI_FIELD",
             "SHARED_OR_OTHER_USER_LAYOUT_DISABLED", "PROVISION_FIRST",

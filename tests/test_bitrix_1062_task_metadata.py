@@ -50,6 +50,8 @@ def inspect(data, *, fail_method=None):
         methods.append(method)
         if fail_method == method:
             return httpx.Response(403, json={"error": "ACCESS_DENIED"})
+        if method == "crm.status.list":
+            return httpx.Response(200, json={"result": data.get("crm.status.list", [])})
         return httpx.Response(200, json={"result": data[method]})
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         return audit_synthetic_task_link(WEBHOOK, client=client), methods
@@ -150,3 +152,76 @@ def test_clean_card_all_subchecks_true():
     assert result["exact_demo_card_readback"] is True
     assert len(result["exact_demo_card_checks"]) == 14
     assert all(result["exact_demo_card_checks"].values())
+
+
+
+def test_alternate_registered_nonfailure_stage_is_valid_and_never_changes_crm():
+    data=fixture()
+    data["crm.item.get"]["item"]["stageId"]="DT1062_21:REVIEW"
+    data["crm.status.list"]=[
+        {"ENTITY_ID":"DYNAMIC_1062_STAGE_21","STATUS_ID":"DT1062_21:NEW",
+         "CATEGORY_ID":"21","SEMANTICS":None},
+        {"ENTITY_ID":"DYNAMIC_1062_STAGE_21","STATUS_ID":"DT1062_21:REVIEW",
+         "CATEGORY_ID":"21","SEMANTICS":None},
+    ]
+    report, methods=inspect(data)
+    assert report["status"]=="LINKED_TASK_METADATA_READY"
+    assert report["exact_demo_card_checks"]["stage_matches"] is False
+    assert report["alternate_stage_verified_in_category_21"] is True
+    assert report["stage_policy"]=="REGISTERED_NON_FAILURE_STAGE"
+    assert methods[-1]=="crm.status.list"
+    assert "crm.item.update" not in methods
+
+
+@pytest.mark.parametrize("variant", [
+    [{"ENTITY_ID":"DYNAMIC_1062_STAGE_22","STATUS_ID":"DT1062_21:REVIEW",
+      "CATEGORY_ID":"22","SEMANTICS":None}],
+    [{"ENTITY_ID":"DYNAMIC_1062_STAGE_21","STATUS_ID":"DT1062_21:REVIEW",
+      "CATEGORY_ID":"21","SEMANTICS":"F"}],
+    [{"ENTITY_ID":"DYNAMIC_1062_STAGE_21","STATUS_ID":"DT1062_21:REVIEW",
+      "CATEGORY_ID":"21","SEMANTICS":None,"EXTRA":{"SEMANTICS":"failure"}}],
+    [{"ENTITY_ID":"DYNAMIC_1062_STAGE_21","STATUS_ID":"DT1062_21:OTHER",
+      "CATEGORY_ID":"21","SEMANTICS":None}],
+    [],
+])
+def test_alternate_stage_wrong_category_terminal_unknown_or_absent_blocks(variant):
+    data=fixture()
+    data["crm.item.get"]["item"]["stageId"]="DT1062_21:REVIEW"
+    data["crm.status.list"]=variant
+    report, methods=inspect(data)
+    assert report["status"]=="LINKED_TASK_METADATA_BLOCKED"
+    assert report["exact_demo_card_readback"] is False
+    assert report["alternate_stage_verified_in_category_21"] is False
+    assert methods[-1]=="crm.status.list"
+
+
+def test_changed_stage_with_real_contacts_does_not_call_stage_directory():
+    data=fixture()
+    data["crm.item.get"]["item"]["stageId"]="DT1062_21:REVIEW"
+    data["crm.item.get"]["item"]["contactIds"]=[500]
+    data["crm.status.list"]=[
+        {"ENTITY_ID":"DYNAMIC_1062_STAGE_21","STATUS_ID":"DT1062_21:REVIEW",
+         "CATEGORY_ID":"21","SEMANTICS":None}
+    ]
+    report, methods=inspect(data)
+    assert report["status"]=="LINKED_TASK_METADATA_BLOCKED"
+    assert report["exact_demo_card_checks"]["no_real_contacts"] is False
+    assert "crm.status.list" not in methods
+
+
+def test_stage_registry_http_403_blocks_without_response_leaks():
+    data=fixture()
+    data["crm.item.get"]["item"]["stageId"]="DT1062_21:REVIEW"
+    result, methods=inspect(data, fail_method="crm.status.list")
+    assert result["status"]=="LINKED_TASK_METADATA_BLOCKED"
+    assert result["stage_policy"]=="UNVERIFIED_STAGE_BLOCKED"
+    assert methods[-1]=="crm.status.list"
+
+
+def test_unusual_stage_syntax_not_queried():
+    data=fixture()
+    data["crm.item.get"]["item"]["stageId"]="DT1062_21:REVIEW?CRASH"
+    result, methods=inspect(data)
+    assert result["exact_demo_card_readback"] is False
+    assert result["stage_policy"]=="UNVERIFIED_STAGE_BLOCKED"
+    assert "crm.status.list" not in methods

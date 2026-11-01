@@ -99,3 +99,30 @@ SERVICEIT_BITRIX_METADATA_DONE=YES; CRM_WRITES=NO; REAL_CLIENT_RECORDS_READ=0
 Для контролируемой операции `crm.type.add` подготовлен автономный ZIP-оператор с местным подтверждением `YES`/`CREATE`, безопасным вводом ротационного вебхука и семью мокированными тестами (`7 passed` локально). Код в этой строке **не является частью PR, пока не внесён отдельно**; оператор предоставлен пользователю как отдельный артефакт. Состояние корпоративного портала до выполнения оператором — `AI_SIGNALS_TYPE_CREATED=NOT_VERIFIED`.
 
 Создание в живом корпоративном Битрикс24 требует **отдельного разрешения администратора на изменение конфигурации CRM**, которое не следует выводить из прежнего согласования read-only аудита. Пока такого подтверждения и отчёта операции нет: `NO_LIVE_CREATE_PERFORMED_BY_ASSISTANT`; `CRM_ITEMS_WRITTEN=0`. При ошибке API, таймауте или неоднозначном результате не повторять POST автоматически; проверить список смарт-процессов в UI.
+
+
+## 01.11.2026 — подтверждено создание изолированного процесса 1062
+
+Оператор локально исполнил исправленный установщик \`SERVICEIT_AI_SIGNALS_SAFE_CREATE_POWERSHELL_INPUT_20261101.zip\`, предварительно введя секретный webhook только в скрытый локальный ввод PowerShell. Из предоставленного оператором лога:
+
+\`\`\`text
+9 passed in 0.13s
+SERVICEIT_AI_SIGNALS_LOCAL_TESTS=PASS
+SERVICEIT_AI_SIGNALS_ACTION=CREATE_NEW_ISOLATED_SMART_PROCESS
+PORTAL=serviseit.bitrix24.ru; EXISTING_DEAL_FUNNELS=NO_CHANGES
+NEW_PROCESS=ServiceIT AI Signals (test); CLIENT_RECORDS=NOT_READ
+AUTOMATION=OFF; BUSINESS_PROCESSES=OFF; ACCESS_FOR_ALL=OFF
+BITRIX_BOOTSTRAP_STATUS=CREATED_ISOLATED_TYPE
+BITRIX_BOOTSTRAP_ENTITY_TYPE_ID=1062
+BITRIX_EXISTING_FUNNELS_MODIFIED=NO; CUSTOMER_RECORDS_READ=0; NO_LEAD_WRITES
+SERVICEIT_AI_SIGNALS_OPERATOR=COMPLETE
+\`\`\`
+
+Локальный отчёт установки (только на машине пользователя):
+\`%LOCALAPPDATA%\\ServiceIT\\Bitrix24-ProcessBootstrap\\process-20261101T112929713347Z.json\`.
+
+**Фактическое состояние:** POST создания смарт-процесса завершился статусом \`CREATED_ISOLATED_TYPE\`, ID \`1062\` в портале \`serviseit.bitrix24.ru\`. Предыдущие 8 коммерческих воронок, включая \`Лидогенерация\` (ID 19), и ранее существовавший процесс \`Лицензии\` (ID 1056), по логу установщика не изменялись. Защищённый webhook в GitHub не добавлялся.
+
+**Оставшиеся обязательные проверки до внедрения:** независимая повторная REST-проверка \`crm.type.list\`/\`crm.type.fields\` и настроек автоматизации/доступа, разрешённость дальнейшей записи конфигурации, реальные стадии и UI-права, проектирование и создание пользовательских полей, тест одной синтетической записи только после отдельного разрешения, проверка read-back, затем адаптер handoff. Прежние логи \`334 passed\` и \`9 passed\` относятся к локальным тестам соответствующих версий, а не к полному end-to-end на живом Битрикс24. Не смешивать подтверждение создания нового типа с подтверждением его работоспособности как MVP.
+
+\`SMART_PROCESS_CREATE=CONFIRMED_FROM_OPERATOR_LOG\`; \`ENTITY_TYPE_ID=1062\`; \`PROCESS_READ_BACK=NOT_YET_CONFIRMED\`; \`FIELDS_STAGES_READY=NO\`; \`LIVE_HANDOFF=NO\`; \`PRODUCTION_READY=NO\`.

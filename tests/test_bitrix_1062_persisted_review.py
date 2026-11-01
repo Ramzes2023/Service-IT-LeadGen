@@ -190,3 +190,25 @@ def test_no_network_while_binding_offline_review(tmp_path, monkeypatch):
     assert p["reviewed_count"] == 1
     assert p["live_adapter_activated"] is False
     assert p["source_connections"] == 0
+
+
+def test_readonly_binding_does_not_modify_workflow_database(tmp_path):
+    db, cid, sid = make_db(tmp_path)
+    save_review(db, cid, sid)
+    before = db.read_bytes()
+    result = bind(db)
+    assert result["reviewed_count"] == 1
+    assert db.read_bytes() == before
+
+
+def test_expired_persisted_manager_review_not_authorized(tmp_path):
+    db, cid, sid = make_db(tmp_path)
+    save_review(db, cid, sid)
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "UPDATE workflow_reviews SET reviewed_on='2026-01-01' "
+            "WHERE company_id=? AND signal_id=?",
+            (cid, sid),
+        )
+    with pytest.raises(SyntheticPlanRejected, match="MANAGER_REVIEW_DATE_OUT_OF_RANGE"):
+        bind(db)

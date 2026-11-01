@@ -59,7 +59,7 @@ def _unverified_demo_review_state(value: object, expected: str) -> str:
     """
     if value == expected:
         return "EXACT_SYNTHETIC_LABEL"
-    if value is None or value == "":
+    if value is None or value == "" or value == 0 or value == []:
         return "UNSET_UNVERIFIED"
     return "NONEMPTY_UNRECOGNIZED"
 

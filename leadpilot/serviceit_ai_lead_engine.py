@@ -34,7 +34,7 @@ def _stop(code: str) -> None:
 
 def _clearance(gates: Mapping, key: str) -> str:
     state = gates.get(key, "UNKNOWN")
-    if state not in APPROVED_STATES:
+    if not isinstance(state, str) or state not in APPROVED_STATES:
         _stop("GATE_STATE_INVALID")
     return state
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
+from .bitrix_1062_mapping import ALL_FIELD_CODES
+
 ENTITY = 1062
 CATEGORY = 21
 ITEM_ID = 3
@@ -84,6 +86,8 @@ def task_link_preflight(
             or _present(item, UF["signal"]) != "DEMO-ITREQ-001"
             or _present(item, UF["kind"]) != "demo-synthetic"):
         _deny("SYNTHETIC_IMMUTABLE_FIELDS_MISMATCH")
+    if not ALL_FIELD_CODES.issubset(item.keys()):
+        _deny("REQUIRED_SIXTEEN_UF_FIELDS_MISSING")
     key = _present(item, KEY_CODE)
     if not isinstance(key, str) or not SAFE_KEY.fullmatch(key):
         _deny("SYNTHETIC_KEY_MISMATCH")
@@ -119,10 +123,12 @@ def task_link_preflight(
     # authenticated assertion merely because user.get found an active account.
     if responsible_user.get("EXTERNAL_AUTH_ID") not in (None, ""):
         _deny("EXTERNAL_USER_NOT_ALLOWED")
-    required = ("TITLE", "RESPONSIBLE_ID")
+    required = ("TITLE", "RESPONSIBLE_ID", "UF_CRM_TASK")
     for key_name in required:
         if key_name not in task_fields:
             _deny("TASK_FIELD_SCHEMA_NOT_CONFIRMED")
+    if task_fields["UF_CRM_TASK"].get("type") != "crm":
+        _deny("TASK_CRM_BINDING_FIELD_NOT_CRM_TYPE")
     title = "[DEMO / НЕ ЗВОНИТЬ] Проверить сигнал 1С по карточке ServiceIT №3"
     description = (
         "УЧЕБНАЯ ЗАДАЧА. НЕ ЗВОНИТЬ, НЕ ПИСАТЬ, НЕ СОЗДАВАТЬ КП КЛИЕНТУ.\n"

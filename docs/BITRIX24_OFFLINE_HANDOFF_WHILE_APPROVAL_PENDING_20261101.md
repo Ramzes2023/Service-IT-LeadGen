@@ -1,0 +1,186 @@
+# «Сервис ИТ» — Bitrix24 CRM handoff: подготовка без прав администратора
+
+## Что изменено
+
+Пока Микаил согласовывает разрешения на корпоративный REST API, добавлен **фактически исполняемый локальный контракт передачи событий** (без возможности реального вызова CRM):
+
+- `leadpilot/bitrix_handoff_dryrun.py` — создаёт отдельные **логические намерения** (company+signal+manager next action) из **только синтетических** входных данных; проверяет 10/12-значный ИНН по контрольной сумме, регион Москва/МО, свежесть сигнала (до 30 дней), отметку review (только демонстрационный статус), запреты контакта, существующего клиента и флаг ручной проверки.
+- Дедупликация имеет устойчивый idempotency key для `ИНН+signal_id`, повтор одного события игнорируется, конфликтная повторная запись с новым содержимым блокируется, независимые события одной компании не затираются.
+- Запрещено передавать настоящие источники, клиентские контакты, webhook или токен; нет модуля HTTP, Bitrix24 REST-записи, API-вызова и отправки сообщений.
+- `tests/test_bitrix_handoff_dryrun.py` проверяет дубли, стоп-лист, существующего клиента, просроченные сигналы, неверный ИНН, типы данных, область пилота, отсутствие сети, запрет токенов/контактов.
+- `scripts/RUN_SERVICEIT_BITRIX_HANDOFF_DRYRUN.ps1` запускает тесты, компиляцию и формирует локальный JSON в `%LOCALAPPDATA%\\ServiceIT\\Bitrix24-DryRun`.
+
+**Это отдельный PR поверх PR #36**. Он не меняет исходные механизмы источников или корпоративный Bitrix24. **Локальная Windows-приёмка выполнена пользователем 01.11.2026: 334/334 тестов PASS, compileall PASS, git diff --check PASS; в том числе 25/25 тестов автономного handoff PASS.**
+
+## Что ещё понадобится от компании
+
+1. **Разрешение только на чтение метаданных Bitrix24**; отдельный webhook с минимальной областью `crm` и подотчётной учётной записью, без публикации секретов.
+2. Результат `leadpilot/bitrix_metadata_audit.py` — настоящие `entityTypeId`, `categoryId`, `stageId`, `UF_CRM...`. Указанные до этого имена полей — только наши логические имена.
+3. Правила, как проверять существующих клиентов, дубли, отказы от коммуникаций и юридические основания передачи контактов.
+4. Изолированный тестовый смарт-процесс/портал без роботов, уведомлений, телефонии и автоматических рассылок, утверждённый администратором.
+5. **Отдельное явное разрешение** на синтетический тест записи/отката и только затем реализация отдельного write adapter. Текущий PR принципиально не умеет выполнять реальную запись.
+
+## Демонстрация без разрешений
+
+- Запустить `scripts/RUN_SERVICEIT_BITRIX_HANDOFF_DRYRUN.ps1` из изолированного worktree.
+- Посмотреть JSON: `2` независимых synthetic signals одной компании, `1` пропущенный дубль, `1` STOP, `0` CRM records read, `0` CRM writes, `0` outbound.
+- Это позволяет показывать **проверяемый готовый интерфейс передачи** без наличия конкретной настройки Микаила.
+
+## Проверки, которые нельзя честно считать выполненными
+
+- Реальный Битрикс24 и его CRM права, фактическая карта полей, проверка дублей в CRM.
+- Роли сотрудников и согласование принятия лидов.
+- Запись лидов и задач, их корректная обработка роботами, трафик от источников.
+- Корпоративные звонки, рассылки, отчёты о договорах/выручке, РВП.
+
+**Статус:** `HANDOFF_CONTRACT_PREPARED=YES`; `BITRIX_REAL_INTEGRATION=NO`; `CRM_WRITES=NO`; `PRODUCTION_READY=NO`. Проверенная ранее основная локальная архитектура: 309 тестов на pinned PR #36 HEAD `d37c0f1720f319b4f06f4587879bed1a7ef0afbf`; новый offline bridge имеет отдельный тестовый цикл.
+
+
+## 01.11.2026 — реальная Windows-приёмка offline-контракта
+
+Проверенный на машине пользователя отдельный worktree pinned SHA `bfcaf110ec8c7fd2c437d6a208871e971164a3cd`:
+
+```text
+SERVICEIT_BITRIX_HANDOFF_SHA=bfcaf110ec8c7fd2c437d6a208871e971164a3cd
+SERVICEIT_BITRIX_HANDOFF_TESTS=RUNNING_FULL_SUITE
+334 passed in 14.99s
+BITRIX_OFFLINE_HANDOFF=TEST_START; CRM_WRITES=NO
+25 passed in 0.04s
+BITRIX_HANDOFF_DRYRUN=PASS; SIGNALS=2; DUPLICATES=1; HELDS=1
+BITRIX_HANDOFF_CRM_WRITES=NO; REAL_CLIENT_RECORDS=0; LIVE_AUTH=PENDING
+BITRIX_OFFLINE_HANDOFF=PASS_LOCAL_ONLY; LIVE_BITRIX_NOT_CONNECTED
+SERVICEIT_BITRIX_HANDOFF_ACCEPTANCE=PASS_OFFLINE_ONLY
+CRM_WRITES=NO; REAL_COMPANY_DATA=NO; WEBHOOK_REQUIRED=NO
+```
+
+Локальный отчёт: `%LOCALAPPDATA%\ServiceIT\Bitrix24-DryRun\handoff-20261101T093013642Z.json`. Локальный лог: `%LOCALAPPDATA%\ServiceIT\Bitrix-Handoff-Acceptance\acceptance-20261101T092955216Z.txt`.
+
+Фиксируем границу: успешно проверен **код без сетевых обращений к Bitrix24**, а не подключение CRM. Нет фактического REST API-доступа, проверенной карты полей/прав и разрешения на тестовую запись. PR #37 остаётся Draft поверх PR #36. Повторный тест необходим при изменениях исполняемого кода.
+
+
+## 01.11.2026 — первый подтверждённый LIVE REST-аудит метаданных портала
+
+Пользователь выполнил \`scripts/RUN_SERVICEIT_BITRIX_METADATA_AUDIT.ps1 -Live\` на своём Windows компьютере с отдельным **локально введённым webhook**. Секретный URL и токены в репозиторий/PR не добавлялись. Официальный хост портала: \`serviseit.bitrix24.ru\`.
+
+Из пользовательского PowerShell лога:
+
+\`\`\`text
+SERVICEIT_BITRIX_METADATA_TESTS=PASS
+17 passed in 0.15s
+BITRIX_AUDIT_MODE=LIVE_METADATA_READ_ONLY
+BITRIX_AUDIT_STATUS=METADATA_READ_PASS
+BITRIX_DEAL_CATEGORIES_FOUND=8
+BITRIX_SMART_PROCESSES_FOUND=1
+BITRIX_CRM_WRITES=NO; CRM_CUSTOMER_RECORDS_READ=0; NO_EMAILS_CALLS
+SERVICEIT_BITRIX_METADATA_DONE=YES; CRM_WRITES=NO; REAL_CLIENT_RECORDS_READ=0
+\`\`\`
+
+Успешные вызовы, подтверждённые логом: \`crm.category.list\` (сделки, один smart process), \`crm.item.fields\` (lead/deal/contact/company и smart process), \`crm.status.list\` (стадии 8 категорий сделок и smart process), \`crm.type.list\`. Все указанные вызовы возвращали \`OK\`.
+
+Локальный JSON с конкретными ID, стадиями и кодами полей находится **только на компьютере пользователя**:
+
+\`%LOCALAPPDATA%\\ServiceIT\\Bitrix24-Metadata\\report-20261101T103733824Z.json\`
+
+Этот файл **не был получен в GitHub или чате**. Поэтому сопоставление реальных названий категорий, реальных UF-кодов, robots, RBAC и стоп-листов по-прежнему требует чтения JSON и/или дополнительной согласованной проверки. Успешное чтение схемы **не означает, что нам разрешена или протестирована реальная запись лидов/задач**; \`CRM_WRITES=NO\`, \`PRODUCTION_READY=NO\`.
+
+**Изменение статуса:** \`CRM_METADATA_READ=CONFIRMED\`, \`WEBHOOK_WORKING_FOR_READ=CONFIRMED\`, \`CRM_TEST_SPACE_ISOLATION=NOT_CONFIRMED\`, \`LIVE_CRM_HANDOFF=NOT_IMPLEMENTED\`, \`EXPLICIT_SANDBOX_WRITE_APPROVAL=NOT_CONFIRMED\`.
+
+**Безопасность:** ключ вебхука ранее был виден на пользовательских скриншотах; его следует перегенерировать и прекратить публиковать на скриншотах/в логах. Действующие сделки и рабочую воронку «Техническая поддержка» не затрагивать.
+
+
+## 01.11.2026 — решение по изоляции AI-сигналов
+
+Пользователь выбрал **создание отдельного тестового смарт-процесса**, а не использование существующей коммерческой воронки «Лидогенерация» (ID 19). Все 8 существующих воронок и смарт-процесс «Лицензии» (entityTypeId 1056) **оставить неизменными**.
+
+**Предлагаемое название нового смарт-процесса:** `Сервис ИТ — AI-сигналы (тест)`. Элемент процесса означает первичный потенциальный B2B-сигнал, **не подтверждённый лид/сделку**.
+
+Первоначальные опции: собственные стадии/канбан — включить; роботов, триггеры и бизнес-процессы — выключить; открытый доступ всем сотрудникам — выключить; привязку к реальным контактам и компаниям — не создавать. Настройки проверять по фактическому ответу CRM. Предварительный набор этапов для дальнейшего согласования: новый сигнал, проверка юридического лица/ИНН, проверка потребности, проверка менеджером, одобрено к передаче, отклонено/дубль/стоп. **Стадии и поля этим решением пока не создавались.**
+
+Для контролируемой операции `crm.type.add` подготовлен автономный ZIP-оператор с местным подтверждением `YES`/`CREATE`, безопасным вводом ротационного вебхука и семью мокированными тестами (`7 passed` локально). Код в этой строке **не является частью PR, пока не внесён отдельно**; оператор предоставлен пользователю как отдельный артефакт. Состояние корпоративного портала до выполнения оператором — `AI_SIGNALS_TYPE_CREATED=NOT_VERIFIED`.
+
+Создание в живом корпоративном Битрикс24 требует **отдельного разрешения администратора на изменение конфигурации CRM**, которое не следует выводить из прежнего согласования read-only аудита. Пока такого подтверждения и отчёта операции нет: `NO_LIVE_CREATE_PERFORMED_BY_ASSISTANT`; `CRM_ITEMS_WRITTEN=0`. При ошибке API, таймауте или неоднозначном результате не повторять POST автоматически; проверить список смарт-процессов в UI.
+
+
+## 01.11.2026 — подтверждено создание изолированного процесса 1062
+
+Оператор локально исполнил исправленный установщик \`SERVICEIT_AI_SIGNALS_SAFE_CREATE_POWERSHELL_INPUT_20261101.zip\`, предварительно введя секретный webhook только в скрытый локальный ввод PowerShell. Из предоставленного оператором лога:
+
+\`\`\`text
+9 passed in 0.13s
+SERVICEIT_AI_SIGNALS_LOCAL_TESTS=PASS
+SERVICEIT_AI_SIGNALS_ACTION=CREATE_NEW_ISOLATED_SMART_PROCESS
+PORTAL=serviseit.bitrix24.ru; EXISTING_DEAL_FUNNELS=NO_CHANGES
+NEW_PROCESS=ServiceIT AI Signals (test); CLIENT_RECORDS=NOT_READ
+AUTOMATION=OFF; BUSINESS_PROCESSES=OFF; ACCESS_FOR_ALL=OFF
+BITRIX_BOOTSTRAP_STATUS=CREATED_ISOLATED_TYPE
+BITRIX_BOOTSTRAP_ENTITY_TYPE_ID=1062
+BITRIX_EXISTING_FUNNELS_MODIFIED=NO; CUSTOMER_RECORDS_READ=0; NO_LEAD_WRITES
+SERVICEIT_AI_SIGNALS_OPERATOR=COMPLETE
+\`\`\`
+
+Локальный отчёт установки (только на машине пользователя):
+\`%LOCALAPPDATA%\\ServiceIT\\Bitrix24-ProcessBootstrap\\process-20261101T112929713347Z.json\`.
+
+**Фактическое состояние:** POST создания смарт-процесса завершился статусом \`CREATED_ISOLATED_TYPE\`, ID \`1062\` в портале \`serviseit.bitrix24.ru\`. Предыдущие 8 коммерческих воронок, включая \`Лидогенерация\` (ID 19), и ранее существовавший процесс \`Лицензии\` (ID 1056), по логу установщика не изменялись. Защищённый webhook в GitHub не добавлялся.
+
+**Оставшиеся обязательные проверки до внедрения:** независимая повторная REST-проверка \`crm.type.list\`/\`crm.type.fields\` и настроек автоматизации/доступа, разрешённость дальнейшей записи конфигурации, реальные стадии и UI-права, проектирование и создание пользовательских полей, тест одной синтетической записи только после отдельного разрешения, проверка read-back, затем адаптер handoff. Прежние логи \`334 passed\` и \`9 passed\` относятся к локальным тестам соответствующих версий, а не к полному end-to-end на живом Битрикс24. Не смешивать подтверждение создания нового типа с подтверждением его работоспособности как MVP.
+
+\`SMART_PROCESS_CREATE=CONFIRMED_FROM_OPERATOR_LOG\`; \`ENTITY_TYPE_ID=1062\`; \`PROCESS_READ_BACK=NOT_YET_CONFIRMED\`; \`FIELDS_STAGES_READY=NO\`; \`LIVE_HANDOFF=NO\`; \`PRODUCTION_READY=NO\`.
+
+## 01.11.2026 — разобран локальный JSON-отчёт создания и подготовлен read-back
+
+Пользователь приложил файл `process-20261101T112929713347Z.json` (419 байт), подтверждающий: `portal=serviseit.bitrix24.ru`, название `Сервис ИТ — AI-сигналы (тест)`, `status=CREATED_ISOLATED_TYPE`, `created=true`, `typeId=13`, `entityTypeId=1062`, `existing_deal_funnels_modified=false`, `crm_items_created=0`, `customer_records_read=0`, `robots_enabled=false`. Отчёт не содержит отдельных реальных read-back значений флагов `isAutomationEnabled`, `isBizProcEnabled`, `isSetOpenPermissions`, `isStagesEnabled`, перечня стадий или полей.
+
+Подготовлен автономный read-only оператор `SERVICEIT_AI_SIGNALS_READBACK_1062_20261101.zip` с программой `serviceit_readback_1062.py` и `RUN_SERVICEIT_VERIFY_AI_SIGNALS_1062.ps1`; проверен мокированно `14 passed`, компиляция PASS, PowerShell ASCII PASS. Оператор *только* читает `crm.type.get(id=13)`, `crm.category.list(entityTypeId=1062)`, `crm.item.fields(entityTypeId=1062)` и стадии `crm.status.list`; секрет вводится скрыто на локальном PC, только затем выполняется REST. Проверяет соответствие типа и флаги автоматизации, бизнес-процессов, публичного доступа и канбана; без чтения клиентов и без любых remote writes. **Живой read-back пока не запущен**, результата нет.
+
+Состояние: `CREATE_1062=CONFIRMED`, `READBACK_TYPE_13=NEXT_STEP`, `STAGE_FIELD_CONFIG=NOT_STARTED`, `SYNTHETIC_CRM_ITEM=NOT_CREATED`, `LIVE_HANDOFF=NO`, `PRODUCTION_READY=NO`. Не считать локальные тесты подтверждением реальных параметров API.
+
+## 01.11.2026 — read-back 1062 частичный, диагностировать crm.item.fields
+
+Пользователь выполнил read-only PowerShell operator на живом `serviseit.bitrix24.ru`:
+
+```text
+14 passed in 0.13s
+SERVICEIT_PROCESS_READBACK_LOCAL_TESTS=PASS
+BITRIX_READBACK_STATUS=PARTIAL_READBACK
+BITRIX_READBACK_ENTITY_TYPE_ID=1062
+BITRIX_READBACK_SAFETY_FLAGS=PASS
+BITRIX_READBACK_METHODS={"crm.category.list":"OK","crm.item.fields":"HTTP_FAILED","crm.type.get":"OK"}
+BITRIX_READBACK_CATEGORIES=0
+BITRIX_READBACK_CUSTOM_FIELDS=0
+BITRIX_READBACK_CRM_WRITES=0; CUSTOMER_RECORDS_READ=0
+```
+
+Локальный read-back JSON: `%LOCALAPPDATA%\\ServiceIT\\Bitrix24-Readback\\readback-1062-20261101T113751763Z.json`.
+
+Вывод: настоящий тип `id=13/entityTypeId=1062` подтверждён повторно, проверенные флаги автоматизации и публичного доступа соответствуют изоляции. API вернул пустой список категорий (это не запрос с ошибкой); новый тип пока не имеет доступных категорий в ответе. **Не считать `0` пользовательских полей доказательством их отсутствия:** `crm.item.fields` дал `HTTP_FAILED`. Старый оператор схлопывает HTTP 400/403/500 и слишком большие ответы в одно значение, поэтому причина пока не установлена. Документация допускает `ACCESS_DENIED` (нет прав на чтение элементов данного типа) или `NOT_FOUND`, и сетевые/серверные причины остаются возможны. Не выдавать гипотезу за установленную причину.
+
+Подготовлен отдельный **read-only диагностический ZIP** `SERVICEIT_AI_SIGNALS_FIELDS_DIAGNOSTIC_1062_20261101.zip` с локальными 18/18 мокированными тестами; он читает только `crm.type.get`, `crm.category.list`, `crm.item.fields`, сохраняет обезличенные статус HTTP, allowlist-код REST и количество полей/категорий. Не сохраняет webhook или сырые ответы. Следующая проверка: реальный запуск этого оператора и решение по правам/категориям только после точной диагностики. **Ни одно изменение CRM или дополнительное создание процесса в этом этапе не выполнялось.**
+
+`READBACK=PARTIAL`; `TYPE_IDENTITY=CONFIRMED`; `SAFETY_FLAGS=PASS`; `FIELDS_READ=FAILED_UNDIAGNOSED`; `CATEGORY_LIST=EMPTY`; `LIVE_ITEM_HANDOFF=NO`; `PRODUCTION_READY=NO`.
+
+
+## 01.11.2026 — ACCESS_DENIED исправлен, 1062 live field access PASS
+
+Оператор предоставил новый результат после назначения пользователю вебхука роли `ServiceIT AI — тест` с разрешениями для изолированного смарт-процесса. Повторная проверка тем же read-only оператором завершилась на настоящем портале:
+
+```text
+18 passed in 0.18s
+SERVICEIT_1062_DIAGNOSTIC_TESTS=PASS
+BITRIX_1062_DIAGNOSTIC_STATUS=FIELDS_READ_PASS
+BITRIX_1062_DIAGNOSTIC_METHODS={
+  "crm.category.list": {"body_size_band": "UNDER_100KB", "http_status": 200, "result": "OK"},
+  "crm.item.fields": {"body_size_band": "UNDER_100KB", "http_status": 200, "result": "OK"},
+  "crm.type.get": {"body_size_band": "UNDER_100KB", "http_status": 200, "result": "OK"}
+}
+BITRIX_1062_DIAGNOSTIC_CATEGORIES=1
+BITRIX_1062_DIAGNOSTIC_FIELDS=22
+BITRIX_1062_DIAGNOSTIC_CRM_WRITES=0; CRM_RECORDS_READ=0
+SERVICEIT_1062_DIAGNOSTIC_OPERATOR=COMPLETE
+```
+
+Локальный sanitized JSON: `%LOCALAPPDATA%\\ServiceIT\\Bitrix24-Diagnostics\\diag-fields-1062-20261101T121222435Z.json`.
+
+**Подтверждение:** ошибка `ACCESS_DENIED` на `crm.item.fields` устранена; тип `entityTypeId=1062` доступен, одна категория видна, 22 поля (общие поля + возможные пользовательские) доступны метаданными. Названия/типы всех 22 полей не опубликованы этим логом; нельзя считать, что требуемые для лидогенерации пользовательские поля уже есть. При этом никакие карточки CRM, источники лидов и механизм handoff не подключены: `LIVE_HANDOFF=NO`, `CRM_ITEM_WRITE_TEST=NOT_DONE`, `PRODUCTION_READY=NO`.
+
+**Следующие инженерные задачи:** read-only точный field/stage mapping и safe default category verification, спецификация отдельных полей `source_notice_id` / `INN` / `signal_url` / `signal_kind` / `score` / `review_decision` / `stop_reason` / `ingest_timestamp`; проверка, что любая конфигурационная запись выполняется только по отдельному согласованному оператору с idempotency и без изменения других сущностей; затем отдельное одобренное создание одной синтетической записи, read-back и cleanup-план. Текущие расширенные разрешения роли на `Настройка CRM` по UI являются глобальными — следует сократить их после первоначальной настройки, согласовав с администратором.

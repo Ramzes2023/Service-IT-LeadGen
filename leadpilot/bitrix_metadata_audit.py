@@ -120,7 +120,8 @@ def _read_categories(client: httpx.Client, base: str, entity_type_id: int,
 
 def _read_stages(client: httpx.Client, base: str, entity_type_id: int,
                  category_id: int, report: dict) -> list[dict]:
-    entity_code = (f"DEAL_STAGE_{category_id}" if entity_type_id == 2 else
+    entity_code = ("DEAL_STAGE" if entity_type_id == 2 and category_id == 0 else
+                   f"DEAL_STAGE_{category_id}" if entity_type_id == 2 else
                    f"DYNAMIC_{entity_type_id}_STAGE_{category_id}")
     status, result = _post_read(client, base, "crm.status.list",
                                 {"filter": {"ENTITY_ID": entity_code}})

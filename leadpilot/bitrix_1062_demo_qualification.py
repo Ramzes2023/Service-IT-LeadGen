@@ -124,7 +124,7 @@ def _protected_demo_review_state(
     import re
     positive_scan = re.sub(
         r"\bне\s+(?:подтвержден\w*|проверен\w*|согласован\w*|одобрен\w*)",
-        "unverified", text,
+        "notchecked", text,
     )
     if any(token in positive_scan for token in (
         "http:", "https:", "mailto:", "tel:", "wa.me", "t.me/",

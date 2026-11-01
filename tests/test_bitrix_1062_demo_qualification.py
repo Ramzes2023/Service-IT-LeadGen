@@ -312,3 +312,78 @@ def test_only_hyphen_and_spacing_are_normalized_not_semantic_changes(tmp_path):
     item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]="  СИНТЕТИЧЕСКИЙ ТЕСТ - НЕ РЕАЛЬНАЯ ПОТРЕБНОСТЬ "
     out,_,_=portal(tmp_path,item=item,apply=False)
     assert out["review_status_classification"]["evidence_status"]=="EXACT_SYNTHETIC_LABEL"
+
+
+
+def test_real_portal_shape_synthetic_evidence_and_opaque_review_is_safe_preview(tmp_path):
+    item = card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] = (
+        "ДЕМОНСТРАЦИОННЫЙ тестовый источник — сигнал для проверки"
+    )
+    item["UF_CRM_13_SVCIT_REVIEW_DECISION"] = (
+        "Рассмотрение демо-карточки, статус пока назначен"
+    )
+    result, calls, unchanged = portal(tmp_path, item=item, apply=False)
+    assert result["status"] == "DEMO_PREVIEW_READY"
+    states = result["review_status_classification"]
+    assert states["evidence_status"] == "SYNTHETIC_LABEL_UNVERIFIED_PROTECTED"
+    assert states["review_decision"] == "OPAQUE_REVIEW_UNVERIFIED_PROTECTED"
+    assert result["real_leads_approved"] is False
+    assert result["crm_writes"] == "NO"
+    assert not any(method == "crm.item.update" for method, _ in calls)
+    assert not (tmp_path / "ledger.sqlite").exists()
+    assert unchanged["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] == item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]
+    assert unchanged["UF_CRM_13_SVCIT_REVIEW_DECISION"] == item["UF_CRM_13_SVCIT_REVIEW_DECISION"]
+
+
+def test_one_demo_sync_preserves_both_existing_opaque_status_fields(tmp_path):
+    item = card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] = (
+        "Синтетическая демонстрация AI Lead, источник не подтверждён"
+    )
+    item["UF_CRM_13_SVCIT_REVIEW_DECISION"] = (
+        "Ожидание протокола внутреннего теста"
+    )
+    result, calls, updated = portal(tmp_path, item=item, apply=True)
+    assert result["status"] == "DEMO_CRM_QUALIFICATION_VERIFIED"
+    assert updated["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] == item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]
+    assert updated["UF_CRM_13_SVCIT_REVIEW_DECISION"] == item["UF_CRM_13_SVCIT_REVIEW_DECISION"]
+    writes = [p["fields"] for method, p in calls if method == "crm.item.update"]
+    assert len(writes) == 1
+    assert set(writes[0]) == {SCORE_FIELD, VERSION_FIELD, ACTION_FIELD, STOP_FIELD}
+    assert "звонить" in updated[ACTION_FIELD].lower()
+    assert updated[STOP_FIELD].startswith("DEMO:")
+
+
+@pytest.mark.parametrize("evidence,review", [
+    ("Синтетический тест", "Одобрено для контакта"),
+    ("Демо сигнал, подтверждён покупатель", "На рассмотрении"),
+    ("Синтетический тест", "Заявка проверена менеджером"),
+    ("Синтетический тест", "Контакт разрешен"),
+    ("Демо", "Отклонено менеджером"),
+    ("Real lead confirmed", "Awaiting review"),
+    ("Тестовый источник", "mailto:client@example.org"),
+])
+def test_unsafe_or_approved_review_states_cannot_write_or_call_ai(
+    tmp_path,evidence,review
+):
+    item = card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] = evidence
+    item["UF_CRM_13_SVCIT_REVIEW_DECISION"] = review
+    ai_calls = []
+    def forbidden_ai(text):
+        ai_calls.append(text)
+        raise AssertionError("MUST_NOT_CALL_AI")
+    with pytest.raises(DemoBridgeBlocked):
+        portal(tmp_path, item=item, apply=True, ai=True, ai_result=forbidden_ai)
+    assert ai_calls == []
+    assert not (tmp_path / "ledger.sqlite").exists()
+
+
+def test_unknown_evidence_text_without_synthetic_proof_still_blocks(tmp_path):
+    item = card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] = "Some entirely different business evidence"
+    item["UF_CRM_13_SVCIT_REVIEW_DECISION"] = "Ожидает проверки"
+    with pytest.raises(DemoBridgeBlocked, match="DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED"):
+        portal(tmp_path, item=item, apply=True)
+    assert not (tmp_path / "ledger.sqlite").exists()

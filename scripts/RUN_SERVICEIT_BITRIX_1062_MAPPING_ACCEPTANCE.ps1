@@ -12,9 +12,9 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
 Push-Location -LiteralPath $Repo
 try {
     Write-Output 'SERVICEIT_1062_MAPPING_AND_MANAGER=START; CRM_WRITES=NO'
-    & $PythonPath -m pytest -q -p no:cacheprovider tests/test_bitrix_handoff_dryrun.py tests/test_bitrix_1062_mapping.py tests/test_bitrix_1062_manager_bridge.py tests/test_bitrix_1062_outbox.py tests/test_bitrix_1062_reconcile.py
+    & $PythonPath -m pytest -q -p no:cacheprovider tests/test_bitrix_handoff_dryrun.py tests/test_bitrix_1062_mapping.py tests/test_bitrix_1062_manager_bridge.py tests/test_bitrix_1062_outbox.py tests/test_bitrix_1062_reconcile.py tests/test_bitrix_1062_rest_read.py
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_1062_MANAGER_TESTS_FAILED' }
-    & $PythonPath -m py_compile leadpilot/bitrix_1062_mapping.py leadpilot/bitrix_1062_manager_bridge.py leadpilot/bitrix_1062_outbox.py leadpilot/bitrix_1062_reconcile.py
+    & $PythonPath -m py_compile leadpilot/bitrix_1062_mapping.py leadpilot/bitrix_1062_manager_bridge.py leadpilot/bitrix_1062_outbox.py leadpilot/bitrix_1062_reconcile.py leadpilot/bitrix_1062_rest_read.py
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_1062_MANAGER_COMPILE_FAILED' }
     $Check = @'
 from datetime import date
@@ -65,7 +65,7 @@ print("SERVICEIT_1062_OUTBOX_PREVIEW=PASS; QUEUED=2; DEDUPE=YES; UNCERTAIN_RECOV
 '@
     $Check | & $PythonPath -
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_1062_MANAGER_PREVIEW_FAILED' }
-    Write-Output 'SERVICEIT_1062_OUTBOX_RECONCILE_ACCEPTANCE=PASS_OFFLINE_ONLY; CRM_WRITES=NO; SOURCES=NO'
+    Write-Output 'SERVICEIT_1062_READONLY_ADAPTER_ACCEPTANCE=PASS_OFFLINE_ONLY; CRM_WRITES=NO; SOURCES=NO'
 } finally {
     Pop-Location
 }

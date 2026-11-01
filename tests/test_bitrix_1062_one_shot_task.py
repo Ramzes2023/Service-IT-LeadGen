@@ -119,7 +119,7 @@ def test_missing_authorization_cannot_touch_network_or_ledger(tmp_path):
 @pytest.mark.parametrize("value", [0,-1,True,1000000000])
 def test_bad_recipient_id_blocked_before_post(tmp_path,value):
     result,calls,ledger=invoke(tmp_path,responsible=value)
-    assert result in {"RESPONSIBLE_ID_OUT_OF_RANGE","TASK_ID_INVALID"}
+    assert result in {"RESPONSIBLE_ID_OUT_OF_RANGE","RESPONSIBLE_ID_INVALID"}
     assert not calls and not ledger.exists()
 
 

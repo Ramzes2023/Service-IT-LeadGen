@@ -351,7 +351,42 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ValueError, RuntimeError, sqlite3.Error, httpx.HTTPError, OSError, KeyError, TypeError):
-        # Do not echo arbitrary exception values containing source/credentials.
-        print("SERVICEIT_AI_COCKPIT=BLOCKED_OR_UNCERTAIN; do not retry mutations; inspect local ledger and CRM readback")
-        raise SystemExit(2)
+    except (ValueError, RuntimeError, sqlite3.Error, httpx.HTTPError, OSError, KeyError, TypeError) as exc:
+        # Only emit project-defined fixed reason codes. Never print arbitrary
+        # Bitrix errors, request/response objects, webhook or source text.
+        safe_codes = {
+            "METHOD_BLOCKED", "REST_BUDGET_EXCEEDED", "REST_HTTP_BLOCKED",
+            "REST_RESULT_BLOCKED", "REST_UNCERTAIN_NO_RETRY",
+            "PAGINATION_REQUIRES_REVIEW", "FIELD_TYPE_OR_SCOPE_CONFLICT",
+            "FIELD_SETTINGS_INVALID", "FIELD_MULTILINE_OR_LENGTH_CONFLICT",
+            "SMART_PROCESS_TYPE_MISMATCH",
+            "AUTOMATION_OR_BIZPROC_NOT_CONFIRMED_DISABLED",
+            "TYPE_RESULT_INVALID", "STRING_TYPE_NOT_AVAILABLE",
+            "FIELD_LIST_AMBIGUOUS", "FIELD_LIST_SCOPE_INVALID",
+            "DUPLICATE_FIELD", "ORIGINAL_FIELDS_MISSING",
+            "FIELD_GET_INVALID", "STATE_REQUIRED",
+            "LAYOUT_NULL_OR_AMBIGUOUS", "LAYOUT_SHAPE_AMBIGUOUS",
+            "LAYOUT_DUPLICATE_SECTION", "LAYOUT_FIELDS_MISSING",
+            "LAYOUT_SECTION_CONFLICT", "LAYOUT_DUPLICATE_AI_FIELD",
+            "SHARED_OR_OTHER_USER_LAYOUT_DISABLED", "PROVISION_FIRST",
+            "ITEM_FIELDS_INVALID", "LAYOUT_CONCURRENT_CHANGE",
+            "LAYOUT_READBACK_UNCERTAIN_NO_RETRY",
+            "EXACT_DEMO_ITEM_REQUIRED", "ORIGINAL_DEMO_METADATA_MISMATCH",
+            "REPORT_PAYLOAD_INVALID", "REPORT_FIELD_NOT_WRITABLE",
+            "EXPLICIT_AI_AND_SYNTHETIC_PRIVACY_OPT_IN_REQUIRED",
+            "EXISTING_REPORT_REQUIRES_REVIEW_NO_OVERWRITE",
+            "GIGACHAT_ONLY", "ITEM_CONCURRENT_CHANGE_NO_RETRY",
+            "REPORT_READBACK_UNCERTAIN_NO_RETRY", "PROTECTED_FIELD_DRIFT",
+            "LIVE_INSPECTION_OPT_IN_REQUIRED", "PREVIEW_CANNOT_APPLY",
+            "STATE_DIR_REQUIRED", "ONE_SHOT_ALREADY_RESERVED_NO_RETRY",
+        }
+        code = str(exc) if isinstance(exc, CockpitBlocked) else ""
+        if code not in safe_codes:
+            code = "UNCLASSIFIED_NO_REMOTE_DETAILS"
+        print(json.dumps({
+            "status": "BLOCKED_OR_UNCERTAIN",
+            "safe_reason_code": code,
+            "blind_mutation_retry": "FORBIDDEN",
+            "secrets_in_output": False,
+        }, ensure_ascii=False))
+        raise SystemExit(2) from None

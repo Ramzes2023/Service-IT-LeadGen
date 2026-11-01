@@ -15,6 +15,7 @@ import sqlite3
 import httpx
 
 from .ai import classify_authorized_signal
+from .bitrix_synthetic_text_guard import synthetic_action_is_safe
 from .bitrix_metadata_audit import validate_webhook
 from .bitrix_1062_task_metadata import audit_synthetic_task_link
 from .bitrix_1062_mapping import FIELD_MAP, EXTRA_FIELDS
@@ -88,9 +89,19 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
             stop("AI_HYPOTHESIS_QUALITY_GATE_BLOCKED")
         ai_status = "HYPOTHESIS_UNVERIFIED"
         tag = "AI=ГИПОТЕЗА"
-    action = f"DEMO: {score}/100 по правилам; 1С+ККТ; {tag}. Проверить гипотезу, клиенту не писать и не звонить."
-    if len(action) > 120:
-        stop("DEMO_ACTION_TOO_LONG")
+    if hypothesis is None:
+        action = f"DEMO {score}/100; 1С+ККТ; AI не запускался. Проверить сигнал. Клиенту не звонить."
+    else:
+        need = hypothesis.get("possible_need")
+        if (not isinstance(need, str) or not 8 <= len(need.strip()) <= 400
+                or any(c in need for c in ("\\n", "\\r", "@"))):
+            stop("AI_BRIEF_NOT_SAFE")
+        # The brief is ALWAYS explicitly a hypothesis, never an established
+        # buying intent. No contacts or unreviewed source URLs can enter CRM.
+        concise = need.strip().replace("\\n", " ").replace("\\r", " ")[:58].rstrip()
+        action = f"DEMO {score}/100; AI-гипотеза: {concise}. Не звонить клиенту."
+    if not synthetic_action_is_safe(action):
+        stop("DEMO_ACTION_NOT_SAFE")
     fields = {
         SCORE_FIELD: score,
         VERSION_FIELD: SCORE_VERSION,
@@ -287,7 +298,7 @@ def main() -> None:
             "DEMO_SIGNAL_NOT_FRESH", "EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN",
             "DEMO_EVIDENCE_STATUS_MISMATCH", "DEMO_REVIEW_DECISION_MISMATCH",
             "DEMO_SCORING_UNEXPECTED", "AI_HYPOTHESIS_QUALITY_GATE_BLOCKED",
-            "DEMO_ACTION_TOO_LONG", "REST_METHOD_NOT_ALLOWED",
+            "DEMO_ACTION_TOO_LONG", "DEMO_ACTION_NOT_SAFE", "AI_BRIEF_NOT_SAFE", "REST_METHOD_NOT_ALLOWED",
             "REST_TRANSPORT_OR_TIMEOUT", "REST_HTTP_OR_SIZE_UNAVAILABLE",
             "REST_JSON_INVALID", "REST_API_RESULT_INVALID", "REST_ITEM_MISSING",
             "ONE_DEMO_SCORE_SYNC_ALREADY_ATTEMPTED",

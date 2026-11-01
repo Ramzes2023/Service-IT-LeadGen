@@ -135,3 +135,31 @@ Next component added to the PR: `leadpilot/bitrix_1062_rest_read.py` with `tests
 The native transport is NOT a live lead-delivery worker. It cannot create, modify, delete, notify or email CRM records. It is intended for independently authorized read-only reconciliation after ambiguous results. **New code/test acceptance is still pending on Windows**, and no actual live list/get has been executed in this turn. Since Bitrix24 can restrict searchable fields, a real exact-key list must be independently verified with a rotated secret before treating the reconciliation contract as operational.
 
 **Latest status:** `LIVE_SCHEMA=VERIFIED`; `ONE_SYNTHETIC_E2E=PASS_CLEAN`; `OFFLINE_OUTBOX_414_TESTS=PASS_AT_9cf5892`; `READ_ONLY_REST_TRANSPORT=UNVERIFIED_NEW_REVISION`; `LIVE_NEW_SIGNALS=OFF`; `PRODUCTION_READY=NO`. Keep PR draft. Do not touch other company funnels, users or source integrations.
+
+
+## 01.11.2026 — Windows REST read acceptance 449 PASS; guarded synthetic sender implementation pending tests
+
+Owner independently ran the PR branch frozen at `5705a02ce6241277d0ec247aea96278141b960e3` in a detached Windows worktree:
+
+```text
+140 passed in 1.97s
+SERVICEIT_1062_READONLY_ADAPTER_ACCEPTANCE=PASS_OFFLINE_ONLY; CRM_WRITES=NO; SOURCES=NO
+449 passed in 8.35s
+SERVICEIT_1062_REST_READ_FULL_ACCEPTANCE=PASS_OFFLINE_ONLY
+CRM_WRITES=NO; WEBHOOK_REQUIRED=NO; SOURCES=NO
+```
+
+`compileall -q leadpilot tests` and `git diff --check` passed for that pinned revision. This confirms the **mock-based** read-only REST adapter and project code as of `5705a02`, not live filter availability.
+
+The following files were then **added to the PR, not yet accepted on Windows**:
+
+- `leadpilot/bitrix_1062_synthetic_add.py`: `crm.item.add` only; validates the *canonical* offline synthetic 16-field request using the existing mapping validator, and requires all guards (`AUTHORIZE ONE DEMO 1062`, rotated webhook, robots OFF, isolated test authorization). It permits at most one HTTP POST per object, sets consumed state before I/O, sanitizes all failures, and returns `POST_RESPONSE_UNVERIFIED` even when REST reports an ID.
+- `leadpilot/bitrix_1062_synthetic_delivery.py`: requires a matching durable SQLite `CLAIMED` item (first attempt only), exact-key read-only preflight, **same webhook identity for read and write**, one synthetically scoped add, exact-key read-after-write and candidate-ID match, and persistent `UNCERTAIN` on any ambiguity. It does **not** retry after POST or activate real signals. If an isolated test card is created it requires **separate authorized cleanup** (no auto-delete).
+- `tests/test_bitrix_1062_synthetic_add.py` and `tests/test_bitrix_1062_synthetic_delivery.py`: mock-transport tests for authorization, strict data, deny-other-funnels, single POST, timeouts, duplicate precheck, readback, ID conflicts, and cross-webhook identities.
+- `scripts/RUN_SERVICEIT_BITRIX_1062_MAPPING_ACCEPTANCE.ps1` updated to run both new suites and compile the new code.
+
+These components are **not wired into a scheduler, web service, background worker, or live CLI**. Running unit tests does not use a webhook or modify Bitrix24. The existing one-card live E2E operator passed previously; it should not be rerun. The extra code path has not yet been through independent Windows acceptance. No production sender, real lead source, manager role verification, RBAC, or actual lead transmission is declared ready.
+
+Caution: `crm.item.list` may reject filters on custom UF fields. A failed/empty lookup must never become permission to blindly resend. The code fails closed where filters/readback cannot establish identity. Future user-approved real integration needs a separate privacy and source/business authorization plan.
+
+Reference: https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-add.html and https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-list.html.

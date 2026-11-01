@@ -28,7 +28,7 @@ def results():
         ).hexdigest()[:32],
     })
     return {
-        "crm.type.get": {"type": {
+        "crm.type.getByEntityTypeId": {"type": {
             "entityTypeId": 1062, "isUseInUserfieldEnabled": "Y",
             "linkedUserFields": {"TASKS_TASK|UF_CRM_TASK": "true"},
             "isAutomationEnabled": "N", "isBizProcEnabled": "N",
@@ -68,8 +68,8 @@ def test_all_four_read_methods_then_metadata_ready_but_no_task():
     assert out["status"] == "METADATA_READY_TASK_NOT_CREATED"
     assert out["methods_ok"] == 4
     assert calls == [
-        "crm.type.get", "crm.enum.ownertype", "tasks.task.getFields", "crm.item.get",
-        "crm.type.get", "crm.enum.ownertype", "tasks.task.getFields", "crm.item.get",
+        "crm.type.getByEntityTypeId", "crm.enum.ownertype", "tasks.task.getFields", "crm.item.get",
+        "crm.type.getByEntityTypeId", "crm.enum.ownertype", "tasks.task.getFields", "crm.item.get",
     ]
     assert out["metadata_gates"]["task_link_enabled"] is True
     assert out["task_created"] is False
@@ -113,7 +113,7 @@ def test_oversize_fails_closed():
 
 def test_setting_disabled_reports_flags_not_private_data():
     data = results()
-    data["crm.type.get"]["type"]["linkedUserFields"] = {}
+    data["crm.type.getByEntityTypeId"]["type"]["linkedUserFields"] = {}
     out, _ = check(payload=data)
     assert out["status"] == "BLOCKED_READ_ONLY"
     assert out["metadata_gates"]["task_link_enabled"] is False
@@ -132,3 +132,19 @@ def test_wrong_exact_item_is_blocked():
 def test_webhook_restricted_to_corporate_portal():
     with pytest.raises(ValueError):
         diagnose_task_metadata("https://other.example/rest/1/token")
+
+
+def test_smart_type_metadata_uses_entity_type_not_internal_id():
+    urls = []
+    def handler(request):
+        name = request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
+        urls.append((name, json.loads(request.content)))
+        data = results()
+        return httpx.Response(200, json={"result": data[name]})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        out=diagnose_task_metadata(HOOK, client=client)
+    assert out["status"]=="METADATA_READY_TASK_NOT_CREATED"
+    for name, params in urls:
+        if name=="crm.type.getByEntityTypeId":
+            assert params=={"entityTypeId":1062}
+        assert name!="crm.type.get"

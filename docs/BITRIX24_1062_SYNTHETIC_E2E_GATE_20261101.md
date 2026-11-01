@@ -194,3 +194,14 @@ FULL_SUITE_FAILED
 - Исправленная функция отдельно скомпилирована Python и проверена 24 локальными положительными и отрицательными примерами; PASS. Это не равно полной приёмке репозитория.
 - `scripts/RUN_SERVICEIT_BITRIX_1062_MAPPING_ACCEPTANCE.ps1` теперь запускает `python -m compileall -q leadpilot tests` **до** pytest и аварийно завершает выполнение при синтаксической ошибке.
 - Полная независимая Windows-приёмка нового SHA ещё необходима. Репозиторий и PR остаются в черновом режиме: `CRM_WRITES=NO`, `REAL_SOURCES=NO`.
+
+
+## 01.11.2026 — 527-test local acceptance and clean Git diff
+
+Operator verified Python syntax, 218 targeted mock tests and 527 full-suite tests on 947cdef564e2edf77c362126f6299855e0c8bfd6. The first diff check failed solely due to three whitespace-only documentation lines; these were fixed in docs-only commit 59f5cc77157e1bf69520b0c78d61a79de60a0950. Operator then confirmed exact new branch head and SERVICEIT_1062_DIFF=PASS. This confirms earlier Python source and final docs formatting, not live adapter deployment or real client writes.
+
+## New offline persisted-manager binding — independent Windows acceptance pending
+
+New source leadpilot/bitrix_1062_persisted_review.py and tests/test_bitrix_1062_persisted_review.py connect the existing local SQLite workflow_reviews to exact synthetic 1062 intents. The database is read in SQLite URI mode=ro. Before creating any preview, the mapper compares INN, original source, evidence URL, company name, region and date; checks existing-customer, manual-review and all stop-list channels; rejects stale decisions, unexpected duplicate signals, embedded phone numbers and unsafe notes. Missing underlying records fail closed. No actual CRM item IDs, Bitrix account identity or live user authorizations are inferred.
+
+This is preview-only, with zero Bitrix network requests or changes to commercial funnels. The Windows acceptance runner has been extended to compile and test the new code. The user's previous 527-test result applies only to the prior SHA and does not yet verify the newly added module. PR #37 remains draft. PRODUCTION_READY=NO; REAL_SOURCE_CONNECTIONS=OFF.

@@ -26,3 +26,30 @@ Owner ran the PowerShell-input variant of the synthetic E2E operator. The **10-t
 The revised downloadable artifact is `ServiceIT_Bitrix24_1062_E2E_WIN_ENCODING_FIXED_20261101.zip`, exact SHA-256 `89a412f48165169baa8aa80e6ca5bc9b2ca42c53e0bedc71d16c3bc15d62b129`. **Minimal change**: `read_text(encoding='utf-8')` in the guard test; no changes to live API workflow. Independent local `unittest`: **10 passed**, Python compile PASS. This archive is **not yet part of the GitHub source tree**; retain as an independent test artifact.
 
 Next operator step: download the new ZIP, unpack to a *new folder*, and run the guarded PowerShell operator; do **not** reuse the previous Windows encoding-failing ZIP. A live result has not yet been observed. The previously disclosed webhook must be rotated before using the live mode; robots must be checked OFF. Only one synthetic item in 1062/21 is authorized; never rerun the live operation after an ambiguous create without inspecting the saved report and recovering the owned marker.
+
+
+## 01.11.2026 — успешный реальный синтетический E2E; переход к программному mapping
+
+**Пользователь фактически выполнил** Windows-оператор `ServiceIT_Bitrix24_1062_E2E_WIN_ENCODING_FIXED_20261101.zip` и прислал вывод:
+
+```text
+Ran 10 tests in 0.199s
+OK
+SERVICEIT_1062_LOCAL_GUARD_TESTS=PASS
+SERVICEIT_SYNTHETIC_E2E_STATUS=PASS_SYNTHETIC_E2E_CLEAN
+SERVICEIT_SYNTHETIC_E2E_REPORT=.../synthetic-20261101T134333-12c740aa.json
+SERVICEIT_CRM_SYNTHETIC_CARD_LEFT=0; REAL_CUSTOMER_WRITES=0
+SERVICEIT_1062_OPERATOR_EXIT=0
+SERVICEIT_1062_OPERATOR=COMPLETE
+E2E_EXIT=0
+```
+
+Локальный приватный отчёт на ПК: `%LOCALAPPDATA%\ServiceIT\Bitrix24-Synthetic-E2E\synthetic-20261101T134333-12c740aa.json`. Проверенный оператором результат: одна тестовая карточка создана, прочитана/обновлена и удалена, **0 осталось**. Корпоративные данные и прочие воронки не изменялись по выводу оператора. Секрет вебхука в GitHub не добавлялся. Подтверждение ротации вебхука — только ответ оператора на закрытый guard-вопрос, независимо статус ротации не проверялся.
+
+После этой приёмки добавлен в PR независимый от реального CRM **offline-only mapping**: `leadpilot/bitrix_1062_mapping.py`, `tests/test_bitrix_1062_mapping.py`, `scripts/RUN_SERVICEIT_BITRIX_1062_MAPPING_ACCEPTANCE.ps1`. Он сопоставляет прошедшие offline-валидацию *строго синтетические* намерения с оригинальными 16 пользовательскими полями `UF_CRM_13_...`, системными `categoryId=21`, `stageId=DT1062_21:NEW`, `entityTypeId=1062`, `useOriginalUfNames=Y`. Защита проверяет ИНН, дату, фиктивные источник/URL, формат данных, стабильный ключ `ИНН+signal_id`, отсутствие контактов и чужих полей. Выход — **только план, без HTTP**, и он не является разрешением на live запись.
+
+Результат локальных unit-тестов разработчика: **26 passed** (изолированный модуль и негативные сценарии). Интеграционный тест с реальным `leadpilot.bitrix_handoff_dryrun` добавлен в GitHub и ждёт независимой проверки на рабочем дереве; размещён Windows runner. Проверка GitHub Actions на последнем коммите пока отсутствует.
+
+**Актуальная граница:** `BITRIX_LIVE_SCHEMA=VERIFIED`, `BITRIX_SYNTHETIC_LIVE_E2E=PASS_CLEAN`, `BITRIX_SOURCE_ADAPTER=NOT_CONNECTED`, `MANAGER_APPROVAL_AND_DEDUP_LIVE=NOT_VERIFIED`, `PRODUCTION_READY=NO`. Этим документом обновлены прежние исторические отметки `NOT_RUN`.
+
+Следующая задача — интеграционные тесты контракта в изолированном worktree, независимый обзор live-адаптера и отдельная проверка бизнес-процесса менеджера. Источники остаются вне объёма текущего этапа.

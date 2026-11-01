@@ -15,7 +15,7 @@ from .bitrix_metadata_audit import validate_webhook
 from .bitrix_1062_task_metadata import audit_synthetic_task_link
 
 METHODS = (
-    ("crm.type.get", {"entityTypeId": 1062}),
+    ("crm.type.getByEntityTypeId", {"entityTypeId": 1062}),
     ("crm.enum.ownertype", {}),
     ("tasks.task.getFields", {}),
     ("crm.item.get", {
@@ -100,7 +100,7 @@ def diagnose_task_metadata(
             ),
             "crm_scope_missing_possible": any(
                 checks[m]["state"] in ("API_ERROR", "HTTP_ERROR")
-                for m in ("crm.type.get", "crm.enum.ownertype", "crm.item.get")
+                for m in ("crm.type.getByEntityTypeId", "crm.enum.ownertype", "crm.item.get")
             ),
             "metadata_gates": None,
             "task_created": False, "crm_writes": "NO",

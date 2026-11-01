@@ -138,6 +138,7 @@ def diagnose_task_metadata(
                         "exact_demo_card_readback",
                     )
                 }
+                report["stage_policy"] = result.get("stage_policy", "UNKNOWN")
                 if result["exact_demo_card_readback"] is False:
                     # Return only static field labels and equality booleans,
                     # never actual CRM values, URL, company data or webhook.

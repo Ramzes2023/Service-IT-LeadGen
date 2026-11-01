@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import date
 from hashlib import sha256
+from pathlib import Path
 import json
 import sqlite3
 
@@ -409,7 +410,7 @@ def test_ai_error_traceback_does_not_expose_transport_secret():
 
 def test_cli_readonly_failure_reports_only_fixed_error_code(monkeypatch, capsys):
     from leadpilot import bitrix_1062_ai_cockpit as cockpit
-    monkeypatch.setattr("getpass.getpass", lambda *_: HOOK)
+    monkeypatch.setenv("SERVICEIT_AI_COCKPIT_WEBHOOK", HOOK)
     def deny(self, url, **kwargs):
         return httpx.Response(403, json={
             "error": "ACCESS_DENIED",
@@ -423,7 +424,8 @@ def test_cli_readonly_failure_reports_only_fixed_error_code(monkeypatch, capsys)
     import sys
     old_argv = sys.argv
     try:
-        sys.argv = ["leadpilot.bitrix_1062_ai_cockpit", "--mode", "provision", "--inspect-live"]
+        sys.argv = ["leadpilot.bitrix_1062_ai_cockpit", "--mode", "provision",
+                    "--inspect-live", "--webhook-from-env"]
         with pytest.raises(SystemExit) as outer:
             runpy.run_module("leadpilot.bitrix_1062_ai_cockpit", run_name="__main__")
         assert outer.value.code == 2
@@ -433,3 +435,32 @@ def test_cli_readonly_failure_reports_only_fixed_error_code(monkeypatch, capsys)
     assert '"safe_reason_code": "REST_HTTP_BLOCKED"' in output
     assert "SYNTHETIC_CORPORATE_SECRET_NEVER_LOG" not in output
     assert HOOK not in output
+    import os
+    assert "SERVICEIT_AI_COCKPIT_WEBHOOK" not in os.environ
+
+
+def test_secure_powershell_handoff_is_explicit_and_never_prompts(monkeypatch):
+    from leadpilot import bitrix_1062_ai_cockpit as cockpit
+    monkeypatch.setenv("SERVICEIT_AI_COCKPIT_WEBHOOK", HOOK)
+    monkeypatch.setattr("getpass.getpass", lambda *_: pytest.fail("Python getpass must not be used"))
+    monkeypatch.setattr(httpx.Client, "post", lambda *a, **k: pytest.fail("network forbidden"))
+    with pytest.raises(CockpitBlocked, match="POWERSHELL_SECURE_WEBHOOK_REQUIRED"):
+        cockpit.main(["--inspect-live", "--mode", "provision"])
+    # Missing opt-in never consumes a webhook supplied by another process.
+    import os
+    assert os.environ.get("SERVICEIT_AI_COCKPIT_WEBHOOK") == HOOK
+    monkeypatch.delenv("SERVICEIT_AI_COCKPIT_WEBHOOK")
+    with pytest.raises(CockpitBlocked, match="SECURE_WEBHOOK_MISSING"):
+        cockpit.main(["--inspect-live", "--mode", "provision", "--webhook-from-env"])
+
+
+def test_windows_operator_uses_securestring_not_python_getpass():
+    script = (Path(__file__).resolve().parents[1] /
+              "scripts" / "RUN_SERVICEIT_AI_COCKPIT_DEMO.ps1").read_text(encoding="utf-8")
+    assert "Read-Host 'Authorized Bitrix24 webhook URL (hidden input)' -AsSecureString" in script
+    assert "--webhook-from-env" in script
+    assert "ZeroFreeBSTR" in script
+    assert "Remove-Item Env:\\SERVICEIT_AI_COCKPIT_WEBHOOK" in script
+    assert "getpass.getpass(" not in (
+        Path(__file__).resolve().parents[1] /
+        "leadpilot" / "bitrix_1062_ai_cockpit.py").read_text(encoding="utf-8")

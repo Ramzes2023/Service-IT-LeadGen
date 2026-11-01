@@ -21,3 +21,10 @@ jobs:
         run: python -m compileall -q leadpilot
       - name: Run local tests
         run: python -m pytest -q -p no:cacheprovider tests --basetemp="${{ runner.temp }}/serviceit-pytest-${{ github.run_id }}-${{ github.run_attempt }}"
+  windows-cockpit-secure-input:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell 5.1 syntax and synthetic SecureString handoff
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_AI_COCKPIT_SECURE_INPUT.ps1

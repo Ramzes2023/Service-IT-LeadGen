@@ -134,3 +134,27 @@ SERVICEIT_AI_SIGNALS_OPERATOR=COMPLETE
 Подготовлен автономный read-only оператор `SERVICEIT_AI_SIGNALS_READBACK_1062_20261101.zip` с программой `serviceit_readback_1062.py` и `RUN_SERVICEIT_VERIFY_AI_SIGNALS_1062.ps1`; проверен мокированно `14 passed`, компиляция PASS, PowerShell ASCII PASS. Оператор *только* читает `crm.type.get(id=13)`, `crm.category.list(entityTypeId=1062)`, `crm.item.fields(entityTypeId=1062)` и стадии `crm.status.list`; секрет вводится скрыто на локальном PC, только затем выполняется REST. Проверяет соответствие типа и флаги автоматизации, бизнес-процессов, публичного доступа и канбана; без чтения клиентов и без любых remote writes. **Живой read-back пока не запущен**, результата нет.
 
 Состояние: `CREATE_1062=CONFIRMED`, `READBACK_TYPE_13=NEXT_STEP`, `STAGE_FIELD_CONFIG=NOT_STARTED`, `SYNTHETIC_CRM_ITEM=NOT_CREATED`, `LIVE_HANDOFF=NO`, `PRODUCTION_READY=NO`. Не считать локальные тесты подтверждением реальных параметров API.
+
+## 01.11.2026 — read-back 1062 частичный, диагностировать crm.item.fields
+
+Пользователь выполнил read-only PowerShell operator на живом `serviseit.bitrix24.ru`:
+
+```text
+14 passed in 0.13s
+SERVICEIT_PROCESS_READBACK_LOCAL_TESTS=PASS
+BITRIX_READBACK_STATUS=PARTIAL_READBACK
+BITRIX_READBACK_ENTITY_TYPE_ID=1062
+BITRIX_READBACK_SAFETY_FLAGS=PASS
+BITRIX_READBACK_METHODS={"crm.category.list":"OK","crm.item.fields":"HTTP_FAILED","crm.type.get":"OK"}
+BITRIX_READBACK_CATEGORIES=0
+BITRIX_READBACK_CUSTOM_FIELDS=0
+BITRIX_READBACK_CRM_WRITES=0; CUSTOMER_RECORDS_READ=0
+```
+
+Локальный read-back JSON: `%LOCALAPPDATA%\\ServiceIT\\Bitrix24-Readback\\readback-1062-20261101T113751763Z.json`.
+
+Вывод: настоящий тип `id=13/entityTypeId=1062` подтверждён повторно, проверенные флаги автоматизации и публичного доступа соответствуют изоляции. API вернул пустой список категорий (это не запрос с ошибкой); новый тип пока не имеет доступных категорий в ответе. **Не считать `0` пользовательских полей доказательством их отсутствия:** `crm.item.fields` дал `HTTP_FAILED`. Старый оператор схлопывает HTTP 400/403/500 и слишком большие ответы в одно значение, поэтому причина пока не установлена. Документация допускает `ACCESS_DENIED` (нет прав на чтение элементов данного типа) или `NOT_FOUND`, и сетевые/серверные причины остаются возможны. Не выдавать гипотезу за установленную причину.
+
+Подготовлен отдельный **read-only диагностический ZIP** `SERVICEIT_AI_SIGNALS_FIELDS_DIAGNOSTIC_1062_20261101.zip` с локальными 18/18 мокированными тестами; он читает только `crm.type.get`, `crm.category.list`, `crm.item.fields`, сохраняет обезличенные статус HTTP, allowlist-код REST и количество полей/категорий. Не сохраняет webhook или сырые ответы. Следующая проверка: реальный запуск этого оператора и решение по правам/категориям только после точной диагностики. **Ни одно изменение CRM или дополнительное создание процесса в этом этапе не выполнялось.**
+
+`READBACK=PARTIAL`; `TYPE_IDENTITY=CONFIRMED`; `SAFETY_FLAGS=PASS`; `FIELDS_READ=FAILED_UNDIAGNOSED`; `CATEGORY_LIST=EMPTY`; `LIVE_ITEM_HANDOFF=NO`; `PRODUCTION_READY=NO`.

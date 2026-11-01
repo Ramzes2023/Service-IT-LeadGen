@@ -10,7 +10,7 @@
 - `tests/test_bitrix_handoff_dryrun.py` проверяет дубли, стоп-лист, существующего клиента, просроченные сигналы, неверный ИНН, типы данных, область пилота, отсутствие сети, запрет токенов/контактов.
 - `scripts/RUN_SERVICEIT_BITRIX_HANDOFF_DRYRUN.ps1` запускает тесты, компиляцию и формирует локальный JSON в `%LOCALAPPDATA%\\ServiceIT\\Bitrix24-DryRun`.
 
-**Это отдельный PR поверх PR #36**. Он не меняет исходные механизмы источников и не может навредить текущему рабочему Bitrix24. Готовность этого изменения ещё должна быть подтверждена фактическими Windows-тестами.
+**Это отдельный PR поверх PR #36**. Он не меняет исходные механизмы источников или корпоративный Bitrix24. **Локальная Windows-приёмка выполнена пользователем 01.11.2026: 334/334 тестов PASS, compileall PASS, git diff --check PASS; в том числе 25/25 тестов автономного handoff PASS.**
 
 ## Что ещё понадобится от компании
 
@@ -34,3 +34,25 @@
 - Корпоративные звонки, рассылки, отчёты о договорах/выручке, РВП.
 
 **Статус:** `HANDOFF_CONTRACT_PREPARED=YES`; `BITRIX_REAL_INTEGRATION=NO`; `CRM_WRITES=NO`; `PRODUCTION_READY=NO`. Проверенная ранее основная локальная архитектура: 309 тестов на pinned PR #36 HEAD `d37c0f1720f319b4f06f4587879bed1a7ef0afbf`; новый offline bridge имеет отдельный тестовый цикл.
+
+
+## 01.11.2026 — реальная Windows-приёмка offline-контракта
+
+Проверенный на машине пользователя отдельный worktree pinned SHA `bfcaf110ec8c7fd2c437d6a208871e971164a3cd`:
+
+```text
+SERVICEIT_BITRIX_HANDOFF_SHA=bfcaf110ec8c7fd2c437d6a208871e971164a3cd
+SERVICEIT_BITRIX_HANDOFF_TESTS=RUNNING_FULL_SUITE
+334 passed in 14.99s
+BITRIX_OFFLINE_HANDOFF=TEST_START; CRM_WRITES=NO
+25 passed in 0.04s
+BITRIX_HANDOFF_DRYRUN=PASS; SIGNALS=2; DUPLICATES=1; HELDS=1
+BITRIX_HANDOFF_CRM_WRITES=NO; REAL_CLIENT_RECORDS=0; LIVE_AUTH=PENDING
+BITRIX_OFFLINE_HANDOFF=PASS_LOCAL_ONLY; LIVE_BITRIX_NOT_CONNECTED
+SERVICEIT_BITRIX_HANDOFF_ACCEPTANCE=PASS_OFFLINE_ONLY
+CRM_WRITES=NO; REAL_COMPANY_DATA=NO; WEBHOOK_REQUIRED=NO
+```
+
+Локальный отчёт: `%LOCALAPPDATA%\ServiceIT\Bitrix24-DryRun\handoff-20261101T093013642Z.json`. Локальный лог: `%LOCALAPPDATA%\ServiceIT\Bitrix-Handoff-Acceptance\acceptance-20261101T092955216Z.txt`.
+
+Фиксируем границу: успешно проверен **код без сетевых обращений к Bitrix24**, а не подключение CRM. Нет фактического REST API-доступа, проверенной карты полей/прав и разрешения на тестовую запись. PR #37 остаётся Draft поверх PR #36. Повторный тест необходим при изменениях исполняемого кода.

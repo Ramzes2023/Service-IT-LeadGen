@@ -183,3 +183,14 @@ FULL_SUITE_FAILED
 **Code fix (no test suppression):** added shared `leadpilot/bitrix_synthetic_text_guard.py` containing `synthetic_action_is_safe`, used by **both** `leadpilot/bitrix_handoff_dryrun.py` and `leadpilot/bitrix_1062_mapping.py`. It rejects phone-shaped sequences (10–16 digits with usual punctuation, including the exact failed `+7 999 000 0000` case), links, email markers and control characters, while allowing ordinary synthetic work text and short date references. Added dedicated guard tests plus direct bypass tests in `tests/test_bitrix_handoff_dryrun.py` and `tests/test_bitrix_1062_mapping.py`; the original failing synthetic-add negative case remains unchanged. Windows acceptance runner includes the new guard suite. An independent local regex-only smoke check confirmed the exact phone formats are rejected and ordinary demo action text passes.
 
 **Next gate:** re-run **only** pinned new HEAD in an isolated Windows worktree (targeted tests, then full project tests, compileall, diff check). No webhook required. **Do not claim PASS** on new HEAD before operator returns the successful markers. PR remains draft and no live writer or real-lead ingestion is enabled.
+
+ 
+## 01.11.2026 — исправление SyntaxError после телефонного guard
+ 
+Следующая независимая Windows-проверка зафиксировала ошибку сбора тестов (9 collection errors) в `leadpilot/bitrix_synthetic_text_guard.py`: в условие `if` по ошибке был записан буквальный текст `\\n` вместо символа перевода строки, и Python остановился на `SyntaxError: unexpected character after line continuation character`. Это ошибка нового тестового кода; повторных live REST-вызовов и изменений CRM не было.
+ 
+Исправлено непосредственно в GitHub:
+- Реальный перенос строки восстановлен; основной запрет телефонных номеров НЕ ослаблен.
+- Исправленная функция отдельно скомпилирована Python и проверена 24 локальными положительными и отрицательными примерами; PASS. Это не равно полной приёмке репозитория.
+- `scripts/RUN_SERVICEIT_BITRIX_1062_MAPPING_ACCEPTANCE.ps1` теперь запускает `python -m compileall -q leadpilot tests` **до** pytest и аварийно завершает выполнение при синтаксической ошибке.
+- Полная независимая Windows-приёмка нового SHA ещё необходима. Репозиторий и PR остаются в черновом режиме: `CRM_WRITES=NO`, `REAL_SOURCES=NO`.

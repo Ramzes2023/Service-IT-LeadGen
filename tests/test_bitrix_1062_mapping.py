@@ -135,3 +135,16 @@ def test_hold_cannot_claim_write():
     r["operations"].append({"status": "HOLD", "crm_writes": "YES"})
     with pytest.raises(SyntheticPlanRejected):
         build_synthetic_1062_plan(r, today=NOW)
+
+
+@pytest.mark.parametrize("action", [
+    "Call +7 999 000 0000 to discuss",
+    "Контакт 8-999-000-00-00 для согласования",
+    "Email demo@example.org to approve",
+    "See https://example.org/contact",
+])
+def test_direct_mapping_rejects_embedded_contact_even_if_upstream_bypassed(action):
+    report_with_contact = report()
+    report_with_contact["operations"][0]["logical_fields"]["manager_next_action"] = action
+    with pytest.raises(SyntheticPlanRejected, match="SIGNAL_VALUES_INVALID"):
+        build_synthetic_1062_plan(report_with_contact, today=NOW)

@@ -83,10 +83,24 @@ def _unverified_demo_review_state(value: object, expected: str) -> str:
     A populated unknown value could claim that evidence or a manager review
     is real/approved. Never replace or normalize it silently.
     """
-    if value == expected:
-        return "EXACT_SYNTHETIC_LABEL"
     if value is None or value == "" or value == "0" or value == 0 or value == []:
         return "UNSET_UNVERIFIED"
+    if isinstance(value, str):
+        def normalize(text: str) -> str:
+            return " ".join(
+                text.strip().casefold().replace("—", "-").replace("–", "-").split()
+            )
+        selected = normalize(value)
+        if selected == normalize(expected):
+            return "EXACT_SYNTHETIC_LABEL"
+        # Explicitly harmless *unverified* review labels only; never
+        # infer verification or consent from a free-form Bitrix field.
+        if selected in {
+            "ожидает проверки", "на проверке", "требует проверки",
+            "не проверено", "не подтверждено", "не рассмотрено",
+            "ожидает решения", "синтетический тест", "демо", "demo",
+        }:
+            return "UNVERIFIED_LABEL"
     return "NONEMPTY_UNRECOGNIZED"
 
 

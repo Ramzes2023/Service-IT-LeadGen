@@ -40,3 +40,17 @@ The operator's four local mock/safety test cases passed. **There has been no liv
 The corporate webhook's access to #3/#5 can be exercised, but it does not prove Mikhail's **own** login RBAC. Mikhail should independently open #3 using his account. Avoid the standard `Связаться с клиентом` activity form: do not save a call or send a message for the DEMO company.
 
 A source-neutral, bounded synthetic outbox/delivery/reconciliation handler is in `main` after #37/#38. This is **not** a production daemon, automatic real-lead ingestion, source activation or corporate manager-approved workflow. A production worker requires separate authorized service identity and security policy, verified source mapping, persistent state and monitoring, RBAC, dedupe, rollback procedures, and explicit activation approval. Do not call `PRODUCTION_READY` merely because two test cards and the source code have been verified.
+
+
+## V6 read-only diagnosis and V7 bounded operator — 01 November 2026
+
+After the V5 preflight `BLOCKED_NOT_OUR_DEMO_TITLE_OR_STAGE`, the owner ran a **zero-write** V6 diagnostic against `serviseit.bitrix24.ru`. It returned:
+- `CARD_3_TITLE_EXACT=True`, `CARD_3_STAGE_ACTUAL=DT1062_21:CLIENT`, `CARD_3_IDENTITY_EXCEPT_TITLE_STAGE=True`, `CARD_3_STRICT_STATUS=PASS`.
+- `CARD_5_TITLE_EXACT=True`, `CARD_5_STAGE_ACTUAL=DT1062_21:CLIENT`, `CARD_5_STAGE_EXPECTED=DT1062_21:PREPARATION`, `CARD_5_IDENTITY_EXCEPT_TITLE_STAGE=True`.
+- `SERVICEIT_V6_READ_ONLY=PASS; LIVE_WRITE_CALLS=0`.
+
+The only mismatch confirmed by V6 was the **stage of the extra DEMO item #5**. Original title and unchanged synthetic identity validated on both cards. A bounded external V7 owner-side operator was prepared: the #5 deletion guard allows exactly `PREPARATION` or `CLIENT` (both existing known test stages) but retains the full immutable 16-UF synthetic identity and no-real-contact/company guards. #3 still requires exact `CLIENT` stage. It updates only #3's three DEMO description/action fields, optionally its supported `comments` field, and deletes only verified #5. It records mutation reservations durably and does not retry ambiguous writes blindly.
+
+**Offline evidence:** 21 pytest cases PASS against a freshly extracted V7 ZIP, plus Python compilation and ZIP CRC check. **Live V7 result: NOT YET RECEIVED**. Do not claim #5 was deleted or that one-card final handoff is complete until the owner reports `SERVICEIT_ONE_DEMO_LEAD=PASS`.
+
+The V7 package is a self-contained local operator delivered to the owner; it was not committed as an executable in this repository and is not a production service. No real-source or other-funnel changes are authorized.

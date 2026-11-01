@@ -158,3 +158,29 @@ BITRIX_READBACK_CRM_WRITES=0; CUSTOMER_RECORDS_READ=0
 Подготовлен отдельный **read-only диагностический ZIP** `SERVICEIT_AI_SIGNALS_FIELDS_DIAGNOSTIC_1062_20261101.zip` с локальными 18/18 мокированными тестами; он читает только `crm.type.get`, `crm.category.list`, `crm.item.fields`, сохраняет обезличенные статус HTTP, allowlist-код REST и количество полей/категорий. Не сохраняет webhook или сырые ответы. Следующая проверка: реальный запуск этого оператора и решение по правам/категориям только после точной диагностики. **Ни одно изменение CRM или дополнительное создание процесса в этом этапе не выполнялось.**
 
 `READBACK=PARTIAL`; `TYPE_IDENTITY=CONFIRMED`; `SAFETY_FLAGS=PASS`; `FIELDS_READ=FAILED_UNDIAGNOSED`; `CATEGORY_LIST=EMPTY`; `LIVE_ITEM_HANDOFF=NO`; `PRODUCTION_READY=NO`.
+
+
+## 01.11.2026 — ACCESS_DENIED исправлен, 1062 live field access PASS
+
+Оператор предоставил новый результат после назначения пользователю вебхука роли `ServiceIT AI — тест` с разрешениями для изолированного смарт-процесса. Повторная проверка тем же read-only оператором завершилась на настоящем портале:
+
+```text
+18 passed in 0.18s
+SERVICEIT_1062_DIAGNOSTIC_TESTS=PASS
+BITRIX_1062_DIAGNOSTIC_STATUS=FIELDS_READ_PASS
+BITRIX_1062_DIAGNOSTIC_METHODS={
+  "crm.category.list": {"body_size_band": "UNDER_100KB", "http_status": 200, "result": "OK"},
+  "crm.item.fields": {"body_size_band": "UNDER_100KB", "http_status": 200, "result": "OK"},
+  "crm.type.get": {"body_size_band": "UNDER_100KB", "http_status": 200, "result": "OK"}
+}
+BITRIX_1062_DIAGNOSTIC_CATEGORIES=1
+BITRIX_1062_DIAGNOSTIC_FIELDS=22
+BITRIX_1062_DIAGNOSTIC_CRM_WRITES=0; CRM_RECORDS_READ=0
+SERVICEIT_1062_DIAGNOSTIC_OPERATOR=COMPLETE
+```
+
+Локальный sanitized JSON: `%LOCALAPPDATA%\\ServiceIT\\Bitrix24-Diagnostics\\diag-fields-1062-20261101T121222435Z.json`.
+
+**Подтверждение:** ошибка `ACCESS_DENIED` на `crm.item.fields` устранена; тип `entityTypeId=1062` доступен, одна категория видна, 22 поля (общие поля + возможные пользовательские) доступны метаданными. Названия/типы всех 22 полей не опубликованы этим логом; нельзя считать, что требуемые для лидогенерации пользовательские поля уже есть. При этом никакие карточки CRM, источники лидов и механизм handoff не подключены: `LIVE_HANDOFF=NO`, `CRM_ITEM_WRITE_TEST=NOT_DONE`, `PRODUCTION_READY=NO`.
+
+**Следующие инженерные задачи:** read-only точный field/stage mapping и safe default category verification, спецификация отдельных полей `source_notice_id` / `INN` / `signal_url` / `signal_kind` / `score` / `review_decision` / `stop_reason` / `ingest_timestamp`; проверка, что любая конфигурационная запись выполняется только по отдельному согласованному оператору с idempotency и без изменения других сущностей; затем отдельное одобренное создание одной синтетической записи, read-back и cleanup-план. Текущие расширенные разрешения роли на `Настройка CRM` по UI являются глобальными — следует сократить их после первоначальной настройки, согласовав с администратором.

@@ -12,6 +12,7 @@ leads are deliberately not implemented.
 from __future__ import annotations
 
 import json
+import hmac
 from pathlib import Path
 import sqlite3
 
@@ -81,6 +82,10 @@ def deliver_one_claimed_synthetic(
     if (not isinstance(read_only, Bitrix1062ReadOnly)
             or not isinstance(one_shot_add, Bitrix1062SyntheticAddOnly)):
         raise SyntheticPlanRejected("GATED_TRANSPORTS_REQUIRED")
+    # A narrower read-only role must not search for duplicates that the
+    # writer's identity could see differently. Require one exact credential.
+    if not hmac.compare_digest(read_only._base, one_shot_add._base):
+        return _hold(db_path, key, "WEBHOOK_IDENTITY_MISMATCH")
     if (approval != CONFIRMATION
             or rotated_webhook_confirmed is not True
             or robots_disabled_confirmed is not True

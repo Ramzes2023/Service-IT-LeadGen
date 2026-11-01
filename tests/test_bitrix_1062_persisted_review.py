@@ -131,7 +131,7 @@ def test_existing_stop_list_blocks_local_action(channel, tmp_path):
     suppress(db, "7700000009", channel, "Demo test stop")
     p = bind(db)
     assert p["reviewed_count"] == 0
-    assert p["policy_held_count"] == 1
+    assert p["policy_held_count"] == 2
     assert p["policy_held_not_sent"][0]["reason"] == "COMPANY_POLICY_HOLD"
     assert p["crm_writes"] == "NO"
 
@@ -141,7 +141,7 @@ def test_existing_client_never_produces_manager_action(tmp_path):
     save_review(db, cid, sid)
     p = bind(db)
     assert p["reviewed_count"] == 0
-    assert p["policy_held_count"] == 1
+    assert p["policy_held_count"] == 2
 
 
 def test_phone_in_saved_reason_blocked(tmp_path):

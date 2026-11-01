@@ -83,7 +83,7 @@ def _synthetic_card_only(card: object, today: date) -> dict:
                 or not split.path.startswith("/serviceit-demo/")):
             return _hold("NON_SYNTHETIC_EVIDENCE_FORBIDDEN", key)
         signal_date = date.fromisoformat(card["signal_date"])
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, AttributeError):
         return _hold("INVALID_DATE_OR_SYNTHETIC_URL", key)
     if not 0 <= (today - signal_date).days <= 30:
         return _hold("SIGNAL_NOT_CURRENT", key)

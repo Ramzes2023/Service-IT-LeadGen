@@ -104,6 +104,44 @@ def _unverified_demo_review_state(value: object, expected: str) -> str:
     return "NONEMPTY_UNRECOGNIZED"
 
 
+def _protected_demo_review_state(
+    value: object, *, kind: str, evidence_is_synthetic: bool
+) -> str:
+    """Classify unknown DEMO labels without treating them as approved.
+
+    This is ONLY for the exact synthetic 1062/21/3 fixture, already verified
+    by the caller, with no company/contact links. Never send these existing
+    field values to GigaChat, CRM item.update, or logs.
+    """
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 256:
+        return "NONEMPTY_UNRECOGNIZED"
+    text = " ".join(value.strip().casefold().replace("ё", "е").split())
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        return "NONEMPTY_UNRECOGNIZED"
+    if any(token in text for token in (
+        "http:", "https:", "mailto:", "tel:", "wa.me", "t.me/",
+        "@", "одобр", "разрешен", "разрешено", "согласован",
+        "подтвержден", "подтверждаю", "верифиц", "проверено",
+        "verified", "approved", "confirmed", "contact allowed",
+        "отклон", "отказ", "запрет", "blocked", "отправить",
+    )):
+        return "NONEMPTY_UNRECOGNIZED"
+    if kind == "evidence":
+        # The real Bitrix field is an auxiliary free-text status; accept
+        # a harmless explicitly synthetic label but NEVER verified evidence.
+        if any(token in text for token in (
+            "синтет", "демо", "demo", "тестов", "учебн",
+        )):
+            return "SYNTHETIC_LABEL_UNVERIFIED_PROTECTED"
+        return "NONEMPTY_UNRECOGNIZED"
+    if kind == "review" and evidence_is_synthetic:
+        # No approval inferred: the existing decision is opaque and is
+        # protected from overwrites. The only action is scoring a fictional
+        # signal with an explicit NO CONTACT stop.
+        return "OPAQUE_REVIEW_UNVERIFIED_PROTECTED"
+    return "NONEMPTY_UNRECOGNIZED"
+
+
 def _safe_demo_review_checks(item: dict) -> dict[str, str]:
     """Return static classifications, not raw Bitrix status values."""
     return {
@@ -136,12 +174,26 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
         stop("EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN")
     review_states = _safe_demo_review_checks(item)
     if review_states["evidence_status"] == "NONEMPTY_UNRECOGNIZED":
+        review_states["evidence_status"] = _protected_demo_review_state(
+            item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS"),
+            kind="evidence", evidence_is_synthetic=False,
+        )
+    if review_states["evidence_status"] == "NONEMPTY_UNRECOGNIZED":
         stop("DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED", safe_details={
             "evidence_status_shape": _safe_status_shape(
                 item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS")
             ),
             "review_decision_state": review_states["review_decision"],
         })
+    if review_states["review_decision"] == "NONEMPTY_UNRECOGNIZED":
+        review_states["review_decision"] = _protected_demo_review_state(
+            item.get("UF_CRM_13_SVCIT_REVIEW_DECISION"),
+            kind="review",
+            evidence_is_synthetic=review_states["evidence_status"] in (
+                "EXACT_SYNTHETIC_LABEL", "UNVERIFIED_LABEL",
+                "SYNTHETIC_LABEL_UNVERIFIED_PROTECTED",
+            ),
+        )
     if review_states["review_decision"] == "NONEMPTY_UNRECOGNIZED":
         stop("DEMO_REVIEW_DECISION_NONEMPTY_REVIEW_REQUIRED", safe_details={
             "review_decision_shape": _safe_status_shape(

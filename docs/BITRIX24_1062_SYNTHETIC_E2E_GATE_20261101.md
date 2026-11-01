@@ -82,3 +82,32 @@ The PR next adds `leadpilot/bitrix_1062_manager_bridge.py` and `tests/test_bitri
 **Status of this NEW commit:** code has been committed to the feature branch, but independent full Windows tests and GitHub Actions CI for this revision remain unverified. Do not claim these changes PASS until an operator returns `SERVICEIT_1062_MANAGER_ACCEPTANCE=PASS_OFFLINE_ONLY` and the exit code. The previously verified 52 tests belong to older `78a5e4e`.
 
 **Next gates after this acceptance:** direct integration to persisted manager workflow, idempotent live CRM handoff adapter with read-after-write/recovery and admin RBAC approval, then staging/deployment verification. Continue to keep real sources, actual customers, commercial funnels, email and telephone out of scope.
+
+
+## 01.11.2026 — independent Windows manager acceptance: 384/384 PASS
+
+Owner executed pinned SHA `d14eb01a2a576ac4c2595d0a1ea970c8e851d681` in a detached worktree and provided these host markers:
+
+```text
+SERVICEIT_1062_MAPPING_AND_MANAGER=START; CRM_WRITES=NO
+75 passed in 0.35s
+SERVICEIT_1062_MANAGER_PREVIEW=PASS; SYNTHETIC_SIGNALS=2; REVIEWED=1; UF_FIELDS=16; REST_CALLS=0
+SERVICEIT_1062_MANAGER_ACCEPTANCE=PASS_OFFLINE_ONLY; CRM_WRITES=NO; SOURCES=NO
+384 passed in 10.00s
+SERVICEIT_BITRIX_MANAGER_FULL_ACCEPTANCE=PASS_LOCAL_ONLY
+```
+
+Independent Windows `compileall -q leadpilot tests` and `git diff --check origin/feat/serviceit-nonsource-architecture-20261031...HEAD` also passed. These facts verify SHA `d14eb01` **only**. The full test suite did not contact corporate Bitrix24.
+
+## Durable synthetic outbox and read-only recovery — new code, awaiting host acceptance
+
+After the 384-test acceptance, further code was added only to PR #37:
+
+- `leadpilot/bitrix_1062_outbox.py`: persistent local SQLite outbox keyed by deterministic synthetic `ИНН+signal_id`. Immutable fingerprint blocks same-key payload changes; atomic claiming and audit events; states `QUEUED`, `CLAIMED`, `UNCERTAIN`, `VERIFIED`; **never automatically retry a claim**.
+- `leadpilot/bitrix_1062_reconcile.py`: requires a caller-supplied read-only transport for **only** `crm.item.list` / `crm.item.get` against `entityTypeId=1062`, category 21, exact synthetic key. A missing visible item never authorizes a resend; multiple matches block reconciliation. No embedded webhook, production transport, write method or live call.
+- `tests/test_bitrix_1062_outbox.py` / `tests/test_bitrix_1062_reconcile.py`: database durability, duplicate conflicts, parallel claims, missing/multiple remote matches, scope constraints, and mock-only recovery.
+- `scripts/RUN_SERVICEIT_BITRIX_1062_MAPPING_ACCEPTANCE.ps1`: updated to cover these files and exercise a temporary simulated outbox with fake read-only response. No secret needed.
+
+**Current boundary:** new source is committed but no new full Windows acceptance or GitHub Actions was confirmed for the later SHA. No real `crm.item.add` code is activated, real leads remain `0`, and source connections are intentionally `0`. The demonstrated live E2E remains the separately audited single synthetic card, now deleted.
+
+**Required next step:** independent pinned Windows suite, then review of transport authorization, RBAC and robots before any additional live tests. Keep PR #37 draft and do not merge into `main` until reviewed.

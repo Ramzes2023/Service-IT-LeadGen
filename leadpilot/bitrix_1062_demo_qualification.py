@@ -35,11 +35,37 @@ SYNTHETIC_ITEM = 3
 
 
 class DemoBridgeBlocked(ValueError):
-    pass
+    def __init__(self, code: str, *, safe_details: dict | None = None):
+        super().__init__(code)
+        # Never carry remote values, Bitrix errors, names or webhook tokens.
+        self.safe_details = safe_details or {}
 
 
-def stop(code: str):
-    raise DemoBridgeBlocked(code)
+def stop(code: str, *, safe_details: dict | None = None):
+    raise DemoBridgeBlocked(code, safe_details=safe_details)
+
+
+def _safe_status_shape(value: object) -> str:
+    """Return only an allowlisted value category, never the value itself."""
+    if value is None or value == "" or value == "0" or value == 0 or value == []:
+        return "UNSELECTED"
+    if isinstance(value, str):
+        if value.isascii() and value.isdecimal():
+            return "POSSIBLE_ENUM_ID"
+        v = value.strip().casefold()
+        if any(token in v for token in ("синтет", "демо", "demo", "тест")):
+            return "HAS_SYNTHETIC_WORD"
+        if any(token in v for token in (
+                "одобр", "подтвержд", "verified", "approved", "реальн")):
+            return "POSSIBLE_AFFIRMATIVE_STATUS"
+        return "UNRECOGNIZED_TEXT"
+    if isinstance(value, (int, float, bool)):
+        return "UNRECOGNIZED_NUMERIC"
+    if isinstance(value, list):
+        return "NONEMPTY_LIST"
+    if isinstance(value, dict):
+        return "OBJECT"
+    return "UNEXPECTED_TYPE"
 
 
 def _date(value: object) -> date:
@@ -49,6 +75,47 @@ def _date(value: object) -> date:
         return date.fromisoformat(value[:10]) if value[:4].isdigit() and "-" in value[:10] else datetime.strptime(value, "%d.%m.%Y").date()
     except ValueError:
         stop("DEMO_SIGNAL_DATE_INVALID")
+
+
+def _unverified_demo_review_state(value: object, expected: str) -> str:
+    """Only two safe states: exact original synthetic marker or no decision yet.
+
+    A populated unknown value could claim that evidence or a manager review
+    is real/approved. Never replace or normalize it silently.
+    """
+    if value is None or value == "" or value == "0" or value == 0 or value == []:
+        return "UNSET_UNVERIFIED"
+    if isinstance(value, str):
+        def normalize(text: str) -> str:
+            return " ".join(
+                text.strip().casefold().replace("—", "-").replace("–", "-").split()
+            )
+        selected = normalize(value)
+        if selected == normalize(expected):
+            return "EXACT_SYNTHETIC_LABEL"
+        # Explicitly harmless *unverified* review labels only; never
+        # infer verification or consent from a free-form Bitrix field.
+        if selected in {
+            "ожидает проверки", "на проверке", "требует проверки",
+            "не проверено", "не подтверждено", "не рассмотрено",
+            "ожидает решения", "синтетический тест", "демо", "demo",
+        }:
+            return "UNVERIFIED_LABEL"
+    return "NONEMPTY_UNRECOGNIZED"
+
+
+def _safe_demo_review_checks(item: dict) -> dict[str, str]:
+    """Return static classifications, not raw Bitrix status values."""
+    return {
+        "evidence_status": _unverified_demo_review_state(
+            item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS"),
+            EXTRA_FIELDS["UF_CRM_13_SVCIT_EVIDENCE_STATUS"],
+        ),
+        "review_decision": _unverified_demo_review_state(
+            item.get("UF_CRM_13_SVCIT_REVIEW_DECISION"),
+            EXTRA_FIELDS["UF_CRM_13_SVCIT_REVIEW_DECISION"],
+        ),
+    }
 
 
 def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -> dict:
@@ -67,10 +134,21 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
         stop("DEMO_SIGNAL_NOT_FRESH")
     if item.get(STOP_FIELD) not in (None, "", STOP_VALUE):
         stop("EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN")
-    if item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS") != EXTRA_FIELDS["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]:
-        stop("DEMO_EVIDENCE_STATUS_MISMATCH")
-    if item.get("UF_CRM_13_SVCIT_REVIEW_DECISION") != EXTRA_FIELDS["UF_CRM_13_SVCIT_REVIEW_DECISION"]:
-        stop("DEMO_REVIEW_DECISION_MISMATCH")
+    review_states = _safe_demo_review_checks(item)
+    if review_states["evidence_status"] == "NONEMPTY_UNRECOGNIZED":
+        stop("DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED", safe_details={
+            "evidence_status_shape": _safe_status_shape(
+                item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS")
+            ),
+            "review_decision_state": review_states["review_decision"],
+        })
+    if review_states["review_decision"] == "NONEMPTY_UNRECOGNIZED":
+        stop("DEMO_REVIEW_DECISION_NONEMPTY_REVIEW_REQUIRED", safe_details={
+            "review_decision_shape": _safe_status_shape(
+                item.get("UF_CRM_13_SVCIT_REVIEW_DECISION")
+            ),
+            "evidence_status_state": review_states["evidence_status"],
+        })
     # Same reusable engine as the general ServiceIT AI Signals pipeline.
     # Seven company-wide CRM/stop/legal checks intentionally stay UNKNOWN.
     # This is a synthetic demonstration, never a real qualified prospect.
@@ -133,7 +211,8 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
             "synthetic_only": True, "recommended_service_demo": recommended,
             "general_ai_lead_pipeline":plan_serviceit_ai_signals([assessment])["status"],
             "global_gates":assessment["checks"],
-            "manager_brief_demo":assessment["manager_script"]}
+            "manager_brief_demo":assessment["manager_script"],
+            "existing_review_states":review_states}
 
 
 def _rest(client: httpx.Client, base: str, method: str, params: dict) -> dict:
@@ -240,16 +319,23 @@ def sync_one_demo(webhook: str, ledger_path: str | Path, *,
             "entityTypeId": 1062, "id": 3, "useOriginalUfNames": "Y"})
         if not _id(item):
             stop("DEMO_ONLY_CARD_NOT_FOUND")
+        # Preflight all synthetic/stop/freshness checks BEFORE any external
+        # GigaChat request. A failed CRM safety gate never sends even a
+        # fictional sentence to the model or reserves a POST ledger.
+        day = today or date.today()
+        preview = build_analysis(item, today=day)
+        # Field schema is also read-only; reject bad permission/types BEFORE
+        # making an external model request or reserving a CRM mutation.
+        _verify_writable_demo_fields(client, base)
         ai = None
         if use_ai:
             try:
                 ai = (ai_classifier or classify_authorized_signal)(AI_TEXT)
             except (ValueError, RuntimeError, httpx.HTTPError):
                 stop("AI_LIVE_REQUEST_BLOCKED")
-        report = build_analysis(item, today=today or date.today(), hypothesis=ai)
+        report = build_analysis(item, today=day, hypothesis=ai) if ai is not None else preview
         fields = report["fields"]
         already = _matches(item, fields)
-        _verify_writable_demo_fields(client, base)
         output = {
             "status": "ALREADY_MATCHES" if already else "DEMO_PREVIEW_READY",
             "portal": "serviseit.bitrix24.ru", "only_item": 3,
@@ -257,6 +343,7 @@ def sync_one_demo(webhook: str, ledger_path: str | Path, *,
             "ai_status": report["ai_status"], "stage_policy": gate["stage_policy"],
             "synthetic_stop_gate": True,
             "global_customer_dedup": "NOT_VERIFIED",
+            "review_status_classification": report["existing_review_states"],
             "real_leads_approved": False,
             "crm_writes": "NO", "task_created": False,
             "customer_messages": "NO",
@@ -314,7 +401,8 @@ def main() -> None:
         allowed = {
             "DEMO_SIGNAL_DATE_INVALID", "DEMO_ONLY_IDENTITY_GATE_FAILED",
             "DEMO_SIGNAL_NOT_FRESH", "EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN",
-            "DEMO_EVIDENCE_STATUS_MISMATCH", "DEMO_REVIEW_DECISION_MISMATCH",
+            "DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED",
+            "DEMO_REVIEW_DECISION_NONEMPTY_REVIEW_REQUIRED",
             "DEMO_SCORING_UNEXPECTED", "AI_HYPOTHESIS_QUALITY_GATE_BLOCKED",
             "DEMO_ACTION_TOO_LONG", "DEMO_ACTION_NOT_SAFE", "AI_BRIEF_NOT_SAFE",
             "DEMO_GENERAL_PIPELINE_BLOCKED", "REST_METHOD_NOT_ALLOWED",
@@ -330,9 +418,12 @@ def main() -> None:
             "DEMO_SCORE_FIELD_TYPE_UNEXPECTED", "DEMO_TEXT_FIELD_TYPE_UNEXPECTED",
         }
         reason = str(ex) if str(ex) in allowed else "BLOCKED_UNSPECIFIED"
-        print(json.dumps({"status": "BLOCKED_OR_UNCERTAIN", "reason": reason,
-                          "no_blind_retry": True, "real_leads_approved": False},
-                         ensure_ascii=False))
+        failure = {"status": "BLOCKED_OR_UNCERTAIN", "reason": reason,
+                   "no_blind_retry": True, "real_leads_approved": False,
+                   "crm_write_confirmed": False}
+        if isinstance(ex, DemoBridgeBlocked) and ex.safe_details:
+            failure["safe_field_diagnostics"] = ex.safe_details
+        print(json.dumps(failure, ensure_ascii=False))
         raise SystemExit(2) from None
 
 

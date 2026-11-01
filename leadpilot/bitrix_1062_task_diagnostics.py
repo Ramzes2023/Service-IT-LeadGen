@@ -76,10 +76,13 @@ def _inspect_one(client: httpx.Client, base: str, name: str, params: dict) -> di
         info["type_metadata_readable"] = isinstance(typ, dict)
         if isinstance(typ, dict):
             info["correct_entity_type"] = str(typ.get("entityTypeId")) == "1062"
-            info["task_link_enabled"] = (
-                _yes(typ.get("isUseInUserfieldEnabled"))
-                and isinstance(typ.get("linkedUserFields"), dict)
+            info["userfield_use_enabled"] = _yes(typ.get("isUseInUserfieldEnabled"))
+            info["tasks_task_linked_field_enabled"] = (
+                isinstance(typ.get("linkedUserFields"), dict)
                 and _yes(typ["linkedUserFields"].get("TASKS_TASK|UF_CRM_TASK"))
+            )
+            info["task_link_enabled"] = (
+                info["userfield_use_enabled"] and info["tasks_task_linked_field_enabled"]
             )
             info["automation_confirmed_off"] = (
                 _off(typ.get("isAutomationEnabled"))

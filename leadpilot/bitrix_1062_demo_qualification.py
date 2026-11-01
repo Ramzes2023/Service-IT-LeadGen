@@ -19,7 +19,8 @@ from .bitrix_synthetic_text_guard import synthetic_action_is_safe
 from .bitrix_metadata_audit import validate_webhook
 from .bitrix_1062_task_metadata import audit_synthetic_task_link
 from .bitrix_1062_mapping import FIELD_MAP, EXTRA_FIELDS
-from .core import score_company, SCORE_VERSION
+from .core import SCORE_VERSION
+from .serviceit_ai_lead_engine import assess_lead, plan_serviceit_ai_signals, QualificationBlocked
 
 SCORE_FIELD = FIELD_MAP["lead_score"]
 VERSION_FIELD = FIELD_MAP["score_version"]
@@ -70,13 +71,27 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
         stop("DEMO_EVIDENCE_STATUS_MISMATCH")
     if item.get("UF_CRM_13_SVCIT_REVIEW_DECISION") != EXTRA_FIELDS["UF_CRM_13_SVCIT_REVIEW_DECISION"]:
         stop("DEMO_REVIEW_DECISION_MISMATCH")
-    company = {"region": "Москва", "industry": "торговля",
-               "phone": "", "email": ""}
-    signals = [{"id": 1, "signal_date": signal_date.isoformat(),
-                "signal_type": "new_store"}]
-    score, recommended, factors = score_company(company, signals, today)
-    if not isinstance(score, int) or not 0 <= score <= 100 or factors["contact"] != 0:
-        stop("DEMO_SCORING_UNEXPECTED")
+    # Same reusable engine as the general ServiceIT AI Signals pipeline.
+    # Seven company-wide CRM/stop/legal checks intentionally stay UNKNOWN.
+    # This is a synthetic demonstration, never a real qualified prospect.
+    try:
+        assessment = assess_lead(
+            {"inn":"7700000009", "name":"DEMO COMPANY-001",
+             "region":"Москва", "industry":"торговля", "phone":"", "email":""},
+            [{"signal_type":"new_store",
+              "signal_date":signal_date.isoformat(),
+              "source_url":item.get(FIELD_MAP["signal_url"]),
+              "evidence":AI_TEXT}],
+            checks={}, today=today, demo=True,
+        )
+    except QualificationBlocked:
+        stop("DEMO_GENERAL_PIPELINE_BLOCKED")
+    score = assessment["lead_score"]
+    recommended = assessment["suggested_service"]
+    factors = assessment["score_factors"]
+    if (assessment["status"] not in ("HOLD_UNVERIFIED", "DEMO_REVIEW_ONLY")
+            or assessment["crm_handoff_eligible"] or factors["contact"] != 0):
+        stop("DEMO_GENERAL_PIPELINE_BLOCKED")
     ai_status = "NOT_RUN"
     tag = "AI=НЕ ЗАПУЩЕН"
     if hypothesis is not None:
@@ -115,7 +130,10 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
             "global_crm_duplicate_check": "NOT_PERFORMED",
             "customer_contact_authorized": False,
             "real_lead_ready": False,
-            "synthetic_only": True, "recommended_service_demo": recommended}
+            "synthetic_only": True, "recommended_service_demo": recommended,
+            "general_ai_lead_pipeline":plan_serviceit_ai_signals([assessment])["status"],
+            "global_gates":assessment["checks"],
+            "manager_brief_demo":assessment["manager_script"]}
 
 
 def _rest(client: httpx.Client, base: str, method: str, params: dict) -> dict:
@@ -298,7 +316,8 @@ def main() -> None:
             "DEMO_SIGNAL_NOT_FRESH", "EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN",
             "DEMO_EVIDENCE_STATUS_MISMATCH", "DEMO_REVIEW_DECISION_MISMATCH",
             "DEMO_SCORING_UNEXPECTED", "AI_HYPOTHESIS_QUALITY_GATE_BLOCKED",
-            "DEMO_ACTION_TOO_LONG", "DEMO_ACTION_NOT_SAFE", "AI_BRIEF_NOT_SAFE", "REST_METHOD_NOT_ALLOWED",
+            "DEMO_ACTION_TOO_LONG", "DEMO_ACTION_NOT_SAFE", "AI_BRIEF_NOT_SAFE",
+            "DEMO_GENERAL_PIPELINE_BLOCKED", "REST_METHOD_NOT_ALLOWED",
             "REST_TRANSPORT_OR_TIMEOUT", "REST_HTTP_OR_SIZE_UNAVAILABLE",
             "REST_JSON_INVALID", "REST_API_RESULT_INVALID", "REST_ITEM_MISSING",
             "ONE_DEMO_SCORE_SYNC_ALREADY_ATTEMPTED",

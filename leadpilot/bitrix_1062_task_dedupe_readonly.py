@@ -1,0 +1,173 @@
+"""Bounded, read-only Bitrix24 task de-duplication for CRM 1062 / item 3.
+
+Searches only the exact synthetic CRM binding and unique DEMO task title.
+No tasks are created, no contacts or employee profiles are read, and no
+remote response text, webhook secrets, or task descriptions are displayed.
+"""
+from __future__ import annotations
+
+import json
+import os
+
+import httpx
+
+from .bitrix_metadata_audit import validate_webhook
+from .bitrix_1062_task_metadata import audit_synthetic_task_link
+from .bitrix_1062_manager_task_preview import DemoTaskGateBlocked
+
+TASK_TITLE = "[DEMO / НЕ ЗВОНИТЬ] Проверить сигнал 1С по карточке ServiceIT №3"
+CRM_BINDING = "T426_3"
+FIELDS = ("ID", "TITLE", "RESPONSIBLE_ID", "UF_CRM_TASK")
+MAX_PAGES = 2
+PAGE_SIZE = 50
+
+
+class TaskDiscoveryBlocked(ValueError):
+    """Read-only duplicate check is insufficient to safely plan a task."""
+
+
+def _deny(code: str) -> None:
+    raise TaskDiscoveryBlocked(code)
+
+
+def _positive_id(value: object) -> int:
+    if type(value) is int and 0 < value < 2_147_483_648:
+        return value
+    if (isinstance(value, str) and value.isascii()
+            and value.isdecimal() and value[0] != "0" and len(value) <= 10
+            and int(value) < 2_147_483_648):
+        return int(value)
+    _deny("TASK_ID_INVALID")
+
+
+def _list_tasks(client: httpx.Client, base: str, field: str, match: str) -> list[dict]:
+    if field not in ("TITLE", "UF_CRM_TASK") or match not in (TASK_TITLE, CRM_BINDING):
+        _deny("UNBOUNDED_TASK_SEARCH_FORBIDDEN")
+    seen: set[int] = set()
+    rows: list[dict] = []
+    for page in range(MAX_PAGES):
+        params = {
+            "filter": {field: match},
+            "select": list(FIELDS),
+            "start": page * PAGE_SIZE,
+        }
+        try:
+            response = client.post(
+                base + "/tasks.task.list.json", json=params,
+                timeout=12.0, follow_redirects=False,
+            )
+        except (httpx.HTTPError, ValueError, TypeError):
+            _deny("TASK_LIST_UNAVAILABLE")
+        if response.status_code != 200 or len(response.content) > 128_000:
+            _deny("TASK_LIST_UNAVAILABLE")
+        try:
+            raw = response.json()
+        except (ValueError, TypeError):
+            _deny("TASK_LIST_MALFORMED")
+        if not isinstance(raw, dict) or "error" in raw or not isinstance(raw.get("result"), dict):
+            _deny("TASK_LIST_UNAVAILABLE")
+        data = raw["result"].get("tasks")
+        if not isinstance(data, list) or len(data) > PAGE_SIZE:
+            _deny("TASK_LIST_SCHEMA_CHANGED")
+        for task in data:
+            if not isinstance(task, dict):
+                _deny("TASK_LIST_SCHEMA_CHANGED")
+            tid = _positive_id(task.get("id", task.get("ID")))
+            if tid in seen:
+                _deny("TASK_PAGINATION_DUPLICATE")
+            seen.add(tid)
+            title = task.get("title", task.get("TITLE"))
+            if not isinstance(title, str):
+                _deny("TASK_TITLE_MISSING")
+            bind = task.get("ufCrmTask", task.get("UF_CRM_TASK", None))
+            if bind is None:
+                normalized = None
+            elif isinstance(bind, list) and all(isinstance(v, str) for v in bind):
+                normalized = bind
+            elif isinstance(bind, str):
+                normalized = [bind]
+            else:
+                _deny("CRM_TASK_LINK_UNEXPECTED_SHAPE")
+            # Both scans are intentionally fail-closed on servers that ignore
+            # filters, rather than silently ignoring rows from unrelated tasks.
+            if field == "TITLE" and title != TASK_TITLE:
+                _deny("TASK_TITLE_FILTER_NOT_EXACT")
+            if field == "UF_CRM_TASK" and (normalized is None or CRM_BINDING not in normalized):
+                _deny("TASK_CRM_FILTER_IGNORED")
+            rows.append({"id": tid, "title_exact": title == TASK_TITLE,
+                         "bound_to_demo": normalized is not None and CRM_BINDING in normalized})
+        if len(data) < PAGE_SIZE:
+            return rows
+        # A full page requires an explicit server pagination cursor.
+        next_page = raw.get("next")
+        if type(next_page) is not int or next_page != (page + 1) * PAGE_SIZE:
+            _deny("TASK_PAGINATION_UNVERIFIED")
+    _deny("TASK_RESULT_WINDOW_TOO_LARGE")
+
+
+def discover_demo_manager_task(
+    webhook: str, *, client: httpx.Client | None = None,
+) -> dict:
+    """Strict metadata + two read-only task searches; no write authorization."""
+    base = validate_webhook(webhook)
+    own = client is None
+    if own:
+        client = httpx.Client(timeout=12.0, follow_redirects=False, trust_env=False)
+    try:
+        # Metadata check revalidates the exact DEMO card, process link, and
+        # that robots/business processes remain switched off.
+        try:
+            meta = audit_synthetic_task_link(webhook, client=client)
+        except (DemoTaskGateBlocked, ValueError, httpx.HTTPError):
+            _deny("EXACT_DEMO_METADATA_NOT_READY")
+        if meta["status"] != "LINKED_TASK_METADATA_READY":
+            _deny("EXACT_DEMO_METADATA_NOT_READY")
+        linked = _list_tasks(client, base, "UF_CRM_TASK", CRM_BINDING)
+        titled = _list_tasks(client, base, "TITLE", TASK_TITLE)
+        unique = {record["id"]: record for record in [*linked, *titled]}
+        already = len(unique) != 0
+        return {
+            "status": "EXISTING_VISIBLE_TASK_FOUND" if already else "NO_VISIBLE_MATCH_NOT_GLOBAL_PROOF",
+            "portal": "serviseit.bitrix24.ru",
+            "crm_item_id": 3,
+            "crm_binding_verified": CRM_BINDING,
+            "scans_completed": 2,
+            "visible_linked_count": len(linked),
+            "visible_demo_title_count": len(titled),
+            "visible_unique_task_count": len(unique),
+            "existing_visible_task_ids": sorted(unique),
+            "identity_of_manager_confirmed": False,
+            "visibility_complete_for_all_company_tasks": False,
+            "safe_to_create_task_now": False,
+            "task_created": False,
+            "crm_writes": "NO",
+            "customer_contact": "NO",
+        }
+    finally:
+        if own:
+            client.close()
+
+
+def main() -> None:
+    try:
+        outcome = discover_demo_manager_task(os.environ.get("SERVICEIT_TASK_READONLY_WEBHOOK", ""))
+    except (TaskDiscoveryBlocked, ValueError, httpx.HTTPError) as exc:
+        code = str(exc)
+        if code not in {
+            "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE", "TASK_LIST_MALFORMED",
+            "TASK_LIST_SCHEMA_CHANGED", "TASK_ID_INVALID", "TASK_PAGINATION_DUPLICATE",
+            "TASK_TITLE_MISSING", "CRM_TASK_LINK_UNEXPECTED_SHAPE",
+            "TASK_TITLE_FILTER_NOT_EXACT", "TASK_CRM_FILTER_IGNORED",
+            "TASK_PAGINATION_UNVERIFIED", "TASK_RESULT_WINDOW_TOO_LARGE",
+            "UNBOUNDED_TASK_SEARCH_FORBIDDEN",
+        }:
+            code = "BLOCKED_UNSPECIFIED"
+        outcome = {"status": "BLOCKED_READ_ONLY", "reason_code": code,
+                   "task_created": False, "crm_writes": "NO"}
+    print(json.dumps(outcome, ensure_ascii=False, indent=2))
+    raise SystemExit(0 if outcome["status"] in
+                     ("EXISTING_VISIBLE_TASK_FOUND", "NO_VISIBLE_MATCH_NOT_GLOBAL_PROOF") else 2)
+
+
+if __name__ == "__main__":
+    main()

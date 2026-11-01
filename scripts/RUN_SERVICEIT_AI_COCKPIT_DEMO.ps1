@@ -21,10 +21,10 @@ if ($UseExistingGigaChat -and ($Mode -ne 'populate' -or -not $InspectLive -or -n
     -not $GigaChatOptIn -or -not $SyntheticPrivacyOptIn)) {
     throw 'LOCAL_GIGACHAT_KEY_OPT_IN_REQUIRES_EXACT_DEMO_POPULATE_FLAGS'
 }
-# Deliberately do not source any .env, token or webhook file. PowerShell securely
-# prompts for the webhook locally; never put it in shell history or arguments.
-# Process GIGACHAT_* may be used only with both opt-ins. The additional
-# -UseExistingGigaChat is an explicit opt-in for the known local VALYQON paths.
+# Never load Bitrix credentials from files: PowerShell prompts securely.
+# With explicit -UseExistingGigaChat, only the five known local VALYQON
+# configuration paths are read for GIGACHAT_* (as in preflight PR #59).
+# Secrets must never appear in argv, shell history or console output.
 $cockpitArguments = @('-m','leadpilot.bitrix_1062_ai_cockpit','--mode',$Mode)
 if ($InspectLive) { $cockpitArguments += '--inspect-live' }
 if ($ApplyDemo) { $cockpitArguments += @('--apply-demo','--state-dir',$StateDir) }
@@ -36,7 +36,6 @@ if ($SyntheticPrivacyOptIn) { $cockpitArguments += '--synthetic-privacy-opt-in' 
 if (Test-Path Env:\SERVICEIT_AI_COCKPIT_WEBHOOK) {
     throw 'PREEXISTING_WEBHOOK_ENV_REFUSED'
 }
-# Preserve the caller's model environment; no key/config is persisted.
 $aiNames = @('GIGACHAT_CREDENTIALS','GIGACHAT_SCOPE','GIGACHAT_MODEL','GIGACHAT_CA_BUNDLE_FILE','AI_ENABLE','AI_PROVIDER')
 $savedAI = @{}
 if ($UseExistingGigaChat) {
@@ -60,42 +59,7 @@ try {
             foreach ($path in $paths) {
                 if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
                 foreach ($line in [IO.File]::ReadAllLines($path, [Text.Encoding]::UTF8)) {
-                    if ($line -notmatch '^\s*(?:export\s+)?(GIGACHAT_CREDENTIALS|GIGACHAT_SCOPE|GIGACHAT_MODEL|GIGACHAT_CA_BUNDLE_FILE)\s*=\s*(.*)
-        $secret = Read-Host 'Authorized Bitrix24 webhook URL (hidden input)' -AsSecureString
-        if ($null -eq $secret -or $secret.Length -eq 0) {
-            throw 'BITRIX_WEBHOOK_MISSING'
-        }
-        $ptr = [IntPtr]::Zero
-        try {
-            $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
-            $env:SERVICEIT_AI_COCKPIT_WEBHOOK = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
-        } finally {
-            if ($ptr -ne [IntPtr]::Zero) {
-                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
-            }
-            $secret.Dispose()
-        }
-        if (-not $env:SERVICEIT_AI_COCKPIT_WEBHOOK) {
-            throw 'BITRIX_WEBHOOK_MISSING'
-        }
-        $cockpitArguments += '--webhook-from-env'
-    }
-    & $pythonForCockpit @cockpitArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Cockpit blocked or uncertain. Do not repeat writes; inspect ledger and CRM.'
-    }
-} finally {
-    if (Test-Path Env:\SERVICEIT_AI_COCKPIT_WEBHOOK) {
-        Remove-Item Env:\SERVICEIT_AI_COCKPIT_WEBHOOK -ErrorAction SilentlyContinue
-    }
-    if ($UseExistingGigaChat) {
-        foreach ($name in $aiNames) {
-            [Environment]::SetEnvironmentVariable($name,$savedAI[$name],'Process')
-        }
-    }
-    Pop-Location
-}
-) {
+                    if ($line -notmatch '^\s*(?:export\s+)?(GIGACHAT_CREDENTIALS|GIGACHAT_SCOPE|GIGACHAT_MODEL|GIGACHAT_CA_BUNDLE_FILE)\s*=\s*(.*)$') {
                         continue
                     }
                     $name = $Matches[1]; $value = $Matches[2].Trim()
@@ -149,6 +113,11 @@ try {
 } finally {
     if (Test-Path Env:\SERVICEIT_AI_COCKPIT_WEBHOOK) {
         Remove-Item Env:\SERVICEIT_AI_COCKPIT_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    if ($UseExistingGigaChat) {
+        foreach ($name in $aiNames) {
+            [Environment]::SetEnvironmentVariable($name,$savedAI[$name],'Process')
+        }
     }
     Pop-Location
 }

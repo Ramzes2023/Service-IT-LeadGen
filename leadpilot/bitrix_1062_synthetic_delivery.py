@@ -11,13 +11,11 @@ leads are deliberately not implemented.
 """
 from __future__ import annotations
 
-import json
 import hmac
 from pathlib import Path
-import sqlite3
 
 from .bitrix_1062_mapping import SyntheticPlanRejected, IDEMPOTENCY_FIELD
-from .bitrix_1062_outbox import mark_uncertain, confirm_remote_readback
+from .bitrix_1062_outbox import mark_uncertain, confirm_remote_readback, fence_claimed_payload
 from .bitrix_1062_reconcile import inspect_remote_synthetic_key
 from .bitrix_1062_rest_read import Bitrix1062ReadOnly
 from .bitrix_1062_synthetic_add import (
@@ -35,17 +33,7 @@ def _claimed_record(db_path: str | Path, claim: dict) -> tuple[str, dict]:
     key = validate_synthetic_create(params)
     if key != claim["idempotency_key"]:
         raise SyntheticPlanRejected("CLAIM_KEY_MISMATCH")
-    db = sqlite3.connect(str(db_path), timeout=10)
-    try:
-        row = db.execute(
-            "SELECT state,payload_json,attempts FROM bitrix_1062_outbox "
-            "WHERE idempotency_key=?", (key,),
-        ).fetchone()
-    finally:
-        db.close()
-    if (row is None or row[0] != "CLAIMED" or row[2] != 1
-            or json.loads(row[1]) != params):
-        raise SyntheticPlanRejected("CLAIM_NOT_DURABLE_OR_ALREADY_ATTEMPTED")
+    fence_claimed_payload(db_path, key, params)
     return key, params
 
 

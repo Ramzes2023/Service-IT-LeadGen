@@ -84,6 +84,7 @@ def _validate_card(operation: Mapping[str, Any], today: date) -> tuple[str, dict
         _reject("IDEMPOTENCY_MISMATCH")
     name, region, source, url = (f[k] for k in ("company_name", "region", "signal_source", "signal_url"))
     if (not isinstance(name, str) or not re.fullmatch(r"DEMO[ -][\w .-]{4,80}", name)
+            or not synthetic_action_is_safe(name)
             or "\n" in name or "\r" in name or "@" in name or region not in {"Москва", "Московская область"}
             or source not in SYNTHETIC_SOURCES or not isinstance(url, str)):
         _reject("SYNTHETIC_SOURCE_OR_NAME_INVALID")
@@ -91,6 +92,8 @@ def _validate_card(operation: Mapping[str, Any], today: date) -> tuple[str, dict
         u = urlsplit(url)
         if (u.scheme != "https" or u.hostname != "example.invalid" or u.username or u.password
                 or u.port not in (None, 443) or u.query or u.fragment
+                or not synthetic_action_is_safe(u.path)
+                or not re.fullmatch(r'/serviceit-demo/[A-Za-z0-9/_-]{1,100}', u.path)
                 or not u.path.startswith("/serviceit-demo/")):
             _reject("SYNTHETIC_URL_INVALID")
         dt = date.fromisoformat(f["signal_date"])

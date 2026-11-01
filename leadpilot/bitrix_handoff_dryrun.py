@@ -69,6 +69,7 @@ def _synthetic_card_only(card: object, today: date) -> dict:
         return _hold("STOP_LIST_APPLIES", key)
     name = card.get("company_name")
     if (not isinstance(name, str) or not re.fullmatch(r"DEMO[ -][\w .-]{4,80}", name)
+            or not synthetic_action_is_safe(name)
             or any(x in name for x in ("\n", "\r", "@"))):
         return _hold("DEMO_COMPANY_NAME_REQUIRED", key)
     region = card.get("region")
@@ -81,6 +82,8 @@ def _synthetic_card_only(card: object, today: date) -> dict:
         if (source not in SYNTHETIC_SOURCES or split.scheme != "https"
                 or split.hostname != "example.invalid" or split.username or split.password
                 or split.port not in (None, 443) or split.query or split.fragment
+                or not synthetic_action_is_safe(split.path)
+                or not re.fullmatch(r'/serviceit-demo/[A-Za-z0-9/_-]{1,100}', split.path)
                 or not split.path.startswith("/serviceit-demo/")):
             return _hold("NON_SYNTHETIC_EVIDENCE_FORBIDDEN", key)
         signal_date = date.fromisoformat(card["signal_date"])

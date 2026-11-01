@@ -31,6 +31,7 @@ def _db(tmp_path):
 def _item(claim, item_id=101):
     fields = claim["params_preview_only"]["fields"]
     return {
+        **fields,
         "id": item_id, "entityTypeId": 1062, "categoryId": 21,
         "title": fields["title"], "stageId": "DT1062_21:NEW",
         "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": claim["idempotency_key"],

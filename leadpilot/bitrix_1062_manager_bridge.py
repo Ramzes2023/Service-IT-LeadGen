@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date
 import re
 from typing import Any, Mapping
+from .bitrix_synthetic_text_guard import synthetic_action_is_safe
 
 from .bitrix_1062_mapping import (
     build_synthetic_1062_plan, SyntheticPlanRejected,
@@ -58,7 +59,7 @@ def _check_review(review: Mapping[str, Any], today: date) -> dict:
             or role not in ("manager", "supervisor")
             or decision not in DECISION_TO_STAGE):
         _reject("MANAGER_REVIEW_NOT_SYNTHETIC")
-    if (not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 200
+    if (not synthetic_action_is_safe(reason)
             or reason != reason.strip()
             or any(x in reason.lower() for x in ("@", "http://", "https://"))
             or any(ord(c) < 32 or ord(c) == 127 for c in reason)):

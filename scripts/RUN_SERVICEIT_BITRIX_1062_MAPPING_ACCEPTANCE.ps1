@@ -55,7 +55,7 @@ with TemporaryDirectory(prefix="serviceit-1062-outbox-") as scratch:
     assert claimed and claimed["crm_writes"] == "NO"
     mark_uncertain(db, claimed["idempotency_key"], reason_code="SIMULATED_TIMEOUT")
     fields = claimed["params_preview_only"]["fields"]
-    item = dict(id=791, entityTypeId=1062, categoryId=21, stageId="DT1062_21:NEW",
+    item = dict(fields, id=791, entityTypeId=1062, categoryId=21, stageId="DT1062_21:NEW",
                 title=fields["title"],
                 UF_CRM_13_SVCIT_IDEMPOTENCY_KEY=claimed["idempotency_key"])
     def fake_read_only(method, params):

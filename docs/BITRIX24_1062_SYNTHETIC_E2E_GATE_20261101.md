@@ -111,3 +111,27 @@ After the 384-test acceptance, further code was added only to PR #37:
 **Current boundary:** new source is committed but no new full Windows acceptance or GitHub Actions was confirmed for the later SHA. No real `crm.item.add` code is activated, real leads remain `0`, and source connections are intentionally `0`. The demonstrated live E2E remains the separately audited single synthetic card, now deleted.
 
 **Required next step:** independent pinned Windows suite, then review of transport authorization, RBAC and robots before any additional live tests. Keep PR #37 draft and do not merge into `main` until reviewed.
+
+
+## 01.11.2026 — Windows acceptance: 414/414 PASS on 9cf589243eac
+
+The owner completed independent isolated Windows testing at the pinned commit `9cf589243eac4ed73b8d0beecd368a6c94557139`:
+
+```text
+105 passed in 1.35s
+SERVICEIT_1062_OUTBOX_PREVIEW=PASS; QUEUED=2; DEDUPE=YES; UNCERTAIN_RECOVERY=READ_ONLY; REST_CALLS=0
+SERVICEIT_1062_OUTBOX_RECONCILE_ACCEPTANCE=PASS_OFFLINE_ONLY; CRM_WRITES=NO; SOURCES=NO
+414 passed in 8.69s
+SERVICEIT_1062_OUTBOX_FULL_ACCEPTANCE=PASS_OFFLINE_ONLY
+CRM_WRITES=NO; SOURCES=NO; REAL_CUSTOMER_DATA=NO
+```
+
+The host also passed `compileall` and `git diff --check`. This acceptance covers exactly the frozen older commit `9cf5892`, not later commits.
+
+## Scoped read-only REST transport: code submitted, host acceptance pending
+
+Next component added to the PR: `leadpilot/bitrix_1062_rest_read.py` with `tests/test_bitrix_1062_rest_read.py`; Windows acceptance script extended to run these tests. This transport is intentionally **read-only**: `crm.item.list` and `crm.item.get` exclusively, only for smart process `1062` and exact synthetic key `DEMO-IDEMP-...`, only `categoryId=21` and original UF field code mode `Y`. A GET by numeric ID is allowed **only after a preceding exact-key LIST** binds that item to the same in-memory session; list/get results are checked for synthetic marker and isolated scope. It rejects non-200, API errors, unexpected pagination, broad listings, other entity types, contacts/deals and write methods. Webhook contents must never enter logs, git or test artifacts. Tests use `httpx.MockTransport`, not corporate CRM.
+
+The native transport is NOT a live lead-delivery worker. It cannot create, modify, delete, notify or email CRM records. It is intended for independently authorized read-only reconciliation after ambiguous results. **New code/test acceptance is still pending on Windows**, and no actual live list/get has been executed in this turn. Since Bitrix24 can restrict searchable fields, a real exact-key list must be independently verified with a rotated secret before treating the reconciliation contract as operational.
+
+**Latest status:** `LIVE_SCHEMA=VERIFIED`; `ONE_SYNTHETIC_E2E=PASS_CLEAN`; `OFFLINE_OUTBOX_414_TESTS=PASS_AT_9cf5892`; `READ_ONLY_REST_TRANSPORT=UNVERIFIED_NEW_REVISION`; `LIVE_NEW_SIGNALS=OFF`; `PRODUCTION_READY=NO`. Keep PR draft. Do not touch other company funnels, users or source integrations.

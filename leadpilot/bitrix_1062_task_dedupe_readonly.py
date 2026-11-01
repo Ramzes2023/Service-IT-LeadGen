@@ -209,6 +209,22 @@ def main() -> None:
             code = "BLOCKED_UNSPECIFIED"
         outcome = {"status": "BLOCKED_READ_ONLY", "reason_code": code,
                    "task_created": False, "crm_writes": "NO"}
+        if code.startswith("EXACT_DEMO_"):
+            # A blocked metadata gate is not a task-list error. Collect only
+            # independently sanitized REST method states and boolean gates,
+            # with no raw CRM item, error descriptions or webhook in output.
+            try:
+                from .bitrix_1062_task_diagnostics import diagnose_task_metadata
+                diag = diagnose_task_metadata(
+                    os.environ.get("SERVICEIT_TASK_READONLY_WEBHOOK", "")
+                )
+                outcome["metadata_diagnostics"] = {
+                    "status": diag["status"],
+                    "methods": diag["methods"],
+                    "metadata_gates": diag["metadata_gates"],
+                }
+            except (ValueError, TypeError, httpx.HTTPError, KeyError):
+                outcome["metadata_diagnostics"] = "INDEPENDENT_READ_FAILED"
     print(json.dumps(outcome, ensure_ascii=False, indent=2))
     raise SystemExit(0 if outcome["status"] in
                      ("EXISTING_VISIBLE_TASK_FOUND", "NO_VISIBLE_MATCH_NOT_GLOBAL_PROOF") else 2)

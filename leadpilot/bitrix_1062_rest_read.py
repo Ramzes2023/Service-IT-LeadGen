@@ -107,7 +107,9 @@ class Bitrix1062ReadOnly:
             # A full page or REST paging metadata can hide more duplicates.
             # Do not accept a partial view as proof of uniqueness.
             if (len(items) >= 50 or body.get("next") is not None
-                    or (type(body.get("total")) is int and body["total"] > len(items))):
+                    or result.get("next") is not None
+                    or any('total' in obj and (type(obj['total']) is not int
+                           or obj['total'] != len(items)) for obj in (body, result))):
                 _deny("BITRIX1062_RESULT_PAGINATION_AMBIGUOUS")
             key = params["filter"][KEY_FIELD]
             for item in items:

@@ -10,7 +10,7 @@ import re
 
 # A phone-shaped string containing 10-16 digits; allow typical punctuation
 # (+, spaces, parentheses and dashes). Do not mistake a short date for a phone.
-_PHONE = re.compile(r"(?<![A-Za-z0-9])\+?\d(?:[\s().-]*\d){9,15}(?![A-Za-z0-9])")
+_PHONE = re.compile(r"(?<!\d)\+?\d(?:[\s().-]*\d){9,15}(?!\d)")
 _CONTACT_SCHEMES = ("http", "mailto:", "tel:", "wa.me", "t.me/")
 
 

@@ -1,0 +1,313 @@
+{
+  "mode": "SYNTHETIC PREVIEW",
+  "real_crm_confirmation": false,
+  "real_rest_calls": 0,
+  "customer_contact_authorized": false,
+  "production_ready": false,
+  "real_leads_delivered": false,
+  "report": {
+    "contract_version": "serviceit-bitrix-intent-v1",
+    "mode": "SYNTHETIC_OFFLINE_ONLY",
+    "portal": "serviseit.bitrix24.ru",
+    "crm_writes": "NO",
+    "real_customer_records_read": 0,
+    "outbound_messages": 0,
+    "proposed_company_count": 1,
+    "independent_signal_count": 2,
+    "held_count": 1,
+    "deduplicated_count": 1,
+    "unconfirmed_requirements": [
+      "ADMIN_API_READ_PERMISSION",
+      "REAL_PORTAL_FIELD_CODES",
+      "ISOLATED_TEST_ENTITY",
+      "COMPANY_DUPLICATE_AND_STOP_RULES",
+      "EXPLICIT_SANDBOX_WRITE_PERMISSION"
+    ],
+    "field_mapping_ready_for_live_write": false,
+    "operations": [
+      {
+        "status": "DRY_RUN_INTENT_ONLY",
+        "idempotency_key": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b",
+        "logical_fields": {
+          "company_inn": "7700000009",
+          "company_name": "DEMO COMPANY-001",
+          "region": "Москва",
+          "signal_id": "DEMO-ITREQ-001",
+          "signal_date": "2026-10-31",
+          "signal_source": "synthetic-fixture",
+          "signal_url": "https://example.invalid/serviceit-demo/request/001",
+          "suggested_service": "1С",
+          "lead_score": 86,
+          "score_version": "demo-v1",
+          "manager_next_action": "Проверить синтетический запрос 1С"
+        },
+        "crm_entity_type": "UNCONFIRMED",
+        "actual_crm_field_codes": "UNCONFIRMED",
+        "crm_writes": "NO",
+        "real_customer_contact": false
+      },
+      {
+        "status": "DUPLICATE_SIMULATION_SKIPPED",
+        "idempotency_key": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b",
+        "crm_writes": "NO"
+      },
+      {
+        "status": "DRY_RUN_INTENT_ONLY",
+        "idempotency_key": "DEMO-IDEMP-e6ee46069c59da6cc5215d38ce9d9a51",
+        "logical_fields": {
+          "company_inn": "7700000009",
+          "company_name": "DEMO COMPANY-001",
+          "region": "Москва",
+          "signal_id": "DEMO-ITREQ-002",
+          "signal_date": "2026-10-31",
+          "signal_source": "synthetic-second",
+          "signal_url": "https://example.invalid/serviceit-demo/request/002",
+          "suggested_service": "1С",
+          "lead_score": 86,
+          "score_version": "demo-v1",
+          "manager_next_action": "Проверить синтетический запрос 1С"
+        },
+        "crm_entity_type": "UNCONFIRMED",
+        "actual_crm_field_codes": "UNCONFIRMED",
+        "crm_writes": "NO",
+        "real_customer_contact": false
+      },
+      {
+        "status": "HOLD",
+        "reason": "STOP_LIST_APPLIES",
+        "idempotency_key": "DEMO-IDEMP-f18c6ce074808b968bb2dab2b25a858b",
+        "crm_writes": "NO"
+      }
+    ],
+    "production_activated": false
+  },
+  "mapping": {
+    "status": "BITRIX_1062_MAPPING_PREVIEW_ONLY",
+    "portal": "serviseit.bitrix24.ru",
+    "entity_type_id": 1062,
+    "category_id": 21,
+    "field_count": 16,
+    "operation_count": 2,
+    "requests_not_sent": [
+      {
+        "operation": "PREVIEW_ONLY_NOT_EXECUTABLE",
+        "idempotency_key": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b",
+        "method_if_separately_authorized": "crm.item.add",
+        "params": {
+          "entityTypeId": 1062,
+          "useOriginalUfNames": "Y",
+          "fields": {
+            "title": "DEMO ServiceIT AI — DEMO-ITREQ-001",
+            "categoryId": 21,
+            "stageId": "DT1062_21:NEW",
+            "UF_CRM_13_SVCIT_COMPANY_INN": "7700000009",
+            "UF_CRM_13_SVCIT_COMPANY_NAME": "DEMO COMPANY-001",
+            "UF_CRM_13_SVCIT_REGION": "Москва",
+            "UF_CRM_13_SVCIT_SIGNAL_ID": "DEMO-ITREQ-001",
+            "UF_CRM_13_SVCIT_SIGNAL_DATE": "2026-10-31",
+            "UF_CRM_13_SVCIT_SIGNAL_SOURCE": "synthetic-fixture",
+            "UF_CRM_13_SVCIT_SIGNAL_URL": "https://example.invalid/serviceit-demo/request/001",
+            "UF_CRM_13_SVCIT_SUGGESTED_SERVICE": "1С",
+            "UF_CRM_13_SVCIT_LEAD_SCORE": 86,
+            "UF_CRM_13_SVCIT_SCORE_VERSION": "demo-v1",
+            "UF_CRM_13_SVCIT_MANAGER_NEXT_ACTION": "Проверить синтетический запрос 1С",
+            "UF_CRM_13_SVCIT_EVIDENCE_STATUS": "Синтетический тест — не реальная потребность",
+            "UF_CRM_13_SVCIT_REVIEW_DECISION": "Ожидает проверки менеджером",
+            "UF_CRM_13_SVCIT_STOP_REASON": "",
+            "UF_CRM_13_SVCIT_SIGNAL_KIND": "demo-synthetic",
+            "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b"
+          }
+        }
+      },
+      {
+        "operation": "PREVIEW_ONLY_NOT_EXECUTABLE",
+        "idempotency_key": "DEMO-IDEMP-e6ee46069c59da6cc5215d38ce9d9a51",
+        "method_if_separately_authorized": "crm.item.add",
+        "params": {
+          "entityTypeId": 1062,
+          "useOriginalUfNames": "Y",
+          "fields": {
+            "title": "DEMO ServiceIT AI — DEMO-ITREQ-002",
+            "categoryId": 21,
+            "stageId": "DT1062_21:NEW",
+            "UF_CRM_13_SVCIT_COMPANY_INN": "7700000009",
+            "UF_CRM_13_SVCIT_COMPANY_NAME": "DEMO COMPANY-001",
+            "UF_CRM_13_SVCIT_REGION": "Москва",
+            "UF_CRM_13_SVCIT_SIGNAL_ID": "DEMO-ITREQ-002",
+            "UF_CRM_13_SVCIT_SIGNAL_DATE": "2026-10-31",
+            "UF_CRM_13_SVCIT_SIGNAL_SOURCE": "synthetic-second",
+            "UF_CRM_13_SVCIT_SIGNAL_URL": "https://example.invalid/serviceit-demo/request/002",
+            "UF_CRM_13_SVCIT_SUGGESTED_SERVICE": "1С",
+            "UF_CRM_13_SVCIT_LEAD_SCORE": 86,
+            "UF_CRM_13_SVCIT_SCORE_VERSION": "demo-v1",
+            "UF_CRM_13_SVCIT_MANAGER_NEXT_ACTION": "Проверить синтетический запрос 1С",
+            "UF_CRM_13_SVCIT_EVIDENCE_STATUS": "Синтетический тест — не реальная потребность",
+            "UF_CRM_13_SVCIT_REVIEW_DECISION": "Ожидает проверки менеджером",
+            "UF_CRM_13_SVCIT_STOP_REASON": "",
+            "UF_CRM_13_SVCIT_SIGNAL_KIND": "demo-synthetic",
+            "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-e6ee46069c59da6cc5215d38ce9d9a51"
+          }
+        }
+      }
+    ],
+    "crm_writes": "NO",
+    "manager_approval_for_real_leads": "NOT_GRANTED",
+    "live_adapter_activated": false,
+    "source_connections": 0
+  },
+  "manager": {
+    "status": "BITRIX_1062_MANAGER_PREVIEW_ONLY",
+    "entity_type_id": 1062,
+    "category_id": 21,
+    "signal_count": 2,
+    "reviewed_count": 2,
+    "unreviewed_count": 0,
+    "actions_not_sent": [
+      {
+        "operation": "PREVIEW_ONLY_NOT_EXECUTABLE",
+        "event_id": "DEMO-REVIEW-LOCAL0000",
+        "idempotency_key": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b",
+        "reviewer_label": "DEMO-MANAGER-1",
+        "reviewer_role": "manager",
+        "reason": "Синтетическая проверка проекта без контактов",
+        "reviewed_on": "2026-11-01",
+        "expected_current_stage": "DT1062_21:CLIENT",
+        "expected_category_id": 21,
+        "expected_field_value": {
+          "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b"
+        },
+        "method_if_separately_authorized": "crm.item.update",
+        "params_template_without_item_id": {
+          "entityTypeId": 1062,
+          "useOriginalUfNames": "Y",
+          "fields": {
+            "stageId": "DT1062_21:SUCCESS",
+            "UF_CRM_13_SVCIT_REVIEW_DECISION": "DEMO_RELEVANT_NOT_A_SALE",
+            "UF_CRM_13_SVCIT_EVIDENCE_STATUS": "DEMO_MANUAL_REVIEW_ONLY",
+            "UF_CRM_13_SVCIT_STOP_REASON": "DEMO_NONE"
+          }
+        },
+        "real_manager_authorization_verified": false
+      },
+      {
+        "operation": "PREVIEW_ONLY_NOT_EXECUTABLE",
+        "event_id": "DEMO-REVIEW-LOCAL0001",
+        "idempotency_key": "DEMO-IDEMP-e6ee46069c59da6cc5215d38ce9d9a51",
+        "reviewer_label": "DEMO-MANAGER-1",
+        "reviewer_role": "manager",
+        "reason": "Синтетическая проверка проекта без контактов",
+        "reviewed_on": "2026-11-01",
+        "expected_current_stage": "DT1062_21:CLIENT",
+        "expected_category_id": 21,
+        "expected_field_value": {
+          "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-e6ee46069c59da6cc5215d38ce9d9a51"
+        },
+        "method_if_separately_authorized": "crm.item.update",
+        "params_template_without_item_id": {
+          "entityTypeId": 1062,
+          "useOriginalUfNames": "Y",
+          "fields": {
+            "stageId": "DT1062_21:PREPARATION",
+            "UF_CRM_13_SVCIT_REVIEW_DECISION": "DEMO_RESEARCH_REQUIRED",
+            "UF_CRM_13_SVCIT_EVIDENCE_STATUS": "DEMO_MANUAL_REVIEW_ONLY",
+            "UF_CRM_13_SVCIT_STOP_REASON": "DEMO_NONE"
+          }
+        },
+        "real_manager_authorization_verified": false
+      }
+    ],
+    "crm_writes": "NO",
+    "live_manager_identity_verified": false,
+    "customer_contact_authorized": false,
+    "source_connections": 0,
+    "live_adapter_activated": false
+  },
+  "local_outbox": {
+    "mode": "SYNTHETIC_LOCAL_OUTBOX_ONLY",
+    "states": {
+      "CLAIMED": 0,
+      "QUEUED": 0,
+      "UNCERTAIN": 0,
+      "VERIFIED": 2
+    },
+    "audit_events": 7,
+    "crm_writes": "NO",
+    "live_transport": false,
+    "source_connections": 0
+  },
+  "duplicate_replay": {
+    "queued": 0,
+    "duplicate_skipped": 2,
+    "crm_writes": "NO"
+  },
+  "mock_receipts": [
+    {
+      "status": "RECONCILED_REMOTE_READBACK",
+      "external_id": 1,
+      "crm_writes": "NO",
+      "post_retries": 0
+    },
+    {
+      "status": "RECONCILED_REMOTE_READBACK",
+      "external_id": 2,
+      "crm_writes": "NO",
+      "post_retries": 0
+    }
+  ],
+  "mock_calls": [
+    "MOCK crm.item.add",
+    "MOCK crm.item.list",
+    "MOCK crm.item.get",
+    "MOCK crm.item.add",
+    "MOCK crm.item.list",
+    "MOCK crm.item.get"
+  ],
+  "mock_final_items": [
+    {
+      "UF_CRM_13_SVCIT_COMPANY_INN": "7700000009",
+      "UF_CRM_13_SVCIT_COMPANY_NAME": "DEMO COMPANY-001",
+      "UF_CRM_13_SVCIT_EVIDENCE_STATUS": "DEMO_MANUAL_REVIEW_ONLY",
+      "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-8aa61764c82151c1c11a52bd19ff699b",
+      "UF_CRM_13_SVCIT_LEAD_SCORE": 86,
+      "UF_CRM_13_SVCIT_MANAGER_NEXT_ACTION": "Проверить синтетический запрос 1С",
+      "UF_CRM_13_SVCIT_REGION": "Москва",
+      "UF_CRM_13_SVCIT_REVIEW_DECISION": "DEMO_RELEVANT_NOT_A_SALE",
+      "UF_CRM_13_SVCIT_SCORE_VERSION": "demo-v1",
+      "UF_CRM_13_SVCIT_SIGNAL_DATE": "2026-10-31",
+      "UF_CRM_13_SVCIT_SIGNAL_ID": "DEMO-ITREQ-001",
+      "UF_CRM_13_SVCIT_SIGNAL_KIND": "demo-synthetic",
+      "UF_CRM_13_SVCIT_SIGNAL_SOURCE": "synthetic-fixture",
+      "UF_CRM_13_SVCIT_SIGNAL_URL": "https://example.invalid/serviceit-demo/request/001",
+      "UF_CRM_13_SVCIT_STOP_REASON": "DEMO_NONE",
+      "UF_CRM_13_SVCIT_SUGGESTED_SERVICE": "1С",
+      "categoryId": 21,
+      "stageId": "DT1062_21:SUCCESS",
+      "title": "DEMO ServiceIT AI — DEMO-ITREQ-001",
+      "id": 1,
+      "entityTypeId": 1062
+    },
+    {
+      "UF_CRM_13_SVCIT_COMPANY_INN": "7700000009",
+      "UF_CRM_13_SVCIT_COMPANY_NAME": "DEMO COMPANY-001",
+      "UF_CRM_13_SVCIT_EVIDENCE_STATUS": "DEMO_MANUAL_REVIEW_ONLY",
+      "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-e6ee46069c59da6cc5215d38ce9d9a51",
+      "UF_CRM_13_SVCIT_LEAD_SCORE": 86,
+      "UF_CRM_13_SVCIT_MANAGER_NEXT_ACTION": "Проверить синтетический запрос 1С",
+      "UF_CRM_13_SVCIT_REGION": "Москва",
+      "UF_CRM_13_SVCIT_REVIEW_DECISION": "DEMO_RESEARCH_REQUIRED",
+      "UF_CRM_13_SVCIT_SCORE_VERSION": "demo-v1",
+      "UF_CRM_13_SVCIT_SIGNAL_DATE": "2026-10-31",
+      "UF_CRM_13_SVCIT_SIGNAL_ID": "DEMO-ITREQ-002",
+      "UF_CRM_13_SVCIT_SIGNAL_KIND": "demo-synthetic",
+      "UF_CRM_13_SVCIT_SIGNAL_SOURCE": "synthetic-second",
+      "UF_CRM_13_SVCIT_SIGNAL_URL": "https://example.invalid/serviceit-demo/request/002",
+      "UF_CRM_13_SVCIT_STOP_REASON": "DEMO_NONE",
+      "UF_CRM_13_SVCIT_SUGGESTED_SERVICE": "1С",
+      "categoryId": 21,
+      "stageId": "DT1062_21:PREPARATION",
+      "title": "DEMO ServiceIT AI — DEMO-ITREQ-002",
+      "id": 2,
+      "entityTypeId": 1062
+    }
+  ]
+}

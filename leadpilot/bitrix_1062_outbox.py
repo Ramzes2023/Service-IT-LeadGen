@@ -8,7 +8,7 @@ CRM by its idempotency key. Never assume exactly-once from a POST call.
 from __future__ import annotations
 
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -19,6 +19,7 @@ from typing import Any
 from .bitrix_1062_mapping import (
     ALL_FIELD_CODES, CATEGORY_ID, ENTITY_TYPE_ID, IDEMPOTENCY_FIELD,
     INITIAL_STAGE, SyntheticPlanRejected,
+    FIELD_MAP, _validate_card,
 )
 
 SCHEMA = """
@@ -127,6 +128,20 @@ def _validate_plan(plan: dict) -> list[tuple[str, str, str]]:
                     + "\x00" + fields["UF_CRM_13_SVCIT_SIGNAL_ID"]
                 ).encode("utf-8")).hexdigest()[:32]):
             raise SyntheticPlanRejected("OPERATION_FIELDS_INVALID")
+        # Validate every mapped value, including contacts, URLs and fixed demo
+        # labels. A plan's preview status is not evidence that it is canonical.
+        try:
+            signal_day = date.fromisoformat(fields['UF_CRM_13_SVCIT_SIGNAL_DATE'])
+        except (ValueError, TypeError):
+            raise SyntheticPlanRejected('OPERATION_SIGNAL_DATE_INVALID') from None
+        _, canonical = _validate_card(dict(
+            status='DRY_RUN_INTENT_ONLY', idempotency_key=key,
+            logical_fields={k: fields[v] for k, v in FIELD_MAP.items()},
+            crm_entity_type='UNCONFIRMED', actual_crm_field_codes='UNCONFIRMED',
+            crm_writes='NO', real_customer_contact=False),
+            signal_day)
+        if fields != canonical:
+            raise SyntheticPlanRejected('OPERATION_NOT_CANONICAL')
         payload = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = sha256(payload.encode("utf-8")).hexdigest()
         validated.append((key, payload, digest))
@@ -167,12 +182,14 @@ def claim_next(db_path: str | Path) -> dict | None:
         with db:
             db.execute("BEGIN IMMEDIATE")
             item = db.execute(
-                "SELECT idempotency_key,payload_json FROM bitrix_1062_outbox "
+                "SELECT idempotency_key,payload_json,payload_sha256 FROM bitrix_1062_outbox "
                 "WHERE state='QUEUED' ORDER BY created_at,idempotency_key LIMIT 1"
             ).fetchone()
             if item is None:
                 return None
             key = item["idempotency_key"]
+            if sha256(item['payload_json'].encode('utf-8')).hexdigest() != item['payload_sha256']:
+                raise SyntheticPlanRejected('DURABLE_PAYLOAD_INTEGRITY_FAILED')
             db.execute(
                 "UPDATE bitrix_1062_outbox SET state='CLAIMED',attempts=attempts+1,"
                 "updated_at=? WHERE idempotency_key=? AND state='QUEUED'",
@@ -204,6 +221,25 @@ def mark_uncertain(db_path: str | Path, key: str, *, reason_code: str) -> dict:
     return {"state": "UNCERTAIN", "requires_manual_reconciliation": True, "crm_writes": "NO"}
 
 
+def fence_claimed_payload(db_path: str | Path, key: str, params: dict) -> None:
+    """Atomically consume a claim before I/O, including across worker restarts."""
+    if not isinstance(key, str) or not KEY.fullmatch(key):
+        raise SyntheticPlanRejected("CLAIM_KEY_INVALID")
+    with closing(_connect(db_path)) as db:
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT state,payload_json,payload_sha256,attempts FROM bitrix_1062_outbox "
+                             "WHERE idempotency_key=?", (key,)).fetchone()
+            if (row is None or row['state'] != 'CLAIMED' or row['attempts'] != 1
+                    or sha256(row['payload_json'].encode('utf-8')).hexdigest() != row['payload_sha256']
+                    or json.loads(row['payload_json']) != params):
+                raise SyntheticPlanRejected("CLAIM_NOT_DURABLE_OR_ALREADY_ATTEMPTED")
+            db.execute("UPDATE bitrix_1062_outbox SET state='UNCERTAIN',"
+                       "last_reason='DELIVERY_ATTEMPT_FENCED',updated_at=? "
+                       "WHERE idempotency_key=?", (_now(), key))
+            _event(db, key, 'UNCERTAIN', 'DELIVERY_ATTEMPT_FENCED')
+
+
 def confirm_remote_readback(db_path: str | Path, key: str, *, crm_item: dict) -> dict:
     """Accept one externally read-back isolated CRM item; never mutate remote CRM.
 
@@ -222,6 +258,12 @@ def confirm_remote_readback(db_path: str | Path, key: str, *, crm_item: dict) ->
             if record is None or record["state"] not in ("CLAIMED", "UNCERTAIN", "VERIFIED"):
                 raise SyntheticPlanRejected("READBACK_STATE_INVALID")
             expected = json.loads(record["payload_json"])["fields"]
+            # This receipt confirms the create payload only. Later stage/review
+            # changes need separate authorized transition evidence, not a
+            # permissive stage allow-list or a six-field identity-only match.
+            if any(type(crm_item.get(code)) is not type(value)
+                   or crm_item.get(code) != value for code, value in expected.items()):
+                raise SyntheticPlanRejected("REMOTE_READBACK_MISMATCH")
             item_id = crm_item.get("id")
             if (type(item_id) is not int or item_id <= 0
                     or crm_item.get("entityTypeId") != ENTITY_TYPE_ID

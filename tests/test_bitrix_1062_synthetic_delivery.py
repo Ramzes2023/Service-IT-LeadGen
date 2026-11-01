@@ -41,7 +41,7 @@ def _flags():
 
 def _fake_item(claim, *, id=401):
     fields = claim["params_preview_only"]["fields"]
-    return {"id": id, "entityTypeId": 1062, "categoryId": 21,
+    return {**fields, "id": id, "entityTypeId": 1062, "categoryId": 21,
             "stageId": "DT1062_21:NEW", "title": fields["title"],
             KEY_FIELD: claim["idempotency_key"]}
 

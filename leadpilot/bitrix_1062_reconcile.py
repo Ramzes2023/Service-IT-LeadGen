@@ -44,6 +44,10 @@ def inspect_remote_synthetic_key(call: Callable[[str, dict], Any], key: str) -> 
     items = listing.get("items")
     if not isinstance(items, list):
         raise SyntheticPlanRejected("REMOTE_ITEMS_MALFORMED")
+    if (listing.get("next") is not None
+            or ("total" in listing and
+                (type(listing["total"]) is not int or listing["total"] != len(items)))):
+        raise SyntheticPlanRejected("REMOTE_LIST_INCOMPLETE")
     if len(items) > 1:
         return {"status": "DUPLICATE_REMOTE_CANDIDATES", "count": len(items), "crm_writes": "NO"}
     if len(items) == 0:

@@ -25,6 +25,7 @@ def _claim(tmp_path):
     mark_uncertain(db, claim["idempotency_key"], reason_code="TIMEOUT")
     fields = claim["params_preview_only"]["fields"]
     item = {
+        **fields,
         "id": 99, "entityTypeId": 1062, "categoryId": 21,
         "stageId": "DT1062_21:NEW", "title": fields["title"],
         KEY_FIELD: claim["idempotency_key"],

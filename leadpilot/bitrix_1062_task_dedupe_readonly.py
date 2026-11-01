@@ -12,7 +12,7 @@ import os
 import httpx
 
 from .bitrix_metadata_audit import validate_webhook
-from .bitrix_1062_task_metadata import audit_synthetic_task_link
+from .bitrix_1062_task_metadata import audit_synthetic_task_link, TaskMetadataReadError
 from .bitrix_1062_manager_task_preview import DemoTaskGateBlocked
 
 TASK_TITLE = "[DEMO / НЕ ЗВОНИТЬ] Проверить сигнал 1С по карточке ServiceIT №3"
@@ -126,10 +126,31 @@ def discover_demo_manager_task(
         # that robots/business processes remain switched off.
         try:
             meta = audit_synthetic_task_link(webhook, client=client)
+        except TaskMetadataReadError as exc:
+            # The metadata reader uses only known project-generated reason
+            # codes, not remote Bitrix error text. Never reveal a response body.
+            code = str(exc)
+            if code in {
+                "READ_HTTP_UNAVAILABLE", "READ_RESPONSE_UNAVAILABLE",
+                "READ_FAILED", "READ_METHOD_FORBIDDEN", "SCHEMA_UNEXPECTED",
+            }:
+                _deny("EXACT_DEMO_METADATA_" + code)
+            _deny("EXACT_DEMO_METADATA_READ_UNCLASSIFIED")
         except (DemoTaskGateBlocked, ValueError, httpx.HTTPError):
-            _deny("EXACT_DEMO_METADATA_NOT_READY")
+            _deny("EXACT_DEMO_METADATA_READ_UNCLASSIFIED")
         if meta["status"] != "LINKED_TASK_METADATA_READY":
-            _deny("EXACT_DEMO_METADATA_NOT_READY")
+            gate_codes = {
+                "owner_symbol_verified": "OWNER_SYMBOL",
+                "task_link_enabled": "TASK_LINK",
+                "automation_confirmed_off": "AUTOMATION_OFF",
+                "task_fields_ready": "TASK_FIELDS",
+                "exact_demo_card_readback": "EXACT_CARD",
+            }
+            failed = [code for name, code in gate_codes.items()
+                      if meta.get(name) is not True]
+            if len(failed) == 1:
+                _deny("EXACT_DEMO_GATE_" + failed[0] + "_FAILED")
+            _deny("EXACT_DEMO_MULTIPLE_OR_UNKNOWN_GATES_FAILED")
         linked = _list_tasks(client, base, "UF_CRM_TASK", CRM_BINDING)
         titled = _list_tasks(client, base, "TITLE", TASK_TITLE)
         unique = {record["id"]: record for record in [*linked, *titled]}
@@ -162,7 +183,20 @@ def main() -> None:
     except (TaskDiscoveryBlocked, ValueError, httpx.HTTPError) as exc:
         code = str(exc)
         if code not in {
-            "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE", "TASK_LIST_MALFORMED",
+            "EXACT_DEMO_METADATA_NOT_READY",
+            "EXACT_DEMO_METADATA_READ_HTTP_UNAVAILABLE",
+            "EXACT_DEMO_METADATA_READ_RESPONSE_UNAVAILABLE",
+            "EXACT_DEMO_METADATA_READ_FAILED",
+            "EXACT_DEMO_METADATA_READ_METHOD_FORBIDDEN",
+            "EXACT_DEMO_METADATA_SCHEMA_UNEXPECTED",
+            "EXACT_DEMO_METADATA_READ_UNCLASSIFIED",
+            "EXACT_DEMO_GATE_OWNER_SYMBOL_FAILED",
+            "EXACT_DEMO_GATE_TASK_LINK_FAILED",
+            "EXACT_DEMO_GATE_AUTOMATION_OFF_FAILED",
+            "EXACT_DEMO_GATE_TASK_FIELDS_FAILED",
+            "EXACT_DEMO_GATE_EXACT_CARD_FAILED",
+            "EXACT_DEMO_MULTIPLE_OR_UNKNOWN_GATES_FAILED",
+            "TASK_LIST_UNAVAILABLE", "TASK_LIST_MALFORMED",
             "TASK_LIST_SCHEMA_CHANGED", "TASK_LIST_HTTP_400", "TASK_LIST_HTTP_401",
             "TASK_LIST_HTTP_403", "TASK_LIST_HTTP_429", "TASK_LIST_HTTP_OTHER",
             "TASK_LIST_RESPONSE_TOO_LARGE", "TASK_LIST_API_ERROR",
@@ -175,6 +209,22 @@ def main() -> None:
             code = "BLOCKED_UNSPECIFIED"
         outcome = {"status": "BLOCKED_READ_ONLY", "reason_code": code,
                    "task_created": False, "crm_writes": "NO"}
+        if code.startswith("EXACT_DEMO_"):
+            # A blocked metadata gate is not a task-list error. Collect only
+            # independently sanitized REST method states and boolean gates,
+            # with no raw CRM item, error descriptions or webhook in output.
+            try:
+                from .bitrix_1062_task_diagnostics import diagnose_task_metadata
+                diag = diagnose_task_metadata(
+                    os.environ.get("SERVICEIT_TASK_READONLY_WEBHOOK", "")
+                )
+                outcome["metadata_diagnostics"] = {
+                    "status": diag["status"],
+                    "methods": diag["methods"],
+                    "metadata_gates": diag["metadata_gates"],
+                }
+            except (ValueError, TypeError, httpx.HTTPError, KeyError):
+                outcome["metadata_diagnostics"] = "INDEPENDENT_READ_FAILED"
     print(json.dumps(outcome, ensure_ascii=False, indent=2))
     raise SystemExit(0 if outcome["status"] in
                      ("EXISTING_VISIBLE_TASK_FOUND", "NO_VISIBLE_MATCH_NOT_GLOBAL_PROOF") else 2)

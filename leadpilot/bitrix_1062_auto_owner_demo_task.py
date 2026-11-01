@@ -79,7 +79,20 @@ def main() -> None:
         code = str(ex)
         approved_preflight = {
             "REMOTE_PREFLIGHT_" + x for x in (
-                "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE",
+                "EXACT_DEMO_METADATA_NOT_READY",
+                "EXACT_DEMO_METADATA_READ_HTTP_UNAVAILABLE",
+                "EXACT_DEMO_METADATA_READ_RESPONSE_UNAVAILABLE",
+                "EXACT_DEMO_METADATA_READ_FAILED",
+                "EXACT_DEMO_METADATA_READ_METHOD_FORBIDDEN",
+                "EXACT_DEMO_METADATA_SCHEMA_UNEXPECTED",
+                "EXACT_DEMO_METADATA_READ_UNCLASSIFIED",
+                "EXACT_DEMO_GATE_OWNER_SYMBOL_FAILED",
+                "EXACT_DEMO_GATE_TASK_LINK_FAILED",
+                "EXACT_DEMO_GATE_AUTOMATION_OFF_FAILED",
+                "EXACT_DEMO_GATE_TASK_FIELDS_FAILED",
+                "EXACT_DEMO_GATE_EXACT_CARD_FAILED",
+                "EXACT_DEMO_MULTIPLE_OR_UNKNOWN_GATES_FAILED",
+                "TASK_LIST_UNAVAILABLE",
                 "TASK_LIST_HTTP_400", "TASK_LIST_HTTP_401",
                 "TASK_LIST_HTTP_403", "TASK_LIST_HTTP_429",
                 "TASK_LIST_HTTP_OTHER", "TASK_LIST_RESPONSE_TOO_LARGE",

@@ -86,6 +86,10 @@ def test_missing_task_scope_is_method_specific_and_does_not_echo_secret():
     }
     assert out["methods"]["crm.item.get"]["state"] == "OK"
     assert out["task_scope_missing_possible"] is True
+    typ = out["methods"]["crm.type.getByEntityTypeId"]
+    assert typ["correct_entity_type"] is True
+    assert typ["task_link_enabled"] is True
+    assert typ["automation_confirmed_off"] is True
     body = json.dumps(out)
     assert "PRIVATE_TOKEN_AND" not in body
     assert "SYNTHETICDEMOSECRET123" not in body
@@ -148,3 +152,21 @@ def test_smart_type_metadata_uses_entity_type_not_internal_id():
         if name=="crm.type.getByEntityTypeId":
             assert params=={"entityTypeId":1062}
         assert name!="crm.type.get"
+
+
+def test_type_report_flags_disabled_task_link_even_without_task_scope():
+    data=results()
+    data["crm.type.getByEntityTypeId"]["type"]["linkedUserFields"]={}
+    calls=[]
+    def handler(request):
+        method=request.url.path.rsplit("/",1)[-1].removesuffix(".json")
+        calls.append(method)
+        if method=="tasks.task.getFields":
+            return httpx.Response(401,json={"error":"insufficient_scope"})
+        return httpx.Response(200,json={"result":data[method]})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        out=diagnose_task_metadata(HOOK,client=client)
+    assert len(calls)==4
+    assert out["status"]=="BLOCKED_READ_ONLY"
+    assert out["methods"]["crm.type.getByEntityTypeId"]["task_link_enabled"] is False
+    assert out["task_scope_missing_possible"] is True

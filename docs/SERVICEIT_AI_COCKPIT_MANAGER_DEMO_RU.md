@@ -53,10 +53,10 @@
 
    ```powershell
    .\scripts\RUN_SERVICEIT_AI_COCKPIT_DEMO.ps1 -Mode populate -InspectLive
-   .\scripts\RUN_SERVICEIT_AI_COCKPIT_DEMO.ps1 -Mode populate -InspectLive -ApplyDemo -GigaChatOptIn -SyntheticPrivacyOptIn
+   .\scripts\RUN_SERVICEIT_AI_COCKPIT_DEMO.ps1 -Mode populate -InspectLive -ApplyDemo -GigaChatOptIn -SyntheticPrivacyOptIn -UseExistingGigaChat
    ```
 
-   Для второго запуска администратор заранее безопасно настраивает процессные переменные существующей интеграции: `AI_ENABLE=1`, `AI_PROVIDER=gigachat`, `GIGACHAT_CREDENTIALS`, при необходимости `GIGACHAT_SCOPE`, `GIGACHAT_MODEL` (обычно GigaChat-2), `GIGACHAT_CA_BUNDLE_FILE`. Оператор не читает `.env`, файлы вебхуков, cookie или токены и не печатает значения. TLS-проверка включена. Модели отправляется только фиксированная учебная фраза из существующего модуля, никогда данные карточки. Только `quality_status=complete`, положительная конечная confidence, разрешённая услуга и дословная цитата допускаются к отчёту. Свободный текст модели проверяется на опасные конструкции и не копируется как установленный факт: карточка получает ограниченную гипотезу применимости услуги. Полный отчёт не сокращается до короткой строки.
+   Для второго запуска `-UseExistingGigaChat` (добавлен после успешного реального preflight 01.11.2026 с `quality=complete`) берёт локальные GigaChat-настройки из того же строго ограниченного списка пяти одобренных путей, что и отдельный проверенный оператор PR #59. Эта опция допустима **только** вместе с `-Mode populate -InspectLive -ApplyDemo -GigaChatOptIn -SyntheticPrivacyOptIn`; без флага существующие переменные окружения продолжают использоваться как прежде. Оператор не читает файлы вебхуков/cookie, не публикует ключи и восстанавливает GigaChat-переменные окружения в `finally`. До резервирования однократной операции `populate` проверяет локальную конфигурацию GigaChat; отсутствие ключа/выключенная модель не расходуют reservation. При таймауте или недопустимом ответе *после* резервирования повторные POST/модельный вызов по-прежнему запрещены. TLS-проверка включена. Модели отправляется только фиксированная учебная фраза из существующего модуля, никогда данные карточки. Только `quality_status=complete`, положительная конечная confidence, разрешённая услуга и дословная цитата допускаются к отчёту. Свободный текст модели проверяется на опасные конструкции и не копируется как установленный факт: карточка получает ограниченную гипотезу применимости услуги. Полный отчёт не сокращается до короткой строки.
 
 Основной оператор — PowerShell-скрипт выше с `-PythonPath` (при необходимости). Прямой вызов Python для live-запросов теперь требует явный `--webhook-from-env` и заранее безопасно подготовленное `SERVICEIT_AI_COCKPIT_WEBHOOK`; без этого вызов прекращается с фиксированным кодом, **никакого Python getpass**. Поэтому используйте только PowerShell-оператор. Без `-InspectLive` возможен полностью офлайн preview. В данном PR никаких live-команд не выполнялось.
 
@@ -85,3 +85,9 @@
 - [configuration.get: scope и extras.categoryId](https://apidocs.bitrix24.ru/api-reference/crm/universal/item-details-configuration/crm-item-details-configuration-get.html)
 - [configuration.set: полная замена всех разделов](https://apidocs.bitrix24.ru/api-reference/crm/universal/item-details-configuration/crm-item-details-configuration-set.html)
 - [crm.item.fields](https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-fields.html), [crm.item.update](https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-update.html)
+
+## Результаты приёмки 1 ноября 2026 года
+
+Корпоративный портал вернул `LIVE_FIELDS_VERIFIED`, `missing=[]` (9 полей созданы), а позднее `REPORT_PREVIEW_NOT_RUN` (существующая DEMO-карточка №3, оценка 90/100, `AI=NOT_RUN`). Отдельная модельная проверка с разрешённым локальным ключом вернула `GIGACHAT_COCKPIT_PREFLIGHT_PASS`, `quality=complete`, `verified_quote=true`, 9 полей, `full_report_chars=1638`, `CRM_WRITES=0`, `LEDGER_RESERVATIONS=0`. Это *не* равнозначно `DEMO_AI_REPORT_VERIFIED`: запись отчёта ещё требуется выполнить на Windows-портале, и повторный ответ модели может отличаться.
+
+Статус оформления: `layout_origin=UNSAVED_DEFAULT`, нет полной персональной или общей настройки. Команду `-Mode layout -ApplyDemo` не запускать до отдельного сохранения штатного личного вида в интерфейсе Bitrix24. Отчёт в уже созданные поля можно заполнить отдельно без изменения layout.

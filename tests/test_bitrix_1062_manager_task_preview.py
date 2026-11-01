@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import pytest
 
+from leadpilot.bitrix_1062_mapping import ALL_FIELD_CODES
 from leadpilot.bitrix_1062_manager_task_preview import (
     DemoTaskGateBlocked, task_link_preflight,
 )
@@ -22,6 +23,8 @@ def fixture():
         "UF_CRM_13_SVCIT_SIGNAL_KIND": "demo-synthetic",
         "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY": "DEMO-IDEMP-" + "a" * 32,
     }
+    for code in ALL_FIELD_CODES:
+        item.setdefault(code, 86 if code.endswith("LEAD_SCORE") else "DEMO SYNTHETIC")
     process = {
         "entityTypeId": 1062, "isUseInUserfieldEnabled": "Y",
         "linkedUserFields": {"TASKS_TASK|UF_CRM_TASK": "true"},
@@ -30,7 +33,7 @@ def fixture():
     types = [{"ID": 1062, "NAME": "Сервис ИТ — AI-сигналы (тест)",
               "SYMBOL_CODE_SHORT": "T426"}]
     user = {"ID": 42, "ACTIVE": "Y", "EXTERNAL_AUTH_ID": None}
-    fields = {"TITLE": {}, "RESPONSIBLE_ID": {}, "UF_CRM_TASK": {}}
+    fields = {"TITLE": {}, "RESPONSIBLE_ID": {}, "UF_CRM_TASK": {"type": "crm"}}
     return {"item": item, "process_type": process, "owner_types": types,
             "responsible_user": user, "task_fields": fields}
 
@@ -116,4 +119,16 @@ def test_no_effect_on_real_crm_or_network(monkeypatch):
 def test_invalid_boolean_user_id_rejected():
     f=fixture();f["responsible_user"]["ID"]=True
     with pytest.raises(DemoTaskGateBlocked):
+        run(f)
+
+
+def test_missing_one_of_sixteen_original_uf_fields_blocks():
+    f=fixture();f["item"].pop("UF_CRM_13_SVCIT_SCORE_VERSION")
+    with pytest.raises(DemoTaskGateBlocked,match="REQUIRED_SIXTEEN_UF_FIELDS_MISSING"):
+        run(f)
+
+
+def test_task_crm_link_field_schema_invalid_blocks():
+    f=fixture();f["task_fields"]["UF_CRM_TASK"]["type"]="string"
+    with pytest.raises(DemoTaskGateBlocked,match="TASK_CRM_BINDING_FIELD_NOT_CRM_TYPE"):
         run(f)

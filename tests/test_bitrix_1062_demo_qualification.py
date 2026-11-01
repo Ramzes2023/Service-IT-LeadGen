@@ -290,3 +290,25 @@ def test_blocked_status_exception_does_not_expose_real_field_text():
     assert str(err)=="DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED"
     assert err.safe_details["evidence_status_shape"]=="UNRECOGNIZED_TEXT"
     assert "PRIVATE_CORPORATE_RECORD_SENSITIVE" not in str(err.safe_details)
+
+
+
+@pytest.mark.parametrize("safe_label", [
+    "Ожидает проверки", "На проверке", "Требует проверки",
+    "Не проверено", "Не подтверждено", "Не рассмотрено",
+    "Ожидает решения", "Синтетический тест", "ДЕМО", "demo",
+])
+def test_common_unverified_review_labels_do_not_claim_approval(tmp_path,safe_label):
+    item=card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]=safe_label
+    out,calls,_=portal(tmp_path,item=item,apply=False)
+    assert out["review_status_classification"]["evidence_status"]=="UNVERIFIED_LABEL"
+    assert out["real_leads_approved"] is False
+    assert not any(method=="crm.item.update" for method,_ in calls)
+
+
+def test_only_hyphen_and_spacing_are_normalized_not_semantic_changes(tmp_path):
+    item=card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]="  СИНТЕТИЧЕСКИЙ ТЕСТ - НЕ РЕАЛЬНАЯ ПОТРЕБНОСТЬ "
+    out,_,_=portal(tmp_path,item=item,apply=False)
+    assert out["review_status_classification"]["evidence_status"]=="EXACT_SYNTHETIC_LABEL"

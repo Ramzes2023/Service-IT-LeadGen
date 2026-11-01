@@ -158,3 +158,71 @@ def test_repr_is_secret_free():
         obj = Bitrix1062ReadOnly(WEBHOOK, client=client)
         assert "TESTROTATEDSECRET" not in repr(obj)
         assert "/rest/" not in repr(obj)
+
+
+def test_get_cannot_read_arbitrary_item_without_prior_list():
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"result": {"item": sample_item()}})
+    with client_for(handler) as client:
+        adapter = Bitrix1062ReadOnly(WEBHOOK, client=client)
+        with pytest.raises(Bitrix1062ReadError, match="REQUIRES_EXACT_LIST_BINDING"):
+            adapter("crm.item.get", get_params())
+    assert calls == []
+
+
+def test_get_cannot_read_other_id_after_exact_list():
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"result": {"items": [sample_item()]}})
+    with client_for(handler) as client:
+        adapter = Bitrix1062ReadOnly(WEBHOOK, client=client)
+        adapter("crm.item.list", list_params())
+        with pytest.raises(Bitrix1062ReadError, match="REQUIRES_EXACT_LIST_BINDING"):
+            adapter("crm.item.get", {**get_params(), "id": 102})
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("mutation", [
+    {"categoryId": 19},
+    {"entityTypeId": 2},
+    {KEY_FIELD: "DEMO-IDEMP-" + "b"*32},
+    {"title": "Existing customer"},
+])
+def test_list_returned_item_must_be_synthetic_and_exact(mutation):
+    item = {**sample_item(), **mutation}
+    with client_for(lambda _: httpx.Response(200, json={"result": {"items": [item]}})) as client:
+        adapter = Bitrix1062ReadOnly(WEBHOOK, client=client)
+        with pytest.raises(Bitrix1062ReadError, match="LIST_ITEM_OUT_OF_SCOPE"):
+            adapter("crm.item.list", list_params())
+
+
+def test_get_returned_item_must_still_match_bound_key():
+    requests = []
+    def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(200, json={"result": {"items": [sample_item()]}})
+        return httpx.Response(200, json={"result": {"item": {**sample_item(), "categoryId": 19}}})
+    with client_for(handler) as client:
+        adapter = Bitrix1062ReadOnly(WEBHOOK, client=client)
+        adapter("crm.item.list", list_params())
+        with pytest.raises(Bitrix1062ReadError, match="GET_ITEM_OUT_OF_SCOPE"):
+            adapter("crm.item.get", get_params())
+
+
+def test_list_with_two_matching_items_has_no_get_authorization():
+    item1, item2 = sample_item(), {**sample_item(), "id": 102}
+    seen = []
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"result": {"items": [item1, item2]}})
+    with client_for(handler) as client:
+        adapter = Bitrix1062ReadOnly(WEBHOOK, client=client)
+        result = adapter("crm.item.list", list_params())
+        assert len(result["items"]) == 2
+        with pytest.raises(Bitrix1062ReadError, match="REQUIRES_EXACT_LIST_BINDING"):
+            adapter("crm.item.get", get_params())
+    assert len(seen) == 1

@@ -35,10 +35,24 @@ def make_db(tmp_path, *, existing=False, source_override=None, name_override=Non
         "existing_customer": existing,
         "evidence": "Only synthetic evidence for integration test",
     })
+    # The canonical offline report contains a second independent synthetic
+    # signal for the same company; persist it without granting a review.
+    second = synthetic_fixture(NOW)[2]
+    ingest(db, {
+        "inn": second["inn"],
+        "name": name_override or second["company_name"],
+        "region": second["region"],
+        "source_name": second["signal_source"],
+        "source_url": second["signal_url"],
+        "signal_type": "new_store",
+        "signal_date": second["signal_date"],
+        "existing_customer": existing,
+        "evidence": "Second synthetic event, no review",
+    })
     with sqlite3.connect(db) as con:
         sid = con.execute(
-            "SELECT id FROM signals WHERE company_id=?",
-            (stored["company_id"],),
+            "SELECT id FROM signals WHERE company_id=? AND source_url=?",
+            (stored["company_id"], item["signal_url"]),
         ).fetchone()[0]
     return db, stored["company_id"], sid
 

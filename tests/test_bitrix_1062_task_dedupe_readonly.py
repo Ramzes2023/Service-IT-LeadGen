@@ -161,3 +161,61 @@ def test_task_list_http_status_is_sanitized(http_code, expected):
             _list_tasks(client, HOOK, "UF_CRM_TASK", CRM_BINDING)
     assert HOOK not in str(exc.value)
     assert "CUSTOM_SECRET_INFO" not in str(exc.value)
+
+
+
+@pytest.mark.parametrize("flag,reason", [
+    ("owner_symbol_verified", "EXACT_DEMO_GATE_OWNER_SYMBOL_FAILED"),
+    ("task_link_enabled", "EXACT_DEMO_GATE_TASK_LINK_FAILED"),
+    ("automation_confirmed_off", "EXACT_DEMO_GATE_AUTOMATION_OFF_FAILED"),
+    ("task_fields_ready", "EXACT_DEMO_GATE_TASK_FIELDS_FAILED"),
+    ("exact_demo_card_readback", "EXACT_DEMO_GATE_EXACT_CARD_FAILED"),
+])
+def test_metadata_reports_the_one_failed_gate_without_scanning_tasks(monkeypatch, flag, reason):
+    from leadpilot import bitrix_1062_task_dedupe_readonly as module
+    gates = dict.fromkeys((
+        "owner_symbol_verified", "task_link_enabled", "automation_confirmed_off",
+        "task_fields_ready", "exact_demo_card_readback",
+    ), True)
+    gates[flag] = False
+    def meta(*args, **kwargs):
+        return {"status": "LINKED_TASK_METADATA_BLOCKED", **gates}
+    monkeypatch.setattr(module, "audit_synthetic_task_link", meta)
+    with pytest.raises(TaskDiscoveryBlocked, match="^"+reason+"$"):
+        call()
+
+
+def test_metadata_multiple_failed_gates_stays_fail_closed(monkeypatch):
+    from leadpilot import bitrix_1062_task_dedupe_readonly as module
+    monkeypatch.setattr(module, "audit_synthetic_task_link",
+        lambda *a,**k: {"status":"LINKED_TASK_METADATA_BLOCKED",
+                         "exact_demo_card_readback": False,
+                         "task_link_enabled": False})
+    with pytest.raises(TaskDiscoveryBlocked, match="EXACT_DEMO_MULTIPLE_OR_UNKNOWN_GATES_FAILED"):
+        call()
+
+
+@pytest.mark.parametrize("code,expected", [
+    ("READ_HTTP_UNAVAILABLE", "EXACT_DEMO_METADATA_READ_HTTP_UNAVAILABLE"),
+    ("READ_RESPONSE_UNAVAILABLE", "EXACT_DEMO_METADATA_READ_RESPONSE_UNAVAILABLE"),
+    ("SCHEMA_UNEXPECTED", "EXACT_DEMO_METADATA_SCHEMA_UNEXPECTED"),
+])
+def test_safe_metadata_reader_errors_not_masked(monkeypatch, code, expected):
+    from leadpilot import bitrix_1062_task_dedupe_readonly as module
+    from leadpilot.bitrix_1062_task_metadata import TaskMetadataReadError
+    def fail(*args,**kwargs):
+        raise TaskMetadataReadError(code)
+    monkeypatch.setattr(module, "audit_synthetic_task_link", fail)
+    with pytest.raises(TaskDiscoveryBlocked, match="^"+expected+"$"):
+        call()
+
+
+def test_metadata_exception_text_from_unknown_source_not_leaked(monkeypatch):
+    from leadpilot import bitrix_1062_task_dedupe_readonly as module
+    from leadpilot.bitrix_1062_task_metadata import TaskMetadataReadError
+    def fail(*args,**kwargs):
+        raise TaskMetadataReadError("UNTRUSTED_PRIVATE_DATA_" + HOOK)
+    monkeypatch.setattr(module, "audit_synthetic_task_link", fail)
+    with pytest.raises(TaskDiscoveryBlocked, match="EXACT_DEMO_METADATA_READ_UNCLASSIFIED") as caught:
+        call()
+    assert HOOK not in str(caught.value)

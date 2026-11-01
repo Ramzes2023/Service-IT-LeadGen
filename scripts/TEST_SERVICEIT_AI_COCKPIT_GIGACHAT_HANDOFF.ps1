@@ -52,7 +52,7 @@ try {
     & $runner -Mode populate -InspectLive -ApplyDemo -GigaChatOptIn -SyntheticPrivacyOptIn -UseExistingGigaChat -PythonPath $mock
     if (Test-Path Env:\SERVICEIT_AI_COCKPIT_WEBHOOK) { throw 'BITRIX_WEBHOOK_NOT_CLEANED' }
     if ($env:GIGACHAT_CREDENTIALS -ne 'SYNTHETIC_MOCK_CREDENTIAL' -or
-        $env:AI_ENABLE -ne '0' -or $env:AI_PROVIDER -ne '') {
+        $env:AI_ENABLE -ne '0' -or (-not [string]::IsNullOrEmpty($env:AI_PROVIDER))) {
         throw 'CALLER_AI_ENV_NOT_RESTORED'
     }
     Write-Output 'SERVICEIT_WINDOWS_COCKPIT_GIGACHAT_HANDOFF=PASS; NETWORK=0; CRM_WRITES=0'

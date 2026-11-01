@@ -21,7 +21,10 @@ def owner_id(webhook: str, client: httpx.Client) -> int:
         r = client.post(base + "/profile.json", json={}, timeout=12, follow_redirects=False)
         if r.status_code != 200 or len(r.content) > 16384:
             raise ValueError()
-        result = r.json().get("result")
+        payload = r.json()
+        if not isinstance(payload, dict) or "error" in payload:
+            raise ValueError()
+        result = payload.get("result")
         if not isinstance(result, dict):
             raise ValueError()
     except (ValueError, TypeError, httpx.HTTPError):

@@ -12,6 +12,10 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
 Push-Location -LiteralPath $Repo
 try {
     Write-Output 'SERVICEIT_1062_MAPPING_AND_MANAGER=START; CRM_WRITES=NO'
+    # Validate syntax before pytest collection: prevents cascading import errors.
+    & $PythonPath -m compileall -q leadpilot tests
+    if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_1062_SYNTAX_PREFLIGHT_FAILED' }
+    Write-Output 'SERVICEIT_1062_SYNTAX_PREFLIGHT=PASS'
     & $PythonPath -m pytest -q -p no:cacheprovider tests/test_bitrix_handoff_dryrun.py tests/test_bitrix_1062_mapping.py tests/test_bitrix_1062_manager_bridge.py tests/test_bitrix_1062_outbox.py tests/test_bitrix_1062_reconcile.py tests/test_bitrix_1062_rest_read.py tests/test_bitrix_1062_synthetic_add.py tests/test_bitrix_1062_synthetic_delivery.py tests/test_bitrix_synthetic_text_guard.py
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_1062_MANAGER_TESTS_FAILED' }
     & $PythonPath -m py_compile leadpilot/bitrix_1062_mapping.py leadpilot/bitrix_1062_manager_bridge.py leadpilot/bitrix_1062_outbox.py leadpilot/bitrix_1062_reconcile.py leadpilot/bitrix_1062_rest_read.py leadpilot/bitrix_1062_synthetic_add.py leadpilot/bitrix_1062_synthetic_delivery.py leadpilot/bitrix_synthetic_text_guard.py

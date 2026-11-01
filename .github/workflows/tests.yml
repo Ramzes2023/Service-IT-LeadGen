@@ -35,3 +35,10 @@ jobs:
       - name: PowerShell 5.1 synthetic GigaChat opt-in and env restoration
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_GIGACHAT_COCKPIT_PREFLIGHT.ps1
+  windows-cockpit-gigachat-handoff:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic Bitrix and GigaChat handoff (no external calls)
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_AI_COCKPIT_GIGACHAT_HANDOFF.ps1

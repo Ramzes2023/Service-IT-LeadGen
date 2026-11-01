@@ -138,7 +138,25 @@ def execute_one_demo_task(
     try:
         try:
             check = discover_demo_manager_task(webhook, client=client)
-        except (TaskDiscoveryBlocked, ValueError, httpx.HTTPError):
+        except TaskDiscoveryBlocked as exc:
+            # Only project-defined constants are allowed out; do not print
+            # arbitrary REST error descriptions or webhook URLs.
+            known_preflight = {
+                "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE",
+                "TASK_LIST_HTTP_400", "TASK_LIST_HTTP_401",
+                "TASK_LIST_HTTP_403", "TASK_LIST_HTTP_429",
+                "TASK_LIST_HTTP_OTHER", "TASK_LIST_RESPONSE_TOO_LARGE",
+                "TASK_LIST_API_ERROR", "TASK_LIST_MALFORMED",
+                "TASK_LIST_SCHEMA_CHANGED", "TASK_ID_INVALID",
+                "TASK_PAGINATION_DUPLICATE", "TASK_TITLE_MISSING",
+                "CRM_TASK_LINK_UNEXPECTED_SHAPE",
+                "TASK_TITLE_FILTER_NOT_EXACT", "TASK_CRM_FILTER_IGNORED",
+                "TASK_PAGINATION_UNVERIFIED", "TASK_RESULT_WINDOW_TOO_LARGE",
+                "UNBOUNDED_TASK_SEARCH_FORBIDDEN",
+            }
+            code = str(exc)
+            _stop("REMOTE_PREFLIGHT_" + (code if code in known_preflight else "BLOCKED_UNSPECIFIED"))
+        except (ValueError, httpx.HTTPError):
             _stop("REMOTE_DEMO_TASK_PREFLIGHT_BLOCKED")
         if check["status"] != "NO_VISIBLE_MATCH_NOT_GLOBAL_PROOF":
             _stop("REMOTE_VISIBLE_DEMO_TASK_ALREADY_EXISTS")
@@ -220,6 +238,19 @@ def main() -> None:
             "EXPLICIT_ONE_TASK_CONFIRMATION_REQUIRED",
             "RESPONSIBLE_ID_INVALID", "RESPONSIBLE_ID_OUT_OF_RANGE",
             "REMOTE_DEMO_TASK_PREFLIGHT_BLOCKED",
+            *( "REMOTE_PREFLIGHT_" + x for x in (
+                "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE",
+                "TASK_LIST_HTTP_400", "TASK_LIST_HTTP_401",
+                "TASK_LIST_HTTP_403", "TASK_LIST_HTTP_429",
+                "TASK_LIST_HTTP_OTHER", "TASK_LIST_RESPONSE_TOO_LARGE",
+                "TASK_LIST_API_ERROR", "TASK_LIST_MALFORMED",
+                "TASK_LIST_SCHEMA_CHANGED", "TASK_ID_INVALID",
+                "TASK_PAGINATION_DUPLICATE", "TASK_TITLE_MISSING",
+                "CRM_TASK_LINK_UNEXPECTED_SHAPE",
+                "TASK_TITLE_FILTER_NOT_EXACT", "TASK_CRM_FILTER_IGNORED",
+                "TASK_PAGINATION_UNVERIFIED", "TASK_RESULT_WINDOW_TOO_LARGE",
+                "UNBOUNDED_TASK_SEARCH_FORBIDDEN", "BLOCKED_UNSPECIFIED",
+            )),
             "REMOTE_VISIBLE_DEMO_TASK_ALREADY_EXISTS",
             "LOCAL_DEMO_TASK_ALREADY_RESERVED_DO_NOT_RETRY",
             "LOCAL_LEDGER_UNAVAILABLE",

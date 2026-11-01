@@ -6,9 +6,10 @@ Input metadata must originate from separately authorized read-only portal checks
 from __future__ import annotations
 
 import re
+from hashlib import sha256
 from urllib.parse import urlsplit
 
-from .bitrix_1062_mapping import ALL_FIELD_CODES
+from .bitrix_1062_mapping import ALL_FIELD_CODES, CONTRACT_VERSION
 
 ENTITY = 1062
 CATEGORY = 21
@@ -46,6 +47,10 @@ def _positive(value: object) -> int:
 
 def _yes(value: object) -> bool:
     return value is True or value in ("Y", "true", "1")
+
+
+def _off(value: object) -> bool:
+    return value is False or value in ("N", "false", "0")
 
 
 def _present(item: dict, name: str) -> object:
@@ -89,7 +94,10 @@ def task_link_preflight(
     if not ALL_FIELD_CODES.issubset(item.keys()):
         _deny("REQUIRED_SIXTEEN_UF_FIELDS_MISSING")
     key = _present(item, KEY_CODE)
-    if not isinstance(key, str) or not SAFE_KEY.fullmatch(key):
+    expected_key = "DEMO-IDEMP-" + sha256(
+        f"{CONTRACT_VERSION}\x007700000009\x00DEMO-ITREQ-001".encode("utf-8")
+    ).hexdigest()[:32]
+    if not isinstance(key, str) or not SAFE_KEY.fullmatch(key) or key != expected_key:
         _deny("SYNTHETIC_KEY_MISMATCH")
     url = _present(item, UF["url"])
     if not isinstance(url, str):
@@ -104,8 +112,9 @@ def task_link_preflight(
             or not isinstance(process_type.get("linkedUserFields"), dict)
             or not _yes(process_type["linkedUserFields"].get("TASKS_TASK|UF_CRM_TASK"))):
         _deny("SMART_PROCESS_TASK_BINDING_NOT_ENABLED")
-    if (_yes(process_type.get("isAutomationEnabled")) or _yes(process_type.get("isBizProcEnabled"))):
-        _deny("SMART_PROCESS_AUTOMATION_MUST_BE_OFF")
+    if (not _off(process_type.get("isAutomationEnabled"))
+            or not _off(process_type.get("isBizProcEnabled"))):
+        _deny("SMART_PROCESS_AUTOMATION_MUST_BE_CONFIRMED_OFF")
 
     matches = [r for r in owner_types if isinstance(r, dict)
                and str(r.get("ID")) == str(ENTITY)]

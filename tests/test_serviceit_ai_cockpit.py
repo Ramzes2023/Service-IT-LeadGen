@@ -416,9 +416,6 @@ def test_cli_readonly_failure_reports_only_fixed_error_code(monkeypatch, capsys)
             "error_description": "SYNTHETIC_CORPORATE_SECRET_NEVER_LOG",
         })
     monkeypatch.setattr(httpx.Client, "post", deny)
-    with pytest.raises(SystemExit) as ex:
-        cockpit.main(["--mode", "provision", "--inspect-live"])
-    assert ex.value.code == 2
     # main() raises CockpitBlocked; command-line wrapper prints a single
     # sanitized code and suppresses all remote text and fake secrets.
     # Execute the module's __main__ exception handler via runpy to test it.

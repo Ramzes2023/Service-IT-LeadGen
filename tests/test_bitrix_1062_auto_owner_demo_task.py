@@ -37,7 +37,7 @@ def test_auto_resolves_exact_webhook_owner_without_add():
     ({"ID": "77", "NAME": "Тестовый", "LAST_NAME": "Оператор"}, "OWNER_PROFILE_ID_MISMATCH"),
     ({"ID": "18", "NAME": "Михаил", "LAST_NAME": "Менеджер"}, "MANAGER_RECIPIENT_FORBIDDEN"),
     ({"ID": "18", "NAME": "Mikhail", "LAST_NAME": "Manager"}, "MANAGER_RECIPIENT_FORBIDDEN"),
-    ({"ID": "18", "NAME": "", "LAST_NAME": "Оператор"}, "OWNER_IDENTITY_UNVERIFIABLE"),
+    ({"ID": "18", "NAME": "", "LAST_NAME": "Оператор"}, "OWNER_FIRST_NAME_MISSING"),
     ({"ID": True, "NAME": "Тестовый", "LAST_NAME": "Оператор"}, "OWNER_PROFILE_ID_MISMATCH"),
     ({"ID": "018", "NAME": "Тестовый", "LAST_NAME": "Оператор"}, "OWNER_PROFILE_ID_MISMATCH"),
 ])
@@ -85,3 +85,27 @@ def test_manager_denylist_blocks_before_writer(tmp_path, monkeypatch):
         with pytest.raises(OneShotTaskBlocked, match="MANAGER_RECIPIENT_FORBIDDEN"):
             run(HOOK, tmp_path/"no-ledger.sqlite", client)
     assert not (tmp_path/"no-ledger.sqlite").exists()
+
+
+
+@pytest.mark.parametrize("profile", [
+    {"ID":"18","NAME":"Оператор","LAST_NAME":""},
+    {"ID":"18","NAME":"Оператор"},
+    {"ID":"18","NAME":"Рамзес","LAST_NAME":None},
+])
+def test_blank_optional_surname_accepted_with_exact_owner_id(profile):
+    actual, calls = probe({"result": profile})
+    assert actual == 18
+    assert calls == ["profile.json"]
+
+
+@pytest.mark.parametrize("profile,code", [
+    ({"ID":"18","NAME":None}, "OWNER_FIRST_NAME_MISSING"),
+    ({"ID":"18","NAME":"Миша","LAST_NAME":""}, "MANAGER_RECIPIENT_FORBIDDEN"),
+    ({"ID":"18","NAME":"Михаил","LAST_NAME":None}, "MANAGER_RECIPIENT_FORBIDDEN"),
+    ({"ID":"18","NAME":"X","LAST_NAME":None}, "OWNER_FIRST_NAME_MISSING"),
+    ({"ID":"18","NAME":"Оператор","LAST_NAME":18}, "OWNER_SURNAME_INVALID"),
+])
+def test_safety_remains_closed_for_ambiguous_owner(profile,code):
+    with pytest.raises(OneShotTaskBlocked,match=code):
+        probe({"result":profile})

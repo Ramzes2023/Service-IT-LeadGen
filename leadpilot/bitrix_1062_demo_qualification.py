@@ -153,14 +153,15 @@ def _verify_writable_demo_fields(client: httpx.Client, base: str) -> None:
     for code in ALLOWED_WRITE_FIELDS:
         details = fields[code]
         if (not isinstance(details, dict)
-                or details.get("isReadOnly") is True
-                or details.get("isMultiple") is True):
+                or details.get("isReadOnly") in (True, "Y", "true")
+                or details.get("isMultiple") in (True, "Y", "true")
+                or details.get("isImmutable") in (True, "Y", "true")):
             stop("DEMO_TARGET_FIELD_NOT_SINGLE_WRITABLE")
         typ = details.get("type")
         if code == SCORE_FIELD:
-            if typ not in ("integer", "double", "number", "string"):
+            if typ not in ("integer", "double", "number", "string", "crm_userfield"):
                 stop("DEMO_SCORE_FIELD_TYPE_UNEXPECTED")
-        elif typ not in ("string", "text"):
+        elif typ not in ("string", "text", "crm_userfield"):
             stop("DEMO_TEXT_FIELD_TYPE_UNEXPECTED")
 
 

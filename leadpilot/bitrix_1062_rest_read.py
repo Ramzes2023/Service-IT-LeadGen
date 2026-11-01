@@ -70,12 +70,18 @@ class Bitrix1062ReadOnly:
         if not isinstance(client, httpx.Client):
             raise TypeError("BITRIX1062_HTTP_CLIENT_REQUIRED")
         self._client = client
+        # GET is permitted only after an exact synthetic-key LIST in this session.
+        self._allowed_ids: dict[int, str] = {}
 
     def __repr__(self) -> str:
         return "Bitrix1062ReadOnly(portal=serviseit.bitrix24.ru, methods=READ_ONLY)"
 
     def __call__(self, method: str, params: dict) -> dict:
         validate_read_request(method, params)
+        if method == "crm.item.list":
+            self._allowed_ids.clear()
+        elif params["id"] not in self._allowed_ids:
+            _deny("BITRIX1062_GET_REQUIRES_EXACT_LIST_BINDING")
         try:
             response = self._client.post(
                 self._base + "/" + method + ".json",
@@ -83,10 +89,13 @@ class Bitrix1062ReadOnly:
                 follow_redirects=False,
                 timeout=12.0,
             )
-            if response.status_code != 200 or len(response.content) > MAX_BYTES:
-                _deny("BITRIX1062_HTTP_DENIED_OR_UNAVAILABLE")
-            body = response.json()
         except (httpx.HTTPError, ValueError, TypeError):
+            _deny("BITRIX1062_HTTP_OR_PARSE_FAILURE")
+        if response.status_code != 200 or len(response.content) > MAX_BYTES:
+            _deny("BITRIX1062_HTTP_DENIED_OR_UNAVAILABLE")
+        try:
+            body = response.json()
+        except (ValueError, TypeError):
             _deny("BITRIX1062_HTTP_OR_PARSE_FAILURE")
         if not isinstance(body, dict) or "error" in body or not isinstance(body.get("result"), dict):
             _deny("BITRIX1062_REST_DENIED_OR_MALFORMED")
@@ -100,7 +109,24 @@ class Bitrix1062ReadOnly:
             if (len(items) >= 50 or body.get("next") is not None
                     or (type(body.get("total")) is int and body["total"] > len(items))):
                 _deny("BITRIX1062_RESULT_PAGINATION_AMBIGUOUS")
+            key = params["filter"][KEY_FIELD]
+            for item in items:
+                if (not isinstance(item, dict) or type(item.get("id")) is not int
+                        or item["id"] <= 0 or item.get("entityTypeId") != ENTITY_TYPE_ID
+                        or item.get("categoryId") != CATEGORY_ID
+                        or item.get(KEY_FIELD) != key
+                        or not isinstance(item.get("title"), str)
+                        or not item["title"].startswith("DEMO ServiceIT AI — DEMO-")):
+                    _deny("BITRIX1062_LIST_ITEM_OUT_OF_SCOPE")
+            if len(items) == 1:
+                self._allowed_ids[items[0]["id"]] = key
         else:
-            if not isinstance(result.get("item"), dict):
-                _deny("BITRIX1062_ITEM_MALFORMED")
+            item = result.get("item")
+            if (not isinstance(item, dict) or item.get("id") != params["id"]
+                    or item.get("entityTypeId") != ENTITY_TYPE_ID
+                    or item.get("categoryId") != CATEGORY_ID
+                    or item.get(KEY_FIELD) != self._allowed_ids[params["id"]]
+                    or not isinstance(item.get("title"), str)
+                    or not item["title"].startswith("DEMO ServiceIT AI — DEMO-")):
+                _deny("BITRIX1062_GET_ITEM_OUT_OF_SCOPE")
         return result

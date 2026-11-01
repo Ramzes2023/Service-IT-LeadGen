@@ -118,12 +118,21 @@ def _protected_demo_review_state(
     text = " ".join(value.strip().casefold().replace("ё", "е").split())
     if any(ord(char) < 32 or ord(char) == 127 for char in text):
         return "NONEMPTY_UNRECOGNIZED"
-    if any(token in text for token in (
+    # Clearly *negated* verifications are not approvals.
+    # Strip those fixed phrases only for the positive marker scan;
+    # keep original text untouched everywhere else.
+    import re
+    positive_scan = re.sub(
+        r"\bне\s+(?:подтвержден\w*|проверен\w*|согласован\w*|одобрен\w*)",
+        "unverified", text,
+    )
+    if any(token in positive_scan for token in (
         "http:", "https:", "mailto:", "tel:", "wa.me", "t.me/",
         "@", "одобр", "разрешен", "разрешено", "согласован",
-        "подтвержден", "подтверждаю", "верифиц", "проверено",
+        "подтвержден", "подтверждаю", "верифиц", "проверен",
         "verified", "approved", "confirmed", "contact allowed",
-        "отклон", "отказ", "запрет", "blocked", "отправить",
+        "accepted", "принят", "отклон", "отказ", "запрет",
+        "blocked", "отправить",
     )):
         return "NONEMPTY_UNRECOGNIZED"
     if kind == "evidence":

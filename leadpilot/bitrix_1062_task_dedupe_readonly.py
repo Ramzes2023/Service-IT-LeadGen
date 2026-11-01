@@ -160,6 +160,7 @@ def discover_demo_manager_task(
             "portal": "serviseit.bitrix24.ru",
             "crm_item_id": 3,
             "crm_binding_verified": CRM_BINDING,
+            "stage_policy": meta.get("stage_policy", "UNKNOWN"),
             "scans_completed": 2,
             "visible_linked_count": len(linked),
             "visible_demo_title_count": len(titled),

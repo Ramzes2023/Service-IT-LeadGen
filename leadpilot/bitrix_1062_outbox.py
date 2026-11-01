@@ -119,7 +119,7 @@ def _validate_plan(plan: dict) -> list[tuple[str, str, str]]:
                 or not fields["title"].endswith(fields["UF_CRM_13_SVCIT_SIGNAL_ID"])
                 or fields["UF_CRM_13_SVCIT_SIGNAL_SOURCE"] not in
                    ("synthetic-fixture", "synthetic-second")
-                or fields["UF_CRM_13_SVCIT_SIGNAL_KIND"] != "demo-synthetic"):
+                or fields["UF_CRM_13_SVCIT_SIGNAL_KIND"] != "demo-synthetic"\n                or not isinstance(fields.get("UF_CRM_13_SVCIT_COMPANY_INN"), str)\n                or not re.fullmatch(r"\\d{10}|\\d{12}", fields["UF_CRM_13_SVCIT_COMPANY_INN"])\n                or key != "DEMO-IDEMP-" + sha256((\n                    "serviceit-bitrix-intent-v1\\x00" + fields["UF_CRM_13_SVCIT_COMPANY_INN"]\n                    + "\\x00" + fields["UF_CRM_13_SVCIT_SIGNAL_ID"]\n                ).encode("utf-8")).hexdigest()[:32]):
             raise SyntheticPlanRejected("OPERATION_FIELDS_INVALID")
         payload = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = sha256(payload.encode("utf-8")).hexdigest()
@@ -179,7 +179,7 @@ def claim_next(db_path: str | Path) -> dict | None:
 
 def mark_uncertain(db_path: str | Path, key: str, *, reason_code: str) -> dict:
     """Unknown POST outcome: lock key until exact-key remote reconciliation."""
-    if not KEY.fullmatch(key) or not SAFE_REASON.fullmatch(reason_code):
+    if (not isinstance(key, str) or not KEY.fullmatch(key)\n            or not isinstance(reason_code, str) or not SAFE_REASON.fullmatch(reason_code)):
         raise SyntheticPlanRejected("INVALID_UNCERTAIN_MARKER")
     with closing(_connect(db_path)) as db:
         with db:

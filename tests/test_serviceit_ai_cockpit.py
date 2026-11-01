@@ -404,3 +404,35 @@ def test_ai_error_traceback_does_not_expose_transport_secret():
             with pytest.raises(RuntimeError) as failure:
                 provider.classify(AI_TEXT)
     assert "SYNTHETIC_SECRET_MUST_NOT_LEAK" not in "".join(traceback.format_exception(failure.value))
+
+
+
+def test_cli_readonly_failure_reports_only_fixed_error_code(monkeypatch, capsys):
+    from leadpilot import bitrix_1062_ai_cockpit as cockpit
+    monkeypatch.setattr("getpass.getpass", lambda *_: HOOK)
+    def deny(self, url, **kwargs):
+        return httpx.Response(403, json={
+            "error": "ACCESS_DENIED",
+            "error_description": "SYNTHETIC_CORPORATE_SECRET_NEVER_LOG",
+        })
+    monkeypatch.setattr(httpx.Client, "post", deny)
+    with pytest.raises(SystemExit) as ex:
+        cockpit.main(["--mode", "provision", "--inspect-live"])
+    assert ex.value.code == 2
+    # main() raises CockpitBlocked; command-line wrapper prints a single
+    # sanitized code and suppresses all remote text and fake secrets.
+    # Execute the module's __main__ exception handler via runpy to test it.
+    import runpy
+    import sys
+    old_argv = sys.argv
+    try:
+        sys.argv = ["leadpilot.bitrix_1062_ai_cockpit", "--mode", "provision", "--inspect-live"]
+        with pytest.raises(SystemExit) as outer:
+            runpy.run_module("leadpilot.bitrix_1062_ai_cockpit", run_name="__main__")
+        assert outer.value.code == 2
+    finally:
+        sys.argv = old_argv
+    output = capsys.readouterr().out
+    assert '"safe_reason_code": "REST_HTTP_BLOCKED"' in output
+    assert "SYNTHETIC_CORPORATE_SECRET_NEVER_LOG" not in output
+    assert HOOK not in output

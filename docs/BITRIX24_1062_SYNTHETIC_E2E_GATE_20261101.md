@@ -184,11 +184,11 @@ FULL_SUITE_FAILED
 
 **Next gate:** re-run **only** pinned new HEAD in an isolated Windows worktree (targeted tests, then full project tests, compileall, diff check). No webhook required. **Do not claim PASS** on new HEAD before operator returns the successful markers. PR remains draft and no live writer or real-lead ingestion is enabled.
 
- 
+
 ## 01.11.2026 — исправление SyntaxError после телефонного guard
- 
+
 Следующая независимая Windows-проверка зафиксировала ошибку сбора тестов (9 collection errors) в `leadpilot/bitrix_synthetic_text_guard.py`: в условие `if` по ошибке был записан буквальный текст `\\n` вместо символа перевода строки, и Python остановился на `SyntaxError: unexpected character after line continuation character`. Это ошибка нового тестового кода; повторных live REST-вызовов и изменений CRM не было.
- 
+
 Исправлено непосредственно в GitHub:
 - Реальный перенос строки восстановлен; основной запрет телефонных номеров НЕ ослаблен.
 - Исправленная функция отдельно скомпилирована Python и проверена 24 локальными положительными и отрицательными примерами; PASS. Это не равно полной приёмке репозитория.

@@ -106,3 +106,47 @@ def test_missing_field_blocks():
 def test_forbidden_read_error_sanitized():
     with pytest.raises(TaskMetadataReadError):
         inspect(fixture(),fail_method="crm.item.get")
+
+
+
+@pytest.mark.parametrize("field,value,check", [
+    ("id", 4, "item_id_matches"),
+    ("entityTypeId", 1050, "entity_type_matches"),
+    ("categoryId", 22, "category_matches"),
+    ("stageId", "DT1062_21:NEW", "stage_matches"),
+    ("title", "SOME-OTHER-DEMO", "title_matches"),
+    ("UF_CRM_13_SVCIT_IDEMPOTENCY_KEY", "DEMO-IDEMP-INVALID", "idempotency_key_matches"),
+    ("UF_CRM_13_SVCIT_SIGNAL_SOURCE", "different-fixture", "source_is_demo_fixture"),
+    ("UF_CRM_13_SVCIT_SIGNAL_ID", "DEMO-OTHER", "signal_id_matches"),
+    ("UF_CRM_13_SVCIT_COMPANY_INN", "7700000010", "demo_inn_matches"),
+    ("UF_CRM_13_SVCIT_COMPANY_NAME", "DEMO DIFFERENT", "demo_company_name_matches"),
+    ("UF_CRM_13_SVCIT_SIGNAL_URL", "https://other.invalid/example", "demo_source_url_matches"),
+    ("contactIds", [7], "no_real_contacts"),
+    ("companyId", 33, "no_real_company_link"),
+])
+def test_card_subchecks_identify_exact_reason_without_returning_values(field, value, check):
+    data = fixture()
+    data["crm.item.get"]["item"][field] = value
+    result, methods = inspect(data)
+    assert result["exact_demo_card_readback"] is False
+    flags = result["exact_demo_card_checks"]
+    assert flags[check] is False
+    assert all(type(v) is bool for v in flags.values())
+    assert result["task_created"] is False
+    assert "crm.item.get" in methods
+    for private_value in ("DEMO DIFFERENT", "7700000010", "https://other.invalid/example"):
+        assert private_value not in str(result)
+
+
+def test_missing_one_uf_code_is_specifically_classified():
+    data = fixture()
+    del data["crm.item.get"]["item"]["UF_CRM_13_SVCIT_SCORE_VERSION"]
+    result, _ = inspect(data)
+    assert result["exact_demo_card_checks"]["all_16_original_uf_names_present"] is False
+
+
+def test_clean_card_all_subchecks_true():
+    result, _ = inspect(fixture())
+    assert result["exact_demo_card_readback"] is True
+    assert len(result["exact_demo_card_checks"]) == 14
+    assert all(result["exact_demo_card_checks"].values())

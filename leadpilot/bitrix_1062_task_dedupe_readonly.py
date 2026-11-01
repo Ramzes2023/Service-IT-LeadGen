@@ -223,6 +223,10 @@ def main() -> None:
                     "methods": diag["methods"],
                     "metadata_gates": diag["metadata_gates"],
                 }
+                if code == "EXACT_DEMO_GATE_EXACT_CARD_FAILED":
+                    outcome["metadata_diagnostics"]["exact_demo_card_checks"] = (
+                        diag.get("exact_demo_card_checks", "NOT_AVAILABLE")
+                    )
             except (ValueError, TypeError, httpx.HTTPError, KeyError):
                 outcome["metadata_diagnostics"] = "INDEPENDENT_READ_FAILED"
     print(json.dumps(outcome, ensure_ascii=False, indent=2))

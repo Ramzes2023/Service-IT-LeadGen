@@ -138,6 +138,13 @@ def diagnose_task_metadata(
                         "exact_demo_card_readback",
                     )
                 }
+                if result["exact_demo_card_readback"] is False:
+                    # Return only static field labels and equality booleans,
+                    # never actual CRM values, URL, company data or webhook.
+                    checks = result.get("exact_demo_card_checks", {})
+                    report["exact_demo_card_checks"] = {
+                        key: bool(value) for key, value in checks.items()
+                    }
                 if result["status"] == "LINKED_TASK_METADATA_READY":
                     report["status"] = "METADATA_READY_TASK_NOT_CREATED"
         return report

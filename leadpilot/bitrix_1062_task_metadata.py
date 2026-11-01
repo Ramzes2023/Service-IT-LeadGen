@@ -49,6 +49,34 @@ def _call(client: httpx.Client, base: str, method: str, params: dict) -> Any:
         raise TaskMetadataReadError("READ_FAILED") from None
 
 
+def _demo_item_checks(item: dict) -> dict[str, bool]:
+    """Explain exact synthetic-card gate with safe booleans only.
+
+    No actual field values, contact references, webhook, text or source URL
+    may be returned. These checks mirror the existing fail-closed contract,
+    rather than relaxing it to pass a later CRM state accidentally.
+    """
+    expected_key = "DEMO-IDEMP-" + sha256(
+        f"{CONTRACT_VERSION}\x007700000009\x00DEMO-ITREQ-001".encode()
+    ).hexdigest()[:32]
+    return {
+        "item_id_matches": str(item.get("id")) == str(ITEM_ID),
+        "entity_type_matches": str(item.get("entityTypeId")) == str(ENTITY),
+        "category_matches": str(item.get("categoryId")) == str(CATEGORY),
+        "stage_matches": item.get("stageId") == STAGE,
+        "title_matches": item.get("title") == ITEM_TITLE,
+        "all_16_original_uf_names_present": ALL_FIELD_CODES.issubset(item.keys()),
+        "idempotency_key_matches": item.get(KEY_CODE) == expected_key,
+        "source_is_demo_fixture": item.get(UF["source"]) == "synthetic-fixture",
+        "signal_id_matches": item.get(UF["signal"]) == "DEMO-ITREQ-001",
+        "demo_inn_matches": item.get(UF["inn"]) == "7700000009",
+        "demo_company_name_matches": item.get(UF["name"]) == "DEMO COMPANY-001",
+        "demo_source_url_matches": item.get(UF["url"]) == "https://example.invalid/serviceit-demo/request/001",
+        "no_real_contacts": item.get("contactIds") in (None, []),
+        "no_real_company_link": item.get("companyId") in (None, 0, "0"),
+    }
+
+
 def audit_synthetic_task_link(
     webhook: str, *, client: httpx.Client | None = None,
 ) -> dict:
@@ -92,25 +120,8 @@ def audit_synthetic_task_link(
             task_schema and isinstance(fields["UF_CRM_TASK"], dict)
             and fields["UF_CRM_TASK"].get("type") == "crm"
         )
-        expected_key = "DEMO-IDEMP-" + sha256(
-            f"{CONTRACT_VERSION}\x007700000009\x00DEMO-ITREQ-001".encode()
-        ).hexdigest()[:32]
-        item_exact = (
-            str(item.get("id")) == str(ITEM_ID)
-            and str(item.get("entityTypeId")) == str(ENTITY)
-            and str(item.get("categoryId")) == str(CATEGORY)
-            and item.get("stageId") == STAGE
-            and item.get("title") == ITEM_TITLE
-            and ALL_FIELD_CODES.issubset(item.keys())
-            and item.get(KEY_CODE) == expected_key
-            and item.get(UF["source"]) == "synthetic-fixture"
-            and item.get(UF["signal"]) == "DEMO-ITREQ-001"
-            and item.get(UF["inn"]) == "7700000009"
-            and item.get(UF["name"]) == "DEMO COMPANY-001"
-            and item.get(UF["url"]) == "https://example.invalid/serviceit-demo/request/001"
-            and item.get("contactIds") in (None, [])
-            and item.get("companyId") in (None, 0, "0")
-        )
+        item_checks = _demo_item_checks(item)
+        item_exact = all(item_checks.values())
         safe = all((symbol_ok, binding_on, automation_off, crm_link_type, item_exact))
         return {
             "status": "LINKED_TASK_METADATA_READY" if safe else "LINKED_TASK_METADATA_BLOCKED",
@@ -121,6 +132,7 @@ def audit_synthetic_task_link(
             "automation_confirmed_off": bool(automation_off),
             "task_fields_ready": bool(crm_link_type),
             "exact_demo_card_readback": bool(item_exact),
+            "exact_demo_card_checks": item_checks,
             "methods_called": list(ALLOWED),
             "manager_employee_id_verified": False,
             "task_created": False, "crm_writes": "NO", "customer_contacts": 0,

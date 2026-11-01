@@ -248,3 +248,30 @@ def test_cli_read_only_on_metadata_failure_uses_sanitized_diagnostic(monkeypatch
     assert '"exact_demo_card_readback": false' in output
     assert HOOK not in output
     assert "TASK_ADDED" not in output
+
+
+
+def test_cli_card_subchecks_propagate_without_values(monkeypatch,capsys):
+    from leadpilot import bitrix_1062_task_dedupe_readonly as module
+    from leadpilot import bitrix_1062_task_diagnostics as diagnostics
+    monkeypatch.setenv("SERVICEIT_TASK_READONLY_WEBHOOK", HOOK)
+    def blocked(*args, **kwargs):
+        raise TaskDiscoveryBlocked("EXACT_DEMO_GATE_EXACT_CARD_FAILED")
+    monkeypatch.setattr(module,"discover_demo_manager_task",blocked)
+    monkeypatch.setattr(diagnostics,"diagnose_task_metadata",lambda hook: {
+        "status":"BLOCKED_READ_ONLY",
+        "methods":{"crm.item.get":{"state":"OK"}},
+        "metadata_gates":{"exact_demo_card_readback":False},
+        "exact_demo_card_checks":{
+            "stage_matches":False,
+            "all_16_original_uf_names_present":True,
+        },
+    })
+    with pytest.raises(SystemExit) as exit_info:
+        module.main()
+    assert exit_info.value.code == 2
+    printed=capsys.readouterr().out
+    assert '"stage_matches": false' in printed
+    assert '"all_16_original_uf_names_present": true' in printed
+    assert HOOK not in printed
+    assert "crm.item.update" not in printed

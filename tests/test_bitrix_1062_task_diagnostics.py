@@ -202,3 +202,26 @@ def test_distinct_spa_settings_are_reported_with_task_scope_denied(
     assert flags["task_link_enabled"] is (expected_use and expected_link)
     assert out["methods"]["tasks.task.getFields"]["api_error_code"]=="INSUFFICIENT_SCOPE"
     assert out["task_created"] is False
+
+
+
+def test_field_level_diagnosis_reports_only_failed_boolean_gate():
+    data = results()
+    data["crm.item.get"]["item"]["stageId"] = "DT1062_21:NEW"
+    data["crm.item.get"]["item"]["UF_CRM_13_SVCIT_COMPANY_NAME"] = "PRIVATE_CORPORATE_VALUE"
+    out, calls = check(payload=data)
+    assert out["status"] == "BLOCKED_READ_ONLY"
+    assert out["metadata_gates"]["exact_demo_card_readback"] is False
+    assert out["exact_demo_card_checks"]["stage_matches"] is False
+    assert out["exact_demo_card_checks"]["demo_company_name_matches"] is False
+    assert out["exact_demo_card_checks"]["no_real_contacts"] is True
+    assert len(calls) == 8
+    body = json.dumps(out)
+    assert "PRIVATE_CORPORATE_VALUE" not in body
+    assert HOOK not in body
+
+
+def test_field_flags_are_not_returned_when_everything_matches():
+    out, _ = check()
+    assert out["status"] == "METADATA_READY_TASK_NOT_CREATED"
+    assert "exact_demo_card_checks" not in out

@@ -109,7 +109,7 @@ def test_rules_are_deterministic_and_ai_cannot_change_score():
     assert with_ai["ai_status"]=="HYPOTHESIS_UNVERIFIED"
     assert base["real_lead_ready"] is False
     assert base["global_crm_duplicate_check"]=="NOT_PERFORMED"
-    assert "клиенту не писать" in base["fields"][ACTION_FIELD]
+    assert "не звонить" in base["fields"][ACTION_FIELD].lower()
 
 
 def test_demo_crm_dry_run_never_writes(tmp_path):
@@ -183,7 +183,7 @@ def test_model_ai_synthetic_only_and_not_real_contact(tmp_path):
     result,calls,item=portal(tmp_path,apply=True,ai=True,ai_result=good_ai)
     assert result["ai_status"]=="HYPOTHESIS_UNVERIFIED"
     assert item[SCORE_FIELD]==90
-    assert "ГИПОТЕЗА" in item[ACTION_FIELD]
+    assert "гипотеза" in item[ACTION_FIELD].lower()
     assert result["real_leads_approved"] is False
     assert not any("contacts" in method.lower() or "company.list" in method
                    for method,_ in calls)

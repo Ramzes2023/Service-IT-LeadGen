@@ -129,6 +129,42 @@ def _rest(client: httpx.Client, base: str, method: str, params: dict) -> dict:
     return item
 
 
+
+def _verify_writable_demo_fields(client: httpx.Client, base: str) -> None:
+    """Never POST to fields not confirmed in *this* smart-process schema."""
+    try:
+        response = client.post(base + "/crm.item.fields.json",
+            json={"entityTypeId":1062, "useOriginalUfNames":"Y"},
+            timeout=15, follow_redirects=False)
+    except (httpx.HTTPError, ValueError, TypeError):
+        stop("DEMO_FIELD_SCHEMA_READ_FAILED")
+    if response.status_code != 200 or len(response.content) > 256000:
+        stop("DEMO_FIELD_SCHEMA_READ_FAILED")
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        stop("DEMO_FIELD_SCHEMA_READ_FAILED")
+    if not isinstance(payload, dict) or "error" in payload:
+        stop("DEMO_FIELD_SCHEMA_READ_FAILED")
+    result = payload.get("result")
+    fields = result.get("fields") if isinstance(result, dict) else None
+    if not isinstance(fields, dict) or not ALLOWED_WRITE_FIELDS.issubset(fields):
+        stop("DEMO_TARGET_FIELDS_MISSING")
+    for code in ALLOWED_WRITE_FIELDS:
+        details = fields[code]
+        if (not isinstance(details, dict)
+                or details.get("isReadOnly") is True
+                or details.get("isMultiple") is True):
+            stop("DEMO_TARGET_FIELD_NOT_SINGLE_WRITABLE")
+        typ = details.get("type")
+        if code == SCORE_FIELD:
+            if typ not in ("integer", "double", "number", "string"):
+                stop("DEMO_SCORE_FIELD_TYPE_UNEXPECTED")
+        elif typ not in ("string", "text"):
+            stop("DEMO_TEXT_FIELD_TYPE_UNEXPECTED")
+
+
+
 def _id(item: dict) -> bool:
     return str(item.get("id")) == "3" and str(item.get("entityTypeId")) == "1062"
 
@@ -183,6 +219,7 @@ def sync_one_demo(webhook: str, ledger_path: str | Path, *,
         report = build_analysis(item, today=today or date.today(), hypothesis=ai)
         fields = report["fields"]
         already = _matches(item, fields)
+        _verify_writable_demo_fields(client, base)
         output = {
             "status": "ALREADY_MATCHES" if already else "DEMO_PREVIEW_READY",
             "portal": "serviseit.bitrix24.ru", "only_item": 3,
@@ -257,6 +294,9 @@ def main() -> None:
             "DEMO_METADATA_NOT_READY", "DEMO_ONLY_CARD_NOT_FOUND",
             "AI_LIVE_REQUEST_BLOCKED", "DEMO_SYNC_READBACK_UNCERTAIN_DO_NOT_RETRY",
             "DEMO_SYNC_METADATA_CHANGED_DO_NOT_RETRY",
+            "DEMO_FIELD_SCHEMA_READ_FAILED", "DEMO_TARGET_FIELDS_MISSING",
+            "DEMO_TARGET_FIELD_NOT_SINGLE_WRITABLE",
+            "DEMO_SCORE_FIELD_TYPE_UNEXPECTED", "DEMO_TEXT_FIELD_TYPE_UNEXPECTED",
         }
         reason = str(ex) if str(ex) in allowed else "BLOCKED_UNSPECIFIED"
         print(json.dumps({"status": "BLOCKED_OR_UNCERTAIN", "reason": reason,

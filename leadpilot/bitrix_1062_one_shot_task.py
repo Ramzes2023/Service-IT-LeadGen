@@ -125,7 +125,10 @@ def execute_one_demo_task(
     """
     if authorization != CONFIRM:
         _stop("EXPLICIT_ONE_TASK_CONFIRMATION_REQUIRED")
-    rid = _positive_id(responsible_id)
+    try:
+        rid = _positive_id(responsible_id)
+    except TaskDiscoveryBlocked:
+        _stop("RESPONSIBLE_ID_INVALID")
     if rid > 999_999_999:
         _stop("RESPONSIBLE_ID_OUT_OF_RANGE")
     base = validate_webhook(webhook)
@@ -215,7 +218,7 @@ def main() -> None:
     except (OneShotTaskBlocked, TaskDiscoveryBlocked, ValueError, sqlite3.Error) as e:
         known = {
             "EXPLICIT_ONE_TASK_CONFIRMATION_REQUIRED",
-            "RESPONSIBLE_ID_OUT_OF_RANGE",
+            "RESPONSIBLE_ID_INVALID", "RESPONSIBLE_ID_OUT_OF_RANGE",
             "REMOTE_DEMO_TASK_PREFLIGHT_BLOCKED",
             "REMOTE_VISIBLE_DEMO_TASK_ALREADY_EXISTS",
             "LOCAL_DEMO_TASK_ALREADY_RESERVED_DO_NOT_RETRY",

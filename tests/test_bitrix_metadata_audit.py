@@ -102,6 +102,9 @@ def test_mocked_portal_metadata_audit_no_customer_access():
     assert [s["id"] for s in result["smart_processes"][0]["categories"][0]["stages"]] == ["NEW", "PRIVATE"]
     assert result["deal_categories"][1]["stages"][1]["name"] == "[название скрыто]"
     assert called.count("crm.status.list") == 5
+    assert result["methods"]["crm.status.list.DEAL_STAGE"] == "OK"
+    assert "crm.status.list.DEAL_STAGE_0" not in result["methods"]
+    assert [s["id"] for s in result["deal_categories"][0]["stages"]] == ["NEW", "PRIVATE"]
     assert "SecretToken" not in str(result)
     assert "Real customer phone" not in str(result)
 

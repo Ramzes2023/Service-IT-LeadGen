@@ -61,6 +61,20 @@ def run():
         print(json.dumps(build_evidence_briefs(args.fns, requests=args.requests,
                          facts=args.facts, contacts=args.contacts), ensure_ascii=True, indent=2))
         return
+    if args.command == "manager-workspace":
+        from datetime import date
+        from .manager_briefs import build_manager_briefs
+        from .ai_manager_workspace import build_manager_workspace
+        db_path = Path(args.db)
+        if not db_path.is_file():
+            raise ValueError("Existing local database required; no implicit creation")
+        now = date.fromisoformat(args.today) if args.today else date.today()
+        report = build_manager_briefs(db_path, today=now, limit=args.limit)
+        views = [build_manager_workspace(b, checked_on=now) for b in report["briefs"]]
+        print(json.dumps({"mode": "MANAGER_PREPARATION_ONLY", "briefs": views,
+                          "crm_writes": "NO", "customer_contact": "NO",
+                          "ai_inference_triggered": False}, ensure_ascii=False, indent=2))
+        return
     initialize(args.db)
     if args.command == "init":
         print("DB_INITIALIZED=" + args.db)
@@ -91,16 +105,6 @@ def run():
                 today=date.fromisoformat(args.today) if args.today else None,
                 limit=args.limit)
         print("MANAGER_BRIEFS=" + json.dumps(result, ensure_ascii=False))
-    elif args.command == "manager-workspace":
-        from datetime import date
-        from .manager_briefs import build_manager_briefs
-        from .ai_manager_workspace import build_manager_workspace
-        now = date.fromisoformat(args.today) if args.today else date.today()
-        report = build_manager_briefs(args.db, today=now, limit=args.limit)
-        views = [build_manager_workspace(b, checked_on=now) for b in report["briefs"]]
-        print(json.dumps({"mode": "MANAGER_PREPARATION_ONLY", "briefs": views,
-                          "crm_writes": "NO", "customer_contact": "NO",
-                          "ai_inference_triggered": False}, ensure_ascii=False, indent=2))
     elif args.command == "crm-preview":
         print("PREVIEW_ONLY_NOT_SENT=" + str(export_preview(args.db, args.output)))
         print("FILE=" + args.output)

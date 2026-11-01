@@ -121,10 +121,10 @@ def _validate_plan(plan: dict) -> list[tuple[str, str, str]]:
                    ("synthetic-fixture", "synthetic-second")
                 or fields["UF_CRM_13_SVCIT_SIGNAL_KIND"] != "demo-synthetic"
                 or not isinstance(fields.get("UF_CRM_13_SVCIT_COMPANY_INN"), str)
-                or not re.fullmatch(r"\\d{10}|\\d{12}", fields["UF_CRM_13_SVCIT_COMPANY_INN"])
+                or not re.fullmatch(r"\d{10}|\d{12}", fields["UF_CRM_13_SVCIT_COMPANY_INN"])
                 or key != "DEMO-IDEMP-" + sha256((
-                    "serviceit-bitrix-intent-v1\\x00" + fields["UF_CRM_13_SVCIT_COMPANY_INN"]
-                    + "\\x00" + fields["UF_CRM_13_SVCIT_SIGNAL_ID"]
+                    "serviceit-bitrix-intent-v1\x00" + fields["UF_CRM_13_SVCIT_COMPANY_INN"]
+                    + "\x00" + fields["UF_CRM_13_SVCIT_SIGNAL_ID"]
                 ).encode("utf-8")).hexdigest()[:32]):
             raise SyntheticPlanRejected("OPERATION_FIELDS_INVALID")
         payload = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

@@ -29,7 +29,7 @@ def fixture():
         ).hexdigest()[:32],
     })
     return {
-        "crm.type.get": {"type": {
+        "crm.type.getByEntityTypeId": {"type": {
             "entityTypeId": 1062, "isUseInUserfieldEnabled": "Y",
             "linkedUserFields": {"TASKS_TASK|UF_CRM_TASK": "true"},
             "isAutomationEnabled": "N", "isBizProcEnabled": "N",
@@ -57,7 +57,7 @@ def inspect(data, *, fail_method=None):
 
 def test_mock_portal_four_read_calls_and_no_task_add():
     out, methods = inspect(fixture())
-    assert methods == ["crm.type.get", "crm.enum.ownertype",
+    assert methods == ["crm.type.getByEntityTypeId", "crm.enum.ownertype",
                        "tasks.task.getFields", "crm.item.get"]
     assert out["status"] == "LINKED_TASK_METADATA_READY"
     assert out["task_created"] is False and out["crm_writes"] == "NO"
@@ -66,11 +66,11 @@ def test_mock_portal_four_read_calls_and_no_task_add():
 
 
 @pytest.mark.parametrize("section,field,new", [
-    ("crm.type.get", "isUseInUserfieldEnabled", "N"),
-    ("crm.type.get", "linkedUserFields", {}),
-    ("crm.type.get", "isAutomationEnabled", "Y"),
-    ("crm.type.get", "isBizProcEnabled", "Y"),
-    ("crm.type.get", "isBizProcEnabled", None),
+    ("crm.type.getByEntityTypeId", "isUseInUserfieldEnabled", "N"),
+    ("crm.type.getByEntityTypeId", "linkedUserFields", {}),
+    ("crm.type.getByEntityTypeId", "isAutomationEnabled", "Y"),
+    ("crm.type.getByEntityTypeId", "isBizProcEnabled", "Y"),
+    ("crm.type.getByEntityTypeId", "isBizProcEnabled", None),
 ])
 def test_process_not_ready_blocks(section, field, new):
     data=fixture();data[section]["type"][field]=new

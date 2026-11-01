@@ -15,7 +15,7 @@ try {
     & $PythonPath -m compileall -q leadpilot
     if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_TASK_DIAG_SYNTAX_FAILED' }
     Write-Output 'SERVICEIT_TASK_DIAG=READ_ONLY_START'
-    Write-Output 'ONLY_METHODS=crm.type.get,crm.enum.ownertype,tasks.task.getFields,crm.item.get'
+    Write-Output 'ONLY_METHODS=crm.type.getByEntityTypeId,crm.enum.ownertype,tasks.task.getFields,crm.item.get'
     Write-Output 'NO_CUSTOMER_READS; NO_TASKS_CREATED; NO_CRM_WRITES'
     $secret = Read-Host 'Authorized CRM + tasks REST webhook (hidden)' -AsSecureString
     $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)

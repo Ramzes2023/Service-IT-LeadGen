@@ -13,9 +13,10 @@ import httpx
 
 from .bitrix_metadata_audit import validate_webhook
 from .bitrix_1062_task_metadata import audit_synthetic_task_link
+from .bitrix_1062_manager_task_preview import _yes, _off
 
 METHODS = (
-    ("crm.type.get", {"entityTypeId": 1062}),
+    ("crm.type.getByEntityTypeId", {"entityTypeId": 1062}),
     ("crm.enum.ownertype", {}),
     ("tasks.task.getFields", {}),
     ("crm.item.get", {
@@ -69,7 +70,22 @@ def _inspect_one(client: httpx.Client, base: str, name: str, params: dict) -> di
     result = data["result"]
     if not isinstance(result, (dict, list)):
         return {"state": "RESULT_UNEXPECTED_TYPE"}
-    return {"state": "OK", "result_shape": "LIST" if isinstance(result, list) else "OBJECT"}
+    info = {"state": "OK", "result_shape": "LIST" if isinstance(result, list) else "OBJECT"}
+    if name == "crm.type.getByEntityTypeId":
+        typ = result.get("type") if isinstance(result, dict) else None
+        info["type_metadata_readable"] = isinstance(typ, dict)
+        if isinstance(typ, dict):
+            info["correct_entity_type"] = str(typ.get("entityTypeId")) == "1062"
+            info["task_link_enabled"] = (
+                _yes(typ.get("isUseInUserfieldEnabled"))
+                and isinstance(typ.get("linkedUserFields"), dict)
+                and _yes(typ["linkedUserFields"].get("TASKS_TASK|UF_CRM_TASK"))
+            )
+            info["automation_confirmed_off"] = (
+                _off(typ.get("isAutomationEnabled"))
+                and _off(typ.get("isBizProcEnabled"))
+            )
+    return info
 
 
 def diagnose_task_metadata(
@@ -100,7 +116,7 @@ def diagnose_task_metadata(
             ),
             "crm_scope_missing_possible": any(
                 checks[m]["state"] in ("API_ERROR", "HTTP_ERROR")
-                for m in ("crm.type.get", "crm.enum.ownertype", "crm.item.get")
+                for m in ("crm.type.getByEntityTypeId", "crm.enum.ownertype", "crm.item.get")
             ),
             "metadata_gates": None,
             "task_created": False, "crm_writes": "NO",

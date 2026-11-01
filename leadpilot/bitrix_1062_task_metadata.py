@@ -1,6 +1,6 @@
 """Read-only corporate preflight for ONE ServiceIT DEMO task association.
 
-Methods permitted: crm.type.get, crm.enum.ownertype,
+Methods permitted: crm.type.getByEntityTypeId, crm.enum.ownertype,
 tasks.task.getFields, crm.item.get. Never return raw CRM data or webhook.
 Does not look up employees or perform any task or CRM mutations.
 """
@@ -20,7 +20,7 @@ from .bitrix_1062_manager_task_preview import (
 from .bitrix_1062_mapping import ALL_FIELD_CODES, CONTRACT_VERSION
 from hashlib import sha256
 
-ALLOWED = ("crm.type.get", "crm.enum.ownertype",
+ALLOWED = ("crm.type.getByEntityTypeId", "crm.enum.ownertype",
            "tasks.task.getFields", "crm.item.get")
 
 
@@ -58,7 +58,7 @@ def audit_synthetic_task_link(
     if own_client:
         client = httpx.Client(timeout=12, trust_env=False, follow_redirects=False)
     try:
-        type_result = _call(client, base, "crm.type.get", {"entityTypeId": ENTITY})
+        type_result = _call(client, base, "crm.type.getByEntityTypeId", {"entityTypeId": ENTITY})
         owner_result = _call(client, base, "crm.enum.ownertype", {})
         task_result = _call(client, base, "tasks.task.getFields", {})
         item_result = _call(client, base, "crm.item.get", {

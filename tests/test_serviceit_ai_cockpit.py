@@ -576,3 +576,39 @@ def test_explicit_personal_layout_does_not_read_common():
     assert layout["personal"] == portal.layout
     assert not any(m == "crm.item.details.configuration.get" and
                    p.get("scope") == "C" for m, p in portal.calls)
+
+
+def test_cockpit_missing_local_gigachat_config_never_reserves_report(tmp_path, monkeypatch):
+    # A previous real synthetic preflight may pass in another PowerShell;
+    # the write operator must still refuse missing credentials BEFORE fencing.
+    portal = Portal()
+    state = State(tmp_path)
+    monkeypatch.setenv("AI_ENABLE", "0")
+    monkeypatch.delenv("GIGACHAT_CREDENTIALS", raising=False)
+    with pytest.raises(RuntimeError, match="AI disabled"):
+        populate(portal, state=state, apply=True, gigachat=True, privacy=True,
+                 classifier=None, today=TODAY)
+    with sqlite3.connect(state.path) as con:
+        assert con.execute("SELECT COUNT(*) FROM cockpit_ops").fetchone()[0] == 0
+    assert not list(tmp_path.glob("demo-report-before*.json"))
+    assert not any(m == "crm.item.update" for m, _ in portal.calls)
+
+
+def test_cockpit_loaded_local_gigachat_config_fences_then_infers(tmp_path, monkeypatch):
+    from leadpilot import ai as adapter
+    portal = Portal()
+    state = State(tmp_path)
+    monkeypatch.setenv("AI_ENABLE", "1")
+    monkeypatch.setenv("AI_PROVIDER", "gigachat")
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "SYNTHETIC_MOCK_ONLY")
+    def synthetic_classifier(text):
+        assert text == AI_TEXT
+        with sqlite3.connect(state.path) as con:
+            assert con.execute("SELECT state FROM cockpit_ops").fetchone()[0] == "UNCERTAIN"
+        return ai()
+    monkeypatch.setattr(adapter, "classify_cockpit_signal", synthetic_classifier)
+    result = populate(portal, state=state, apply=True, gigachat=True, privacy=True,
+                      classifier=None, today=TODAY)
+    assert result["status"] == "DEMO_AI_REPORT_VERIFIED"
+    with sqlite3.connect(state.path) as con:
+        assert con.execute("SELECT state FROM cockpit_ops").fetchone()[0] == "VERIFIED"

@@ -160,7 +160,7 @@ def test_stage_change_kept_when_registered_in_same_demo_funnel(tmp_path):
     ({"UF_CRM_13_SVCIT_SIGNAL_SOURCE":"real-company"}, "DEMO_METADATA_NOT_READY"),
     ({"UF_CRM_13_SVCIT_COMPANY_INN":"7700000010"}, "DEMO_METADATA_NOT_READY"),
     ({STOP_FIELD:"PRODUCTION_STOP_LIST: DO NOT OVERWRITE"}, "EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN"),
-    ({"UF_CRM_13_SVCIT_EVIDENCE_STATUS":"validated real"}, "DEMO_EVIDENCE_STATUS_MISMATCH"),
+    ({"UF_CRM_13_SVCIT_EVIDENCE_STATUS":"validated real"}, "DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED"),
 ])
 def test_protected_card_or_real_client_never_updated(tmp_path,change,code):
     item=card()
@@ -197,4 +197,60 @@ def test_api_access_denied_is_safe_block(tmp_path):
 def test_schema_denied_blocks_before_write_or_ledger(tmp_path):
     with pytest.raises(DemoBridgeBlocked, match="DEMO_FIELD_SCHEMA_READ_FAILED"):
         portal(tmp_path, apply=True, deny="crm.item.fields")
+    assert not (tmp_path/"ledger.sqlite").exists()
+
+
+
+@pytest.mark.parametrize("absent", [None,"",0,"0",[]])
+@pytest.mark.parametrize("field", [
+    "UF_CRM_13_SVCIT_EVIDENCE_STATUS",
+    "UF_CRM_13_SVCIT_REVIEW_DECISION",
+])
+def test_unselected_review_fields_remain_unverified_without_becoming_real_leads(
+    tmp_path,field,absent
+):
+    item=card()
+    item[field]=absent
+    result,calls,current=portal(tmp_path,item=item,apply=False)
+    assert result["status"]=="DEMO_PREVIEW_READY"
+    assert result["real_leads_approved"] is False
+    assert result["review_status_classification"][
+        "evidence_status" if "EVIDENCE" in field else "review_decision"
+    ]=="UNSET_UNVERIFIED"
+    assert not any(method=="crm.item.update" for method,_ in calls)
+    assert not (tmp_path/"ledger.sqlite").exists()
+
+
+def test_unreviewed_fields_can_be_left_untouched_by_one_demo_update(tmp_path):
+    item=card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]=None
+    item["UF_CRM_13_SVCIT_REVIEW_DECISION"]=""
+    result,calls,current=portal(tmp_path,item=item,apply=True)
+    assert result["status"]=="DEMO_CRM_QUALIFICATION_VERIFIED"
+    assert current["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] is None
+    assert current["UF_CRM_13_SVCIT_REVIEW_DECISION"]==""
+    writes=[p["fields"] for method,p in calls if method=="crm.item.update"]
+    assert len(writes)==1
+    assert "UF_CRM_13_SVCIT_EVIDENCE_STATUS" not in writes[0]
+    assert "UF_CRM_13_SVCIT_REVIEW_DECISION" not in writes[0]
+
+
+def test_unsafe_existing_approved_review_still_blocks(tmp_path):
+    item=card()
+    item["UF_CRM_13_SVCIT_REVIEW_DECISION"]="Одобрено для контакта"
+    with pytest.raises(DemoBridgeBlocked, match="DEMO_REVIEW_DECISION_NONEMPTY_REVIEW_REQUIRED"):
+        portal(tmp_path,item=item,apply=True)
+    assert not (tmp_path/"ledger.sqlite").exists()
+
+
+def test_external_ai_is_not_called_on_failed_qualifying_review_state(tmp_path):
+    item=card()
+    item["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]="Real confirmed procurement"
+    calls=[]
+    def forbidden_ai(text):
+        calls.append(text)
+        raise AssertionError("AI_MUST_NOT_BE_CALLED_BEFORE_SAFETY_GATES")
+    with pytest.raises(DemoBridgeBlocked,match="DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED"):
+        portal(tmp_path,item=item,apply=True,ai=True,ai_result=forbidden_ai)
+    assert calls==[]
     assert not (tmp_path/"ledger.sqlite").exists()

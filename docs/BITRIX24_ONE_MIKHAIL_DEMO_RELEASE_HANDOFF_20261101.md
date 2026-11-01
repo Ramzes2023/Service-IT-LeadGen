@@ -54,3 +54,26 @@ The only mismatch confirmed by V6 was the **stage of the extra DEMO item #5**. O
 **Offline evidence:** 21 pytest cases PASS against a freshly extracted V7 ZIP, plus Python compilation and ZIP CRC check. **Live V7 result: NOT YET RECEIVED**. Do not claim #5 was deleted or that one-card final handoff is complete until the owner reports `SERVICEIT_ONE_DEMO_LEAD=PASS`.
 
 The V7 package is a self-contained local operator delivered to the owner; it was not committed as an executable in this repository and is not a production service. No real-source or other-funnel changes are authorized.
+
+
+## FINAL ACCEPTANCE: V7 single demo item — PASS (01 November 2026)
+
+Owner ran V7 in the corporate portal and submitted the resulting PowerShell console output. **Final live outcome: PASS.** The earlier V5 preflight block and V6 read-only stage mismatch are now historical, resolved gates.
+
+```text
+SERVICEIT_V7_OFFLINE_TESTS=PASS; VERIFIED_CASES=21
+SERVICEIT_ONE_DEMO_LEAD=PASS
+EXACTLY_ONE_DEMO_CARD_ID=3; CATEGORY=21; ENTITY=1062
+Mikhail_URL=https://serviseit.bitrix24.ru/crm/type/1062/details/3/
+REAL_LEADS=0; AUTOMATION=OFF; SOURCE_CONNECTIONS=0
+SERVICEIT_MIKHAIL_DEMO_READY=ONE_VERIFIED_CARD
+RELEASE_CODE_IN_MAIN=PR36_PR37_PR38_MERGED
+```
+
+A real screenshot of the corporate CRM smart-process Kanban additionally showed the test process titled **«Сервис ИТ — AI-сигналы (тест)»** with precisely one visible tile **«DEMO ServiceIT AI — DEMO-ITREQ-001»** under **«Проверка менеджером»** (counter=1), and visible earlier working stages with counter=0. This independently supports the existence and visible stage of card #3. The full business description/score and other UF field contents are not readable in the Kanban screenshot; opening the detailed card is the appropriate next visual check. The successful operator status reports successful bounded enrichment of #3 and removal of the verified synthetic #5. No real CRM customers or funnel records were part of this operation.
+
+**Final retained demo:** [Corporate Bitrix24 card #3](https://serviseit.bitrix24.ru/crm/type/1062/details/3/) — only fictional 1С:Розница / KKT three-store project, clearly DEMO and no real sales claim.
+
+**Manager presentation improvement (per official Bitrix24 help):** In this smart process Kanban, use the top-right gear icon → **Настройка канбана → Настроить карточку просмотра**, and select existing populated fields such as **Вид услуги**, **Оценка лида**, **Наименование организации** and **Следующее действие менеджера**. Apply without creating new fields or changing other funnels. This layout setting may be personal to the employee; confirm the same view under Mikhail's account. A blank Kanban tile body with only title is the standard compact display, not missing saved fields. See the official Bitrix24 smart-process Kanban configuration guide: https://helpdesk.bitrix24.ru/open/18913888/.
+
+**Remaining work is NOT finished production automation:** source collection is off, no background live worker/service is activated, the corporate manager's own role and access are unverified, and no real leads have been delivered. Merging source code into `main` is not equivalent to deploying a production service. Demonstration acceptance is complete; operational activation still needs a separate management and security approval.

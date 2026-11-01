@@ -28,6 +28,9 @@ def run():
     command.add_argument("--output", default="exports/manager_briefs.json")
     command.add_argument("--limit", type=int, default=20)
     command.add_argument("--today", default=None)
+    command = sub.add_parser("manager-workspace")
+    command.add_argument("--limit", type=int, default=10)
+    command.add_argument("--today", default=None)
     command = sub.add_parser("evidence-briefs")
     command.add_argument("--fns", required=True)
     for field in ("requests", "facts", "contacts"):
@@ -88,6 +91,16 @@ def run():
                 today=date.fromisoformat(args.today) if args.today else None,
                 limit=args.limit)
         print("MANAGER_BRIEFS=" + json.dumps(result, ensure_ascii=False))
+    elif args.command == "manager-workspace":
+        from datetime import date
+        from .manager_briefs import build_manager_briefs
+        from .ai_manager_workspace import build_manager_workspace
+        now = date.fromisoformat(args.today) if args.today else date.today()
+        report = build_manager_briefs(args.db, today=now, limit=args.limit)
+        views = [build_manager_workspace(b, checked_on=now) for b in report["briefs"]]
+        print(json.dumps({"mode": "MANAGER_PREPARATION_ONLY", "briefs": views,
+                          "crm_writes": "NO", "customer_contact": "NO",
+                          "ai_inference_triggered": False}, ensure_ascii=False, indent=2))
     elif args.command == "crm-preview":
         print("PREVIEW_ONLY_NOT_SENT=" + str(export_preview(args.db, args.output)))
         print("FILE=" + args.output)

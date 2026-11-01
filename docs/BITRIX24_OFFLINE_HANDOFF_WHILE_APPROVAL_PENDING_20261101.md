@@ -56,3 +56,33 @@ CRM_WRITES=NO; REAL_COMPANY_DATA=NO; WEBHOOK_REQUIRED=NO
 Локальный отчёт: `%LOCALAPPDATA%\ServiceIT\Bitrix24-DryRun\handoff-20261101T093013642Z.json`. Локальный лог: `%LOCALAPPDATA%\ServiceIT\Bitrix-Handoff-Acceptance\acceptance-20261101T092955216Z.txt`.
 
 Фиксируем границу: успешно проверен **код без сетевых обращений к Bitrix24**, а не подключение CRM. Нет фактического REST API-доступа, проверенной карты полей/прав и разрешения на тестовую запись. PR #37 остаётся Draft поверх PR #36. Повторный тест необходим при изменениях исполняемого кода.
+
+
+## 01.11.2026 — первый подтверждённый LIVE REST-аудит метаданных портала
+
+Пользователь выполнил \`scripts/RUN_SERVICEIT_BITRIX_METADATA_AUDIT.ps1 -Live\` на своём Windows компьютере с отдельным **локально введённым webhook**. Секретный URL и токены в репозиторий/PR не добавлялись. Официальный хост портала: \`serviseit.bitrix24.ru\`.
+
+Из пользовательского PowerShell лога:
+
+\`\`\`text
+SERVICEIT_BITRIX_METADATA_TESTS=PASS
+17 passed in 0.15s
+BITRIX_AUDIT_MODE=LIVE_METADATA_READ_ONLY
+BITRIX_AUDIT_STATUS=METADATA_READ_PASS
+BITRIX_DEAL_CATEGORIES_FOUND=8
+BITRIX_SMART_PROCESSES_FOUND=1
+BITRIX_CRM_WRITES=NO; CRM_CUSTOMER_RECORDS_READ=0; NO_EMAILS_CALLS
+SERVICEIT_BITRIX_METADATA_DONE=YES; CRM_WRITES=NO; REAL_CLIENT_RECORDS_READ=0
+\`\`\`
+
+Успешные вызовы, подтверждённые логом: \`crm.category.list\` (сделки, один smart process), \`crm.item.fields\` (lead/deal/contact/company и smart process), \`crm.status.list\` (стадии 8 категорий сделок и smart process), \`crm.type.list\`. Все указанные вызовы возвращали \`OK\`.
+
+Локальный JSON с конкретными ID, стадиями и кодами полей находится **только на компьютере пользователя**:
+
+\`%LOCALAPPDATA%\\ServiceIT\\Bitrix24-Metadata\\report-20261101T103733824Z.json\`
+
+Этот файл **не был получен в GitHub или чате**. Поэтому сопоставление реальных названий категорий, реальных UF-кодов, robots, RBAC и стоп-листов по-прежнему требует чтения JSON и/или дополнительной согласованной проверки. Успешное чтение схемы **не означает, что нам разрешена или протестирована реальная запись лидов/задач**; \`CRM_WRITES=NO\`, \`PRODUCTION_READY=NO\`.
+
+**Изменение статуса:** \`CRM_METADATA_READ=CONFIRMED\`, \`WEBHOOK_WORKING_FOR_READ=CONFIRMED\`, \`CRM_TEST_SPACE_ISOLATION=NOT_CONFIRMED\`, \`LIVE_CRM_HANDOFF=NOT_IMPLEMENTED\`, \`EXPLICIT_SANDBOX_WRITE_APPROVAL=NOT_CONFIRMED\`.
+
+**Безопасность:** ключ вебхука ранее был виден на пользовательских скриншотах; его следует перегенерировать и прекратить публиковать на скриншотах/в логах. Действующие сделки и рабочую воронку «Техническая поддержка» не затрагивать.

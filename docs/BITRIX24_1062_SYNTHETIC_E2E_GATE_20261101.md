@@ -17,3 +17,12 @@ Safety handling: after ambiguous create/network timeout, **no automatic retry**.
 A prior webhook secret was pasted into chat by mistake. **Rotate/revoke that old secret before any further live REST call**; rotation remains operator-unverified. Confirm no robots or automated notifications are active for process 1062 before testing. Existing admin approval covered configuration; the owner subsequently explicitly authorized a single synthetic item create/update/delete in the isolated process, no other changes.
 
 Status: `BITRIX_SCHEMA_VERIFIED=YES`; `BITRIX_SYNTHETIC_LIVE_E2E=NOT_RUN`; `REAL_LEADS=0`; `SOURCE_ADAPTER=NOT_CONNECTED`; `PRODUCTION_READY=NO`. Keep PR draft and do not merge before a successful clean portal test and review.
+
+
+## 01.11.2026 — Windows cp1252 guard-test repair (no live CRM writes)
+
+Owner ran the PowerShell-input variant of the synthetic E2E operator. The **10-test local guard suite stopped with 1 error** before asking for any live webhook and **before any CRM item operation**. Root cause in the test, not the API: `Path(svc.__file__).read_text()` used the host Windows default `cp1252` and failed to decode byte `0x9d` in UTF-8 Python source (`UnicodeDecodeError`).
+
+The revised downloadable artifact is `ServiceIT_Bitrix24_1062_E2E_WIN_ENCODING_FIXED_20261101.zip`, exact SHA-256 `89a412f48165169baa8aa80e6ca5bc9b2ca42c53e0bedc71d16c3bc15d62b129`. **Minimal change**: `read_text(encoding='utf-8')` in the guard test; no changes to live API workflow. Independent local `unittest`: **10 passed**, Python compile PASS. This archive is **not yet part of the GitHub source tree**; retain as an independent test artifact.
+
+Next operator step: download the new ZIP, unpack to a *new folder*, and run the guarded PowerShell operator; do **not** reuse the previous Windows encoding-failing ZIP. A live result has not yet been observed. The previously disclosed webhook must be rotated before using the live mode; robots must be checked OFF. Only one synthetic item in 1062/21 is authorized; never rerun the live operation after an ambiguous create without inspecting the saved report and recovering the owned marker.

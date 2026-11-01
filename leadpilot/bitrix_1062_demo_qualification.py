@@ -51,6 +51,33 @@ def _date(value: object) -> date:
         stop("DEMO_SIGNAL_DATE_INVALID")
 
 
+def _unverified_demo_review_state(value: object, expected: str) -> str:
+    """Only two safe states: exact original synthetic marker or no decision yet.
+
+    A populated unknown value could claim that evidence or a manager review
+    is real/approved. Never replace or normalize it silently.
+    """
+    if value == expected:
+        return "EXACT_SYNTHETIC_LABEL"
+    if value is None or value == "":
+        return "UNSET_UNVERIFIED"
+    return "NONEMPTY_UNRECOGNIZED"
+
+
+def _safe_demo_review_checks(item: dict) -> dict[str, str]:
+    """Return static classifications, not raw Bitrix status values."""
+    return {
+        "evidence_status": _unverified_demo_review_state(
+            item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS"),
+            EXTRA_FIELDS["UF_CRM_13_SVCIT_EVIDENCE_STATUS"],
+        ),
+        "review_decision": _unverified_demo_review_state(
+            item.get("UF_CRM_13_SVCIT_REVIEW_DECISION"),
+            EXTRA_FIELDS["UF_CRM_13_SVCIT_REVIEW_DECISION"],
+        ),
+    }
+
+
 def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -> dict:
     """Deterministic fictional signal analysis, never real lead qualification."""
     if not isinstance(item, dict):
@@ -67,10 +94,11 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
         stop("DEMO_SIGNAL_NOT_FRESH")
     if item.get(STOP_FIELD) not in (None, "", STOP_VALUE):
         stop("EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN")
-    if item.get("UF_CRM_13_SVCIT_EVIDENCE_STATUS") != EXTRA_FIELDS["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]:
-        stop("DEMO_EVIDENCE_STATUS_MISMATCH")
-    if item.get("UF_CRM_13_SVCIT_REVIEW_DECISION") != EXTRA_FIELDS["UF_CRM_13_SVCIT_REVIEW_DECISION"]:
-        stop("DEMO_REVIEW_DECISION_MISMATCH")
+    review_states = _safe_demo_review_checks(item)
+    if review_states["evidence_status"] == "NONEMPTY_UNRECOGNIZED":
+        stop("DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED")
+    if review_states["review_decision"] == "NONEMPTY_UNRECOGNIZED":
+        stop("DEMO_REVIEW_DECISION_NONEMPTY_REVIEW_REQUIRED")
     # Same reusable engine as the general ServiceIT AI Signals pipeline.
     # Seven company-wide CRM/stop/legal checks intentionally stay UNKNOWN.
     # This is a synthetic demonstration, never a real qualified prospect.
@@ -133,7 +161,8 @@ def build_analysis(item: dict, *, today: date, hypothesis: dict | None = None) -
             "synthetic_only": True, "recommended_service_demo": recommended,
             "general_ai_lead_pipeline":plan_serviceit_ai_signals([assessment])["status"],
             "global_gates":assessment["checks"],
-            "manager_brief_demo":assessment["manager_script"]}
+            "manager_brief_demo":assessment["manager_script"],
+            "existing_review_states":review_states}
 
 
 def _rest(client: httpx.Client, base: str, method: str, params: dict) -> dict:
@@ -240,13 +269,18 @@ def sync_one_demo(webhook: str, ledger_path: str | Path, *,
             "entityTypeId": 1062, "id": 3, "useOriginalUfNames": "Y"})
         if not _id(item):
             stop("DEMO_ONLY_CARD_NOT_FOUND")
+        # Preflight all synthetic/stop/freshness checks BEFORE any external
+        # GigaChat request. A failed CRM safety gate never sends even a
+        # fictional sentence to the model or reserves a POST ledger.
+        day = today or date.today()
+        preview = build_analysis(item, today=day)
         ai = None
         if use_ai:
             try:
                 ai = (ai_classifier or classify_authorized_signal)(AI_TEXT)
             except (ValueError, RuntimeError, httpx.HTTPError):
                 stop("AI_LIVE_REQUEST_BLOCKED")
-        report = build_analysis(item, today=today or date.today(), hypothesis=ai)
+        report = build_analysis(item, today=day, hypothesis=ai) if ai is not None else preview
         fields = report["fields"]
         already = _matches(item, fields)
         _verify_writable_demo_fields(client, base)
@@ -257,6 +291,7 @@ def sync_one_demo(webhook: str, ledger_path: str | Path, *,
             "ai_status": report["ai_status"], "stage_policy": gate["stage_policy"],
             "synthetic_stop_gate": True,
             "global_customer_dedup": "NOT_VERIFIED",
+            "review_status_classification": report["existing_review_states"],
             "real_leads_approved": False,
             "crm_writes": "NO", "task_created": False,
             "customer_messages": "NO",
@@ -314,7 +349,8 @@ def main() -> None:
         allowed = {
             "DEMO_SIGNAL_DATE_INVALID", "DEMO_ONLY_IDENTITY_GATE_FAILED",
             "DEMO_SIGNAL_NOT_FRESH", "EXISTING_STOP_REASON_MUST_NOT_BE_OVERWRITTEN",
-            "DEMO_EVIDENCE_STATUS_MISMATCH", "DEMO_REVIEW_DECISION_MISMATCH",
+            "DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED",
+            "DEMO_REVIEW_DECISION_NONEMPTY_REVIEW_REQUIRED",
             "DEMO_SCORING_UNEXPECTED", "AI_HYPOTHESIS_QUALITY_GATE_BLOCKED",
             "DEMO_ACTION_TOO_LONG", "DEMO_ACTION_NOT_SAFE", "AI_BRIEF_NOT_SAFE",
             "DEMO_GENERAL_PIPELINE_BLOCKED", "REST_METHOD_NOT_ALLOWED",

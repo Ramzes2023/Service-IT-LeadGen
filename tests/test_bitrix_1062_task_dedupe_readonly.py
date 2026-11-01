@@ -219,3 +219,32 @@ def test_metadata_exception_text_from_unknown_source_not_leaked(monkeypatch):
     with pytest.raises(TaskDiscoveryBlocked, match="EXACT_DEMO_METADATA_READ_UNCLASSIFIED") as caught:
         call()
     assert HOOK not in str(caught.value)
+
+
+
+def test_cli_read_only_on_metadata_failure_uses_sanitized_diagnostic(monkeypatch, capsys):
+    from leadpilot import bitrix_1062_task_dedupe_readonly as module
+    from leadpilot import bitrix_1062_task_diagnostics as diagnostics
+    monkeypatch.setenv("SERVICEIT_TASK_READONLY_WEBHOOK", HOOK)
+    def blocked(*args, **kwargs):
+        raise TaskDiscoveryBlocked("EXACT_DEMO_GATE_EXACT_CARD_FAILED")
+    monkeypatch.setattr(module, "discover_demo_manager_task", blocked)
+    monkeypatch.setattr(diagnostics, "diagnose_task_metadata", lambda hook: {
+        "status": "BLOCKED_READ_ONLY",
+        "methods": {"crm.item.get": {"state": "OK", "result_shape": "OBJECT"}},
+        "metadata_gates": {
+            "exact_demo_card_readback": False,
+            "owner_symbol_verified": True,
+            "task_link_enabled": True,
+            "automation_confirmed_off": True,
+            "task_fields_ready": True,
+        },
+    })
+    with pytest.raises(SystemExit) as ex:
+        module.main()
+    assert ex.value.code == 2
+    output = capsys.readouterr().out
+    assert "EXACT_DEMO_GATE_EXACT_CARD_FAILED" in output
+    assert '"exact_demo_card_readback": false' in output
+    assert HOOK not in output
+    assert "TASK_ADDED" not in output

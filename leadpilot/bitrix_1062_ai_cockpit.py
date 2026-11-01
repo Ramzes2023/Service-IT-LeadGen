@@ -306,6 +306,14 @@ def populate(rest, *, state=None, apply=False, gigachat=False, privacy=False, cl
         require(gigachat and privacy and state is not None, "EXPLICIT_AI_AND_SYNTHETIC_PRIVACY_OPT_IN_REQUIRED")
         require(all(item.get(code) in (None, "") for code in WRITE_FIELDS),
                 "EXISTING_REPORT_REQUIRES_REVIEW_NO_OVERWRITE")
+        # No state reservation or one-shot model attempt when credentials are
+        # absent/misconfigured. Previous real preflight confirms model quality,
+        # this local gate only confirms the new operator inherited its key.
+        if classifier is None:
+            from .ai import config_from_env
+            config = config_from_env()
+            require(config.provider == "gigachat" and bool(config.credentials),
+                    "GIGACHAT_CONFIG_REQUIRED")
         # Reserve before model request as well: a timed-out model request is never
         # blindly repeated. This ledger is unrelated to old qualification sync.
         state.backup("demo-report-before", {k: item.get(k) for k in WRITE_FIELDS})
@@ -425,7 +433,7 @@ if __name__ == "__main__":
             "REPORT_PAYLOAD_INVALID", "REPORT_FIELD_NOT_WRITABLE",
             "EXPLICIT_AI_AND_SYNTHETIC_PRIVACY_OPT_IN_REQUIRED",
             "EXISTING_REPORT_REQUIRES_REVIEW_NO_OVERWRITE",
-            "GIGACHAT_ONLY", "ITEM_CONCURRENT_CHANGE_NO_RETRY",
+            "GIGACHAT_ONLY", "GIGACHAT_CONFIG_REQUIRED", "ITEM_CONCURRENT_CHANGE_NO_RETRY",
             "REPORT_READBACK_UNCERTAIN_NO_RETRY", "PROTECTED_FIELD_DRIFT",
             "LIVE_INSPECTION_OPT_IN_REQUIRED", "PREVIEW_CANNOT_APPLY",
             "STATE_DIR_REQUIRED", "ONE_SHOT_ALREADY_RESERVED_NO_RETRY",

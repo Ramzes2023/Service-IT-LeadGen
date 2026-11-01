@@ -77,7 +77,22 @@ def main() -> None:
         out = run(os.environ.get("SERVICEIT_TASK_READONLY_WEBHOOK", ""), path)
     except (OneShotTaskBlocked, ValueError, httpx.HTTPError) as ex:
         code = str(ex)
-        if code not in {"OWNER_URL_INVALID", "OWNER_PROFILE_UNAVAILABLE",
+        approved_preflight = {
+            "REMOTE_PREFLIGHT_" + x for x in (
+                "EXACT_DEMO_METADATA_NOT_READY", "TASK_LIST_UNAVAILABLE",
+                "TASK_LIST_HTTP_400", "TASK_LIST_HTTP_401",
+                "TASK_LIST_HTTP_403", "TASK_LIST_HTTP_429",
+                "TASK_LIST_HTTP_OTHER", "TASK_LIST_RESPONSE_TOO_LARGE",
+                "TASK_LIST_API_ERROR", "TASK_LIST_MALFORMED",
+                "TASK_LIST_SCHEMA_CHANGED", "TASK_ID_INVALID",
+                "TASK_PAGINATION_DUPLICATE", "TASK_TITLE_MISSING",
+                "CRM_TASK_LINK_UNEXPECTED_SHAPE",
+                "TASK_TITLE_FILTER_NOT_EXACT", "TASK_CRM_FILTER_IGNORED",
+                "TASK_PAGINATION_UNVERIFIED", "TASK_RESULT_WINDOW_TOO_LARGE",
+                "UNBOUNDED_TASK_SEARCH_FORBIDDEN", "BLOCKED_UNSPECIFIED",
+            )
+        }
+        if code not in approved_preflight and code not in {"OWNER_URL_INVALID", "OWNER_PROFILE_UNAVAILABLE",
                         "OWNER_PROFILE_ID_MISMATCH", "OWNER_IDENTITY_UNVERIFIABLE",
                         "OWNER_FIRST_NAME_MISSING", "OWNER_SURNAME_INVALID",
                         "MANAGER_RECIPIENT_FORBIDDEN", "REMOTE_DEMO_TASK_PREFLIGHT_BLOCKED",

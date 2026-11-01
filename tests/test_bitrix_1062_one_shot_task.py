@@ -55,6 +55,11 @@ def invoke(tmp_path, *, mode="ok", ledger=None, confirm=CONFIRM, responsible=22)
         if meth in meta:
             return httpx.Response(200, json={"result": meta[meth]})
         if meth == "tasks.task.list":
+            if mode == "list_http400":
+                return httpx.Response(400, json={
+                    "error": "CUSTOM_PRIVATE_REQUEST_DATA",
+                    "error_description": "Do not show task names or secrets",
+                })
             if mode == "existing":
                 return httpx.Response(200, json={"result": {"tasks": [{
                     "id": "100", "title": TASK_TITLE, "ufCrmTask": [CRM_BINDING],
@@ -149,3 +154,11 @@ def test_post_ok_but_wrong_link_is_uncertain(tmp_path):
     second, new_calls,_=invoke(tmp_path,ledger=ledger)
     assert second=="LOCAL_DEMO_TASK_ALREADY_RESERVED_DO_NOT_RETRY"
     assert not any(m=="tasks.task.add" for m,_ in new_calls)
+
+
+def test_preflight_rest_400_is_precise_and_sends_no_post(tmp_path):
+    result,calls,ledger=invoke(tmp_path,mode="list_http400")
+    assert result == "REMOTE_PREFLIGHT_TASK_LIST_HTTP_400"
+    assert not ledger.exists()
+    assert not any(name == "tasks.task.add" for name,_ in calls)
+    assert not any("PRIVATE_REQUEST_DATA" in str(v) for _,v in calls)

@@ -80,3 +80,10 @@
 - Артефакт имеет SHA-256 `64478871c9b8376371f78c72e042c60d10be7db291e4be83017782764494730c`. Токен вебхука не хранить в ZIP, логе и GitHub.
 
 **Реальный preflight и apply ещё НЕ выполнены**. `LIVE_CONFIG_FIELDS=NOT_STARTED`; `LIVE_CONFIG_STAGES=NOT_STARTED`; `LIVE_HANDOFF=NO`. Сначала получить вывод read-only preflight, затем оценить необходимость изменения webhook scope и согласовать конфигурационную запись с администратором.
+
+
+## 01.11.2026 — реальный preflight заблокирован scope
+
+Оператор запустил `SERVICEIT_AI_SIGNALS_CONFIG_1062_SAFE_PREFLIGHT_20261101.zip` без `-Apply`; локальные `17/17 PASS`. Live preflight на `serviseit.bitrix24.ru` завершился безопасной остановкой `SERVICEIT_1062_CONFIG_STATUS=BLOCKED`, `SERVICEIT_1062_CONFIG_REASON=INSUFFICIENT_SCOPE`. Изменений CRM не было: `SERVICEIT_1062_CRM_ITEM_WRITES=0`, `EXISTING_FUNNELS=UNCHANGED_BY_TOOL`.
+
+Локальный отчёт оператора: `%LOCALAPPDATA%/ServiceIT/AI-Config-1062/config-20261101T123333822Z.json`. Требуется добавить в **существующий входящий вебхук ID 27** scope `userfieldconfig` при сохранении `crm` и повторно запустить **только read-only preflight**. Не назначать глобальный admin и не пересоздавать процесс 1062. Любая конфигурационная запись отдельным `-Apply` только после успешного preflight и разрешения администратора. Документация: https://apidocs.bitrix24.ru/tutorials/field-types/how-to-add-user-field-to-spa.html .

@@ -20,7 +20,7 @@ from .bitrix_1062_task_dedupe_readonly import (
     TaskDiscoveryBlocked, _positive_id,
 )
 
-CONFIRM = "СОЗДАТЬ ОДНУ DEMO ЗАДАЧУ 1062-3"
+CONFIRM = "AUTHORIZE_ONE_SERVICEIT_DEMO_TASK_1062_3"
 TASK_KEY = "serviceit-demo-1062-item3-linkedtask-v1"
 DESCRIPTION = (
     "ДЕМОНСТРАЦИЯ ДЛЯ МИХАИЛА. ЭТО НЕ РЕАЛЬНЫЙ ЛИД.\n"

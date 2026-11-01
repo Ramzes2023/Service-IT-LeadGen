@@ -39,7 +39,9 @@ def build_persisted_synthetic_manager_plan(
     actions = []
     held = []
     try:
-        with closing(sqlite3.connect(str(db_path))) as con:
+        # A read-only SQLite URI prevents accidental modification or DB creation.
+        db_uri = Path(db_path).expanduser().resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(db_uri, uri=True)) as con:
             con.row_factory = sqlite3.Row
             for intent in mapped["requests_not_sent"]:
                 fields = intent["params"]["fields"]

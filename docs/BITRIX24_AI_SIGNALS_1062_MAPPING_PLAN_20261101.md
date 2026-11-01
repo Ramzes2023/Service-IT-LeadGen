@@ -87,3 +87,41 @@
 Оператор запустил `SERVICEIT_AI_SIGNALS_CONFIG_1062_SAFE_PREFLIGHT_20261101.zip` без `-Apply`; локальные `17/17 PASS`. Live preflight на `serviseit.bitrix24.ru` завершился безопасной остановкой `SERVICEIT_1062_CONFIG_STATUS=BLOCKED`, `SERVICEIT_1062_CONFIG_REASON=INSUFFICIENT_SCOPE`. Изменений CRM не было: `SERVICEIT_1062_CRM_ITEM_WRITES=0`, `EXISTING_FUNNELS=UNCHANGED_BY_TOOL`.
 
 Локальный отчёт оператора: `%LOCALAPPDATA%/ServiceIT/AI-Config-1062/config-20261101T123333822Z.json`. Требуется добавить в **существующий входящий вебхук ID 27** scope `userfieldconfig` при сохранении `crm` и повторно запустить **только read-only preflight**. Не назначать глобальный admin и не пересоздавать процесс 1062. Любая конфигурационная запись отдельным `-Apply` только после успешного preflight и разрешения администратора. Документация: https://apidocs.bitrix24.ru/tutorials/field-types/how-to-add-user-field-to-spa.html .
+
+
+## 01.11.2026 — live конфигурация и независимый post-apply read-back: VERIFIED
+
+После явного подтверждения администратора пользователь запустил guarded operator на собственном Windows компьютере, используя только скрытый локальный ввод вебхука. **Фактически полученный вывод**:
+
+```text
+TARGET=serviseit.bitrix24.ru; ENTITY_TYPE_ID=1062; CATEGORY_ID=21; INTERNAL_TYPE_ID=13
+SERVICEIT_CONFIG_1062_LOCAL_TESTS=PASS  # 17/17
+SERVICEIT_1062_CONFIG_STATUS=APPLY_VERIFIED
+SERVICEIT_1062_FIELDS_MISSING_BEFORE=16
+SERVICEIT_1062_STAGES_RENAME_BEFORE=5
+SERVICEIT_1062_NEW_STAGE_NEEDED=TRUE
+SERVICEIT_1062_FIELDS_CREATED=16
+SERVICEIT_1062_STAGES_CHANGED=6
+SERVICEIT_1062_CRM_ITEM_WRITES=0; EXISTING_FUNNELS=UNCHANGED_BY_TOOL
+```
+
+Локальный закрытый отчёт применения: `%LOCALAPPDATA%\ServiceIT\AI-Config-1062\config-20261101T130414653Z.json`. После записи пользователь отдельно выполнил **новый read-only preflight**, который завершился:
+
+```text
+SERVICEIT_1062_CONFIG_STATUS=PREFLIGHT_READY
+SERVICEIT_1062_FIELDS_MISSING_BEFORE=0
+SERVICEIT_1062_STAGES_RENAME_BEFORE=0
+SERVICEIT_1062_NEW_STAGE_NEEDED=FALSE
+SERVICEIT_1062_CRM_ITEM_WRITES=0; EXISTING_FUNNELS=UNCHANGED_BY_TOOL
+SERVICEIT_CRM_SCHEMA=VERIFIED
+```
+
+Локальный закрытый отчёт проверки: `%LOCALAPPDATA%\ServiceIT\AI-Config-1062\config-20261101T130807434Z.json`. Предыдущие разделы данного документа с пометками `PROPOSED_ONLY`, `NOT_STARTED` и `INSUFFICIENT_SCOPE` сохраняются как **исторический журнал**, но теперь **устарели как описание текущей схемы**.
+
+**Подтверждено:** 16 запланированных полей существуют, 5 названий стадий настроены, одна дополнительная стадия присутствует, иных изменений воронки не требуется. По отчёту оператора клиентские записи не создавались, прочие воронки не изменялись.
+
+**Не подтверждено и не разрешено текущим конфигурационным согласованием:** запись/удаление синтетической карточки через `crm.item.add/update/delete`, менеджерский E2E, ACL/RBAC на уровне реальных сотрудников, независимые проверки выключенных роботов, идемпотентность против реального Bitrix24, live handoff adapter, получение реальных лидов. Эти возможности не следует объявлять готовыми. Для тестовой записи требуется отдельное явное разрешение в изолированном процессе. PR остаётся Draft.
+
+**Секреты:** ранее URL вебхука попал в пользовательский лог переписки; его необходимо перегенерировать/отозвать до дальнейших live REST-тестов. Ротация пока не подтверждена; не копировать URL в GitHub или отчёты.
+
+**Текущий статус:** `SERVICEIT_CRM_SCHEMA=VERIFIED`; `LIVE_HANDOFF=NO`; `PRODUCTION_READY=NO`.

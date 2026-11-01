@@ -16,6 +16,7 @@ if ($env:SERVICEIT_AI_COCKPIT_WEBHOOK -cne 'https://serviseit.bitrix24.ru/rest/1
 if ($args -notcontains '--webhook-from-env') { throw 'SECURE_HANDOFF_FLAG_MISSING' }
 if ($args -notcontains '--inspect-live') { throw 'INSPECT_ONLY_FLAG_MISSING' }
 if ($args -contains '--apply-demo') { throw 'WRITE_FLAG_FORBIDDEN' }
+$global:LASTEXITCODE = 0
 Write-Output 'SYNTHETIC_SECURE_HANDOFF=PASS'
 '@ | Set-Content -LiteralPath $mock -Encoding UTF8
 try {

@@ -66,3 +66,17 @@
 - В UI ранее отображались широкие разрешения роли `ServiceIT AI — тест` в блоке **Настройка CRM**, включая управление чужими процессами. После конфигурирования согласовать ограничение этих полномочий с администратором. Секрет вебхука никогда не помещать в GitHub, файлы отчётов или переписку.
 
 **Статус:** `LIVE_METADATA=PASS`, `ENTITY_TYPE_ID=1062`, `INTERNAL_TYPE_ID=13`, `CATEGORY_ID=21`, `USER_FIELDS_EXISTING=0`, `STAGE_CONFIG=PROPOSED_ONLY`, `LIVE_HANDOFF=NO`, `PRODUCTION_READY=NO`.
+
+
+## 01.11.2026 — готов guarded installer: первый запуск только preflight
+
+Подготовлен отдельный автономный ZIP-оператор `SERVICEIT_AI_SIGNALS_CONFIG_1062_SAFE_PREFLIGHT_20261101.zip`. Его исходные файлы: `serviceit_config_1062.py`, `RUN_SERVICEIT_CONFIG_1062.ps1`, `tests/test_config.py`, `README.txt`. **Это отдельный пользовательский артефакт, пока не закоммичен в PR.**
+
+- `17/17` локальных unit-тестов PASS, Python compile PASS (mock API, без корпоративного webhook).
+- Режим без параметра `-Apply` делает **только read-only preflight**, сверяет `typeId=13`, `entityTypeId=1062`, `categoryId=21`, выключенную автоматизацию, `crm.status.list` и коды/типы планируемых 16 полей.
+- **Важный дополнительный scope:** `userfieldconfig` вместе с `crm` для `userfieldconfig.getTypes`, `userfieldconfig.list`, `userfieldconfig.add`. Он не обязательно предоставлен существующему входящему вебхуку. Preflight обязан остановиться с безопасным кодом ошибки до записи; настройку scope выполняет администратор портала.
+- Опциональный `-Apply` доступен только с отдельными подтверждениями `YES` и `CONFIGURE 1062` на локальном Windows компьютере; включает до 16 добавлений полей, до 5 переименований стадий и 1 новый этап. Все изменения только в `CRM_13` и `DYNAMIC_1062_STAGE_21`, проверяются read-back; конфликт имён/типов или чужая стадия = fail closed.
+- Никакие реальные элементы CRM, компании, контакты, сделки, задачи, телефония, роботы, рассылки или источники не изменяются этим оператором.
+- Артефакт имеет SHA-256 `64478871c9b8376371f78c72e042c60d10be7db291e4be83017782764494730c`. Токен вебхука не хранить в ZIP, логе и GitHub.
+
+**Реальный preflight и apply ещё НЕ выполнены**. `LIVE_CONFIG_FIELDS=NOT_STARTED`; `LIVE_CONFIG_STAGES=NOT_STARTED`; `LIVE_HANDOFF=NO`. Сначала получить вывод read-only preflight, затем оценить необходимость изменения webhook scope и согласовать конфигурационную запись с администратором.

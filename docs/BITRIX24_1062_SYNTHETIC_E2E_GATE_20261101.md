@@ -163,3 +163,23 @@ These components are **not wired into a scheduler, web service, background worke
 Caution: `crm.item.list` may reject filters on custom UF fields. A failed/empty lookup must never become permission to blindly resend. The code fails closed where filters/readback cannot establish identity. Future user-approved real integration needs a separate privacy and source/business authorization plan.
 
 Reference: https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-add.html and https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-list.html.
+
+
+## 01.11.2026 — guarded synthetic writer Windows acceptance: one real validation defect detected
+
+Owner independently ran frozen `8f21895e78c2f8b0952cb43763d299711b484808`. The Windows log showed:
+
+```text
+185 passed, 1 failed (targeted suite)
+494 passed, 1 failed (full suite)
+FAILED tests/test_bitrix_1062_synthetic_add.py::test_changed_synthetic_fields_are_rejected[
+ UF_CRM_13_SVCIT_MANAGER_NEXT_ACTION-Call +7 999 000 0000 to discuss]
+SERVICEIT_1062_MANAGER_TESTS_FAILED
+FULL_SUITE_FAILED
+```
+
+**Root cause**: `manager_next_action` validators rejected `@`, `http` and newlines, but **did not reject phone-shaped text embedded inside an otherwise ordinary string**. The synthetic add path reused the mapping validator, so a test action with a mobile number was accepted. No live REST requests were issued and no company CRM records were changed; this was an offline test failure.
+
+**Code fix (no test suppression):** added shared `leadpilot/bitrix_synthetic_text_guard.py` containing `synthetic_action_is_safe`, used by **both** `leadpilot/bitrix_handoff_dryrun.py` and `leadpilot/bitrix_1062_mapping.py`. It rejects phone-shaped sequences (10–16 digits with usual punctuation, including the exact failed `+7 999 000 0000` case), links, email markers and control characters, while allowing ordinary synthetic work text and short date references. Added dedicated guard tests plus direct bypass tests in `tests/test_bitrix_handoff_dryrun.py` and `tests/test_bitrix_1062_mapping.py`; the original failing synthetic-add negative case remains unchanged. Windows acceptance runner includes the new guard suite. An independent local regex-only smoke check confirmed the exact phone formats are rejected and ordinary demo action text passes.
+
+**Next gate:** re-run **only** pinned new HEAD in an isolated Windows worktree (targeted tests, then full project tests, compileall, diff check). No webhook required. **Do not claim PASS** on new HEAD before operator returns the successful markers. PR remains draft and no live writer or real-lead ingestion is enabled.

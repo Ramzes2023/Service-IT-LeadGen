@@ -113,3 +113,17 @@ def test_same_company_different_signal_preserves_independent_intents():
     assert intents[0]["idempotency_key"] != intents[1]["idempotency_key"]
     assert intents[0]["logical_fields"]["company_inn"] == intents[1]["logical_fields"]["company_inn"]
     assert intents[0]["logical_fields"]["signal_id"] != intents[1]["logical_fields"]["signal_id"]
+
+
+@pytest.mark.parametrize("action", [
+    "Call +7 999 000 0000 to discuss",
+    "Наберите 8(999)000-00-00 сегодня",
+    "Check demo@example.org for status",
+    "Связаться через https://example.org",
+])
+def test_embedded_contact_action_is_held_before_mapping(action):
+    item = dict(_cards()[0], manager_next_action=action)
+    result = _synthetic_card_only(item, NOW)
+    assert result["status"] == "HOLD"
+    assert result["reason"] == "LOGICAL_FIELD_VALIDATION_FAILED"
+    assert result["crm_writes"] == "NO"

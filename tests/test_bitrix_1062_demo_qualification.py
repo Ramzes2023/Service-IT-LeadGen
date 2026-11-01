@@ -254,3 +254,39 @@ def test_external_ai_is_not_called_on_failed_qualifying_review_state(tmp_path):
         portal(tmp_path,item=item,apply=True,ai=True,ai_result=forbidden_ai)
     assert calls==[]
     assert not (tmp_path/"ledger.sqlite").exists()
+
+
+
+@pytest.mark.parametrize("unexpected,kind", [
+    ("12345", "POSSIBLE_ENUM_ID"),
+    ("Demo item checked in CRM", "HAS_SYNTHETIC_WORD"),
+    ("Approved real transaction", "POSSIBLE_AFFIRMATIVE_STATUS"),
+    ({"unexpected":"PRIVATE"}, "OBJECT"),
+    ([71], "NONEMPTY_LIST"),
+])
+def test_evidence_block_diagnostics_have_only_static_categories(unexpected,kind):
+    from leadpilot.bitrix_1062_demo_qualification import _safe_status_shape
+    assert _safe_status_shape(unexpected)==kind
+
+
+def test_no_external_ai_called_when_crm_field_schema_permission_denied(tmp_path):
+    calls=[]
+    def forbidden_ai(text):
+        calls.append(text)
+        raise AssertionError("AI_MUST_NOT_RUN_BEFORE_SCHEMA_VALIDATION")
+    with pytest.raises(DemoBridgeBlocked,match="DEMO_FIELD_SCHEMA_READ_FAILED"):
+        portal(tmp_path,apply=True,ai=True,ai_result=forbidden_ai,deny="crm.item.fields")
+    assert not calls
+    assert not (tmp_path/"ledger.sqlite").exists()
+
+
+def test_blocked_status_exception_does_not_expose_real_field_text():
+    from leadpilot.bitrix_1062_demo_qualification import build_analysis
+    original=card()
+    original["UF_CRM_13_SVCIT_EVIDENCE_STATUS"]="PRIVATE_CORPORATE_RECORD_SENSITIVE"
+    with pytest.raises(DemoBridgeBlocked) as caught:
+        build_analysis(original,today=TODAY)
+    err=caught.value
+    assert str(err)=="DEMO_EVIDENCE_STATUS_NONEMPTY_REVIEW_REQUIRED"
+    assert err.safe_details["evidence_status_shape"]=="UNRECOGNIZED_TEXT"
+    assert "PRIVATE_CORPORATE_RECORD_SENSITIVE" not in str(err.safe_details)

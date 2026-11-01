@@ -1,13 +1,14 @@
 """Read-only corporate preflight for ONE ServiceIT DEMO task association.
 
 Methods permitted: crm.type.getByEntityTypeId, crm.enum.ownertype,
-tasks.task.getFields, crm.item.get. Never return raw CRM data or webhook.
+tasks.task.getFields, crm.item.get, conditional crm.status.list. Never return raw CRM data or webhook.
 Does not look up employees or perform any task or CRM mutations.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import httpx
@@ -21,7 +22,7 @@ from .bitrix_1062_mapping import ALL_FIELD_CODES, CONTRACT_VERSION
 from hashlib import sha256
 
 ALLOWED = ("crm.type.getByEntityTypeId", "crm.enum.ownertype",
-           "tasks.task.getFields", "crm.item.get")
+           "tasks.task.getFields", "crm.item.get", "crm.status.list")
 
 
 class TaskMetadataReadError(ValueError):
@@ -77,6 +78,45 @@ def _demo_item_checks(item: dict) -> dict[str, bool]:
     }
 
 
+
+def _registered_demo_stage(client: httpx.Client, base: str, candidate: object) -> bool:
+    """Validate an alternate stage ONLY against the same DEMO category 21.
+
+    Never accept a failure stage; no raw stage labels, customer data, or
+    response bodies leave this function. Any REST/schema ambiguity fails shut.
+    """
+    if not isinstance(candidate, str) or not re.fullmatch(
+        r"DT1062_21:[A-Za-z0-9_-]{1,64}", candidate
+    ):
+        return False
+    try:
+        entries = _call(client, base, "crm.status.list", {
+            "filter": {"ENTITY_ID": "DYNAMIC_1062_STAGE_21"},
+        })
+    except TaskMetadataReadError:
+        return False
+    if not isinstance(entries, list) or not 1 <= len(entries) <= 100:
+        return False
+    matched = [
+        entry for entry in entries
+        if isinstance(entry, dict)
+        and entry.get("ENTITY_ID") == "DYNAMIC_1062_STAGE_21"
+        and entry.get("STATUS_ID") == candidate
+        and entry.get("CATEGORY_ID") in (None, 21, "21")
+    ]
+    if len(matched) != 1:
+        return False
+    stage = matched[0]
+    if stage.get("SEMANTICS") not in (None, "", "S"):
+        return False
+    extra = stage.get("EXTRA")
+    if extra is not None and not isinstance(extra, dict):
+        return False
+    if isinstance(extra, dict) and extra.get("SEMANTICS") in ("failure", "apology"):
+        return False
+    return True
+
+
 def audit_synthetic_task_link(
     webhook: str, *, client: httpx.Client | None = None,
 ) -> dict:
@@ -121,7 +161,21 @@ def audit_synthetic_task_link(
             and fields["UF_CRM_TASK"].get("type") == "crm"
         )
         item_checks = _demo_item_checks(item)
-        item_exact = all(item_checks.values())
+        immutable_demo_checks_ok = all(
+            valid for name, valid in item_checks.items() if name != "stage_matches"
+        )
+        alternative_stage_verified = False
+        if immutable_demo_checks_ok and not item_checks["stage_matches"]:
+            alternative_stage_verified = _registered_demo_stage(
+                client, base, item.get("stageId")
+            )
+        # The stage is a workflow location, not an immutable identity field.
+        # A changed stage is safe only when the Bitrix dictionary confirms it
+        # belongs to the SAME isolated category and is not a failure stage.
+        item_exact = (
+            immutable_demo_checks_ok
+            and (item_checks["stage_matches"] or alternative_stage_verified)
+        )
         safe = all((symbol_ok, binding_on, automation_off, crm_link_type, item_exact))
         return {
             "status": "LINKED_TASK_METADATA_READY" if safe else "LINKED_TASK_METADATA_BLOCKED",
@@ -133,7 +187,16 @@ def audit_synthetic_task_link(
             "task_fields_ready": bool(crm_link_type),
             "exact_demo_card_readback": bool(item_exact),
             "exact_demo_card_checks": item_checks,
-            "methods_called": list(ALLOWED),
+            "alternate_stage_verified_in_category_21": alternative_stage_verified,
+            "stage_policy": (
+                "ORIGINAL_STAGE" if item_checks["stage_matches"]
+                else "REGISTERED_NON_FAILURE_STAGE" if alternative_stage_verified
+                else "UNVERIFIED_STAGE_BLOCKED"
+            ),
+            "methods_called": list(ALLOWED[:4]) + (
+                ["crm.status.list"] if immutable_demo_checks_ok
+                and not item_checks["stage_matches"] else []
+            ),
             "manager_employee_id_verified": False,
             "task_created": False, "crm_writes": "NO", "customer_contacts": 0,
             "safe_to_create_task_now": False,

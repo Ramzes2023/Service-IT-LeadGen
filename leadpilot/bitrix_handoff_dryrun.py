@@ -16,6 +16,7 @@ import re
 from urllib.parse import urlsplit
 
 from .verified_import import is_valid_inn
+from .bitrix_synthetic_text_guard import synthetic_action_is_safe
 
 CONTRACT_VERSION = "serviceit-bitrix-intent-v1"
 REQUIRED_LOGICAL_FIELDS = (
@@ -95,7 +96,7 @@ def _synthetic_card_only(card: object, today: date) -> dict:
     if (not isinstance(ver, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,30}", ver)
             or svc not in ("1С", "IT-аутсорсинг", "ККТ")
             or not isinstance(action, str) or not 8 <= len(action) <= 120
-            or "@" in action or "http" in action.lower() or "\n" in action):
+            or not synthetic_action_is_safe(action)):
         return _hold("LOGICAL_FIELD_VALIDATION_FAILED", key)
     return {
         "status": "DRY_RUN_INTENT_ONLY", "idempotency_key": key,

@@ -14,6 +14,7 @@ from leadpilot.bitrix_1062_demo_qualification import AI_TEXT
 from leadpilot.bitrix_1062_ai_cockpit import (
     Rest, State, CockpitBlocked, PREFIX, SPECS, WRITE_FIELDS, LAYOUT_SCOPE,
     inspect_schema, provision, plan_layout, configure_layout, populate, demo_assessment, main,
+    inspect_layout, live_readonly_preview, COMMON_LAYOUT_SCOPE,
 )
 from leadpilot.serviceit_ai_report import build_report
 
@@ -464,3 +465,114 @@ def test_windows_operator_uses_securestring_not_python_getpass():
     assert "getpass.getpass(" not in (
         Path(__file__).resolve().parents[1] /
         "leadpilot" / "bitrix_1062_ai_cockpit.py").read_text(encoding="utf-8")
+
+
+class InheritedLayoutPortal(Portal):
+    """Synthetic REST: P is legitimately null, C is an independently stored layout."""
+    def __init__(self, common=None, personal=None):
+        super().__init__()
+        self.personal = deepcopy(personal)
+        self.common = deepcopy(self.layout) if common == "USE_SAVED" else deepcopy(common)
+
+    def __call__(self, method, params):
+        if method == "crm.item.details.configuration.get":
+            assert params in (LAYOUT_SCOPE, COMMON_LAYOUT_SCOPE)
+            self.calls.append((method, deepcopy(params)))
+            return deepcopy(self.personal if params["scope"] == "P" else self.common)
+        if method == "crm.item.details.configuration.set":
+            assert {k: v for k, v in params.items() if k != "data"} == LAYOUT_SCOPE
+            self.calls.append((method, deepcopy(params)))
+            self.personal = deepcopy(params["data"])
+            return True
+        return super().__call__(method, params)
+
+
+def test_null_personal_inherits_common_for_read_only_preview():
+    portal = InheritedLayoutPortal(common="USE_SAVED")
+    common_before = deepcopy(portal.common)
+    result = live_readonly_preview(portal, today=TODAY)
+    assert result["status"] == "LIVE_READONLY_PREVIEW"
+    assert result["layout_origin"] == "INHERITED_COMMON"
+    assert result["personal_layout_saved"] is False
+    assert result["personal_layout_can_be_planned"] is True
+    assert result["layout_sections"] == len(common_before)
+    assert result["ai"] == "NOT_RUN"
+    assert result["report"]["score"] == 90
+    assert portal.common == common_before and portal.personal is None
+    assert not any(m in ("crm.item.details.configuration.set", "crm.item.update",
+                         "userfieldconfig.add") for m, _ in portal.calls)
+
+
+def test_null_personal_clones_common_into_personal_only_with_backup(tmp_path):
+    portal = InheritedLayoutPortal(common="USE_SAVED")
+    original_common = deepcopy(portal.common)
+    preview = configure_layout(portal)
+    assert preview["origin"] == "INHERITED_COMMON"
+    assert preview["before"] is None
+    assert preview["after"][1:] == original_common
+    assert portal.personal is None
+    state = State(tmp_path)
+    applied = configure_layout(portal, state=state, apply=True)
+    assert applied["status"] == "PERSONAL_LAYOUT_APPLIED"
+    assert applied["origin"] == "INHERITED_COMMON"
+    assert portal.common == original_common
+    assert portal.personal[1:] == original_common
+    assert portal.personal[0]["title"] == "Сервис ИТ | AI-анализ"
+    backup = json.loads(next(tmp_path.glob("personal-layout-*.json")).read_text(encoding="utf-8"))
+    assert backup["data"] is None
+    assert backup["common_base"] == original_common
+    assert backup["proposed"] == portal.personal
+    configure_layout(portal, state=state, apply=True)
+    assert sum(m == "crm.item.details.configuration.set" for m, _ in portal.calls) == 1
+    assert not any(m == "crm.item.details.configuration.set" and p.get("scope") == "C"
+                   for m, p in portal.calls)
+
+
+def test_null_both_uses_readonly_diagnostic_but_refuses_layout_set(tmp_path):
+    portal = InheritedLayoutPortal(common=None)
+    output = live_readonly_preview(portal, today=TODAY)
+    assert output["status"] == "LIVE_READONLY_PREVIEW"
+    assert output["layout_origin"] == "UNSAVED_DEFAULT"
+    assert output["layout_sections"] == 0
+    assert output["personal_layout_can_be_planned"] is False
+    with pytest.raises(CockpitBlocked, match="LAYOUT_DEFAULT_REQUIRES_MANUAL_BASELINE"):
+        configure_layout(portal, state=State(tmp_path), apply=True)
+    assert not any(m == "crm.item.details.configuration.set" for m, _ in portal.calls)
+    assert not list(tmp_path.glob("personal-layout-*.json"))
+
+
+@pytest.mark.parametrize("personal,common", [([], "USE_SAVED"), ({}, "USE_SAVED"),
+                                               (None, []), (None, {})])
+def test_only_explicit_null_is_treated_as_unsaved(personal, common):
+    portal = InheritedLayoutPortal(common=common, personal=personal)
+    with pytest.raises(CockpitBlocked, match="LAYOUT_EMPTY_OR_AMBIGUOUS"):
+        inspect_layout(portal)
+    assert not any(m == "crm.item.details.configuration.set" for m, _ in portal.calls)
+
+
+def test_inherited_common_changes_before_set_no_write_or_fence(tmp_path):
+    portal = InheritedLayoutPortal(common="USE_SAVED")
+    reads = 0
+    def rest(method, params):
+        nonlocal reads
+        if method == "crm.item.details.configuration.get" and params["scope"] == "C":
+            reads += 1
+            if reads == 2:
+                portal.common[0]["title"] = "Updated by colleague"
+        return portal(method, params)
+    state = State(tmp_path)
+    with pytest.raises(CockpitBlocked, match="LAYOUT_COMMON_CONCURRENT_CHANGE"):
+        configure_layout(rest, state=state, apply=True)
+    assert portal.personal is None
+    assert not any(m == "crm.item.details.configuration.set" for m, _ in portal.calls)
+    with sqlite3.connect(state.path) as con:
+        assert con.execute("SELECT COUNT(*) FROM cockpit_ops").fetchone()[0] == 0
+
+
+def test_explicit_personal_layout_does_not_read_common():
+    portal = Portal()
+    layout = inspect_layout(portal)
+    assert layout["origin"] == "PERSONAL_SAVED"
+    assert layout["personal"] == portal.layout
+    assert not any(m == "crm.item.details.configuration.get" and
+                   p.get("scope") == "C" for m, p in portal.calls)

@@ -304,10 +304,12 @@ def populate(rest, *, state=None, apply=False, gigachat=False, privacy=False, cl
 
 def main(argv=None):
     import argparse
-    import getpass
+    import os
     parser = argparse.ArgumentParser(description="ServiceIT cockpit: offline preview by default")
     parser.add_argument("--mode", choices=["preview", "provision", "layout", "populate"], default="preview")
     parser.add_argument("--inspect-live", action="store_true")
+    parser.add_argument("--webhook-from-env", action="store_true",
+                        help="Explicit PowerShell SecureString handoff only; never put a URL on the command line")
     parser.add_argument("--apply-demo", action="store_true")
     parser.add_argument("--gigachat-opt-in", action="store_true")
     parser.add_argument("--synthetic-privacy-opt-in", action="store_true")
@@ -321,8 +323,13 @@ def main(argv=None):
         return 0
     require(args.mode != "preview" or not args.apply_demo, "PREVIEW_CANNOT_APPLY")
     require(not args.apply_demo or args.state_dir, "STATE_DIR_REQUIRED")
-    webhook = getpass.getpass("Bitrix webhook (local, hidden): ")
-    # No credentials read from files, command-line arguments or console output.
+    # Avoid Windows getpass console input: on the approved operator host it can
+    # discard paste/keystrokes. A trusted PowerShell Read-Host -AsSecureString
+    # passes the webhook only in the short-lived child process environment.
+    require(args.webhook_from_env, "POWERSHELL_SECURE_WEBHOOK_REQUIRED")
+    webhook = os.environ.pop("SERVICEIT_AI_COCKPIT_WEBHOOK", "")
+    require(bool(webhook), "SECURE_WEBHOOK_MISSING")
+    # Never accept a webhook on argv, in config files, or via Python getpass.
     with httpx.Client(trust_env=False, follow_redirects=False) as client:
         rest = Rest(webhook, client)
         state = State(args.state_dir) if args.apply_demo else None
@@ -355,6 +362,7 @@ if __name__ == "__main__":
         # Only emit project-defined fixed reason codes. Never print arbitrary
         # Bitrix errors, request/response objects, webhook or source text.
         safe_codes = {
+            "POWERSHELL_SECURE_WEBHOOK_REQUIRED", "SECURE_WEBHOOK_MISSING",
             "METHOD_BLOCKED", "REST_BUDGET_EXCEEDED", "REST_HTTP_BLOCKED",
             "REST_RESULT_BLOCKED", "REST_UNCERTAIN_NO_RETRY",
             "PAGINATION_REQUIRES_REVIEW", "FIELD_TYPE_OR_SCOPE_CONFLICT",

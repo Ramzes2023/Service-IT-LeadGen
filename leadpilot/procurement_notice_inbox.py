@@ -79,6 +79,8 @@ def _notice_url(value, source):
         if source == "b2b-center" and host in ("www.b2b-center.ru", "b2b-center.ru"):
             if re.fullmatch(r"/search/number/l\d+(?:-\d+){1,8}/?", url.path) and not url.query:
                 return value
+            if re.fullmatch(r"/app/market-next/[a-z0-9-]+/tender-[0-9]+/", url.path) and not url.query:
+                return value
             if url.path == "/market/view.html" and set(parse_qs(url.query)) == {"id"}:
                 ids = parse_qs(url.query).get("id", [])
                 if len(ids) == 1 and re.fullmatch(r"\d{5,12}", ids[0]):

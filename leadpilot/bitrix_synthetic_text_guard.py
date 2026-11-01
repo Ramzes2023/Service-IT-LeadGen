@@ -15,7 +15,8 @@ _CONTACT_SCHEMES = ("http", "mailto:", "tel:", "wa.me", "t.me/")
 
 
 def synthetic_action_is_safe(action: object) -> bool:
-    if (not isinstance(action, str) or not 8 <= len(action) <= 120\n            or action != action.strip() or not action.strip()):
+    if (not isinstance(action, str) or not 8 <= len(action) <= 120
+            or action != action.strip() or not action.strip()):
         return False
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in action):
         return False

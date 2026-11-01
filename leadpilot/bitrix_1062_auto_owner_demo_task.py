@@ -35,11 +35,19 @@ def owner_id(webhook: str, client: httpx.Client) -> int:
             or int(user_id) != int(m.group(1))):
         raise OneShotTaskBlocked("OWNER_PROFILE_ID_MISMATCH")
     first, last = result.get("NAME"), result.get("LAST_NAME")
-    if not all(isinstance(v, str) and 2 <= len(v.strip()) <= 80 for v in (first, last)):
-        raise OneShotTaskBlocked("OWNER_IDENTITY_UNVERIFIABLE")
-    # No task should go to the manager whose involvement was explicitly excluded.
-    full = (first + " " + last).casefold().replace("ё", "е")
-    if any(x in full for x in ("михаил", "микаил", "mikhail", "mikail", "michael")):
+    # Bitrix24 profiles can have an empty optional surname. A verified
+    # authenticated webhook owner ID plus a nonempty first name is sufficient
+    # for this single synthetic internal demonstration. Absent/ambiguous
+    # first names remain blocked; never guess an employee from the Windows PC.
+    if not isinstance(first, str) or not 2 <= len(first.strip()) <= 80:
+        raise OneShotTaskBlocked("OWNER_FIRST_NAME_MISSING")
+    if last is not None and (not isinstance(last, str) or len(last.strip()) > 80):
+        raise OneShotTaskBlocked("OWNER_SURNAME_INVALID")
+    full = (first + " " + (last or "")).casefold().replace("ё", "е")
+    if any(x in full for x in (
+        "михаил", "микаил", "миша", "mikhail", "michail",
+        "mikail", "michael", "misha", "mikael",
+    )):
         raise OneShotTaskBlocked("MANAGER_RECIPIENT_FORBIDDEN")
     return int(user_id)
 
@@ -71,6 +79,7 @@ def main() -> None:
         code = str(ex)
         if code not in {"OWNER_URL_INVALID", "OWNER_PROFILE_UNAVAILABLE",
                         "OWNER_PROFILE_ID_MISMATCH", "OWNER_IDENTITY_UNVERIFIABLE",
+                        "OWNER_FIRST_NAME_MISSING", "OWNER_SURNAME_INVALID",
                         "MANAGER_RECIPIENT_FORBIDDEN", "REMOTE_DEMO_TASK_PREFLIGHT_BLOCKED",
                         "REMOTE_VISIBLE_DEMO_TASK_ALREADY_EXISTS",
                         "LOCAL_DEMO_TASK_ALREADY_RESERVED_DO_NOT_RETRY",

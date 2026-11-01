@@ -224,3 +224,20 @@ def test_filter_error_blocks_post_before_creation(tmp_path):
     assert result["reason_code"] == "EXACT_KEY_READ_PREFLIGHT_FAILED"
     assert calls == {"read": 1, "write": 0}
     assert overview(db)["states"]["UNCERTAIN"] == 1
+
+
+def test_read_and_write_must_use_identical_webhook_identity(tmp_path):
+    db, claim = _setup(tmp_path)
+    calls, r_client, w_client = _clients(claim)
+    other_webhook = "https://serviseit.bitrix24.ru/rest/123/ANOTHER_SYNTHETIC_TOKEN_123456"
+    with r_client, w_client:
+        result = deliver_one_claimed_synthetic(
+            db, claim,
+            read_only=Bitrix1062ReadOnly(WEBHOOK, client=r_client),
+            one_shot_add=Bitrix1062SyntheticAddOnly(other_webhook, client=w_client),
+            **_flags(),
+        )
+    assert result["status"] == "UNCERTAIN_MANUAL_RECONCILIATION"
+    assert result["reason_code"] == "WEBHOOK_IDENTITY_MISMATCH"
+    assert calls["add_calls"] == 0 and calls["read_calls"] == []
+    assert overview(db)["states"]["UNCERTAIN"] == 1

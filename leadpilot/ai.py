@@ -88,8 +88,7 @@ def _validated_answer(response: dict, source_text: str) -> dict:
         if not isinstance(quote, str):
             raise ValueError("Invalid evidence quote")
         # Quotes are accepted only when they appear verbatim in the input.
-        quote = quote.strip()[:300]
-        quote_is_verified = not quote or quote in source_text
+        quote_is_verified = not quote or (bool(quote.strip()) and len(quote) <= 300 and quote in source_text)
         if not quote_is_verified:
             quote = ""
         need = answer.get("possible_need", "")
@@ -120,8 +119,9 @@ def _validated_answer(response: dict, source_text: str) -> dict:
 
 class AIProvider:
     """One process-lived instance for GigaChat token reuse; inject client in tests."""
-    def __init__(self, config: AIConfig, client: httpx.Client | None = None):
+    def __init__(self, config: AIConfig, client: httpx.Client | None = None, *, retry_unauthorized: bool = True):
         self.config = config
+        self.retry_unauthorized = retry_unauthorized
         self._owned = client is None
         self.client = client or httpx.Client(verify=config.ca_bundle or True, timeout=30.0)
         self._token = None
@@ -151,7 +151,7 @@ class AIProvider:
             if not isinstance(token, str) or not token:
                 raise ValueError("GigaChat OAuth: access token missing")
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError("GigaChat authorization failed; check key, scope and TLS") from exc
+            raise RuntimeError("GigaChat authorization failed; check key, scope and TLS") from None
         self._token = token
         # Server tokens normally last 30 minutes. Refresh early; avoid persisting.
         self._token_valid_until = time.monotonic() + 25 * 60
@@ -175,7 +175,7 @@ class AIProvider:
             response = self.client.post(url,
                                         headers={"Authorization": "Bearer " + token,
                                                  "Accept": "application/json"}, json=body)
-            if response.status_code == 401 and cfg.provider == "gigachat":
+            if response.status_code == 401 and cfg.provider == "gigachat" and self.retry_unauthorized:
                 self._token = None
                 response = self.client.post(url, headers={
                     "Authorization": "Bearer " + self._get_token(), "Accept": "application/json"}, json=body)
@@ -183,7 +183,7 @@ class AIProvider:
             output = _validated_answer(response.json(), source_text)
         except (httpx.HTTPError, ValueError) as exc:
             # Avoid leaking authorization or source text in console errors.
-            raise RuntimeError("AI request or response validation failed") from exc
+            raise RuntimeError("AI request or response validation failed") from None
         return {**output, "provider": cfg.provider, "model": cfg.model}
 
 
@@ -193,3 +193,16 @@ def classify_authorized_signal(source_text: str, provider: AIProvider | None = N
         return provider.classify(source_text)
     with AIProvider(config_from_env()) as p:
         return p.classify(source_text)
+
+
+def classify_cockpit_signal(source_text: str) -> dict:
+    """One completion attempt for the fenced cockpit; no authorization POST replay.
+
+    The caller owns synthetic identity/privacy gates and durable reservation.
+    Existing classification callers retain their previous behavior.
+    """
+    config = config_from_env()
+    if config.provider != "gigachat":
+        raise ValueError("Cockpit requires GigaChat")
+    with AIProvider(config, retry_unauthorized=False) as provider:
+        return provider.classify(source_text)

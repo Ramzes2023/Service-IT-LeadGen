@@ -51,6 +51,7 @@ jobs:
             -e SERVICEIT_V2_APPS_RECEIVER_ENABLED=YES \
             -e SERVICEIT_V2_GMAIL_EXPECTED_EMAIL=ramzesisayev444@gmail.com \
             -e SERVICEIT_V2_DB_DSN="$SYNTHETIC_DB_DSN" \
+            -e SERVICEIT_V2_DB_EXPECTED_NAME=serviceitv2_test \
             -e SERVICEIT_V2_APPS_HMAC_SECRET_B64="$secret_b64" \
             serviceit-v2-render:synthetic
           trap 'docker rm -f serviceit-v2-synthetic-e2e >/dev/null 2>&1 || true' EXIT
@@ -147,3 +148,6 @@ jobs:
           print('CONTAINER_SYNTHETIC_POSTGRES_WRITES_ONLY=PASS', flush=True)
           print('CONTAINER_SYNTHETIC_CRM_WRITES=0', flush=True)
           PY
+          # Logs contain only fixed status tokens, never DB DSN/key.
+          docker logs serviceit-v2-synthetic-e2e | grep -Fx 'SERVICEIT_V2_DB_PREFLIGHT=PASS'
+          echo 'CONTAINER_SYNTHETIC_BOOT_DB_NAME_CHECK=PASS'

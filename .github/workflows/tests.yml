@@ -132,3 +132,10 @@ jobs:
       - name: Stop temporary receiver
         if: always()
         run: docker rm -f serviceit-event-ci || true
+  windows-b2b-card7-preliminary-backfill:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact item7 backfill one-shot approval gate and secure mock
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_B2B_CARD7_PRELIMINARY_BACKFILL.ps1

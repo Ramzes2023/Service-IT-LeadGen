@@ -44,3 +44,12 @@ scripts/RUN_SERVICEIT_EVENT_QUEUE_CRM_READONLY.ps1 без аргументов �
 Ссылки Bitrix:
 https://apidocs.bitrix24.ru/api-reference/crm/universal/events/on-crm-dynamic-item-add.html
 https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-get.html
+
+
+## Дополнение: точная приёмка уже созданной карточки №7
+
+По реальным журналам https://github.com/Ramzes2023/Service-IT-LeadGen/actions/runs/41458344493 канал B2B-Center автоматически создал 2 ноября 2026 года `card_id=7`, `tender_id=4661617`, `ONE_TENDER_HOLD_VERIFIED` до объединения PR #71. Поэтому девять AI-полей карточки №7 не могли быть автоматически добавлены кодом, который появился позже.
+
+Для разбора этой *одной существующей* карточки не нужен развёрнутый event receiver и файл очереди. После CI запускать Windows оператор в режиме `-InspectLive -ItemId 7` с секретным вводом корпоративного webhook. Код делает только `crm.item.get` с `entityTypeId=1062`, `id=7`, `useOriginalUfNames=Y`, проверяет `categoryId=21` и возвращает безопасный классификатор: `HOLD_MISSING_PRELIMINARY_AI` или `HOLD_PRELIMINARY_AI_ALREADY_PRESENT` и т.д. Само содержимое или токен в выводе не показываются.
+
+**Это диагностика, не backfill:** не обновляет девять полей, не запускает GigaChat и не перезаписывает демонстрационную карточку #3. После точного read-only результата отдельный идемпотентный и утверждённый backfill может быть разработан с подтверждением исходного текста и readback без повтора при UNCERTAIN.

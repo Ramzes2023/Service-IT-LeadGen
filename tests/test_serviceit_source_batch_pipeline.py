@@ -38,7 +38,7 @@ def test_fixture_merges_company_signals_and_is_safe():
         assert item["crm_fields_preview"]["UF_CRM_13_SVCIT_SCORE_VERSION"] == SCORE_VERSION
         assert item["crm_handoff_eligible_by_supplied_checks"] is False
         assert item["crm_operation"] == "NOT_SENT_REQUIRES_SEPARATE_REVIEW"
-        assert item["qualification_status"] == "DEMO_REVIEW_ONLY"
+        assert item["qualification_status"] == "HOLD_UNVERIFIED"
 
 
 def test_sorting_by_inn_and_sources_reuses_same_batch_fingerprint():

@@ -160,3 +160,23 @@ jobs:
       - name: No-reservation prewrite forensic CLI mock on Windows
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_B2B_CARD7_PREWRITE_STAGE_READONLY.ps1
+  windows-card7-local-sqlite-probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: No-webhook local-only SQLite probe PowerShell 5.1 syntax
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_CARD7_LOCAL_SQLITE_PROBE.ps1
+      - name: Real Windows SQLite transaction in disposable state directory
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'ServiceIT-SQLite-Private-Test'
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
+          python -m leadpilot.serviceit_card7_sqlite_local_probe --local-only
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_SQLITE_LOCAL_PROBE_FAILED' }
+          $RealLedger = Join-Path $env:LOCALAPPDATA 'ServiceIT\Existing-B2B-Hold-AI\backfill-v1.sqlite3'
+          if (Test-Path -LiteralPath $RealLedger) { throw 'TEST_CREATED_A_REAL_LEDGER' }

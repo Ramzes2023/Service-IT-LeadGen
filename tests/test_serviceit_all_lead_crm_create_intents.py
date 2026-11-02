@@ -40,7 +40,7 @@ def test_complete_one_request_per_company_includes_score_version_badge():
         assert params["entityTypeId"]==1062
         assert params["useOriginalUfNames"]=="Y"
         fields=params["fields"]
-        assert len(fields)==20
+        assert len(fields)==29
         assert set(fields)==CODES|{"title","categoryId","stageId"}
         assert fields["categoryId"]==21
         assert fields["stageId"]=="DT1062_21:NEW"
@@ -48,6 +48,10 @@ def test_complete_one_request_per_company_includes_score_version_badge():
         assert fields[VERSION_FIELD]=="mvp-2026-10-v1"
         assert fields[BADGE_FIELD]==op["color_badge"]
         assert fields["UF_CRM_13_SVCIT_STOP_REASON"]=="DEMO / НЕ ЗВОНИТЬ"
+        assert fields["UF_CRM_13_SVCIT_AI_STATUS"]=="NOT_RUN"
+        assert "AI NOT_RUN" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
+        assert len([key for key in fields if key.startswith("UF_CRM_13_SVCIT_AI_")])==11
+        assert op["gigachat_actual_run"] is False
         assert fields["UF_CRM_13_SVCIT_SIGNAL_KIND"]=="demo-synthetic"
         assert "phone" not in fields and "email" not in fields
 
@@ -90,7 +94,9 @@ def test_no_production_keys_or_contacts_in_cli(capsys):
     assert "params_NOT_SENT" not in printed
     summary=json.loads(printed)
     assert summary["unique_companies"]==2
-    assert summary["items"][0]["field_count"]==20
+    assert summary["items"][0]["field_count"]==29
+    assert summary["items"][0]["ai_status"]=="NOT_RUN"
+    assert summary["items"][0]["gigachat_actual_run"] is False
     assert all(x["status"]=="PREVIEW_ONLY_NOT_AUTHORIZED" for x in summary["items"])
 
 
@@ -162,3 +168,40 @@ def test_invalid_payload_redacted_cli(tmp_path,capsys):
     printed=capsys.readouterr().out
     assert "NO_PRINT_DO_NOT_LEAK" not in printed
     assert json.loads(printed)["crm_writes"]==0
+
+
+def test_mocked_gigachat_hypothesis_included_without_affecting_score():
+    plan=build_all_lead_intents(sample())
+    item=plan["intents"][0]
+    fingerprint=item["source_fingerprint"]
+    # Valid exact quote must be drawn from actual evidence string.
+    src=sample()["entries"][0]["signals"][0]["evidence"]
+    ai={
+        "provider":"gigachat", "model":"mock-gigachat", "origin":"AI_hypothesis",
+        "quality_status":"complete", "confidence":0.7,
+        "service":"1С", "possible_need":"Возможно требуется настройка 1С",
+        "evidence_quote":src,
+    }
+    with_ai=build_all_lead_intents(sample(),ai_by_fingerprint={fingerprint:ai})
+    updated=with_ai["intents"][0]
+    assert updated["score"]==item["score"]
+    assert updated["color_badge"]==item["color_badge"]
+    assert updated["gigachat_actual_run"] is True
+    assert updated["ai_status"]=="HYPOTHESIS_UNVERIFIED"
+    fields=updated["params_NOT_SENT"]["fields"]
+    assert fields["UF_CRM_13_SVCIT_AI_STATUS"]=="HYPOTHESIS_UNVERIFIED"
+    assert "HYPOTHESIS" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
+    assert with_ai["crm_writes"]==0
+
+
+def test_bad_gigachat_hypothesis_is_rejected_not_written():
+    original=build_all_lead_intents(sample())
+    fingerprint=original["intents"][0]["source_fingerprint"]
+    ai={
+        "provider":"gigachat","model":"mock","origin":"AI_hypothesis",
+        "quality_status":"complete","confidence":0.5,
+        "service":"1С","possible_need":"Нужно проверить",
+        "evidence_quote":"НЕСУЩЕСТВУЮЩАЯ ЦИТАТА",
+    }
+    with pytest.raises(ValueError,match="REPORT_AI_QUALITY_BLOCKED"):
+        build_all_lead_intents(sample(),ai_by_fingerprint={fingerprint:ai})

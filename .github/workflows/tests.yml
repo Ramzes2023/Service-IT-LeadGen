@@ -146,3 +146,10 @@ jobs:
       - name: No-apply card7 forensic SecureString Windows test
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_B2B_CARD7_FORENSIC_READONLY.ps1
+  windows-card7-postapply-readonly:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read-only postapply CRM and ledger reconciliation mocked secure CLI
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_B2B_CARD7_POSTAPPLY_READONLY.ps1

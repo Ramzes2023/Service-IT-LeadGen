@@ -91,3 +91,10 @@ jobs:
       - name: Strictly read-only corporate schema preflight and SecureString handoff
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_ALL_LEAD_CRM_SCHEMA_READONLY.ps1
+  windows-all-lead-crm-create-preview:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Offline complete 1062 create preview PowerShell smoke
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_ALL_LEAD_CRM_CREATE_PREVIEW.ps1

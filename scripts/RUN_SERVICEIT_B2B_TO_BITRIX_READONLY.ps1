@@ -22,7 +22,7 @@ try {
     & $PythonPath -m py_compile leadpilot/b2b_email_opportunity_bridge.py leadpilot/b2b_bitrix_readiness.py
     if ($LASTEXITCODE -ne 0) { throw 'B2B_BRIDGE_COMPILE_NOT_PASS' }
     Write-Output 'B2B_BRIDGE_TESTS=PASS; WILL_READ_ONLY_TYPE_FIELDS_CATEGORY_STAGES'
-    $Secret = Read-Host -Prompt 'Введите одобренный корпоративный Bitrix24 webhook REST (скрытый ввод)' -AsSecureString
+    $Secret = Read-Host -Prompt 'Approved corporate Bitrix24 REST webhook (hidden input)' -AsSecureString
     $Bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
     try {
         $Plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Bstr)

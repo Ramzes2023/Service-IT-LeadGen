@@ -8,6 +8,8 @@ def test_install_requires_explicit_corporate_write_permission_and_dpapi():
     assert "ConvertFrom-SecureString" in source
     assert "New-ScheduledTaskTrigger" in source
     assert "New-TimeSpan -Minutes 5" in source
+    assert "-AllowStartIfOnBatteries" in source
+    assert "-DontStopIfGoingOnBatteries" in source
     assert "Register-ScheduledTask" in source
     assert "LogonType Interactive" in source
     assert "YES" in source

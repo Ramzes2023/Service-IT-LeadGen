@@ -4,7 +4,8 @@
 [CmdletBinding()]
 param(
     [string]$PythonPath = '',
-    [switch]$UseExistingGigaChat
+    [switch]$UseExistingGigaChat,
+    [switch]$ApplyCommonDetailLayout
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -98,3 +99,35 @@ Write-Host 'SERVICEIT_AUTOFILL_TASK_REGISTERED=YES' -ForegroundColor Green
 Write-Host 'INTERVAL_MINUTES=5; HISTORICAL_IDS_3_7=EXCLUDED; STATUS=ENABLED_ON_WINDOWS_LOGIN'
 Write-Host 'Run manually to see a redacted first cycle:'
 Write-Host ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $Runner + '" -PythonPath "' + $PythonPath + '"')
+
+# Optional same-install, admin-only common detail form. No Kanban tile write.
+if ($ApplyCommonDetailLayout) {
+    $LayoutConsent = Read-Host 'Подтверждаете изменение общей раскладки карточки 1062/21 для всех пользователей? Введите YES'
+    if ($LayoutConsent -cne 'YES') {
+        Write-Host 'COMMON_DETAIL_LAYOUT=NOT_AUTHORIZED'
+    } else {
+        $SecretAgain = Get-Content -LiteralPath $RestFile -Raw -Encoding UTF8 | ConvertTo-SecureString
+        $Handle = [IntPtr]::Zero
+        try {
+            $Handle = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecretAgain)
+            $env:SERVICEIT_BITRIX_WEBHOOK = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Handle)
+            $env:SERVICEIT_AUTOFILL_STATE_DIR = Join-Path $Root 'state'
+            $env:SERVICEIT_COMMON_LAYOUT_APPROVED = 'YES_1062_21'
+            Push-Location $Repo
+            try {
+                & $PythonPath -m leadpilot.serviceit_common_card_layout --apply-common
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning 'COMMON_DETAIL_LAYOUT=BLOCKED_OR_UNCERTAIN; NO_RETRY'
+                }
+            } finally { Pop-Location }
+        } finally {
+            Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+            Remove-Item Env:\SERVICEIT_COMMON_LAYOUT_APPROVED -ErrorAction SilentlyContinue
+            Remove-Item Env:\SERVICEIT_AUTOFILL_STATE_DIR -ErrorAction SilentlyContinue
+            if ($Handle -ne [IntPtr]::Zero) {
+                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Handle)
+            }
+            $SecretAgain.Dispose()
+        }
+    }
+}

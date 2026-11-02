@@ -105,7 +105,7 @@ def test_refuses_non_fns_member_names_or_zip_slip(tmp_path,danger):
 
 
 def test_zip_member_count_declared_mismatch_is_rejected(tmp_path):
-    wrong=xml(1).replace(b'KolDok="1"',b'KolDok="999"')
+    wrong=xml(1).replace('КолДок="1"'.encode(), 'КолДок="999"'.encode())
     path=archive(tmp_path,[(1,wrong)])
     with pytest.raises(ArchiveRejected,match="ZIP_MEMBER_RECORD_COUNT_MISMATCH"):
         scan(path)

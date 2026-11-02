@@ -12,6 +12,7 @@ without one the existing business worker writes honest preliminary HOLD only.
 from __future__ import annotations
 
 import base64
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -78,6 +79,7 @@ class RemoteLedger:
             raise FreeCloudBlocked("ENCRYPTION_KEY_INVALID") from exc
         self.client = client
         self.sha: str | None = None
+        self.last_digest: str | None = None
         self.url = "https://api.github.com/repos/" + REPOSITORY + "/contents/" + STATE_PATH
         self.headers = {
             "Authorization": "Bearer " + token,
@@ -107,7 +109,11 @@ class RemoteLedger:
         require(self.sha is not None, "LEDGER_CAS_SHA_MISSING")
         require(file.is_file() and 0 < file.stat().st_size < MAX_ENCRYPTED // 2,
                 "LEDGER_LOCAL_DB_MISSING_OR_TOO_LARGE")
-        encrypted = self.cipher.encrypt(file.read_bytes())
+        payload = file.read_bytes()
+        digest = sha256(payload).hexdigest()
+        if digest == self.last_digest:
+            return
+        encrypted = self.cipher.encrypt(payload)
         require(len(encrypted) < MAX_ENCRYPTED, "LEDGER_CIPHERTEXT_TOO_LARGE")
         body = {
             "branch": STATE_BRANCH,
@@ -125,6 +131,7 @@ class RemoteLedger:
                 and isinstance(result["content"].get("sha"), str),
                 "LEDGER_CHECKPOINT_ACK_INVALID")
         self.sha = result["content"]["sha"]
+        self.last_digest = digest
 
     def restore(self, db_file: Path, start_after_id: int):
         raw = self.fetch()
@@ -149,6 +156,7 @@ class RemoteLedger:
         require(decrypted.startswith(b"SQLite format 3\x00"),
                 "LEDGER_SQLITE_HEADER_INVALID")
         db_file.write_bytes(decrypted)
+        self.last_digest = sha256(decrypted).hexdigest()
         # Validate BEFORE constructing Store, since Store would create absent
         # tables and accidentally mask damaged or mismatched state.
         with sqlite3.connect(db_file) as db:

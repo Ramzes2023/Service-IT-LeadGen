@@ -1,5 +1,7 @@
 # Service IT LeadGen — test assignment / pilot
 
+Universal enrichment worker: [execution, deployment gates and live blockers](docs/SERVICEIT_UNIVERSAL_WORKER_20261102.md).
+
 Offline integration candidate: [readiness, validation and blockers](docs/INTEGRATION_READINESS_20261031.md).
 Synthetic manager demo: `python -m leadpilot.cli acceptance-demo` (no CRM or AI calls).
 

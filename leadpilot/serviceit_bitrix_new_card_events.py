@@ -159,8 +159,9 @@ def queue_status(db_file: Path) -> dict:
     with closing(sqlite3.connect(db_file.resolve().as_uri()+"?mode=ro",
                                  uri=True,timeout=5)) as db:
         rows=db.execute("SELECT status,COUNT(*) FROM new_cards GROUP BY status").fetchall()
-    _require(all(s==QUEUED for s,count in rows),"QUEUE_UNEXPECTED_STATE")
-    return {"status":"QUEUE_READONLY","pending":sum(count for s,count in rows),
+    _require(all(s in {QUEUED,'RUNNING','HOLD','NEEDS_REVIEW','VERIFIED','UNCERTAIN'}
+                 for s,count in rows),"QUEUE_UNEXPECTED_STATE")
+    return {"status":"QUEUE_READONLY","pending":sum(count for s,count in rows if s==QUEUED),
             "crm_writes":0}
 
 

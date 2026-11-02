@@ -1,0 +1,44 @@
+# Overlay on serviceit-event-receiver.compose.yml. No host callback added.
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.serviceit-event-receiver
+    command: ["python", "-m", "leadpilot.serviceit_enrichment_worker", "--serve"]
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 100
+    environment:
+      SERVICEIT_BITRIX_EVENT_QUEUE_DB: /var/lib/serviceit/new-card-events.sqlite3
+      SERVICEIT_WORKER_LIVE_ENABLED: "${SERVICEIT_WORKER_LIVE_ENABLED:-NO}"
+      SERVICEIT_POLL_MIN_ID: "${SERVICEIT_POLL_MIN_ID:-0}"
+      SERVICEIT_APPROVAL_DIR: /run/serviceit-approvals
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
+      AI_ENABLE: "${AI_ENABLE:-0}"
+      AI_PROVIDER: gigachat
+      GIGACHAT_SCOPE: "${GIGACHAT_SCOPE:-GIGACHAT_API_CORP}"
+      GIGACHAT_MODEL: "${GIGACHAT_MODEL:-GigaChat-2}"
+    secrets:
+      - serviceit_rest_webhook
+      - serviceit_gigachat_credentials
+    volumes:
+      - serviceit_event_queue:/var/lib/serviceit:rw
+      - type: bind
+        source: "${SERVICEIT_APPROVAL_HOST_DIR:?private approval directory required}"
+        target: /run/serviceit-approvals
+        read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-m", "leadpilot.serviceit_enrichment_worker", "--health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+secrets:
+  serviceit_rest_webhook:
+    file: "${SERVICEIT_REST_SECRET_FILE:?private REST secret file required}"
+  serviceit_gigachat_credentials:
+    file: "${SERVICEIT_GIGACHAT_SECRET_FILE:?private model secret file required}"

@@ -67,10 +67,13 @@ CREATE TABLE IF NOT EXISTS serviceit_v2_crm_outbox (
   state text NOT NULL CHECK (state IN
     ('PENDING','RESERVED','POST_UNCERTAIN','VERIFIED','BLOCKED')),
   bitrix_item_id bigint NULL,
+  approval_ref text NULL,
   attempt_count integer NOT NULL DEFAULT 0,
   last_attempt_at timestamptz,
   FOREIGN KEY (source,tender_id) REFERENCES serviceit_v2_opportunities(source,tender_id)
 );
+ALTER TABLE serviceit_v2_crm_outbox
+  ADD COLUMN IF NOT EXISTS approval_ref text;
 CREATE TABLE IF NOT EXISTS serviceit_v2_message_failures (
   gmail_message_id text PRIMARY KEY,
   error_code text NOT NULL,

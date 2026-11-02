@@ -1,0 +1,36 @@
+# Private-only ServiceIT isolated 1062 event receiver.
+# No public exposure: a corporate HTTPS reverse proxy must be set up separately.
+# Never put real secrets in this file or GitHub.
+name: serviceit-event-queue
+services:
+  receiver:
+    build:
+      context: ..
+      dockerfile: Dockerfile.serviceit-event-receiver
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    environment:
+      SERVICEIT_BITRIX_APPLICATION_TOKEN: "${SERVICEIT_BITRIX_APPLICATION_TOKEN:?application token is required}"
+      SERVICEIT_BITRIX_EVENT_QUEUE_DB: "/var/lib/serviceit/new-card-events.sqlite3"
+    ports:
+      - "127.0.0.1:18780:8000"
+    volumes:
+      - serviceit_event_queue:/var/lib/serviceit:rw
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://127.0.0.1:8000/health',timeout=3); assert r.status_code==200 and r.json()['production_writer_enabled'] is False"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  serviceit_event_queue:
+    name: serviceit_event_queue_private

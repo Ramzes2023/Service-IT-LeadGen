@@ -7,7 +7,9 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 if (-not $PythonPath) { $PythonPath = Join-Path $Repo '.venv\Scripts\python.exe' }
 if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
-    throw 'SERVICEIT_EXISTING_VENV_REQUIRED_IN_WORKTREE'
+    $ParentPython = Join-Path $env:USERPROFILE 'Service_IT_GitHub_Repo\Service-IT-LeadGen\.venv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $ParentPython -PathType Leaf) { $PythonPath = $ParentPython }
+    else { throw 'SERVICEIT_EXISTING_VENV_REQUIRED_IN_WORKTREE' }
 }
 if (Test-Path Env:BITRIX24_B2B_READONLY_WEBHOOK) {
     throw 'BITRIX_B2B_WEBHOOK_ALREADY_IN_ENV_CLEAR_FIRST'

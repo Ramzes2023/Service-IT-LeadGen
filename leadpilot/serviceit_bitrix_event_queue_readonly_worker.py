@@ -70,7 +70,7 @@ def pending_ids(queue: Path, limit: int=MAX_BATCH) -> list[int]:
 
 
 def _text_or_empty(val,maximum=2000):
-    return type(val) is str and len(val)<=maximum
+    return val is None or (type(val) is str and len(val)<=maximum)
 
 
 def classify_item(item: dict, *, requested_id: int) -> dict:
@@ -99,6 +99,12 @@ def classify_item(item: dict, *, requested_id: int) -> dict:
         raise ReadOnlyWorkerBlocked("CRM_EXISTING_SCORE_TYPE_INVALID")
     if badge not in (None,"") and not _text_or_empty(badge,200):
         raise ReadOnlyWorkerBlocked("CRM_BADGE_FIELD_TYPE_INVALID")
+    signal=signal or ""
+    kind=kind or ""
+    source=source or ""
+    stop=stop or ""
+    ai_status=ai_status or ""
+    report=report or ""
     source_hash=(sha256(signal.encode()).hexdigest()[:16] if signal else "")
     result={"item_id":requested_id,"source_fingerprint":source_hash,
             "source_kind":"unknown","decision":"SOURCE_CONTRACT_REVIEW",
@@ -109,7 +115,9 @@ def classify_item(item: dict, *, requested_id: int) -> dict:
     if kind=="tender-opportunity" and source=="B2B-Center email subscription":
         must(re.fullmatch(r"B2B-CENTER-[0-9]{5,12}",signal) is not None,
              "B2B_SOURCE_ID_CONFLICT")
-        must(stop.strip() and ("HOLD" in (item.get(EVIDENCE) or "").upper()
+        evidence=item.get(EVIDENCE)
+        must(_text_or_empty(evidence,2000),"CRM_EVIDENCE_FIELD_INVALID")
+        must(stop.strip() and ("HOLD" in (evidence or "").upper()
              or "не" in stop.lower()),"B2B_HOLD_GUARD_MISSING")
         # The original source is unverified; even genuine GigaChat on email
         # subject is only an unverified HYPOTHESIS. No Score before buyer checks.

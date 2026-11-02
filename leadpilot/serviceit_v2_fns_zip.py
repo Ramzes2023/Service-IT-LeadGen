@@ -66,7 +66,7 @@ def inspect_local_snapshot(archive: Path, *, release: Release,
                            expected_archive_sha256: str) -> ScanResult:
     _must(isinstance(archive, Path) and archive.is_file()
           and archive.suffix.lower() == ".zip"
-          and 1024 <= archive.stat().st_size <= MAX_ZIP_SIZE,
+          and 100 <= archive.stat().st_size <= MAX_ZIP_SIZE,
           "ZIP_LOCAL_FILE_MISSING_OR_OVER_BUDGET")
     _must(isinstance(release, Release), "FNS_PASSPORT_RELEASE_REQUIRED")
     _must(isinstance(target_inns, list) and

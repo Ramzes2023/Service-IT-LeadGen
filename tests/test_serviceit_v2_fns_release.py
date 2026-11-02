@@ -107,3 +107,18 @@ def test_too_big_download_is_stopped_and_removed(tmp_path):
             download_release(http,rel,dest,explicitly_approved=True,
                              max_download_bytes=1024)
     assert not dest.exists() and not (tmp_path/"big.zip.part").exists()
+
+
+def test_different_release_redirect_fails_closed(tmp_path):
+    rel = parse_official_passport(passport())
+    dest=tmp_path/"current.zip"
+    calls=[]
+    def handler(req):
+        calls.append(str(req.url))
+        return httpx.Response(302,headers={
+            "Location": "https://file.nalog.ru/opendata/7707329152-rsmp/data-10092026-structure-12052026.zip"})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(FNSDownloadBlocked,match="NO_PARTIAL"):
+            download_release(http,rel,dest,explicitly_approved=True)
+    assert calls == [ZIP]
+    assert not dest.exists()

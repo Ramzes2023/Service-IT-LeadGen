@@ -62,19 +62,85 @@ def latest_existing_card_id(rest) -> int:
     return max(7, first)
 
 
+# Diagnostic labels are closed enums. Never print exceptions, API messages,
+# webhook URLs, raw JSON, client identity or arbitrary server-controlled strings.
+_SAFE_REASONS = frozenset({
+    "REST_SCOPE_BLOCKED", "REST_HTTP_UNVERIFIED", "REST_RESPONSE_UNVERIFIED",
+    "CUTOVER_INVENTORY_INVALID", "CUTOVER_ITEM_INVALID",
+    "CUTOVER_CARD_ID_INVALID", "CUTOVER_CARD_ID_OUT_OF_BOUNDS",
+    "CUTOVER_CATEGORY_MISMATCH", "CUTOVER_RESULT_NOT_DESCENDING",
+    "CUTOVER_TOP_ITEM_IDENTITY_UNVERIFIED",
+    "BITRIX24_WEBHOOK_MISSING_OR_BAD_FORMAT",
+    "BITRIX24_WEBHOOK_MUST_BE_OFFICIAL_PORTAL",
+})
+_SAFE_API_ERRORS = frozenset({
+    "ACCESS_DENIED", "INVALID_CREDENTIALS", "INVALID_TOKEN",
+    "ERROR_METHOD_NOT_FOUND", "ERROR_CORE", "INVALID_REQUEST",
+    "ERROR_ARGUMENT", "NO_AUTH_FOUND", "EXPIRED_TOKEN",
+    "INSUFFICIENT_SCOPE", "ENTITY_TYPE_NOT_SUPPORTED",
+    "ERROR_NOT_FOUND", "ERROR_PERMISSION_DENIED",
+})
+
+
+def _safe_reason(exc) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "HTTP_TIMEOUT"
+    if isinstance(exc, httpx.TransportError):
+        return "HTTP_TRANSPORT_FAILED"
+    if isinstance(exc, ValueError) and len(exc.args) == 1:
+        if type(exc.args[0]) is str and exc.args[0] in _SAFE_REASONS:
+            return exc.args[0]
+    return "UNCLASSIFIED_READ_ONLY_FAILURE"
+
+
+def _observe_http(state, response):
+    """Read response only for exact safe HTTP/API codes, no content in logs."""
+    state["http"] = str(response.status_code) if 100 <= response.status_code <= 599 else "UNKNOWN"
+    state["api"] = "NONE"
+    if response.status_code != 200:
+        return
+    try:
+        length = response.headers.get("content-length")
+        if length and int(length) > 512000:
+            return
+        response.read()
+        if len(response.content) > 512000:
+            return
+        data = response.json()
+        if isinstance(data, dict) and "error" in data:
+            code = data.get("error")
+            state["api"] = code if type(code) is str and code in _SAFE_API_ERRORS else "OTHER_REDACTED"
+    except (ValueError, TypeError, httpx.HTTPError):
+        state["api"] = "UNREADABLE"
+
+
 def main() -> int:
     webhook = os.environ.pop("SERVICEIT_BITRIX_WEBHOOK", "")
     if not webhook:
         print("SERVICEIT_CLOUD_CUTOVER=BLOCKED_MISSING_WEBHOOK")
         return 2
+    stage = "WEBHOOK_VALIDATE"
+    observed = {"http": "NOT_SENT", "api": "NONE"}
     try:
-        with httpx.Client(trust_env=False, follow_redirects=False, timeout=20) as client:
-            latest = latest_existing_card_id(Rest(webhook, client))
+        with httpx.Client(
+            trust_env=False, follow_redirects=False, timeout=20,
+            event_hooks={"response": [lambda response: _observe_http(observed, response)]},
+        ) as client:
+            rest = Rest(webhook, client)
+            def traced(method, params):
+                nonlocal stage
+                stage = "LIST" if method == "crm.item.list" else "GET_TOP"
+                return rest(method, params)
+            latest = latest_existing_card_id(traced)
         print(f"SERVICEIT_CLOUD_CUTOVER_MAX_ID={latest}")
         print("SERVICEIT_CLOUD_CUTOVER_CRM_WRITES=0")
         return 0
-    except Exception:
+    except Exception as exc:
         print("SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY")
+        print("SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC="
+              + stage + ":" + _safe_reason(exc)
+              + ":HTTP_" + observed["http"]
+              + ":API_" + observed["api"])
         return 2
 
 

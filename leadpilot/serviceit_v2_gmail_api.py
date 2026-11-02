@@ -10,6 +10,7 @@ import imaplib
 import json
 import os
 import re
+from pathlib import Path
 
 import httpx
 
@@ -18,6 +19,8 @@ GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 MAX_RAW_BYTES = 256_000
 MAX_MESSAGES = 100
+PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+OAUTH_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
 
 class GmailSourceBlocked(ValueError):
@@ -42,7 +45,7 @@ def _safe_json(response: httpx.Response, *, limit=512_000):
 
 class GmailReadOnly:
     def __init__(self, client: httpx.Client, *, client_id: str, client_secret: str,
-                 refresh_token: str):
+                 refresh_token: str, expected_email=None):
         _must(isinstance(client, httpx.Client), "HTTP_CLIENT_REQUIRED")
         for value in (client_id, client_secret, refresh_token):
             _must(isinstance(value, str) and 12 <= len(value) <= 4096
@@ -51,6 +54,11 @@ class GmailReadOnly:
         self.client_id = client_id
         self.client_secret = client_secret
         self.refresh_token = refresh_token
+        if expected_email is not None:
+            _must(isinstance(expected_email, str) and
+                  re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", expected_email),
+                  "EXPECTED_MAILBOX_INVALID")
+        self.expected_email = expected_email.lower() if expected_email else None
 
     def _token(self):
         try:
@@ -68,12 +76,28 @@ class GmailReadOnly:
               and not re.search(r"\s", token), "OAUTH_ACCESS_TOKEN_INVALID")
         return token
 
+    def _verify_account(self, token):
+        if not self.expected_email:
+            return
+        try:
+            response = self.client.get(PROFILE_URL,
+                headers={"Authorization": "Bearer " + token},
+                timeout=15, follow_redirects=False)
+            data = _safe_json(response, limit=32_000)
+        except httpx.HTTPError:
+            raise GmailSourceBlocked("GMAIL_ACCOUNT_CHECK_UNAVAILABLE") from None
+        address = data.get("emailAddress")
+        _must(isinstance(address, str) and
+              address.lower() == self.expected_email,
+              "GMAIL_WRONG_ACCOUNT_BLOCKED")
+
     def recent_messages(self, *, lookback_days=14, max_messages=60, should_fetch=None):
         _must(type(lookback_days) is int and 1 <= lookback_days <= 30,
               "LOOKBACK_INVALID")
         _must(type(max_messages) is int and 1 <= max_messages <= MAX_MESSAGES,
               "MESSAGE_LIMIT_INVALID")
         token = self._token()
+        self._verify_account(token)
         headers = {"Authorization": "Bearer " + token}
         # Include archived vendor notices too; API default excludes Spam/Trash.
         query = "from:" + SENDER + " newer_than:" + str(lookback_days) + "d"
@@ -133,10 +157,48 @@ class GmailReadOnly:
             yield mid, raw
 
 
+def _private_owner_bundle(path_value):
+    """One owner-created Gmail readonly bundle; fail closed on wrong file."""
+    path = Path(path_value).expanduser()
+    _must(path.is_file() and not path.is_symlink() and
+          0 < path.stat().st_size <= 16384, "OAUTH_BUNDLE_FILE_INVALID")
+    if os.name != "nt":
+        _must((path.stat().st_mode & 0o077) == 0 and
+              path.stat().st_uid == os.geteuid(),
+              "OAUTH_BUNDLE_FILE_NOT_PRIVATE")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError, UnicodeError):
+        raise GmailSourceBlocked("OAUTH_BUNDLE_CONTENT_INVALID") from None
+    names = {"client_id","client_secret","refresh_token",
+             "expected_email","scope"}
+    _must(isinstance(data, dict) and set(data) == names
+          and data["scope"] == OAUTH_SCOPE
+          and isinstance(data["expected_email"],str),
+          "OAUTH_BUNDLE_SCOPE_OR_SHAPE_INVALID")
+    return data
+
+
 def from_environment(client: httpx.Client):
-    # Never disclose secret values in errors or logs.
-    keys = ("SERVICEIT_V2_GMAIL_CLIENT_ID", "SERVICEIT_V2_GMAIL_CLIENT_SECRET",
-            "SERVICEIT_V2_GMAIL_REFRESH_TOKEN")
-    values = tuple(os.environ.get(key, "") for key in keys)
-    return GmailReadOnly(client, client_id=values[0], client_secret=values[1],
-                         refresh_token=values[2])
+    """Use local owner-only file OR explicit private env, never mixed sources."""
+    names = ("SERVICEIT_V2_GMAIL_CLIENT_ID", "SERVICEIT_V2_GMAIL_CLIENT_SECRET",
+             "SERVICEIT_V2_GMAIL_REFRESH_TOKEN")
+    file_path = os.environ.get("SERVICEIT_V2_GMAIL_OAUTH_FILE", "")
+    expected = os.environ.get("SERVICEIT_V2_GMAIL_EXPECTED_EMAIL", "")
+    if file_path:
+        _must(not any(os.environ.get(n) for n in names),
+              "MIXED_OAUTH_CREDENTIAL_SOURCES_FORBIDDEN")
+        data = _private_owner_bundle(file_path)
+        if expected:
+            _must(expected.lower() == data["expected_email"].lower(),
+                  "EXPECTED_MAILBOX_CONFLICT")
+        return GmailReadOnly(
+            client, client_id=data["client_id"],
+            client_secret=data["client_secret"],
+            refresh_token=data["refresh_token"],
+            expected_email=data["expected_email"])
+    _must(bool(expected), "EXPECTED_GMAIL_MAILBOX_REQUIRED")
+    values = tuple(os.environ.get(k, "") for k in names)
+    return GmailReadOnly(
+        client, client_id=values[0],client_secret=values[1],
+        refresh_token=values[2],expected_email=expected)

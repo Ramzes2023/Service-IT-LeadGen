@@ -20,7 +20,7 @@ from defusedxml import ElementTree as SafeET
 
 OFFICIAL_MSP_PASSPORT = "https://www.nalog.gov.ru/opendata/7707329152-rsmp/"
 ACCEPTED_REGIONS = frozenset({"77", "50"})
-MAX_XML_BYTES = 256_000
+MAX_XML_BYTES = 8_000_000
 MISSING = "MISSING_EVIDENCE"
 
 

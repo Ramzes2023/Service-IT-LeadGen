@@ -6,6 +6,7 @@ Do not normalize or rewrite an ambiguous CRM value. Never expose CRM contents.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from hashlib import sha256
 import json
 import os
@@ -130,7 +131,7 @@ def ledger_readonly(state_dir):
         return {"state": "LEDGER_NOT_FOUND", "items": {}}
     # mode=ro cannot create or overwrite a SQLite database.
     try:
-        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3) as db:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
             rows = db.execute(
                 "SELECT key,state FROM cockpit_ops WHERE key IN (?,?)", LEDGER_KEYS
             ).fetchall()

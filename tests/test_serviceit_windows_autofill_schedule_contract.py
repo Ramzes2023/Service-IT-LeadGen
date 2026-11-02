@@ -11,7 +11,12 @@ def test_install_requires_explicit_corporate_write_permission_and_dpapi():
     assert "Register-ScheduledTask" in source
     assert "LogonType Interactive" in source
     assert "YES" in source
-    assert "GIGACHAT_CREDENTIALS" in source
+    assert "Read-Host" in source and "-AsSecureString" in source
+    assert "GIGACHAT=DEDICATED_CREDENTIAL_DPAPI_CURRENT_USER" in source
+    assert "GIGACHAT_CREDENTIALS" not in source
+    assert "TenderLens-AI" not in source
+    assert "VALYQON" not in source
+    assert "GIGACHAT_CREDENTIAL_MISSING" in source
     assert "SOURCE" not in source.split("Register-ScheduledTask")[-1]
 
 

@@ -5,6 +5,7 @@
 param(
     [string]$PythonPath = '',
     [switch]$UseExistingGigaChat,
+    [switch]$ConfigureGigaChat,
     [switch]$ApplyCommonDetailLayout
 )
 Set-StrictMode -Version Latest
@@ -41,51 +42,32 @@ try {
     $Rest | ConvertFrom-SecureString | Set-Content -LiteralPath $RestFile -Encoding UTF8 -NoNewline
 } finally { $Rest.Dispose() }
 
-# Existing tested local credential may be imported once into SAME-USER DPAPI,
-# never into the repo, git, logs or scheduled task command line.
-if ($UseExistingGigaChat) {
+# Owner supplies a dedicated, explicitly authorized GigaChat key into an invisible prompt.
+# Never import credentials from other projects or scan unrelated local .env files.
+# Legacy -UseExistingGigaChat now means interactive secure prompt, not automatic reuse.
+if ($UseExistingGigaChat -or $ConfigureGigaChat) {
     Write-Host 'Подключение GigaChat только для корпоративно проверенных карточек.'
     $Consent = Read-Host 'Подтверждена корпоративная политика передачи одобренных сигналов GigaChat? Введите YES'
     if ($Consent -cne 'YES') {
         Write-Host 'GIGACHAT=NOT_INSTALLED_NO_PRIVACY_APPROVAL'
     } else {
-        $Paths = @(
-            (Join-Path $HOME 'TenderLens-AI\.env'),
-            (Join-Path $HOME 'TenderLens-AI\.env.local'),
-            (Join-Path $HOME 'Documents\Codex\tender-ai-phase19\.env'),
-            (Join-Path $HOME 'Documents\Codex\TenderLens-AI\.env'),
-            (Join-Path $env:LOCALAPPDATA 'VALYQON\.env')
-        )
-        $credential = $null
-        $scope = 'GIGACHAT_API_PERS'
-        foreach ($File in $Paths) {
-            if (!(Test-Path -LiteralPath $File -PathType Leaf)) { continue }
-            $candidate = $null
-            $candidateScope = $scope
-            foreach ($line in [IO.File]::ReadAllLines($File, [Text.Encoding]::UTF8)) {
-                if ($line -match '^\s*(?:export\s+)?GIGACHAT_CREDENTIALS\s*=\s*(.*)$') {
-                    $candidate = $Matches[1].Trim().Trim([char[]]@([char]34, [char]39))
-                }
-                if ($line -match '^\s*(?:export\s+)?GIGACHAT_SCOPE\s*=\s*(.*)$') {
-                    $candidateScope = $Matches[1].Trim().Trim([char[]]@([char]34, [char]39))
-                }
-            }
-            if ($candidate) {
-                $credential = $candidate; $scope = $candidateScope
-                break
-            }
-        }
-        if (!$credential) { throw 'EXISTING_GIGACHAT_CREDENTIAL_NOT_FOUND' }
+        $scope = Read-Host 'GigaChat scope (GIGACHAT_API_PERS / GIGACHAT_API_B2B / GIGACHAT_API_CORP, Enter = PERS)'
+        if ([string]::IsNullOrWhiteSpace($scope)) { $scope = 'GIGACHAT_API_PERS' }
         if ($scope -notin @('GIGACHAT_API_PERS', 'GIGACHAT_API_B2B', 'GIGACHAT_API_CORP')) {
             throw 'GIGACHAT_SCOPE_UNSUPPORTED'
         }
         $ModelFile = Join-Path $Root 'gigachat.dpapi'
         if (Test-Path $ModelFile) { throw 'GIGACHAT_SECRET_ALREADY_CONFIGURED' }
-        $Secret = ConvertTo-SecureString $credential -AsPlainText -Force
-        try { $Secret | ConvertFrom-SecureString | Set-Content -LiteralPath $ModelFile -Encoding UTF8 -NoNewline }
-        finally { $Secret.Dispose(); $credential = $null }
+        $Secret = Read-Host 'Отдельный GigaChat API-ключ, разрешенный для Сервис ИТ (ввод скрыт)' -AsSecureString
+        if ($null -eq $Secret -or $Secret.Length -lt 16) { throw 'GIGACHAT_CREDENTIAL_MISSING' }
+        try {
+            $Secret | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $ModelFile -Encoding UTF8 -NoNewline
+        } finally {
+            $Secret.Dispose()
+        }
         $scope | Set-Content -LiteralPath (Join-Path $Root 'gigachat-scope.txt') -Encoding Ascii
-        Write-Host 'GIGACHAT=ENCRYPTED_FOR_CURRENT_WINDOWS_USER' -ForegroundColor Green
+        Write-Host 'GIGACHAT=DEDICATED_CREDENTIAL_DPAPI_CURRENT_USER' -ForegroundColor Green
     }
 }
 

@@ -4,7 +4,7 @@ from email.message import EmailMessage
 import pytest
 
 from leadpilot.b2b_email_opportunity_bridge import (
-    InputRejected, build_bitrix_preview, clean_tender_url, parse_email,
+    InputRejected, build_bitrix_preview, clean_tender_url, parse_email, classify_services,
 )
 
 
@@ -94,3 +94,46 @@ def test_no_real_backend_or_credentials():
     assert report["status"] == "B2B_EMAIL_TENDER_RESEARCH_PREVIEW_ONLY"
     assert "fields_not_sent" in report["cards_not_sent"][0]
     assert report["outreach"] == 0
+
+
+@pytest.mark.parametrize("title", [
+    "Внедрение системы полива сельхозполей",
+    "Интеграция трубопроводов и строительных конструкций",
+    "Техническое обслуживание котельной",
+    "Маркировка труб и металлопроката",
+    "Поставка медицинского оборудования",
+    "Мониторинг загрязнения воздуха и почвы",
+    "Поставка кабеля для строительных работ",
+    "Система мониторинга вибрации промышленных механизмов",
+])
+def test_generic_non_it_tenders_never_reach_it_opportunity_queue(title):
+    assert classify_services(title) == []
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Сопровождение 1С:Бухгалтерии и 1С ЗУП", "1C"),
+    ("Внедрение Битрикс24 CRM", "CRM"),
+    ("ИТ-аутсорсинг рабочих мест", "IT_SUPPORT"),
+    ("Обслуживание серверов и сетевого оборудования", "SERVERS"),
+    ("Внедрение электронного документооборота ЭДО", "KKT_EDO"),
+    ("Поставка кассового оборудования ККТ", "KKT_EDO"),
+    ("Интеграция интернет-магазина с базой данных", "INTEGRATION"),
+    ("Поставка торгового оборудования и ТСД", "KKT_EDO"),
+    ("Поставка компьютерных мониторов", "SERVERS"),
+])
+def test_strict_serviceit_categories_are_kept(title, expected):
+    assert expected in classify_services(title)
+
+
+def test_no_generic_integration_false_positive_in_actual_email_previews():
+    a = bulletin(number="4661617", title="Сопровождение 1С:Бухгалтерии")
+    b = bulletin(number="4652355", title="Интеграция строительных конструкций")
+    c = bulletin(number="4661111", title="Поставка технических систем для обогрева")
+    report = build_bitrix_preview([mail(a + b + c)])
+    assert report["tenders_unique"] == 3
+    assert report["it_opportunity_previews"] == 1
+    assert [x["source_tender_id"] for x in report["cards_not_sent"]] == ["4661617"]
+    assert report["qualified_real_leads"] == 0
+    assert report["buyer_inn_verified"] == 0
+    assert report["fns_micro_small_77_50"] == 0
+    assert report["crm_writes"] == 0

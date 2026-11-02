@@ -108,6 +108,9 @@ def reconcile_readonly(rest, *, db_file:Path) -> dict:
     ledger=inspect_ledger(db_file,protected,expected_ai)
     original=rest("crm.item.get",{
         "entityTypeId":ENTITY,"id":ITEM_ID,"useOriginalUfNames":"Y"})
+    require(isinstance(original,dict) and isinstance(original.get("item"),dict),
+            "READ_ONLY_RESULT_SHAPE_INVALID")
+    _check_item_shape(original["item"])
     camel=rest("crm.item.get",{
         "entityTypeId":ENTITY,"id":ITEM_ID,"useOriginalUfNames":"N"})
     schema=rest("crm.item.fields",{

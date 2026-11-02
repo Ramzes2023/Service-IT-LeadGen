@@ -1,0 +1,77 @@
+name: ServiceIT 12-field AI CRM read-only readiness
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: serviceit-12-field-crm-readonly
+  cancel-in-progress: false
+
+jobs:
+  verify-existing-ai-fields:
+    # A comment on issue 74 by the owner or an explicit manual run only.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.issue.number == 74 && !github.event.issue.pull_request && github.actor == 'Ramzes2023' && github.event.comment.body == 'SERVICEIT_AI_12_FIELD_READONLY_CHECK_V1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install deterministic runtime
+        run: python -m pip install -r requirements.txt
+      - name: Check all 12 existing AI and Score fields, strictly read-only
+        env:
+          SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import httpx
+          from leadpilot.serviceit_enrichment_worker import Rest, schema_limits, FIELDS
+
+          secret = os.environ.pop("SERVICEIT_BITRIX_WEBHOOK", "")
+          if not secret:
+              print(json.dumps({
+                  "status": "SERVICEIT_12_FIELD_READONLY_BLOCKED",
+                  "reason": "GITHUB_REST_SECRET_NOT_CONFIGURED",
+                  "crm_writes": 0, "gigachat_calls": 0,
+              }))
+              sys.exit(2)
+
+          try:
+              with httpx.Client(trust_env=False, follow_redirects=False, timeout=20) as client:
+                  limits = schema_limits(Rest(secret, client))
+              assert len(limits) == len(FIELDS) == 12
+              print(json.dumps({
+                  "status": "SERVICEIT_12_FIELD_READONLY_PASS",
+                  "checked_field_count": len(limits),
+                  "entity_type_id": 1062,
+                  "category_id": 21,
+                  "crm_methods": [
+                      "crm.type.getByEntityTypeId",
+                      "crm.item.fields",
+                      "userfieldconfig.list",
+                      "userfieldconfig.get",
+                  ],
+                  "crm_item_gets": 0, "crm_writes": 0, "gigachat_calls": 0,
+                  "production_activated": False,
+              }))
+          except Exception:
+              # Never log raw HTTP responses, webhook/token or field values.
+              print(json.dumps({
+                  "status": "SERVICEIT_12_FIELD_READONLY_BLOCKED",
+                  "reason": "LIVE_SCHEMA_OR_PERMISSIONS_NOT_VERIFIED",
+                  "crm_writes": 0, "gigachat_calls": 0,
+                  "production_activated": False,
+              }))
+              sys.exit(2)
+          PY

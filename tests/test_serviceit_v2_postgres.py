@@ -43,6 +43,7 @@ def db():
     psycopg = pytest.importorskip("psycopg")
     with psycopg.connect(dsn, autocommit=True) as con:
         init_schema(con)
+        con.execute("TRUNCATE serviceit_v2_crm_outbox, serviceit_v2_versions, serviceit_v2_opportunities, serviceit_v2_messages, serviceit_v2_runtime CASCADE")
         yield con
 
 
@@ -69,6 +70,7 @@ def test_mail_versions_replay_and_no_crm_delivery(db):
 
 
 def test_same_message_id_cannot_be_silently_replaced(db):
+    ingest_message(db, "1a19b7630301bafb", example_mail())
     with pytest.raises(V2StoreBlocked, match="SAME_GMAIL_ID_DIFFERENT_MIME"):
         ingest_message(db, "1a19b7630301bafb", example_mail("Внедрение 1С"))
 
@@ -93,6 +95,7 @@ class NoNetworkFakeGmail:
 
 
 def test_second_poll_skips_already_persisted_body(db):
+    ingest_message(db, "1a19b7630301bafb", example_mail())
     gmail = NoNetworkFakeGmail([("1a19b7630301bafb", example_mail()),
                                ("1a19b7630301babe", example_mail("Разработка ПО 1С"))])
     first = poll_once(db, gmail)

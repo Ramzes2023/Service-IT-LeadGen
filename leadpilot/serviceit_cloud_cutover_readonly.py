@@ -12,6 +12,21 @@ import httpx
 from .serviceit_enrichment_worker import Rest
 
 
+class CutoverItemShapeError(ValueError):
+    """Only a bounded index + a type from a fixed enum. Never carries item data."""
+    def __init__(self, index: int, item: object):
+        self.index = index
+        self.kind = (
+            "NULL" if item is None else
+            "TEXT" if type(item) is str else
+            "LIST" if isinstance(item, list) else
+            "BOOL" if type(item) is bool else
+            "NUMBER" if type(item) in (int, float) else
+            "OTHER"
+        )
+        super().__init__("CUTOVER_ITEM_INVALID")
+
+
 def latest_existing_card_id(rest) -> int:
     result = rest("crm.item.list", {
         "entityTypeId": 1062,
@@ -28,9 +43,9 @@ def latest_existing_card_id(rest) -> int:
         raise ValueError("CUTOVER_INVENTORY_INVALID")
     seen = set()
     previous = None
-    for item in items:
+    for index, item in enumerate(items):
         if not isinstance(item, dict):
-            raise ValueError("CUTOVER_ITEM_INVALID")
+            raise CutoverItemShapeError(index, item)
         try:
             card_id = int(item.get("id", ""))
         except (ValueError, TypeError) as exc:
@@ -137,10 +152,12 @@ def main() -> int:
         return 0
     except Exception as exc:
         print("SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY")
+        shape = (":INDEX_" + str(exc.index) + ":KIND_" + exc.kind
+                 if type(exc) is CutoverItemShapeError else "")
         print("SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC="
               + stage + ":" + _safe_reason(exc)
               + ":HTTP_" + observed["http"]
-              + ":API_" + observed["api"])
+              + ":API_" + observed["api"] + shape)
         return 2
 
 

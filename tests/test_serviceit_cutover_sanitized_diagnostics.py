@@ -100,3 +100,35 @@ def test_windows_diagnostic_does_not_trigger_credential_upload_or_task_disable()
     assert "Set-Variable" not in diagnose
     assert "secret set" not in diagnose
     assert "SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC" not in diagnose or "DIAGNOSTIC" in diagnose
+
+
+@pytest.mark.parametrize("bad_item,kind", [
+    (None, "NULL"),
+    ("UNTRUSTED_SOURCE_SECRET_1234", "TEXT"),
+    ([{"id": 67, "categoryId": 21}], "LIST"),
+    (23, "NUMBER"),
+    (False, "BOOL"),
+])
+def test_nonobject_item_has_only_bounded_index_and_safe_kind(
+        monkeypatch, capsys, bad_item, kind):
+    def route(request):
+        return httpx.Response(200, json={"result": {"items": [
+            {"id": 90, "categoryId": 21},
+            bad_item,
+        ]}})
+    mock_http_client(monkeypatch, route)
+    monkeypatch.setenv("SERVICEIT_BITRIX_WEBHOOK", SAFE_FAKE_HOOK)
+    assert main() == 2
+    out = capsys.readouterr().out
+    assert ("SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC="
+            "LIST:CUTOVER_ITEM_INVALID:HTTP_200:API_NONE:INDEX_1:KIND_" + kind) in out
+    assert "UNTRUSTED_SOURCE_SECRET_1234" not in out
+    assert "syntheticSECRET" not in out
+    assert "90" not in out
+
+
+def test_empty_or_out_of_scope_item_still_blocks_without_guessing():
+    from leadpilot.serviceit_cloud_cutover_readonly import latest_existing_card_id
+    with pytest.raises(ValueError, match="CUTOVER_ITEM_INVALID"):
+        latest_existing_card_id(lambda *args, **kwargs: {
+            "items": [None]})

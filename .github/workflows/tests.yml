@@ -153,3 +153,10 @@ jobs:
       - name: Read-only postapply CRM and ledger reconciliation mocked secure CLI
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_B2B_CARD7_POSTAPPLY_READONLY.ps1
+  windows-card7-prewrite-readonly:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No-reservation prewrite forensic CLI mock on Windows
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_B2B_CARD7_PREWRITE_STAGE_READONLY.ps1

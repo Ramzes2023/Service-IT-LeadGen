@@ -105,3 +105,21 @@ def test_second_poll_skips_already_persisted_body(db):
     assert second["new_messages"] == 0
     assert gmail.requested == ["1a19b7630301babe"]
     assert read_status(db)["total_crm_outbox_events"] == 0
+
+
+def test_invalid_vendor_mime_is_persisted_as_visible_retry(db):
+    bad = (b"From: B2B <marketplace@b2b-center.ru>\r\n"
+           b"Subject: Notice\r\n"
+           b"MIME-Version: 1.0\r\n"
+           b"Content-Type: application/octet-stream\r\n\r\n"
+           b"not-an-email-text-body")
+    source = NoNetworkFakeGmail([("1a19b7630301bac0", bad)])
+    first = poll_once(db, source)
+    assert first["rejected_messages"] == 1
+    assert read_status(db)["unresolved_mail_parsing_errors"] == 1
+    second = poll_once(db, source)
+    assert second["rejected_messages"] == 1
+    assert db.execute(
+        "SELECT attempts FROM serviceit_v2_message_failures WHERE gmail_message_id=%s",
+        ("1a19b7630301bac0",)).fetchone()[0] == 2
+    assert read_status(db)["total_crm_outbox_events"] == 0

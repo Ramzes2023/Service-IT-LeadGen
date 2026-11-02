@@ -164,6 +164,11 @@ def review_queue(db: sqlite3.Connection, *, limit=100):
         groups = json.loads(groups_json)
         if not groups:
             continue
+        # Research queue prioritizes possible private 1C buyers, but the
+        # company name and SME status remain UNVERIFIED.
+        private_form_unverified = bool(
+            re.match(r'^\\s*ООО(?:\\s|[«"])', org or "", re.I))
+        lead_research_candidate = private_form_unverified and "1C" in groups
         items.append({
             "source": "B2B-Center", "tender_id": n,
             "subject": title, "organizer_as_named_in_email": org,
@@ -174,10 +179,15 @@ def review_queue(db: sqlite3.Connection, *, limit=100):
             "buyer_region": "NOT_VERIFIED", "source_status": "NOT_VERIFIED",
             "corporate_contact": "NOT_VERIFIED",
             "classification": "TENDER_OPPORTUNITY_HOLD",
+            "lead_research_candidate": bool(lead_research_candidate),
+            "review_priority": ("P1_1C_PRIVATE_BUYER_RESEARCH" if lead_research_candidate
+                                else "P2_TENDER_RESEARCH"),
+            "next_gate": "VERIFY_BUYER_INN_REGION_FNS_DEMAND_CONTACT_DUPLICATES_STOP",
             "qualified_lead": False,
             "crm_upload_authorized": False,
         })
-    return items
+    return sorted(items, key=lambda item: (
+        not item["lead_research_candidate"], item["tender_id"]))
 
 
 def run_poll(user: str, password: str, state_dir: Path, *, client_factory=None,

@@ -75,7 +75,8 @@ class GmailReadOnly:
               "MESSAGE_LIMIT_INVALID")
         token = self._token()
         headers = {"Authorization": "Bearer " + token}
-        query = "from:" + SENDER + " newer_than:" + str(lookback_days) + "d in:inbox"
+        # Include archived vendor notices too; API default excludes Spam/Trash.
+        query = "from:" + SENDER + " newer_than:" + str(lookback_days) + "d"
         ids: list[str] = []
         cursor = None
         seen_pages = set()

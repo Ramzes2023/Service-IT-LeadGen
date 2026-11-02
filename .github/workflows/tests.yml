@@ -49,3 +49,10 @@ jobs:
       - name: Synthetic guarded score badge operator and SecureString handoff
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_KANBAN_SCORE_BADGE.ps1
+  windows-kanban-badge-recovery-readonly:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recovery diagnostic uses only SecureString and read-only CLI flags
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_KANBAN_BADGE_READONLY_DIAG.ps1

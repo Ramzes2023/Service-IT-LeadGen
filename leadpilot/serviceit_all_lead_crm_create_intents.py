@@ -56,7 +56,7 @@ def _require(yes, code):
 def _safe_label(text: str, max_len: int) -> str:
     _require(type(text) is str and 2 <= len(text) <= max_len, "INTENT_LABEL_INVALID")
     # Never embed HTML/linebreaks, controls, URLs, email or phone in a title.
-    _require(re.fullmatch(r"[\w .()\-–А-Яа-яЁё]+", text, flags=re.UNICODE) is not None,
+    _require(re.fullmatch(r"[\w .()+/,&\-–А-Яа-яЁё]+", text, flags=re.UNICODE) is not None,
              "INTENT_LABEL_UNSAFE")
     return text
 

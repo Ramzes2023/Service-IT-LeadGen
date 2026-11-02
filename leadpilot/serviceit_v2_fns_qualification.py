@@ -17,6 +17,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
 
 OFFICIAL_MSP_PASSPORT = "https://www.nalog.gov.ru/opendata/7707329152-rsmp/"
 ACCEPTED_REGIONS = frozenset({"77", "50"})
@@ -108,7 +109,7 @@ def extract_msp_record(xml: bytes, *, target_inn: str,
             "FNS_XML_DIGEST_MISMATCH")
     try:
         root = SafeET.fromstring(xml)
-    except (SafeET.ParseError, ValueError, TypeError):
+    except (SafeET.ParseError, DefusedXmlException, ValueError, TypeError):
         raise EvidenceRejected("FNS_XML_PARSE_REJECTED") from None
     require(root.tag == "Файл" and root.get("ТипИнф") == "РЕЕСТРМСП"
             and root.get("ВерсФорм") in {"4.06", "4.07", "4.08"},

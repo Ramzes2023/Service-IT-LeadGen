@@ -98,7 +98,7 @@ def notice_from_event(event):
     return notice, kinds
 
 
-def hold_payload(notice, groups):
+def hold_payload(notice, groups, *, ai=None):
     number = notice["tender_id"]
     source_id = "B2B-CENTER-" + number
     fingerprint = sha256(source_id.encode()).hexdigest()[:32]
@@ -117,7 +117,7 @@ def hold_payload(notice, groups):
             "Проверить закупку и покупателя; не контактировать",
         "UF_CRM_13_SVCIT_STOP_REASON": "Не квалифицированный B2B-лид",
         KEY: "B2B-HOLD-" + fingerprint,
-        **hold_analysis_fields(notice, groups),
+        **hold_analysis_fields(notice, groups, ai=ai),
     }
     must(set(fields) == FIELDS | {"title", "categoryId", "stageId"},
          "UNEXPECTED_CRM_FIELDS")
@@ -225,6 +225,28 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
     if exact_duplicate(client, base, source_id):
         return {"status": "ALREADY_EXISTS_IN_CRM",
                 "tender_id": notice["tender_id"], "qualified_leads": 0, "crm_writes": 0}
+    # Optional one model call on the supplier email SUBJECT ONLY. No names,
+    # company INN, source URL, message body, client records or contact details.
+    # It is a hypothesis on unverified evidence, never a qualified lead/Score.
+    if os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED") == "YES":
+        must(os.environ.get("SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED") == "YES"
+             and os.environ.get("AI_ENABLE") == "1"
+             and os.environ.get("AI_PROVIDER") == "gigachat"
+             and bool(os.environ.get("GIGACHAT_CREDENTIALS")),
+             "B2B_GIGACHAT_PRIVACY_OR_CREDENTIALS_NOT_APPROVED")
+        try:
+            from .serviceit_ai_report import plain
+            subject=plain(notice["subject"],240)
+            from .ai import classify_cockpit_signal
+            model_result=classify_cockpit_signal(subject)
+            if (isinstance(model_result,dict)
+                    and model_result.get("provider")=="gigachat"
+                    and model_result.get("quality_status")=="complete"):
+                payload=hold_payload(notice,services,ai=model_result)
+        except (RuntimeError,ValueError,TypeError,KeyError):
+            # Provider unavailable or untrusted text: still create an honest
+            # HOLD with AI_STATUS=NOT_RUN_SOURCE_UNVERIFIED, never fake success.
+            pass
     # Durable reservation before first possible CRM write, no automatic retry.
     ledger.reserve(source_id)
     added = bitrix_call(client, base, "crm.item.add", payload)

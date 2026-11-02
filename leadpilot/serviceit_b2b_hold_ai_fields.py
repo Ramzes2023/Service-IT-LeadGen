@@ -10,6 +10,7 @@ This is safe analysis metadata, not a lead or a model-generated report.
 from __future__ import annotations
 
 import re
+import math
 
 from .b2b_email_opportunity_bridge import KINDS
 
@@ -33,7 +34,7 @@ def _check(value, maximum=240):
     return value
 
 
-def hold_analysis_fields(notice: dict, services: list[str]) -> dict[str,str]:
+def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None = None) -> dict[str,str]:
     """Safe descriptive fields for *every* exact unverified B2B notice.
 
     GigaChat must be started by a separate authorized enrichment worker only
@@ -56,12 +57,33 @@ def hold_analysis_fields(notice: dict, services: list[str]) -> dict[str,str]:
             or any(x not in set(KINDS)|{"INTEGRATION"} for x in services)):
         raise HoldAnalysisRejected("SERVICES_INVALID")
     service_text=", ".join(services)
-    status="NOT_RUN_SOURCE_UNVERIFIED"
+    model="NOT_RUN"
+    if ai is not None:
+        from .ai import ALLOWED
+        confidence=ai.get("confidence") if isinstance(ai,dict) else None
+        quote=ai.get("evidence_quote") if isinstance(ai,dict) else None
+        if (not isinstance(ai,dict) or ai.get("provider")!="gigachat"
+                or ai.get("origin")!="AI_hypothesis"
+                or ai.get("quality_status")!="complete"
+                or ai.get("service") not in ALLOWED
+                or ai.get("service")=="Требуется проверка"
+                or isinstance(confidence,bool) or not isinstance(confidence,(int,float))
+                or not math.isfinite(confidence) or not 0<confidence<=1
+                or not isinstance(quote,str) or not quote.strip()
+                or quote not in subject or not isinstance(ai.get("model"),str)):
+            raise HoldAnalysisRejected("UNVERIFIED_MODEL_OUTPUT")
+        model=_check(ai["model"],80)
+    status="HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED" if ai else "NOT_RUN_SOURCE_UNVERIFIED"
     summary=("Получено уведомление B2B-Center №"+tid+
-             ". Потребность и заказчик не подтверждены; AI-анализ не запускался.")
+             (". Гипотеза GigaChat получена, но потребность и заказчик не подтверждены."
+              if ai else ". Потребность и заказчик не подтверждены; AI-анализ не запускался."))
     quote="Тема письма поставщика: "+subject
-    hypothesis=("Не проверенная моделью гипотеза: возможна закупка по направлению "+
-                service_text+". Требуется изучить оригинальное извещение.")
+    hypothesis=(("Не проверенная моделью гипотеза: возможна закупка по направлению "+
+                 service_text+". Требуется изучить оригинальное извещение.")
+                if ai is None else
+                ("GigaChat высказал НЕПРОВЕРЕННУЮ гипотезу о применимости услуги «"+
+                 _check(ai["service"],80)+"». Дословная цитата из темы уведомления: «"+
+                 _check(ai["evidence_quote"],240)+"». Покупка и первоисточник не подтверждены."))
     limits=("Не проверены оригинал закупки, дата, актуальность, ИНН заказчика, ФНС, "
             "существующие клиенты, CRM-дубли, стоп-лист и право контакта. "
             "Тема письма не доказывает реальную потребность или согласие.")
@@ -77,7 +99,8 @@ def hold_analysis_fields(notice: dict, services: list[str]) -> dict[str,str]:
     full=(
         "Сервис ИТ | Автоматический предварительный разбор HOLD\n"+
         "Источник: уведомление B2B-Center, закупка №"+tid+"\n"+
-        "AI-провайдер: NOT_RUN (GigaChat не вызывался)\n"+
+        ("AI-провайдер: GigaChat / "+model+" (гипотеза, не доказательство)\n"
+         if ai else "AI-провайдер: NOT_RUN (GigaChat не вызывался)\n")+
         "Lead Score: НЕ РАССЧИТАН — отсутствуют подтверждённые факты\n"+
         "Цветной приоритет: НЕ НАЗНАЧЕН\n\n"+
         "Краткий вывод\n"+summary+"\n\n"+

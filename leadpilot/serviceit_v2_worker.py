@@ -18,6 +18,7 @@ from .b2b_email_opportunity_bridge import InputRejected
 from .serviceit_v2_gmail_api import GmailSourceBlocked, from_environment
 from .serviceit_v2_store import (
     V2StoreBlocked, contains_message, ingest_message, init_schema, read_status,
+    record_message_failure,
 )
 
 def _connect():
@@ -49,6 +50,7 @@ def poll_once(conn, gmail, *, max_messages=60, days=14):
             # Bad sender/body is not an approved IT source; do not mark as read
             # or mark as committed. Retry and investigate format on next poll.
             totals["rejected_messages"] += 1
+            record_message_failure(conn, mid)
             continue
         for key, val in one.items():
             totals[key] += val

@@ -99,8 +99,8 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
     full=(
         "Сервис ИТ | Автоматический предварительный разбор HOLD\n"+
         "Источник: уведомление B2B-Center, закупка №"+tid+"\n"+
-        ("AI-провайдер: GigaChat / "+model+" (гипотеза, не доказательство)\\n"
-         if ai else "AI-провайдер: NOT_RUN (GigaChat не вызывался)\\n")+
+        ("AI-провайдер: GigaChat / "+model+" (гипотеза, не доказательство)\n"
+         if ai else "AI-провайдер: NOT_RUN (GigaChat не вызывался)\n")+
         "Lead Score: НЕ РАССЧИТАН — отсутствуют подтверждённые факты\n"+
         "Цветной приоритет: НЕ НАЗНАЧЕН\n\n"+
         "Краткий вывод\n"+summary+"\n\n"+

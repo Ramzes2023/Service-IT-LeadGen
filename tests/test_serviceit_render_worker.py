@@ -10,6 +10,7 @@ from leadpilot.serviceit_render_worker import (
 
 def settings(**kwargs):
     result = {"SERVICEIT_CLOUD_LIVE_ENABLED": LIVE_FLAG,
+              "SERVICEIT_CLOUD_START_AFTER_ID": "7",
               "SERVICEIT_BITRIX_WEBHOOK": "synthetic-NOT-A-REAL-SECRET",
               "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "NO"}
     result.update(kwargs)
@@ -90,3 +91,24 @@ def test_render_blueprint_does_not_publish_secrets_or_autostart():
     assert "sync: false" in text
     assert "GIGACHAT_CREDENTIALS" in text
     assert "1234-secret" not in text
+
+
+def test_cloud_cutover_required_before_any_real_crm_poll(tmp_path):
+    env = settings()
+    del env["SERVICEIT_CLOUD_START_AFTER_ID"]
+    assert config_state(env, root=tmp_path, mounted=True) == "CLOUD_CUTOVER_CURSOR_REQUIRED"
+
+
+def test_first_cloud_cycle_persists_baseline_not_reseeded(tmp_path):
+    import sqlite3
+    from leadpilot.serviceit_render_worker import initialize_cutover
+    root = tmp_path
+    (root / "state").mkdir()
+    assert initialize_cutover(root, 7)
+    with sqlite3.connect(root / "state" / "new-card-events.sqlite3") as db:
+        assert db.execute("SELECT value FROM worker_meta WHERE key='cursor'").fetchone() == ("7",)
+        db.execute("UPDATE worker_meta SET value='101' WHERE key='cursor'")
+    assert initialize_cutover(root, 7)
+    assert not initialize_cutover(root, 100)
+    with sqlite3.connect(root / "state" / "new-card-events.sqlite3") as db:
+        assert db.execute("SELECT value FROM worker_meta WHERE key='cursor'").fetchone() == ("101",)

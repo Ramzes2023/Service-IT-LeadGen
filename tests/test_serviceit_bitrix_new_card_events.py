@@ -86,7 +86,7 @@ def test_body_size_and_invalid_mimetype_fail():
         parse_body(b"x"*20000,"application/json")
     with pytest.raises(EventRejected,match="CONTENT_TYPE_FORBIDDEN"):
         parse_body(b"{}", "text/plain")
-    with pytest.raises(EventRejected,match="INVALID_FORM"):
+    with pytest.raises(EventRejected,match="EVENT_BODY_INVALID"):
         parse_body(b"broken", "application/x-www-form-urlencoded")
 
 

@@ -90,7 +90,7 @@ def test_installer_uses_owner_dpapi_and_repo_verified_only():
 
 def test_script_activation_not_default():
     source = Path("scripts/SETUP_SERVICEIT_FREE_GITHUB_ACTIONS.ps1").read_text("utf-8")
-    assert "param([switch]$Apply)" in source
-    assert "if (-not $Apply)" in source
+    assert "param([switch]$Apply, [switch]$DiagnoseCutover)" in source
+    assert "if (-not $Apply -and -not $DiagnoseCutover)" in source
     assert "OWNER_CLOUD_CONSENT_MISSING" in source
     assert "CLOUD_ALREADY_ENABLED_REFUSE_SECRET_OR_CURSOR_OVERWRITE" in source

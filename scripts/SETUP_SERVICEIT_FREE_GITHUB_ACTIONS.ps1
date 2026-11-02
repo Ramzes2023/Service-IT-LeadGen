@@ -3,7 +3,7 @@
 # command-line arguments, Git working tree, or the public encrypted-state branch.
 # Requires GitHub CLI (gh) interactive auth and owner confirmation.
 [CmdletBinding()]
-param([switch]$Apply)
+param([switch]$Apply, [switch]$DiagnoseCutover)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Repository = 'Ramzes2023/Service-IT-LeadGen'
@@ -51,7 +51,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Ledger)) {
 Write-Host "FREE_GITHUB_REPO=VERIFIED"
 Write-Host 'ENCRYPTED_LEDGER_BRANCH=VERIFIED'
 Write-Host "SCOPE=$Scope"
-if (-not $Apply) {
+if (-not $Apply -and -not $DiagnoseCutover) {
     Write-Host 'CLOUD_SETUP=READONLY_PREFLIGHT_PASS'
     Write-Host 'Run again with -Apply to securely transfer DPAPI secrets and enable the FREE cloud.'
     exit 0
@@ -68,6 +68,33 @@ function Read-DpapiSecret([string]$Path) {
             [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Ptr)
         }
         $Secure.Dispose()
+    }
+}
+
+# Read-only diagnosis: no secret transfer, no task disable, no cloud enable.
+if ($DiagnoseCutover) {
+    $BitrixDiagnostic = Read-DpapiSecret $BitrixFile
+    try {
+        $env:SERVICEIT_BITRIX_WEBHOOK = $BitrixDiagnostic
+        Push-Location $Repo
+        try {
+            $DiagnosticLines = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly 2>$null)
+            $DiagnosticExit = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        foreach ($Line in $DiagnosticLines) {
+            if ($Line -cmatch '^SERVICEIT_CLOUD_CUTOVER_(MAX_ID=[0-9]{1,10}|CRM_WRITES=0|DIAGNOSTIC=[A-Z0-9_:]+)$' -or
+                $Line -ceq 'SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY') {
+                Write-Host $Line
+            }
+        }
+        Write-Host "CUTOVER_DIAGNOSTIC_EXIT_CODE=$DiagnosticExit"
+        if ($DiagnosticExit -ne 0) { exit 2 }
+        exit 0
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+        $BitrixDiagnostic = $null
     }
 }
 
@@ -131,7 +158,14 @@ try {
         Push-Location $Repo
         try {
             $Check = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
-            if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_READONLY_INVENTORY_FAILED' }
+            if ($LASTEXITCODE -ne 0) {
+                foreach ($Line in $Check) {
+                    if ($Line -cmatch '^SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC=[A-Z0-9_:]+$') {
+                        Write-Host $Line
+                    }
+                }
+                throw 'CUTOVER_READONLY_INVENTORY_FAILED'
+            }
         } finally { Pop-Location }
     } finally {
         Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
@@ -179,7 +213,14 @@ try {
         Push-Location $Repo
         try {
             $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
-            if ($LASTEXITCODE -ne 0) { throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED' }
+            if ($LASTEXITCODE -ne 0) {
+                foreach ($Line in $FinalCheck) {
+                    if ($Line -cmatch '^SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC=[A-Z0-9_:]+$') {
+                        Write-Host $Line
+                    }
+                }
+                throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED'
+            }
         } finally { Pop-Location }
     } finally {
         Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue

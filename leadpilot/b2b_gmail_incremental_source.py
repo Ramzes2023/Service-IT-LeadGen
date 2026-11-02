@@ -167,7 +167,7 @@ def review_queue(db: sqlite3.Connection, *, limit=100):
         # Research queue prioritizes possible private 1C buyers, but the
         # company name and SME status remain UNVERIFIED.
         private_form_unverified = bool(
-            re.match(r'^\\s*ООО(?:\\s|[«"])', org or "", re.I))
+            re.match(r'^\s*ООО(?:\s|[«"])', org or "", re.I))
         lead_research_candidate = private_form_unverified and "1C" in groups
         items.append({
             "source": "B2B-Center", "tender_id": n,

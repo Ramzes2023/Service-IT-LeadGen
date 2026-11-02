@@ -43,7 +43,7 @@ jobs:
       - name: Compile modules
         run: python -m compileall -q leadpilot
       - name: Mock OAuth and REAL disposable PostgreSQL test
-        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py
+        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py
       - name: Compose safety / isolation check
         run: |
           docker compose -f deploy/serviceit-v2.compose.yml config --quiet

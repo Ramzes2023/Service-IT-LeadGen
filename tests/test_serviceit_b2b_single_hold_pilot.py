@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from leadpilot import serviceit_b2b_single_hold_pilot as pilot
+from leadpilot.b2b_email_opportunity_bridge import classify_services
 
 
 def owner_trigger():
@@ -116,3 +117,10 @@ def test_missing_hook_never_calls_network():
         result = pilot.run(owner_trigger(), client=c,
                            webhook="", github_token="fake")
     assert result == {"status": "CORPORATE_WEBHOOK_MISSING", "crm_writes": 0}
+
+def test_narrow_database_support_service_fit_no_generic_service():
+    assert "IT_SUPPORT" in classify_services(
+        "Право заключения договора оказания услуг по техническому обслуживанию базы данных")
+    assert "IT_SUPPORT" in classify_services("Сервисная поддержка СУБД")
+    assert not classify_services("Техническое обслуживание складских стеллажей")
+    assert not classify_services("Техническое обслуживание базы отдыха")

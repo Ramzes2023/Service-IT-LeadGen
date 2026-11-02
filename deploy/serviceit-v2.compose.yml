@@ -20,6 +20,8 @@ services:
       - no-new-privileges:true
     networks: [serviceit_private]
   gmail-worker:
+    # Not even started until an authorized operator selects this profile.
+    profiles: [gmail-live]
     build:
       context: ..
       dockerfile: Dockerfile.serviceit-v2

@@ -22,6 +22,7 @@ from .bitrix_metadata_audit import PORTAL, validate_webhook
 from .bitrix_1062_mapping import FIELD_MAP, _is_valid_inn
 from .serviceit_ai_lead_engine import assess_lead
 from .serviceit_ai_report import build_report, plain
+from .serviceit_manager_ai_card import format_verified_card
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, AI_SUFFIXES, PREFIX, hold_analysis_fields
 from .serviceit_bitrix_event_queue_readonly_worker import classify_item
 from .serviceit_enrichment_store import Store, ModelFence
@@ -176,11 +177,7 @@ def verified_fields(approval, item, store, item_id, owner, model):
             and ai['evidence_quote'] in text, 'MODEL_QUOTE_INVALID')
     report = build_report(assessment, source_text=text, evidence_quote=ai['evidence_quote'],
                           reference='evidence-sha256-'+sha256(text.encode()).hexdigest(), ai=ai)
-    values = (report.verification_status, report.summary, report.evidence_quote,
-              report.possible_need, report.limitations, report.service_recommendation,
-              report.next_action, '\n'.join(report.manager_checklist), report.full_report)
-    return {**dict(zip((PREFIX+s for s in AI_SUFFIXES), values)),
-            **fields_from_assessment(assessment)}
+    return format_verified_card(report, assessment)
 
 
 class Worker:

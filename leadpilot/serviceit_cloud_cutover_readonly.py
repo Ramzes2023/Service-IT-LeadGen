@@ -41,10 +41,11 @@ def latest_existing_card_id(rest) -> int:
     seen = set()
     previous = None
     for index, item in enumerate(items):
-        try:
-            card_id = int(item.get("id", ""))
-        except (ValueError, TypeError) as exc:
-            raise ValueError("CUTOVER_CARD_ID_INVALID") from exc
+        raw_id = item.get("id")
+        if not (type(raw_id) is int or
+                (type(raw_id) is str and raw_id.isascii() and raw_id.isdecimal())):
+            raise ValueError("CUTOVER_CARD_ID_INVALID")
+        card_id = int(raw_id)
         if card_id < 1 or card_id > 2_000_000_000:
             raise ValueError("CUTOVER_CARD_ID_OUT_OF_BOUNDS")
         if (("entityTypeId" in item and str(item["entityTypeId"]) != "1062")

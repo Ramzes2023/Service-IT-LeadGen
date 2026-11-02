@@ -28,6 +28,9 @@ def config_state(env, *, root=ROOT, mounted=None):
         return "CLOUD_NOT_ENABLED"
     if not env.get("SERVICEIT_BITRIX_WEBHOOK", "").strip():
         return "CLOUD_WEBHOOK_MISSING"
+    baseline = env.get("SERVICEIT_CLOUD_START_AFTER_ID", "")
+    if not baseline.isascii() or not baseline.isdecimal() or not 7 <= int(baseline) <= 2_000_000_000:
+        return "CLOUD_CUTOVER_CURSOR_REQUIRED"
     if env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") not in ("YES", "NO"):
         return "CLOUD_PRIVACY_DECISION_REQUIRED"
     if env["SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED"] == "YES":
@@ -55,6 +58,26 @@ def child_environment(env, *, root=ROOT):
     return result
 
 
+def initialize_cutover(root, requested_cursor):
+    """Immutable high-watermark prevents backfilling old cards in cloud."""
+    from .serviceit_enrichment_store import Store
+    store = Store(root / "state" / "new-card-events.sqlite3")
+    with store.db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        current = db.execute("SELECT value FROM worker_meta WHERE key='cloud_cutover_cursor'").fetchone()
+        if current is not None:
+            return current[0] == str(requested_cursor)
+        if db.execute("SELECT 1 FROM worker_meta WHERE key='cursor'").fetchone():
+            return False
+        if db.execute("SELECT 1 FROM new_cards LIMIT 1").fetchone():
+            return False
+        if db.execute("SELECT 1 FROM enrichment LIMIT 1").fetchone():
+            return False
+        db.execute("INSERT INTO worker_meta(key,value) VALUES ('cursor',?)", (str(requested_cursor),))
+        db.execute("INSERT INTO worker_meta(key,value) VALUES ('cloud_cutover_cursor',?)", (str(requested_cursor),))
+    return True
+
+
 def run_once(env=None, *, root=ROOT, mounted=None, executor=subprocess.run):
     env = dict(os.environ if env is None else env)
     status = config_state(env, root=root, mounted=mounted)
@@ -63,6 +86,9 @@ def run_once(env=None, *, root=ROOT, mounted=None, executor=subprocess.run):
     (root / "state").mkdir(parents=True, exist_ok=True)
     (root / "approvals").mkdir(parents=True, exist_ok=True)
     try:
+        if not initialize_cutover(root, int(env["SERVICEIT_CLOUD_START_AFTER_ID"])):
+            return {"status": "CLOUD_QUEUE_BASELINE_UNVERIFIED",
+                    "crm_writes": 0, "gigachat_calls": 0}
         completed = executor(
             [sys.executable, "-m", "leadpilot.serviceit_windows_autofill", "--once"],
             env=child_environment(env, root=root),
@@ -78,6 +104,9 @@ def run_once(env=None, *, root=ROOT, mounted=None, executor=subprocess.run):
                 "exit_code": 0 if completed.returncode == 0 else 2}
     except (subprocess.TimeoutExpired, OSError):
         return {"status": "CLOUD_CYCLE_UNVERIFIED", "exit_code": 2}
+    except Exception:
+        return {"status": "CLOUD_QUEUE_BASELINE_UNVERIFIED",
+                "crm_writes": 0, "gigachat_calls": 0}
 
 
 def _terminate(*_):

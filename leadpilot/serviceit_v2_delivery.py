@@ -155,6 +155,20 @@ def _readback(client, base, card_id, payload):
     return actual
 
 
+def _verify_existing_identity(client, base, card_id, source_id):
+    """Existing Bitrix card may predate v2; verify only stable identity."""
+    result = _rest(client, base, "crm.item.get", {
+        "entityTypeId": 1062, "id": card_id, "useOriginalUfNames": "Y"})
+    item = result.get("item")
+    require(isinstance(item, dict) and
+            str(item.get("entityTypeId")) == "1062" and
+            str(item.get("categoryId")) == "21" and
+            item.get(SIGNAL) == source_id and
+            item.get("UF_CRM_13_SVCIT_SIGNAL_KIND") == "tender-opportunity",
+            "EXISTING_CARD_IDENTITY_UNCERTAIN")
+    return item
+
+
 def _mark(conn, key, state, card_id=None):
     require(state in STATES - {"PENDING"}, "STATE_INVALID")
     conn.execute("""
@@ -211,7 +225,7 @@ def process_one(conn, client, webhook, *, commit_live=False):
         if present:
             require(len(present) == 1, "MULTIPLE_PREEXISTING_CARDS")
             card_id = present[0]["id"]
-            _readback(client, base, card_id, payload)
+            _verify_existing_identity(client, base, card_id, source_id)
             _mark(conn, key, "VERIFIED", card_id)
             return {"status": "PREEXISTING_CARD_VERIFIED", "card_id": card_id,
                     "tender_id": tender_id, "crm_writes": 0}
@@ -248,6 +262,7 @@ def reconcile_one(conn, client, webhook, tender_id):
         return {"status": "NOT_FOUND_YET_MANUAL_REVIEW", "crm_writes": 0}
     require(len(cards) == 1, "DUPLICATES_NEED_MANUAL_REVIEW")
     card_id = cards[0]["id"]
+    _verify_existing_identity(client, base, card_id, source_id)
     conn.execute("""
         UPDATE serviceit_v2_crm_outbox SET bitrix_item_id=%s,
           state='VERIFIED',last_attempt_at=now()

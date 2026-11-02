@@ -30,3 +30,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Script -PythonPath $Pyt
 Официальные контракты:
 - https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-get.html
 - https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-update.html
+
+## Фактическая read-only приёмка пользователем — 02.11.2026
+
+После merge PR #63 оператор был выполнен на корпоративном портале. Вывод (секреты не раскрыты):
+
+- `BADGE_READONLY_DIAGNOSTIC`: `demo_id_verified=true`, `score_unchanged=true`, `report_present=true`.
+- `badge_schema_exists=true`, `badge_schema_valid=true`; оба `crm.item.fields` (Y и N) показывают строковое поле, `is_read_only=false`, неоднозначности нет.
+- `readback_with_original_names.state=EMPTY`, `readback_with_camelcase_names.state=EMPTY`, `length=0`, `exact_expected=false`, `has_green_emoji=false`.
+- `ledger.items["badge:1062:13:field:v1"]=VERIFIED`, `ledger.items["badge:1062:21:3:v1"]=UNCERTAIN`.
+- `crm_writes=0`, `new_reservations=0`; новая диагностика не создала запись и не изменила журнал.
+
+**Вывод:** новое пользовательское поле реально присутствует и сообщается REST как writable, но целевое значение не сохранилось к моменту этой проверки. Предыдущее POST завершилось без подтверждённого эффекта. Это **не доказательство причины**: возможны игнорирование неподдерживаемого ключа при update, контекст ACL/CRM формы, регистрозависимое преобразование имени, нормализация сервера или эффект времени создания/кэша. Не выдавать конкретную гипотезу за установленный дефект.
+
+**Режим безопасности:** НЕ выполнять повторно старый `RUN_SERVICEIT_KANBAN_SCORE_BADGE.ps1 -ApplyDemo`, не создавать новый `StateDir`, не сбрасывать `UNCERTAIN`, не изменять основную карточку, Score, отчёт GigaChat или задачу. Следующее возможное исправление должно быть отдельным новым намерением после полной сверки безопасного write-контракта и явного разрешения владельца; приоритет — анализ фактического маппинга и параметров REST без записей. Поле можно пока держать пустым, а старый Score 90/100 остаётся рабочим. Отображение на Kanban отдельно НЕ выполнено.

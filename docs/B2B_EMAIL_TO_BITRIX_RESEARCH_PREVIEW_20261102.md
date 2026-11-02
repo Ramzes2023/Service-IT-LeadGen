@@ -33,3 +33,31 @@ Run locally from repository root using authorised EML copies kept outside Git:
     python -m leadpilot.b2b_email_opportunity_bridge --output exports/b2b-review.json path/to/notice1.eml path/to/notice2.eml
 
 Output must be a NEW JSON file under ignored exports. This is an OFFLINE research artifact, not a deployed Gmail connector or real CRM integration. Keep the PR in DRAFT until actual MIME acceptance and separate approvals.
+
+
+## Follow-on guarded integration implementation, 02 Nov 2026
+
+Implementation now includes:
+- leadpilot/b2b_bitrix_readiness.py: bounded Bitrix24 READ ONLY metadata preflight. It validates the exact existing 1062/21 type, disabled automation and bizproc, all original 16 UF fields, 10 allowed review fields (including idempotency key), category 21 and NEW stage. Rejects unexpected required fields and unrecognised field types; no CRM item/lead/contact reads or writes.
+- leadpilot/b2b_bitrix_hold_delivery.py: exactly-one manual HOLD writer protected by independent schema preflight, exact tender-ID duplicate lookup in review process, manual operator approval, durable exclusive local POST_UNCERTAIN fence before crm.item.add and exact crm.item.get readback; never automatically retries ambiguous writes. Always marks status tender-opportunity and NO CONTACT. This is NOT a lead writer and cannot launch as a scheduled job.
+- leadpilot/b2b_bitrix_operator.py: a default OFFLINE EML parser/preview; actual opt-in requires --apply-one, --verified-original and an exact typed approval. One tender ID only, no mass import.
+- scripts/RUN_SERVICEIT_B2B_TO_BITRIX_READONLY.ps1: secure hidden webhook prompt with four metadata-only REST reads; no CRM writes.
+- scripts/RUN_SERVICEIT_B2B_ONE_HOLD_CARD.ps1: PowerShell 5.1 preview by default and two separate confirmations before one bounded HOLD write.
+
+**GitHub CI is synthetic/mock-based, NOT evidence of direct portal connection.** The live corporate webhook only exists on the owner's Windows device and must never be sent via chat/Git. Real Gmail EMLs also must stay outside Git. No Bitrix24 writes have been executed in this PR.
+
+### Minimum practical run from Windows (safe PREVIEW first)
+
+Create an isolated Git worktree from the draft branch. Do not checkout over the user's current main working tree. Export the legitimate B2B-Center Gmail message from Gmail's 'Show original' / download-original action as .eml, kept outside Git. Run tests and read-only Bitrix metadata preflight:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\RUN_SERVICEIT_B2B_TO_BITRIX_READONLY.ps1
+
+Then run one tender preview with an exact downloaded .eml path (replace the placeholder file name):
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\RUN_SERVICEIT_B2B_ONE_HOLD_CARD.ps1 -EmailFiles "C:\path\official-b2b-message.eml" -TenderId 4661617
+
+No CRM operation takes place in either of these two default commands. Output from the second command must show the selected tender as tender-opportunity and HOLD. If exact EML parsing fails, do not use synthetic replacements and do not attempt CRM writes; first inspect the real MIME structure locally without uploading private raw mail.
+
+Only once read-only preflight passes and the manager authorises creation of one *unqualified tender opportunity* (not sales lead), independently verify that original tender remains active and use the explicit -ApplyOneHold switch on the Windows operator. This mutation can trigger internal CRM events, so confirm disabled robots/bizproc and corporate permissions first. NEVER use -ApplyOneHold blindly or schedule it.
+
+After one verified controlled write, any future recurring automatic Gmail→Bitrix ingestion needs a separate approved Gmail transport (OAuth or other permitted method), provider permission for automated use of subscription contents, and production review policy. ChatGPT's connected Gmail access does not grant Windows OAuth credentials.

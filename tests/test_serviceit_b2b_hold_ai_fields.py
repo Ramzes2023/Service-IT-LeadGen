@@ -12,7 +12,7 @@ from leadpilot.serviceit_b2b_hold_ai_fields import (
 from leadpilot.b2b_github_to_bitrix import (
     notice_from_event, hold_payload,
 )
-from tests.test_b2b_github_to_bitrix import fixture_event
+from test_b2b_github_to_bitrix import fixture_event
 
 
 def test_all_nine_existing_fields_present_on_new_b2b_hold():

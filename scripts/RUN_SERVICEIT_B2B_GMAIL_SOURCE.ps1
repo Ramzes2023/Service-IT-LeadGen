@@ -13,7 +13,6 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ModeCount = @($Setup, $Poll, $InstallSchedule, $Status | Where-Object { $_ }).Count
 # Explicit count avoids silently scheduling/unintended password prompting.
 $ModeCount = [int][bool]$Setup + [int][bool]$Poll + [int][bool]$InstallSchedule + [int][bool]$Status
 if ($ModeCount -ne 1) { throw 'CHOOSE_EXACTLY_ONE_MODE_SETUP_POLL_INSTALLSCHEDULE_STATUS' }

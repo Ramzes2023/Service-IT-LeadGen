@@ -75,5 +75,40 @@ jobs:
               "status": "INGRESS_UNAVAILABLE"
           }, "FAIL_CLOSED_POST_BODY_MISMATCH"
           print("LIVE_RENDER_UNSIGNED_SYNTHETIC_POST_REJECTED=PASS", flush=True)
+
+          # Each additional request is synthetic, has no Gmail source, and
+          # cannot enable the receiver or mutate any database.
+          def rejected(payload, content_type):
+              req = Request(os.environ["INGEST_URL"], data=payload, method="POST",
+                            headers={"Content-Type": content_type})
+              try:
+                  with urlopen(req, timeout=25, context=ssl_ctx) as response:
+                      return response.status, response.read(512)
+              except HTTPError as error:
+                  return error.code, error.read(512)
+
+          bad_type, bad_text = rejected(b"synthetic-no-mail", "text/plain")
+          assert bad_type == 415
+          assert json.loads(bad_text) == {"status": "CONTENT_TYPE_REJECTED"}
+          print("LIVE_RENDER_WRONG_CONTENT_TYPE_DENIED=PASS", flush=True)
+
+          # One 512001-byte test validates the early 512000-byte hard limit;
+          # no real records, remote secrets, or user content are included.
+          big_type, big_text = rejected(b"X" * 512001, "application/json")
+          assert big_type == 413
+          assert json.loads(big_text) == {"status": "BODY_TOO_LARGE"}
+          print("LIVE_RENDER_OVERSIZE_REQUEST_DENIED=PASS", flush=True)
+
+          # Disable auto-published FastAPI OpenAPI documentation in ingress.
+          for suffix in ("/docs", "/openapi.json"):
+              req = Request(os.environ["HEALTH_URL"].removesuffix("/health") + suffix,
+                            method="GET")
+              try:
+                  with urlopen(req, timeout=25, context=ssl_ctx) as response:
+                      docs_status = response.status
+              except HTTPError as error:
+                  docs_status = error.code
+              assert docs_status == 404, "OPEN_API_EXPOSED"
+          print("LIVE_RENDER_API_DOCS_DISABLED=PASS", flush=True)
           print("LIVE_RENDER_REAL_GMAIL_MESSAGES=0; BITRIX_WRITES=0", flush=True)
           PY

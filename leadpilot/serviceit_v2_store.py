@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS serviceit_v2_crm_outbox (
   last_attempt_at timestamptz,
   FOREIGN KEY (source,tender_id) REFERENCES serviceit_v2_opportunities(source,tender_id)
 );
+CREATE TABLE IF NOT EXISTS serviceit_v2_message_failures (
+  gmail_message_id text PRIMARY KEY,
+  error_code text NOT NULL,
+  attempts integer NOT NULL DEFAULT 1 CHECK(attempts >= 1),
+  last_attempt timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS serviceit_v2_runtime (
   name text PRIMARY KEY,
   value text NOT NULL,
@@ -177,6 +183,8 @@ def ingest_message(conn, gmail_message_id: str, mime: bytes) -> dict:
         conn.execute(
             "INSERT INTO serviceit_v2_messages (gmail_message_id,mime_sha256,received_at,observations) VALUES (%s,%s,%s,%s)",
             (gmail_message_id, digest, when, len(observations)))
+        conn.execute("DELETE FROM serviceit_v2_message_failures WHERE gmail_message_id=%s",
+                     (gmail_message_id,))
         counts["new_messages"] = 1
         for row in observations:
             canonical, title, organizer, deadline, labels, status, vd = _observed(row)
@@ -219,6 +227,19 @@ def ingest_message(conn, gmail_message_id: str, mime: bytes) -> dict:
     return counts
 
 
+def record_message_failure(conn, mid: str):
+    _must(isinstance(mid, str) and re.fullmatch(r"[0-9a-f]{8,24}", mid),
+          "BAD_FAILED_MESSAGE_ID")
+    conn.execute("""
+      INSERT INTO serviceit_v2_message_failures
+        (gmail_message_id,error_code)
+      VALUES (%s,'PARSER_REJECTED')
+      ON CONFLICT (gmail_message_id)
+        DO UPDATE SET attempts=serviceit_v2_message_failures.attempts+1,
+                      last_attempt=now()
+    """, (mid,))
+
+
 def read_status(conn):
     rows = {}
     for table, key in (
@@ -226,11 +247,16 @@ def read_status(conn):
         ("serviceit_v2_opportunities", "total_distinct_procurements"),
         ("serviceit_v2_versions", "total_notice_versions"),
         ("serviceit_v2_crm_outbox", "total_crm_outbox_events"),
+        ("serviceit_v2_message_failures", "unresolved_mail_parsing_errors"),
     ):
         rows[key] = conn.execute("SELECT count(*) FROM " + table).fetchone()[0]
     rows["tender_hold"] = conn.execute(
         "SELECT count(*) FROM serviceit_v2_opportunities WHERE review_status=%s",
         ("TENDER_OPPORTUNITY_HOLD",)).fetchone()[0]
+    last = conn.execute(
+        "SELECT value FROM serviceit_v2_runtime WHERE name=%s",
+        ("gmail_last_success_utc",)).fetchone()
+    rows["last_successful_gmail_poll_utc"] = last[0] if last else None
     rows["qualified_leads"] = 0
     rows["crm_writes"] = 0
     rows["mode"] = "READ_ONLY_SOURCE_CORE"

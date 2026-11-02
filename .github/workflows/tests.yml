@@ -42,7 +42,7 @@ jobs:
               $tokens = $null
               $errors = $null
               [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$tokens, [ref]$errors) | Out-Null
-              if ($errors.Count -gt 0) { throw 'AUTOFILL_PS51_SYNTAX_FAILURE' }
+              if ($errors.Count -gt 0) { foreach ($e in $errors) { Write-Output ($path + ': ' + $e.ToString()) }; throw 'AUTOFILL_PS51_SYNTAX_FAILURE' }
               Write-Output 'AUTOFILL_PS51_PARSE_PASS'
           }
   windows-universal-worker:

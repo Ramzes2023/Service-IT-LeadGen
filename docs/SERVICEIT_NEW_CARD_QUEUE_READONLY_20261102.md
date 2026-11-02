@@ -1,0 +1,46 @@
+# Проверка очереди новых карточек 1062/21 перед автозапуском AI
+
+## Задача
+
+Общая цель: любая новая карточка из источника -> проверка -> обоснованный Score и GigaChat -> автоматически заполненные девять AI-полей в Битрикс24. Историческая демонстрация №3 и будущая закупка B2B-Center должны обрабатываться по разным правилам подтверждения доказательств, а не одинаково получать выдуманные 90/100.
+
+Уже объединено:
+- PR #71: новые B2B-Center HOLD-карточки создаются сразу с девятью честными предварительными полями AI; без Score, если нет подтверждений.
+- PR #72: защищённый FastAPI-приёмник новых событий с постоянной SQLite-очередью ID (НЕ развёрнут на сервере).
+- PR #73: отдельно разрешаемый GigaChat на очищенной теме B2B-Center перед единственным созданием карточки с проверенной дословной цитатой; автоматический live режим не подтверждён, секреты и vars не менялись.
+
+## Новый read-only consumer
+
+Модуль leadpilot/serviceit_bitrix_event_queue_readonly_worker.py:
+
+- Читает максимум 10 ID из таблицы new_cards в SQLite только с mode=ro. Он не забирает задания из очереди, не изменяет состояние, не читает старые журналы UNCERTAIN. Сортирует по item_id для повторяемого аудита.
+- На каждый ID вызывает строго **crm.item.get**, entityTypeId=1062 и useOriginalUfNames=Y. Другие CRM методы, включая update, add, list, deleted, tasks, запрещены.
+- Проверяет, что реально полученный item совпал с ID, entityTypeId=1062 и categoryId=21. Чужая категория не попадает на анализ.
+- Не доверяет содержимому event как готовому evidence — получает реальные поля из CRM. Проверяет значения и классифицирует без фактической отправки в GigaChat:
+  - EXCLUDED_SYNTHETIC_DEMO — DEMO item не обрабатывать;
+  - HOLD_MISSING_PRELIMINARY_AI — B2B-Center от предыдущей версии, AI не заполнен;
+  - HOLD_PRELIMINARY_AI_ALREADY_PRESENT — новые B2B HOLD с уже заполненным предварительным отчётом;
+  - HOLD_WITH_UNEXPECTED_SCORE_REVIEW — ошибочно проставлен Score у не подтверждённого B2B HOLD;
+  - TENDER_SOURCE_CONTRACT_UNVERIFIED — прочие закупочные источники без утверждённого контракта;
+  - SOURCE_CONTRACT_REVIEW / EXISTING_ANALYSIS_REQUIRES_REVIEW — всё остальное до независимой проверки;
+  - OUTSIDE_SERVICEIT_CATEGORY — не наша тестовая категория.
+- Выводит только item_id, 16-значный hash исходного signal_id, решение и флаги безопасности. Нет ссылок, email, ИНН, текстов источников и личных данных.
+- Не записывает ни одного поля, не рассчитывает Score, не вызывает GigaChat, не создает задач и не разрешает обзвон. Состояние статусной очереди остается неизменным.
+
+### Windows безопасный запуск
+
+scripts/RUN_SERVICEIT_EVENT_QUEUE_CRM_READONLY.ps1 без аргументов выдаёт OFFLINE. Для реального read-only запуска необходимо сначала **развернуть** и заполнить долговечную очередь, указать её локальный защищённый путь -QueueDb, затем -InspectLive и дать корпоративный webhook скрытым вводом. Его нельзя печатать в консоль или вставлять в GitHub. Запись в CRM не предусмотрена.
+
+Очереди на локальном Windows сейчас может не существовать, поэтому **нет смысла запускать -InspectLive до её развёртывания**. GitHub CI использует только offline fake CRM и PowerShell 5.1 parser.
+
+## Не завершено
+
+- HTTPS deployment, event.bind, аутентифицированный production callback и секрет application_token.
+- Защищённый worker, который помимо чтения удостоверяет первоисточник/ИНН/ФНС/дубль/клиента/stop/legal, может безопасно запускать GigaChat по подтверждённому тексту, рассчитывает детерминированный Score.
+- Write adapter по ровно девяти AI-полям+Score/version/badge с immutable outbox, точным GET-before/GET-after и без повторов при UNCERTAIN.
+- Реальные автозаполнения существующей карточки B2B-Center №4661617 и будущих других площадок, общая канбан-настройка.
+- Никакие текущие результаты нельзя выдавать за production E2E.
+
+Ссылки Bitrix:
+https://apidocs.bitrix24.ru/api-reference/crm/universal/events/on-crm-dynamic-item-add.html
+https://apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-get.html

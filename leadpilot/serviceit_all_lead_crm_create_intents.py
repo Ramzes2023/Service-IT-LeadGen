@@ -22,6 +22,7 @@ from .bitrix_1062_mapping import (
     ENTITY_TYPE_ID, CATEGORY_ID, INITIAL_STAGE, FIELD_MAP,
     IDEMPOTENCY_FIELD,
 )
+from .serviceit_ai_report import build_report
 from .serviceit_source_batch_pipeline import (
     MAX_JSON_BYTES, assess_source_batch, BatchRejected,
 )
@@ -30,6 +31,37 @@ from .serviceit_kanban_presentation import (
 )
 
 INTENT_CONTRACT = "serviceit-all-lead-crm-create-intent-v1"
+AI_PREFIX = "UF_CRM_13_SVCIT_"
+AI_CODES = frozenset(AI_PREFIX + suffix for suffix in (
+    "AI_STATUS", "AI_SUMMARY", "AI_QUOTE", "AI_HYPOTHESIS", "AI_LIMITATIONS",
+    "AI_RECOMMENDATION", "AI_NEXT_ACTION", "AI_MANAGER_BRIEF", "AI_FULL_REPORT",
+))
+
+
+def _ai_fields(report, *, ai=None):
+    """All nine analysis fields, without inventing a GigaChat invocation.
+
+    ai=None means status NOT_RUN, with safe deterministic evidence summary.
+    A separately authenticated provider worker may supply a validated
+    GigaChat hypothesis; the workflow never treats its guess as a fact.
+    """
+    source = report["why_now"]
+    analysis = build_report(
+        report, source_text=source, evidence_quote=source,
+        reference="source-fingerprint-" + report["identity_fingerprint"], ai=ai,
+        timestamp=report["evidence_date"]+"T00:00:00+00:00",
+    )
+    fields=dict(zip((AI_PREFIX+k for k in (
+        "AI_STATUS","AI_SUMMARY","AI_QUOTE","AI_HYPOTHESIS","AI_LIMITATIONS",
+        "AI_RECOMMENDATION","AI_NEXT_ACTION","AI_MANAGER_BRIEF","AI_FULL_REPORT")), (
+        analysis.verification_status, analysis.summary, analysis.evidence_quote,
+        analysis.possible_need, analysis.limitations, analysis.service_recommendation,
+        analysis.next_action, "\n".join(analysis.manager_checklist), analysis.full_report,
+    )))
+    _require(set(fields)==AI_CODES and all(type(x) is str and len(x)<=12000 for x in fields.values()),
+             "INTENT_AI_FIELDS_INVALID")
+    return fields
+
 SOURCE_FIELD = FIELD_MAP["signal_source"]
 TITLE_MAX = 120
 EXACT_BADGE_ALIASES = (
@@ -40,8 +72,8 @@ CODES = frozenset((*FIELD_MAP.values(),
     "UF_CRM_13_SVCIT_REVIEW_DECISION",
     "UF_CRM_13_SVCIT_STOP_REASON",
     "UF_CRM_13_SVCIT_SIGNAL_KIND",
-    IDEMPOTENCY_FIELD, BADGE_FIELD))
-assert len(CODES) == 17
+    IDEMPOTENCY_FIELD, BADGE_FIELD, *AI_CODES))
+assert len(CODES) == 26
 
 
 class CreateIntentRejected(ValueError):
@@ -70,7 +102,7 @@ def _stable_key(company_inn: str, fingerprint: str, source_kind: str) -> str:
     return ("DEMO-BATCH-" if source_kind=="synthetic" else "RESEARCH-HOLD-")+digest
 
 
-def build_all_lead_intents(payload: dict) -> dict:
+def build_all_lead_intents(payload: dict, *, ai_by_fingerprint: dict | None = None) -> dict:
     """Return NOT-SENT Bitrix create-intent objects for all accepted companies.
 
     Even a synthetic VERIFIED input cannot grant production write authority.
@@ -78,6 +110,10 @@ def build_all_lead_intents(payload: dict) -> dict:
     be printed, committed to GitHub or sent to a chat. Use safe_summary().
     """
     validated = assess_source_batch(payload)
+    # The caller MUST provide a real, independently verified provider output
+    # if a GigaChat hypothesis is to be marked as run. Never call a model here.
+    _require(ai_by_fingerprint is None or isinstance(ai_by_fingerprint,dict),
+             "INTENT_AI_INPUT_INVALID")
     kind=validated["source_kind"]
     intents=[]
     for report in validated["assessments"]:
@@ -88,6 +124,8 @@ def build_all_lead_intents(payload: dict) -> dict:
         key=_stable_key(report["company_inn"],report["identity_fingerprint"],kind)
         signal_id=("DEMO-BATCH-" if kind=="synthetic" else "B2B-") + report["identity_fingerprint"][:20]
         scored=fields_from_assessment(report)
+        ai=(ai_by_fingerprint or {}).get(report["identity_fingerprint"])
+        enriched=_ai_fields(report,ai=ai)
         _require(scored[SCORE_FIELD]==report["lead_score"] and
                  scored[VERSION_FIELD]==report["score_version"] and
                  scored[BADGE_FIELD]==report["kanban_score_badge"],
@@ -103,6 +141,7 @@ def build_all_lead_intents(payload: dict) -> dict:
             FIELD_MAP["signal_url"]:report["evidence_url"],
             FIELD_MAP["suggested_service"]:service,
             **scored,
+            **enriched,
             FIELD_MAP["manager_next_action"]:"Проверить первоисточник, ИНН, клиентов и разрешение на контакт.",
             "UF_CRM_13_SVCIT_EVIDENCE_STATUS":(
                 "DEMO — источник вымышленный" if kind=="synthetic"
@@ -136,6 +175,8 @@ def build_all_lead_intents(payload: dict) -> dict:
                 "fields":fields,
             },
             "qualification_status":report["status"],
+            "gigachat_actual_run":ai is not None and enriched[AI_PREFIX+"AI_STATUS"]=="HYPOTHESIS_UNVERIFIED",
+            "ai_status":enriched[AI_PREFIX+"AI_STATUS"],
             "status":"PREVIEW_ONLY_NOT_AUTHORIZED",
             "can_execute":False,
             "crm_write_performed":False,
@@ -173,6 +214,8 @@ def safe_summary(plan: dict) -> dict:
             "score":i["score"],
             "color_badge":i["color_badge"],
             "qualification_status":i["qualification_status"],
+            "ai_status":i["ai_status"],
+            "gigachat_actual_run":i["gigachat_actual_run"],
             "field_count":len(i["params_NOT_SENT"]["fields"]),
             "method_if_future_authorized":i["method_if_future_authorized"],
             "status":i["status"], "can_execute":False

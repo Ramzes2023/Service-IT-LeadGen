@@ -29,6 +29,7 @@ REVIEW_FIELDS = frozenset({
     "UF_CRM_13_SVCIT_EVIDENCE_STATUS",
     "UF_CRM_13_SVCIT_REVIEW_DECISION",
     "UF_CRM_13_SVCIT_STOP_REASON",
+    "UF_CRM_13_SVCIT_IDEMPOTENCY_KEY",
 })
 assert REVIEW_FIELDS.issubset(ALL_FIELD_CODES)
 ALLOW = frozenset({
@@ -86,6 +87,13 @@ def _item_fields(fields_result):
           "FIELDS_NOT_VISIBLE")
     values = fields_result["fields"]
     _must(ALL_FIELD_CODES.issubset(values), "SVCIT_ORIGINAL_16_FIELDS_MISSING")
+    # Other existing custom fields must not be required when we create a
+    # bounded HOLD card with only the review allowlist.
+    for name in ALL_FIELD_CODES - REVIEW_FIELDS:
+        field = values.get(name)
+        _must(isinstance(field, dict)
+              and field.get("isRequired") not in (True, "Y", 1),
+              "UNSUPPORTED_MANDATORY_FIELD_OUTSIDE_REVIEW_ALLOWLIST")
     types = {}
     for name in REVIEW_FIELDS:
         meta = values.get(name)

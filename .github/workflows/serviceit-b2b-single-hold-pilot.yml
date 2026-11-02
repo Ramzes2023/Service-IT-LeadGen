@@ -1,0 +1,41 @@
+name: ServiceIT one B2B HOLD pilot (owner approved, no fanout)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+# Reuse existing lock so a concurrently triggered Gmail→HOLD worker cannot
+# race this one-card pilot for the same B2B-Center source key.
+concurrency:
+  group: serviceit-b2b-bitrix-issue-66
+  cancel-in-progress: false
+
+jobs:
+  exactly-one-hold:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event.issue.number == 83 &&
+      !github.event.issue.pull_request &&
+      github.actor == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_SINGLE_HOLD_PILOT_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Explicitly do not invoke model APIs in this single-card gate.
+      # Existing unrelated GigaChat automation remains unchanged.
+      SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED: "NO"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project dependencies
+        run: python -m pip install -r requirements.txt
+      - name: One existing public source review → at most one HOLD crm.item.add with exact readback
+        run: python -m leadpilot.serviceit_b2b_single_hold_pilot "$GITHUB_EVENT_PATH"

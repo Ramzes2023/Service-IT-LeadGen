@@ -1,0 +1,27 @@
+# Opt-in cloud-only worker. Blueprint creates a PAID starter worker + paid
+# persistent disk: approve charges in Render before enabling this Blueprint.
+# The service cannot contact Bitrix without a separate explicit LIVE setting.
+services:
+  - type: worker
+    name: serviceit-ai-cards-1062-21
+    runtime: python
+    plan: starter
+    region: frankfurt
+    autoDeployTrigger: off
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m leadpilot.serviceit_render_worker
+    disk:
+      name: serviceit-ai-queue
+      mountPath: /opt/render/project/src/serviceit-data
+      sizeGB: 1
+    envVars:
+      - key: SERVICEIT_CLOUD_LIVE_ENABLED
+        value: "NO"
+      - key: SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED
+        value: "NO"
+      - key: SERVICEIT_BITRIX_WEBHOOK
+        sync: false
+      - key: GIGACHAT_CREDENTIALS
+        sync: false
+      - key: GIGACHAT_SCOPE
+        sync: false

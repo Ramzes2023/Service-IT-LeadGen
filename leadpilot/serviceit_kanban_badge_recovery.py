@@ -134,7 +134,7 @@ def ledger_readonly(state_dir):
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
             rows = db.execute(
-                "SELECT key,state FROM cockpit_ops WHERE key IN (?,?)", LEDGER_KEYS
+                "SELECT key,state FROM cockpit_ops WHERE key IN (?,?,?)", LEDGER_KEYS
             ).fetchall()
     except sqlite3.Error:
         raise CockpitBlocked("LEDGER_READ_BLOCKED") from None

@@ -64,10 +64,10 @@ if ($UseExistingGigaChat) {
             $candidateScope = $scope
             foreach ($line in [IO.File]::ReadAllLines($File, [Text.Encoding]::UTF8)) {
                 if ($line -match '^\s*(?:export\s+)?GIGACHAT_CREDENTIALS\s*=\s*(.*)$') {
-                    $candidate = $Matches[1].Trim().Trim([char]34, [char]39)
+                    $candidate = $Matches[1].Trim().Trim([char[]]@([char]34, [char]39))
                 }
                 if ($line -match '^\s*(?:export\s+)?GIGACHAT_SCOPE\s*=\s*(.*)$') {
-                    $candidateScope = $Matches[1].Trim().Trim([char]34, [char]39)
+                    $candidateScope = $Matches[1].Trim().Trim([char[]]@([char]34, [char]39))
                 }
             }
             if ($candidate) {

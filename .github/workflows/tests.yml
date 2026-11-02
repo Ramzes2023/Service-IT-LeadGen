@@ -32,7 +32,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($path in @('scripts/RUN_SERVICEIT_B2B_TO_BITRIX_READONLY.ps1', 'scripts/RUN_SERVICEIT_B2B_ONE_HOLD_CARD.ps1')) {
+          foreach ($path in @('scripts/RUN_SERVICEIT_B2B_TO_BITRIX_READONLY.ps1', 'scripts/RUN_SERVICEIT_B2B_ONE_HOLD_CARD.ps1', 'scripts/RUN_SERVICEIT_B2B_GMAIL_SOURCE.ps1')) {
             $resolved = (Resolve-Path -LiteralPath $path).Path
             $tokens = $null
             $parseErrors = $null

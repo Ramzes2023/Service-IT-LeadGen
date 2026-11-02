@@ -1,23 +1,11 @@
-# ServiceIT Apps Script V5: one-command owner deployment
+# Service IT V5 — Windows owner-operated Apps Script automatic installation
 
-Use **only with the existing owner-controlled script** after a backup. The owner has requested automated Google Apps Script replacement without manually copying/pasting code. Local Windows PowerShell installs an official, SHA-256 pinned portable Node.js only if needed (winget fallback), uses pinned `@google/clasp@3.4.1`, finds exactly one matching existing Service IT / Gmail Tender Auto script, pulls a private backup, preserves unrelated source files, replaces one clear prototype and the manifest, pushes, and pulls again to verify readback.
+**Status 2026-11-02:** A separate reviewed ZIP/PowerShell operator package has been prepared as a conversation artifact; **this PR does not include the V5 executable**. Never fetch or execute a non-existent `scripts/SERVICEIT_GOOGLE_AUTOINSTALL_V5.ps1` path from GitHub.
 
-Important: Google OAuth login still requires the user to approve access in their browser, and Google Apps Script API access may be disabled in their account. No software may legally bypass that consent. The installer **does not** run `checkB2BCenter`, install triggers, enable transmission, modify Bitrix, write CRM, or create a new Apps Script project. It does not establish a deployed 24/7 Gmail → PostgreSQL → Bitrix production pipeline.
+The ZIP replaces the V4 clipboard-only workflow with a PowerShell 5.1 script that attempts to obtain official Node.js (pinned SHA256, `winget` fallback), runs `@google/clasp@3.4.1`, locates exactly one existing **Service IT — Gmail Tender Automation** Google project, pulls a backup, replaces only the recognized source and approved manifest, pushes and pulls back for verification.
 
-Source is read from PR #84 and checked against the exact Git blob SHAs from the previous safe V4 package, avoiding unreviewed code. The app script manifest enables Gmail read-only, external request, and scriptapp scopes; the runtime trigger stays OFF. If the existing script contains unexpected scopes or more than one possible target script file, stop without a Google push. Backup is held in the Windows profile private directory outside Git.
+**Requires on the owner's Windows**: verified pre-existing local Service IT Git clone, internet access to GitHub/Node/npm/Google, a working Google Apps Script API, and one-time Google browser OAuth consent if not yet granted. It is impossible to silently bypass Google approval; software must fail closed.
 
-**Convenient bootstrap:** use the exact Git branch and file below with a SHA pin of the committed V5 installer. No need to download another ZIP. Enter this entire block in Windows PowerShell:
+**Explicitly OFF**: no Google time trigger, Gmail forwarding, HMAC server, production Bitrix CRM writes, or lead promotion. `SERVICEIT_V5_GOOGLE_READBACK=PASS` is the success marker only for *code installation*, never for Gmail→PostgreSQL→Bitrix E2E.
 
-```powershell
-$Repo = "$env:USERPROFILE\Service_IT_GitHub_Repo\Service-IT-LeadGen"
-git -C $Repo fetch origin fix/serviceit-appscript-no-node-safe-handoff-20261102
-if ($LASTEXITCODE -ne 0) { throw 'FETCH_FAILED' }
-$File = "$env:TEMP\SERVICEIT_GOOGLE_AUTOINSTALL_V5.ps1"
-git -C $Repo show "FETCH_HEAD:scripts/SERVICEIT_GOOGLE_AUTOINSTALL_V5.ps1" | Set-Content -LiteralPath $File -Encoding UTF8
-if ($LASTEXITCODE -ne 0) { throw 'GET_SCRIPT_FAILED' }
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $File
-```
-
-Do not claim installation unless output contains `SERVICEIT_V5_GOOGLE_READBACK=PASS`. Stop on any failure; do not blindly repeat a Google write. The script prints a private local diagnostic directory to allow safe troubleshooting without sharing passwords or OAuth tokens.
-
-Not yet deployed: Google Apps Script editing; server HTTPS/HMAC ingress; PostgreSQL canary; Gmail real event; CRM qualified lead path. DRAFT PR #84 remains separate and production must remain OFF.
+The package's Windows execution and actual Google API response have not been verified. If blocked, inspect the `FAILED_PHASE` and `ERROR_CODE` markers only and do not share tokens or logs containing private email data. The separate DRAFT PR #84 remains the implementation branch for independent Gmail ingress/server work.

@@ -98,3 +98,10 @@ jobs:
       - name: Offline complete 1062 create preview PowerShell smoke
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_ALL_LEAD_CRM_CREATE_PREVIEW.ps1
+  windows-event-queue-crm-readonly:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strictly offline event queue read-only PowerShell operator
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_EVENT_QUEUE_CRM_READONLY.ps1

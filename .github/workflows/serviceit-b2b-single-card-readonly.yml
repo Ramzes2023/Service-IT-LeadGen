@@ -1,0 +1,32 @@
+name: ServiceIT single-card B2B read-only gate
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  crm-readonly-one-card-gate:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event.issue.number == 83 &&
+      !github.event.issue.pull_request &&
+      github.actor == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_PILOT_PREFLIGHT_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install existing project requirements
+        run: python -m pip install -r requirements.txt
+      - name: Validate only existing 1062/21 schema, exact source duplicates and GitHub locks
+        run: python -m leadpilot.serviceit_b2b_single_card_preflight "$GITHUB_EVENT_PATH"

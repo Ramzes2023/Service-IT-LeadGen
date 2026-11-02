@@ -56,7 +56,7 @@ class GmailReadOnly:
         self.refresh_token = refresh_token
         if expected_email is not None:
             _must(isinstance(expected_email, str) and
-                  re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", expected_email),
+                  re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", expected_email),
                   "EXPECTED_MAILBOX_INVALID")
         self.expected_email = expected_email.lower() if expected_email else None
 

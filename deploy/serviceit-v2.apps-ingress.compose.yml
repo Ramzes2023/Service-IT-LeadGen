@@ -1,0 +1,37 @@
+# Optional, explicit Apps Script ingress. Not part of default production stack.
+# Requires owner-approved HTTPS reverse proxy to 127.0.0.1:18744.
+# The server does NOT authorize Gmail itself and does NOT write Bitrix.
+services:
+  apps-ingress:
+    profiles: [apps-live]
+    build:
+      context: ..
+      dockerfile: Dockerfile.serviceit-v2
+    command: ["python", "-m", "uvicorn", "leadpilot.serviceit_v2_apps_receiver:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SERVICEIT_V2_DB_DSN: "host=db port=5432 dbname=serviceitv2 user=serviceitv2"
+      PGPASSWORD: "${SERVICEIT_V2_PG_PASSWORD:?dedicated db password required}"
+      SERVICEIT_V2_APPS_RECEIVER_ENABLED: "${SERVICEIT_V2_APPS_RECEIVER_ENABLED:-NO}"
+      SERVICEIT_V2_GMAIL_EXPECTED_EMAIL: "${SERVICEIT_V2_GMAIL_EXPECTED_EMAIL:?approved mailbox required}"
+      SERVICEIT_V2_APPS_HMAC_SECRET_FILE: /run/secrets/apps-hmac
+    volumes:
+      - type: bind
+        source: "${SERVICEIT_V2_APPS_HMAC_HOST_FILE:?private HMAC file required}"
+        target: /run/secrets/apps-hmac
+        read_only: true
+    ports:
+      - "127.0.0.1:18744:8080"
+    networks: [serviceit_private]

@@ -26,6 +26,14 @@ Owner explicitly approved the **existing** Render workspace `My Workspace`
 - Separate [Render Blueprint proposal](../deploy/serviceit-v2-render-blueprint.safe.yaml)
   is **NOT APPLIED**. This is *documentation only* until a safe existing-resource
   adoption process is available; never create a second Blueprint blindly.
+- [Live HTTPS rejection canary](https://github.com/Ramzes2023/Service-IT-LeadGen/actions/runs/41521470012)
+  **SUCCESS**: unauthenticated JSON POST 503 while source OFF, wrong media type
+  415, oversized 512001-byte body 413 and /docs /openapi.json 404.
+- [Isolated Docker HTTP+HMAC+disposable PostgreSQL E2E](https://github.com/Ramzes2023/Service-IT-LeadGen/actions/runs/41521769046)
+  **SUCCESS**: actual Render Docker image with ephemeral GitHub PostgreSQL,
+  signed synthetic MIME accepted once, duplicate request idempotent, forged
+  HMAC rejected 403, exact SQL research rows asserted, CRM writes 0.
+  **This did not access the actual Render PostgreSQL**.
 - The connected Render Postgres MCP read-only query tool could **not** connect
   because PostgreSQL IP allowlist is empty. Do not make it public.
   The Render connector lacks a `fromDatabase` env-var action or Blueprint

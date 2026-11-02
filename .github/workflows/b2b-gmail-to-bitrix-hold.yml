@@ -1,0 +1,38 @@
+name: B2B Center Gmail to Bitrix24 guarded HOLD
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+# One serial worker across ALL comments on the dedicated procurement queue.
+# Never cancel a running writer after it reserves its unique source key.
+concurrency:
+  group: serviceit-b2b-bitrix-issue-66
+  cancel-in-progress: false
+
+jobs:
+  guarded-b2b-hold:
+    if: ${{ github.event.issue.number == 66 && !github.event.issue.pull_request && github.actor == 'Ramzes2023' && startsWith(github.event.comment.body, 'SERVICEIT_B2B_NOTICE_V1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVICEIT_B2B_CRM_AUTO_ENABLED: ${{ vars.SERVICEIT_B2B_CRM_AUTO_ENABLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Validate strictly typed official notification, no CRM write
+        run: python -m leadpilot.b2b_github_to_bitrix --event "$GITHUB_EVENT_PATH"
+      - name: Create one unqualified HOLD card only when owner opt-in is enabled
+        if: ${{ env.SERVICEIT_B2B_CRM_AUTO_ENABLED == 'YES' }}
+        env:
+          SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m leadpilot.b2b_github_to_bitrix --event "$GITHUB_EVENT_PATH" --live

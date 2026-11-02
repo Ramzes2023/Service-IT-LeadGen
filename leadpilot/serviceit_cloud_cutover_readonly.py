@@ -10,20 +10,14 @@ import os
 import httpx
 
 from .serviceit_enrichment_worker import Rest
+from .serviceit_bitrix_list_shape import strict_bitrix_items, ItemListShapeError
 
 
 class CutoverItemShapeError(ValueError):
     """Only a bounded index + a type from a fixed enum. Never carries item data."""
-    def __init__(self, index: int, item: object):
+    def __init__(self, index: int, item_kind: str):
         self.index = index
-        self.kind = (
-            "NULL" if item is None else
-            "TEXT" if type(item) is str else
-            "LIST" if isinstance(item, list) else
-            "BOOL" if type(item) is bool else
-            "NUMBER" if type(item) in (int, float) else
-            "OTHER"
-        )
+        self.kind = item_kind
         super().__init__("CUTOVER_ITEM_INVALID")
 
 
@@ -38,18 +32,20 @@ def latest_existing_card_id(rest) -> int:
         "select": ["id", "categoryId"],
         "start": 0,
     })
-    items = result.get("items")
-    if not isinstance(items, list) or len(items) > 50:
-        raise ValueError("CUTOVER_INVENTORY_INVALID")
+    try:
+        items = strict_bitrix_items(result)
+    except ItemListShapeError as exc:
+        raise CutoverItemShapeError(exc.index, exc.kind) from None
+    except ValueError:
+        raise ValueError("CUTOVER_INVENTORY_INVALID") from None
     seen = set()
     previous = None
     for index, item in enumerate(items):
-        if not isinstance(item, dict):
-            raise CutoverItemShapeError(index, item)
-        try:
-            card_id = int(item.get("id", ""))
-        except (ValueError, TypeError) as exc:
-            raise ValueError("CUTOVER_CARD_ID_INVALID") from exc
+        raw_id = item.get("id")
+        if not (type(raw_id) is int or
+                (type(raw_id) is str and raw_id.isascii() and raw_id.isdecimal())):
+            raise ValueError("CUTOVER_CARD_ID_INVALID")
+        card_id = int(raw_id)
         if card_id < 1 or card_id > 2_000_000_000:
             raise ValueError("CUTOVER_CARD_ID_OUT_OF_BOUNDS")
         if (("entityTypeId" in item and str(item["entityTypeId"]) != "1062")

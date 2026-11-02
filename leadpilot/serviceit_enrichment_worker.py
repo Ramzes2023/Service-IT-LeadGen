@@ -20,6 +20,7 @@ import httpx
 from .ai import AIProvider, config_from_env
 from .bitrix_metadata_audit import PORTAL, validate_webhook
 from .bitrix_1062_mapping import FIELD_MAP, _is_valid_inn
+from .serviceit_bitrix_list_shape import strict_bitrix_items
 from .serviceit_ai_lead_engine import assess_lead
 from .serviceit_ai_report import build_report, plain
 from .serviceit_manager_ai_card import format_verified_card
@@ -306,8 +307,10 @@ def poll(store, rest, minimum_id):
     result = rest('crm.item.list', {'entityTypeId':1062,'useOriginalUfNames':'Y',
                   'filter':{'categoryId':21,'>id':cursor},'order':{'id':'ASC'},
                   'select':['id','categoryId'],'start':0})
-    items = result.get('items')
-    require(isinstance(items,list) and len(items)<=50, 'POLL_RESPONSE_UNTRUSTED')
+    try:
+        items = strict_bitrix_items(result)
+    except ValueError:
+        raise Blocked('POLL_RESPONSE_UNTRUSTED') from None
     for item in items:
         require(isinstance(item,dict), 'POLL_ITEM_INVALID')
         # Bitrix24 crm.item.list silently drops entityTypeId from select.

@@ -84,6 +84,8 @@ def test_gmail_incremental_two_runs_no_duplicate_and_no_remote_mutation(tmp_path
     assert payload["total_review_it"] == 1
     card = payload["items"][0]
     assert card["classification"] == "TENDER_OPPORTUNITY_HOLD"
+    assert card["lead_research_candidate"] is True
+    assert card["review_priority"] == "P1_1C_PRIVATE_BUYER_RESEARCH"
     assert card["qualified_lead"] is False
     assert card["buyer_inn"] is None
     assert card["fns_msp"] == "NOT_VERIFIED"

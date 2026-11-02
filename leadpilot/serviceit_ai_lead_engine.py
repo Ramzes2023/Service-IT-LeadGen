@@ -18,6 +18,7 @@ from typing import Mapping
 
 from .core import score_company, SCORE_VERSION, SERVICES, normalize_inn
 from .bitrix_synthetic_text_guard import synthetic_action_is_safe
+from .serviceit_kanban_presentation import BADGE_FIELD, decorate_assessment, fields_from_assessment
 
 REGIONS = ("Москва", "Московская область", "Ингушетия")
 APPROVED_STATES = frozenset({"VERIFIED", "BLOCKED", "UNKNOWN"})
@@ -158,7 +159,7 @@ def assess_lead(
     )
     fp = sha256((inn + "\x00" + highest["source_url"] + "\x00" +
                  highest["signal_type"]).encode()).hexdigest()[:24]
-    return {
+    result = {
         "mode": "SYNTHETIC_DEMO" if demo else "RESEARCH_OR_REVIEW",
         "company_inn": inn, "company_name": name,
         "region": region, "evidence_url": highest["source_url"],
@@ -180,6 +181,7 @@ def assess_lead(
         "bitrix_write_performed": False,
         "customer_contacted": False,
     }
+    return decorate_assessment(result)
 
 
 def plan_serviceit_ai_signals(assessments: list[dict]) -> dict:
@@ -206,6 +208,9 @@ def plan_serviceit_ai_signals(assessments: list[dict]) -> dict:
         plans.append({
             "fingerprint":fingerprint, "score":report["lead_score"],
             "score_version":report["score_version"],
+            "kanban_score_badge":fields_from_assessment(report)[BADGE_FIELD],
+            "kanban_score_field_code":BADGE_FIELD,
+            "score_badge_write_performed":False,
             "status":report["status"],
             "proposed_service":report["suggested_service"],
             "crm_entity_type_id":1062, "crm_category_id":21,

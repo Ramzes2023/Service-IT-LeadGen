@@ -103,7 +103,7 @@ function hex_(bytes) {
 /** Receiver must ack storage BEFORE replying 200/202; no local "processed" flag. */
 function deliverOne_(id, raw, receiver) {
   if (!raw || raw.length > SERVICEIT.maxRawCharacters ||
-      !/^[a-zA-Z0-9_-]+$/.test(raw))
+      !/^[a-zA-Z0-9_-]+={0,2}$/.test(raw))
     throw new Error('UNSAFE_OR_OVERSIZE_GMAIL_MIME');
   const payload = JSON.stringify({
     version: SERVICEIT.schema,
@@ -150,10 +150,18 @@ function pollAndForwardB2B() {
     const ids = listVendorIds_().reverse();
     let accepted = 0;
     let duplicates = 0;
+    const cache = CacheService.getScriptCache();
     for (let i = 0; i < ids.length; i++) {
+      // Optimization only: authoritative deduplication is PostgreSQL.
+      if (cache.get('serviceit_ack_' + ids[i])) {
+        duplicates++;
+        continue;
+      }
       const msg = Gmail.Users.Messages.get('me', ids[i], {format: 'raw'});
       if (msg.id !== ids[i]) throw new Error('GMAIL_ID_RESPONSE_MISMATCH');
       const result = deliverOne_(ids[i], String(msg.raw || ''), receiver);
+      // Cache ONLY after the server has acknowledged a durable DB transaction.
+      cache.put('serviceit_ack_' + ids[i], '1', 21600);
       if (result === 'INGESTED') accepted++;
       else duplicates++;
     }

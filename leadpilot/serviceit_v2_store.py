@@ -80,6 +80,23 @@ CREATE TABLE IF NOT EXISTS serviceit_v2_message_failures (
   attempts integer NOT NULL DEFAULT 1 CHECK(attempts >= 1),
   last_attempt timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS serviceit_v2_buyer_reviews (
+  source text NOT NULL,
+  tender_id varchar(12) NOT NULL,
+  buyer_inn text NOT NULL,
+  fns_snapshot date NOT NULL,
+  fns_category text NOT NULL,
+  fns_region char(2) NOT NULL,
+  source_xml_sha256 char(64) NOT NULL,
+  decision text NOT NULL CHECK (
+    decision IN ('REVIEW_REQUIRED','POLICY_CANDIDATE_PENDING_AUTHORIZATION')),
+  reason_codes_json text NOT NULL,
+  reviewed_at timestamptz NOT NULL DEFAULT now(),
+  qualified_lead boolean NOT NULL DEFAULT FALSE
+    CHECK (qualified_lead=FALSE),
+  PRIMARY KEY (source,tender_id),
+  FOREIGN KEY (source,tender_id) REFERENCES serviceit_v2_opportunities(source,tender_id)
+);
 CREATE TABLE IF NOT EXISTS serviceit_v2_runtime (
   name text PRIMARY KEY,
   value text NOT NULL,
@@ -251,6 +268,7 @@ def read_status(conn):
         ("serviceit_v2_versions", "total_notice_versions"),
         ("serviceit_v2_crm_outbox", "total_crm_outbox_events"),
         ("serviceit_v2_message_failures", "unresolved_mail_parsing_errors"),
+        ("serviceit_v2_buyer_reviews", "buyer_reviews_not_leads"),
     ):
         rows[key] = conn.execute("SELECT count(*) FROM " + table).fetchone()[0]
     rows["tender_hold"] = conn.execute(

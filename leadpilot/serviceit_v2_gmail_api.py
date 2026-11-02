@@ -68,7 +68,7 @@ class GmailReadOnly:
               and not re.search(r"\s", token), "OAUTH_ACCESS_TOKEN_INVALID")
         return token
 
-    def recent_messages(self, *, lookback_days=14, max_messages=60):
+    def recent_messages(self, *, lookback_days=14, max_messages=60, should_fetch=None):
         _must(type(lookback_days) is int and 1 <= lookback_days <= 30,
               "LOOKBACK_INVALID")
         _must(type(max_messages) is int and 1 <= max_messages <= MAX_MESSAGES,
@@ -112,6 +112,8 @@ class GmailReadOnly:
             raise GmailSourceBlocked("GMAIL_PAGINATION_BUDGET")
         # Fetch chronological-ish order so earlier revisions are inserted first.
         for mid in reversed(ids):
+            if should_fetch is not None and not should_fetch(mid):
+                continue
             try:
                 response = self.client.get(
                     GMAIL_API + "/" + mid, headers=headers,

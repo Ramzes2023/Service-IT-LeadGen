@@ -305,12 +305,24 @@ def poll(store, rest, minimum_id):
     cursor = max(minimum_id-1, int(row[0]) if row else 0)
     result = rest('crm.item.list', {'entityTypeId':1062,'useOriginalUfNames':'Y',
                   'filter':{'categoryId':21,'>id':cursor},'order':{'id':'ASC'},
-                  'select':['id','entityTypeId','categoryId'],'start':0})
+                  'select':['id','categoryId'],'start':0})
     items = result.get('items')
     require(isinstance(items,list) and len(items)<=50, 'POLL_RESPONSE_UNTRUSTED')
     for item in items:
-        item_id = int(item['id'])
-        validate_identity(item,item_id)
+        require(isinstance(item,dict), 'POLL_ITEM_INVALID')
+        # Bitrix24 crm.item.list silently drops entityTypeId from select.
+        # The request is scoped to type 1062; full identity is checked by
+        # crm.item.get before any write in Worker and preliminary_once.
+        raw_id = item.get('id')
+        require(type(raw_id) is int or (
+            isinstance(raw_id,str) and raw_id.isascii() and raw_id.isdecimal()),
+            'POLL_ID_INVALID')
+        item_id = int(raw_id)
+        require(8 <= item_id <= 2_000_000_000
+                and str(item.get('categoryId')) == '21'
+                and ('entityTypeId' not in item
+                     or str(item['entityTypeId']) == '1062'),
+                'POLL_ITEM_IDENTITY_INVALID')
         require(item_id > cursor, 'POLL_ORDER_INVALID')
         store.enqueue(item_id)
         cursor = item_id

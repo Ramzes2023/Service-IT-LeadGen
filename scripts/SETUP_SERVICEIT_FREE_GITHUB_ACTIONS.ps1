@@ -3,7 +3,7 @@
 # command-line arguments, Git working tree, or the public encrypted-state branch.
 # Requires GitHub CLI (gh) interactive auth and owner confirmation.
 [CmdletBinding()]
-param([switch]$Apply)
+param([switch]$Apply, [switch]$DiagnoseCutover)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Repository = 'Ramzes2023/Service-IT-LeadGen'
@@ -51,7 +51,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Ledger)) {
 Write-Host "FREE_GITHUB_REPO=VERIFIED"
 Write-Host 'ENCRYPTED_LEDGER_BRANCH=VERIFIED'
 Write-Host "SCOPE=$Scope"
-if (-not $Apply) {
+if (-not $Apply -and -not $DiagnoseCutover) {
     Write-Host 'CLOUD_SETUP=READONLY_PREFLIGHT_PASS'
     Write-Host 'Run again with -Apply to securely transfer DPAPI secrets and enable the FREE cloud.'
     exit 0
@@ -68,6 +68,778 @@ function Read-DpapiSecret([string]$Path) {
             [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Ptr)
         }
         $Secure.Dispose()
+    }
+}
+
+# Diagnostic mode is strictly read-only: inspect the Bitrix inventory using
+# the already encrypted same-user DPAPI key, but NEVER upload any secret,
+# disable Windows Task Scheduler, write GitHub variables, or enable the cloud.
+if ($DiagnoseCutover) {
+    $BitrixDiagnostic = Read-DpapiSecret $BitrixFile
+    try {
+        $env:SERVICEIT_BITRIX_WEBHOOK = $BitrixDiagnostic
+        Push-Location $Repo
+        try {
+            $DiagnosticLines = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly 2>$null)
+            $DiagnosticExit = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        foreach ($Line in $DiagnosticLines) {
+            if ($Line -cmatch '^SERVICEIT_CLOUD_CUTOVER_(MAX_ID=[0-9]{1,10}|CRM_WRITES=0|DIAGNOSTIC=[A-Z0-9_:]+)
+    # PowerShell 5.1 external stdin pipeline appends a newline. Use redirected
+    # stdin of the GitHub CLI to send EXACT text with NO trailing newline.
+    $Start = New-Object System.Diagnostics.ProcessStartInfo
+    $Start.FileName = $Gh
+    $Start.Arguments = "secret set $Name --repo $Repository"
+    $Start.UseShellExecute = $false
+    $Start.RedirectStandardInput = $true
+    $Start.RedirectStandardOutput = $true
+    $Start.RedirectStandardError = $true
+    $Start.CreateNoWindow = $true
+    $Process = [System.Diagnostics.Process]::Start($Start)
+    try {
+        $Process.StandardInput.Write($Secret)
+        $Process.StandardInput.Close()
+        if (-not $Process.WaitForExit(120000)) {
+            $Process.Kill()
+            throw "GITHUB_SECRET_UPLOAD_TIMEOUT_$Name"
+        }
+        if ($Process.ExitCode -ne 0) { throw "GITHUB_SECRET_UPLOAD_FAILED_$Name" }
+    } finally {
+        $Process.Dispose()
+    }
+}
+
+function Set-Variable([string]$Name, [string]$Value) {
+    & $Gh variable set $Name --repo $Repository --body $Value *> $null
+    if ($LASTEXITCODE -ne 0) { throw "GITHUB_VARIABLE_WRITE_FAILED_$Name" }
+}
+$ExistingVariables = @(& $Gh variable list --repo $Repository --json 'name,value' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_VARIABLE_LIST_FAILED' }
+if (@($ExistingVariables | Where-Object { $_.name -eq 'SERVICEIT_FREE_CLOUD_ENABLED' -and $_.value -eq 'YES' }).Count) {
+    throw 'CLOUD_ALREADY_ENABLED_REFUSE_SECRET_OR_CURSOR_OVERWRITE'
+}
+$ExistingSecrets = @(& $Gh secret list --repo $Repository --json 'name' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_SECRET_LIST_FAILED' }
+$RemoteKeyExists = @($ExistingSecrets | Where-Object { $_.name -eq 'SERVICEIT_GH_LEDGER_KEY' }).Count -gt 0
+if ($RemoteKeyExists -and -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
+    throw 'REMOTE_LEDGER_KEY_EXISTS_NO_LOCAL_MATCH_REFUSE_ROTATION'
+}
+$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_DO_NOT_SWITCH_WHILE_CRM_WRITE_POSSIBLE' }
+$Agree = Read-Host 'Activate FREE cloud, transfer protected ServiceIT secrets, and disable local scheduler? Type YES'
+if ($Agree -cne 'YES') { throw 'OWNER_CLOUD_CONSENT_MISSING' }
+
+$Bitrix = $null
+$Giga = $null
+$Fernet = $null
+try {
+    $Bitrix = Read-DpapiSecret $BitrixFile
+    $Giga = Read-DpapiSecret $ModelFile
+    if ([string]::IsNullOrWhiteSpace($Bitrix) -or [string]::IsNullOrWhiteSpace($Giga)) {
+        throw 'EMPTY_DPAPI_CREDENTIAL'
+    }
+    # Read-only snapshot of the last REAL existing card (no source/customer content).
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $Check = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) {
+                foreach ($Line in $Check) {
+                    if ($Line -cmatch '^SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC=[A-Z0-9_:]+
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $Matches = @($Check | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($Matches.Count -ne 1) { throw 'CUTOVER_ID_NOT_CONFIRMED' }
+    $InitialCutover = [int]($Matches[0] -split '=')[1]
+    Write-Host "CLOUD_CUTOVER_READONLY_MAX_ID=$InitialCutover"
+
+    if (Test-Path -LiteralPath $KeyFile -PathType Leaf) {
+        $Fernet = Read-DpapiSecret $KeyFile
+    } else {
+        $Bytes = New-Object byte[] 32
+        $Random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $Random.GetBytes($Bytes) } finally { $Random.Dispose() }
+        $Fernet = [Convert]::ToBase64String($Bytes).Replace('+','-').Replace('/','_')
+        $KeySecure = ConvertTo-SecureString -String $Fernet -AsPlainText -Force
+        try {
+            $KeySecure | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $KeyFile -Encoding UTF8 -NoNewline
+        } finally { $KeySecure.Dispose() }
+    }
+
+    # Secure GitHub transfer. Passwords never sent as process argv or written to git.
+    Set-SecretFromStdin 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
+    Set-SecretFromStdin 'GIGACHAT_CREDENTIALS' $Giga
+    Set-SecretFromStdin 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    Set-Variable 'GIGACHAT_SCOPE' $Scope
+    Set-Variable 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'
+    Write-Host 'GITHUB_ENCRYPTED_SECRETS=CONFIGURED'
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_CUTOVER_ABORTED' }
+    if ($Task.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Disabled') {
+        throw 'LOCAL_TASK_DISABLE_UNVERIFIED'
+    }
+    Write-Host 'WINDOWS_TASK_DISABLED=YES'
+
+    # Once the local writer is stopped, capture the final upper bound again.
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) {
+                foreach ($Line in $FinalCheck) {
+                    if ($Line -cmatch '^SERVICEIT_CLOUD_CUTOVER_DIAGNOSTIC=[A-Z0-9_:]+
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+ -or
+                $Line -ceq 'SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY') {
+                Write-Host $Line
+            }
+        }
+        Write-Host "CUTOVER_DIAGNOSTIC_EXIT_CODE=$DiagnosticExit"
+        if ($DiagnosticExit -ne 0) { exit 2 }
+        exit 0
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+        $BitrixDiagnostic = $null
+    }
+}
+
+function Set-SecretFromStdin([string]$Name, [string]$Secret) {
+    # PowerShell 5.1 external stdin pipeline appends a newline. Use redirected
+    # stdin of the GitHub CLI to send EXACT text with NO trailing newline.
+    $Start = New-Object System.Diagnostics.ProcessStartInfo
+    $Start.FileName = $Gh
+    $Start.Arguments = "secret set $Name --repo $Repository"
+    $Start.UseShellExecute = $false
+    $Start.RedirectStandardInput = $true
+    $Start.RedirectStandardOutput = $true
+    $Start.RedirectStandardError = $true
+    $Start.CreateNoWindow = $true
+    $Process = [System.Diagnostics.Process]::Start($Start)
+    try {
+        $Process.StandardInput.Write($Secret)
+        $Process.StandardInput.Close()
+        if (-not $Process.WaitForExit(120000)) {
+            $Process.Kill()
+            throw "GITHUB_SECRET_UPLOAD_TIMEOUT_$Name"
+        }
+        if ($Process.ExitCode -ne 0) { throw "GITHUB_SECRET_UPLOAD_FAILED_$Name" }
+    } finally {
+        $Process.Dispose()
+    }
+}
+
+function Set-Variable([string]$Name, [string]$Value) {
+    & $Gh variable set $Name --repo $Repository --body $Value *> $null
+    if ($LASTEXITCODE -ne 0) { throw "GITHUB_VARIABLE_WRITE_FAILED_$Name" }
+}
+$ExistingVariables = @(& $Gh variable list --repo $Repository --json 'name,value' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_VARIABLE_LIST_FAILED' }
+if (@($ExistingVariables | Where-Object { $_.name -eq 'SERVICEIT_FREE_CLOUD_ENABLED' -and $_.value -eq 'YES' }).Count) {
+    throw 'CLOUD_ALREADY_ENABLED_REFUSE_SECRET_OR_CURSOR_OVERWRITE'
+}
+$ExistingSecrets = @(& $Gh secret list --repo $Repository --json 'name' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_SECRET_LIST_FAILED' }
+$RemoteKeyExists = @($ExistingSecrets | Where-Object { $_.name -eq 'SERVICEIT_GH_LEDGER_KEY' }).Count -gt 0
+if ($RemoteKeyExists -and -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
+    throw 'REMOTE_LEDGER_KEY_EXISTS_NO_LOCAL_MATCH_REFUSE_ROTATION'
+}
+$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_DO_NOT_SWITCH_WHILE_CRM_WRITE_POSSIBLE' }
+$Agree = Read-Host 'Activate FREE cloud, transfer protected ServiceIT secrets, and disable local scheduler? Type YES'
+if ($Agree -cne 'YES') { throw 'OWNER_CLOUD_CONSENT_MISSING' }
+
+$Bitrix = $null
+$Giga = $null
+$Fernet = $null
+try {
+    $Bitrix = Read-DpapiSecret $BitrixFile
+    $Giga = Read-DpapiSecret $ModelFile
+    if ([string]::IsNullOrWhiteSpace($Bitrix) -or [string]::IsNullOrWhiteSpace($Giga)) {
+        throw 'EMPTY_DPAPI_CREDENTIAL'
+    }
+    # Read-only snapshot of the last REAL existing card (no source/customer content).
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $Check = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $Matches = @($Check | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($Matches.Count -ne 1) { throw 'CUTOVER_ID_NOT_CONFIRMED' }
+    $InitialCutover = [int]($Matches[0] -split '=')[1]
+    Write-Host "CLOUD_CUTOVER_READONLY_MAX_ID=$InitialCutover"
+
+    if (Test-Path -LiteralPath $KeyFile -PathType Leaf) {
+        $Fernet = Read-DpapiSecret $KeyFile
+    } else {
+        $Bytes = New-Object byte[] 32
+        $Random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $Random.GetBytes($Bytes) } finally { $Random.Dispose() }
+        $Fernet = [Convert]::ToBase64String($Bytes).Replace('+','-').Replace('/','_')
+        $KeySecure = ConvertTo-SecureString -String $Fernet -AsPlainText -Force
+        try {
+            $KeySecure | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $KeyFile -Encoding UTF8 -NoNewline
+        } finally { $KeySecure.Dispose() }
+    }
+
+    # Secure GitHub transfer. Passwords never sent as process argv or written to git.
+    Set-SecretFromStdin 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
+    Set-SecretFromStdin 'GIGACHAT_CREDENTIALS' $Giga
+    Set-SecretFromStdin 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    Set-Variable 'GIGACHAT_SCOPE' $Scope
+    Set-Variable 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'
+    Write-Host 'GITHUB_ENCRYPTED_SECRETS=CONFIGURED'
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_CUTOVER_ABORTED' }
+    if ($Task.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Disabled') {
+        throw 'LOCAL_TASK_DISABLE_UNVERIFIED'
+    }
+    Write-Host 'WINDOWS_TASK_DISABLED=YES'
+
+    # Once the local writer is stopped, capture the final upper bound again.
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+) {
+                        Write-Host $Line
+                    }
+                }
+                throw 'CUTOVER_READONLY_INVENTORY_FAILED'
+            }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $Matches = @($Check | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($Matches.Count -ne 1) { throw 'CUTOVER_ID_NOT_CONFIRMED' }
+    $InitialCutover = [int]($Matches[0] -split '=')[1]
+    Write-Host "CLOUD_CUTOVER_READONLY_MAX_ID=$InitialCutover"
+
+    if (Test-Path -LiteralPath $KeyFile -PathType Leaf) {
+        $Fernet = Read-DpapiSecret $KeyFile
+    } else {
+        $Bytes = New-Object byte[] 32
+        $Random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $Random.GetBytes($Bytes) } finally { $Random.Dispose() }
+        $Fernet = [Convert]::ToBase64String($Bytes).Replace('+','-').Replace('/','_')
+        $KeySecure = ConvertTo-SecureString -String $Fernet -AsPlainText -Force
+        try {
+            $KeySecure | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $KeyFile -Encoding UTF8 -NoNewline
+        } finally { $KeySecure.Dispose() }
+    }
+
+    # Secure GitHub transfer. Passwords never sent as process argv or written to git.
+    Set-SecretFromStdin 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
+    Set-SecretFromStdin 'GIGACHAT_CREDENTIALS' $Giga
+    Set-SecretFromStdin 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    Set-Variable 'GIGACHAT_SCOPE' $Scope
+    Set-Variable 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'
+    Write-Host 'GITHUB_ENCRYPTED_SECRETS=CONFIGURED'
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_CUTOVER_ABORTED' }
+    if ($Task.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Disabled') {
+        throw 'LOCAL_TASK_DISABLE_UNVERIFIED'
+    }
+    Write-Host 'WINDOWS_TASK_DISABLED=YES'
+
+    # Once the local writer is stopped, capture the final upper bound again.
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+ -or
+                $Line -ceq 'SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY') {
+                Write-Host $Line
+            }
+        }
+        Write-Host "CUTOVER_DIAGNOSTIC_EXIT_CODE=$DiagnosticExit"
+        if ($DiagnosticExit -ne 0) { exit 2 }
+        exit 0
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+        $BitrixDiagnostic = $null
+    }
+}
+
+function Set-SecretFromStdin([string]$Name, [string]$Secret) {
+    # PowerShell 5.1 external stdin pipeline appends a newline. Use redirected
+    # stdin of the GitHub CLI to send EXACT text with NO trailing newline.
+    $Start = New-Object System.Diagnostics.ProcessStartInfo
+    $Start.FileName = $Gh
+    $Start.Arguments = "secret set $Name --repo $Repository"
+    $Start.UseShellExecute = $false
+    $Start.RedirectStandardInput = $true
+    $Start.RedirectStandardOutput = $true
+    $Start.RedirectStandardError = $true
+    $Start.CreateNoWindow = $true
+    $Process = [System.Diagnostics.Process]::Start($Start)
+    try {
+        $Process.StandardInput.Write($Secret)
+        $Process.StandardInput.Close()
+        if (-not $Process.WaitForExit(120000)) {
+            $Process.Kill()
+            throw "GITHUB_SECRET_UPLOAD_TIMEOUT_$Name"
+        }
+        if ($Process.ExitCode -ne 0) { throw "GITHUB_SECRET_UPLOAD_FAILED_$Name" }
+    } finally {
+        $Process.Dispose()
+    }
+}
+
+function Set-Variable([string]$Name, [string]$Value) {
+    & $Gh variable set $Name --repo $Repository --body $Value *> $null
+    if ($LASTEXITCODE -ne 0) { throw "GITHUB_VARIABLE_WRITE_FAILED_$Name" }
+}
+$ExistingVariables = @(& $Gh variable list --repo $Repository --json 'name,value' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_VARIABLE_LIST_FAILED' }
+if (@($ExistingVariables | Where-Object { $_.name -eq 'SERVICEIT_FREE_CLOUD_ENABLED' -and $_.value -eq 'YES' }).Count) {
+    throw 'CLOUD_ALREADY_ENABLED_REFUSE_SECRET_OR_CURSOR_OVERWRITE'
+}
+$ExistingSecrets = @(& $Gh secret list --repo $Repository --json 'name' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_SECRET_LIST_FAILED' }
+$RemoteKeyExists = @($ExistingSecrets | Where-Object { $_.name -eq 'SERVICEIT_GH_LEDGER_KEY' }).Count -gt 0
+if ($RemoteKeyExists -and -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
+    throw 'REMOTE_LEDGER_KEY_EXISTS_NO_LOCAL_MATCH_REFUSE_ROTATION'
+}
+$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_DO_NOT_SWITCH_WHILE_CRM_WRITE_POSSIBLE' }
+$Agree = Read-Host 'Activate FREE cloud, transfer protected ServiceIT secrets, and disable local scheduler? Type YES'
+if ($Agree -cne 'YES') { throw 'OWNER_CLOUD_CONSENT_MISSING' }
+
+$Bitrix = $null
+$Giga = $null
+$Fernet = $null
+try {
+    $Bitrix = Read-DpapiSecret $BitrixFile
+    $Giga = Read-DpapiSecret $ModelFile
+    if ([string]::IsNullOrWhiteSpace($Bitrix) -or [string]::IsNullOrWhiteSpace($Giga)) {
+        throw 'EMPTY_DPAPI_CREDENTIAL'
+    }
+    # Read-only snapshot of the last REAL existing card (no source/customer content).
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $Check = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $Matches = @($Check | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($Matches.Count -ne 1) { throw 'CUTOVER_ID_NOT_CONFIRMED' }
+    $InitialCutover = [int]($Matches[0] -split '=')[1]
+    Write-Host "CLOUD_CUTOVER_READONLY_MAX_ID=$InitialCutover"
+
+    if (Test-Path -LiteralPath $KeyFile -PathType Leaf) {
+        $Fernet = Read-DpapiSecret $KeyFile
+    } else {
+        $Bytes = New-Object byte[] 32
+        $Random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $Random.GetBytes($Bytes) } finally { $Random.Dispose() }
+        $Fernet = [Convert]::ToBase64String($Bytes).Replace('+','-').Replace('/','_')
+        $KeySecure = ConvertTo-SecureString -String $Fernet -AsPlainText -Force
+        try {
+            $KeySecure | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $KeyFile -Encoding UTF8 -NoNewline
+        } finally { $KeySecure.Dispose() }
+    }
+
+    # Secure GitHub transfer. Passwords never sent as process argv or written to git.
+    Set-SecretFromStdin 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
+    Set-SecretFromStdin 'GIGACHAT_CREDENTIALS' $Giga
+    Set-SecretFromStdin 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    Set-Variable 'GIGACHAT_SCOPE' $Scope
+    Set-Variable 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'
+    Write-Host 'GITHUB_ENCRYPTED_SECRETS=CONFIGURED'
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_CUTOVER_ABORTED' }
+    if ($Task.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Disabled') {
+        throw 'LOCAL_TASK_DISABLE_UNVERIFIED'
+    }
+    Write-Host 'WINDOWS_TASK_DISABLED=YES'
+
+    # Once the local writer is stopped, capture the final upper bound again.
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+) {
+                        Write-Host $Line
+                    }
+                }
+                throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED'
+            }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+ -or
+                $Line -ceq 'SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY') {
+                Write-Host $Line
+            }
+        }
+        Write-Host "CUTOVER_DIAGNOSTIC_EXIT_CODE=$DiagnosticExit"
+        if ($DiagnosticExit -ne 0) { exit 2 }
+        exit 0
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+        $BitrixDiagnostic = $null
+    }
+}
+
+function Set-SecretFromStdin([string]$Name, [string]$Secret) {
+    # PowerShell 5.1 external stdin pipeline appends a newline. Use redirected
+    # stdin of the GitHub CLI to send EXACT text with NO trailing newline.
+    $Start = New-Object System.Diagnostics.ProcessStartInfo
+    $Start.FileName = $Gh
+    $Start.Arguments = "secret set $Name --repo $Repository"
+    $Start.UseShellExecute = $false
+    $Start.RedirectStandardInput = $true
+    $Start.RedirectStandardOutput = $true
+    $Start.RedirectStandardError = $true
+    $Start.CreateNoWindow = $true
+    $Process = [System.Diagnostics.Process]::Start($Start)
+    try {
+        $Process.StandardInput.Write($Secret)
+        $Process.StandardInput.Close()
+        if (-not $Process.WaitForExit(120000)) {
+            $Process.Kill()
+            throw "GITHUB_SECRET_UPLOAD_TIMEOUT_$Name"
+        }
+        if ($Process.ExitCode -ne 0) { throw "GITHUB_SECRET_UPLOAD_FAILED_$Name" }
+    } finally {
+        $Process.Dispose()
+    }
+}
+
+function Set-Variable([string]$Name, [string]$Value) {
+    & $Gh variable set $Name --repo $Repository --body $Value *> $null
+    if ($LASTEXITCODE -ne 0) { throw "GITHUB_VARIABLE_WRITE_FAILED_$Name" }
+}
+$ExistingVariables = @(& $Gh variable list --repo $Repository --json 'name,value' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_VARIABLE_LIST_FAILED' }
+if (@($ExistingVariables | Where-Object { $_.name -eq 'SERVICEIT_FREE_CLOUD_ENABLED' -and $_.value -eq 'YES' }).Count) {
+    throw 'CLOUD_ALREADY_ENABLED_REFUSE_SECRET_OR_CURSOR_OVERWRITE'
+}
+$ExistingSecrets = @(& $Gh secret list --repo $Repository --json 'name' | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'GITHUB_SECRET_LIST_FAILED' }
+$RemoteKeyExists = @($ExistingSecrets | Where-Object { $_.name -eq 'SERVICEIT_GH_LEDGER_KEY' }).Count -gt 0
+if ($RemoteKeyExists -and -not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) {
+    throw 'REMOTE_LEDGER_KEY_EXISTS_NO_LOCAL_MATCH_REFUSE_ROTATION'
+}
+$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_DO_NOT_SWITCH_WHILE_CRM_WRITE_POSSIBLE' }
+$Agree = Read-Host 'Activate FREE cloud, transfer protected ServiceIT secrets, and disable local scheduler? Type YES'
+if ($Agree -cne 'YES') { throw 'OWNER_CLOUD_CONSENT_MISSING' }
+
+$Bitrix = $null
+$Giga = $null
+$Fernet = $null
+try {
+    $Bitrix = Read-DpapiSecret $BitrixFile
+    $Giga = Read-DpapiSecret $ModelFile
+    if ([string]::IsNullOrWhiteSpace($Bitrix) -or [string]::IsNullOrWhiteSpace($Giga)) {
+        throw 'EMPTY_DPAPI_CREDENTIAL'
+    }
+    # Read-only snapshot of the last REAL existing card (no source/customer content).
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $Check = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $Matches = @($Check | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($Matches.Count -ne 1) { throw 'CUTOVER_ID_NOT_CONFIRMED' }
+    $InitialCutover = [int]($Matches[0] -split '=')[1]
+    Write-Host "CLOUD_CUTOVER_READONLY_MAX_ID=$InitialCutover"
+
+    if (Test-Path -LiteralPath $KeyFile -PathType Leaf) {
+        $Fernet = Read-DpapiSecret $KeyFile
+    } else {
+        $Bytes = New-Object byte[] 32
+        $Random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $Random.GetBytes($Bytes) } finally { $Random.Dispose() }
+        $Fernet = [Convert]::ToBase64String($Bytes).Replace('+','-').Replace('/','_')
+        $KeySecure = ConvertTo-SecureString -String $Fernet -AsPlainText -Force
+        try {
+            $KeySecure | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $KeyFile -Encoding UTF8 -NoNewline
+        } finally { $KeySecure.Dispose() }
+    }
+
+    # Secure GitHub transfer. Passwords never sent as process argv or written to git.
+    Set-SecretFromStdin 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
+    Set-SecretFromStdin 'GIGACHAT_CREDENTIALS' $Giga
+    Set-SecretFromStdin 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    Set-Variable 'GIGACHAT_SCOPE' $Scope
+    Set-Variable 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'
+    Write-Host 'GITHUB_ENCRYPTED_SECRETS=CONFIGURED'
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_CUTOVER_ABORTED' }
+    if ($Task.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Disabled') {
+        throw 'LOCAL_TASK_DISABLE_UNVERIFIED'
+    }
+    Write-Host 'WINDOWS_TASK_DISABLED=YES'
+
+    # Once the local writer is stopped, capture the final upper bound again.
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+) {
+                        Write-Host $Line
+                    }
+                }
+                throw 'CUTOVER_READONLY_INVENTORY_FAILED'
+            }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $Matches = @($Check | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($Matches.Count -ne 1) { throw 'CUTOVER_ID_NOT_CONFIRMED' }
+    $InitialCutover = [int]($Matches[0] -split '=')[1]
+    Write-Host "CLOUD_CUTOVER_READONLY_MAX_ID=$InitialCutover"
+
+    if (Test-Path -LiteralPath $KeyFile -PathType Leaf) {
+        $Fernet = Read-DpapiSecret $KeyFile
+    } else {
+        $Bytes = New-Object byte[] 32
+        $Random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $Random.GetBytes($Bytes) } finally { $Random.Dispose() }
+        $Fernet = [Convert]::ToBase64String($Bytes).Replace('+','-').Replace('/','_')
+        $KeySecure = ConvertTo-SecureString -String $Fernet -AsPlainText -Force
+        try {
+            $KeySecure | ConvertFrom-SecureString |
+                Set-Content -LiteralPath $KeyFile -Encoding UTF8 -NoNewline
+        } finally { $KeySecure.Dispose() }
+    }
+
+    # Secure GitHub transfer. Passwords never sent as process argv or written to git.
+    Set-SecretFromStdin 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
+    Set-SecretFromStdin 'GIGACHAT_CREDENTIALS' $Giga
+    Set-SecretFromStdin 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    Set-Variable 'GIGACHAT_SCOPE' $Scope
+    Set-Variable 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'
+    Write-Host 'GITHUB_ENCRYPTED_SECRETS=CONFIGURED'
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($Task.State -eq 'Running') { throw 'LOCAL_TASK_RUNNING_CUTOVER_ABORTED' }
+    if ($Task.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Disabled') {
+        throw 'LOCAL_TASK_DISABLE_UNVERIFIED'
+    }
+    Write-Host 'WINDOWS_TASK_DISABLED=YES'
+
+    # Once the local writer is stopped, capture the final upper bound again.
+    $env:SERVICEIT_BITRIX_WEBHOOK = $Bitrix
+    try {
+        Push-Location $Repo
+        try {
+            $FinalCheck = @(& $Python -m leadpilot.serviceit_cloud_cutover_readonly)
+            if ($LASTEXITCODE -ne 0) { throw 'FINAL_CUTOVER_READONLY_INVENTORY_FAILED' }
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    }
+    $FinalMatches = @($FinalCheck | Where-Object { $_ -match '^SERVICEIT_CLOUD_CUTOVER_MAX_ID=([0-9]+)$' })
+    if ($FinalMatches.Count -ne 1) { throw 'FINAL_CUTOVER_ID_UNVERIFIED' }
+    $FinalCutover = [int]($FinalMatches[0] -split '=')[1]
+    if ($FinalCutover -lt $InitialCutover) { throw 'CUTOVER_RESULT_MOVED_BACKWARD' }
+    Set-Variable 'SERVICEIT_GH_START_AFTER_ID' ([string]$FinalCutover)
+    # Enable last; if any earlier step fails, cloud remains disabled.
+    Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED' 'YES'
+    Write-Host "SERVICEIT_FREE_GITHUB_CLOUD=ENABLED"
+    Write-Host "CLOUD_CUTOVER_ID=$FinalCutover"
+    Write-Host 'CHECK_GITHUB_ACTIONS=ServiceIT Free Cloud AI Cards'
+    Write-Host 'NOTE=HOLD remains preliminary until independent source approval; real GigaChat+Score requires separate acceptance.'
+} finally {
+    Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+    $Bitrix = $null
+    $Giga = $null
+    $Fernet = $null
+}
+ -or
+                $Line -ceq 'SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY') {
+                Write-Host $Line
+            }
+        }
+        Write-Host "CUTOVER_DIAGNOSTIC_EXIT_CODE=$DiagnosticExit"
+        if ($DiagnosticExit -ne 0) { exit 2 }
+        exit 0
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+        $BitrixDiagnostic = $null
     }
 }
 

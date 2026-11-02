@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 
+from .b2b_email_opportunity_bridge import KINDS
+
 PREFIX="UF_CRM_13_SVCIT_"
 AI_SUFFIXES=(
     "AI_STATUS","AI_SUMMARY","AI_QUOTE","AI_HYPOTHESIS","AI_LIMITATIONS",
@@ -51,7 +53,7 @@ def hold_analysis_fields(notice: dict, services: list[str]) -> dict[str,str]:
         raise HoldAnalysisRejected("TENDER_ID_INVALID")
     subject=_check(notice.get("subject"),240)
     if (not isinstance(services,list) or not 1<=len(services)<=5
-            or any(x not in {"1C","ККТ","IT-аутсорсинг","CRM","торговое оборудование"} for x in services)):
+            or any(x not in set(KINDS)|{"INTEGRATION"} for x in services)):
         raise HoldAnalysisRejected("SERVICES_INVALID")
     service_text=", ".join(services)
     status="NOT_RUN_SOURCE_UNVERIFIED"

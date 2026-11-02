@@ -193,6 +193,7 @@ def main(argv=None):
     parser.add_argument("--inspect-live",action="store_true")
     parser.add_argument("--webhook-from-env",action="store_true")
     parser.add_argument("--queue-db",type=Path)
+    parser.add_argument("--item-id",type=int,default=0)
     parser.add_argument("--limit",type=int,default=MAX_BATCH)
     args=parser.parse_args(argv)
     try:
@@ -204,12 +205,16 @@ def main(argv=None):
                  "crm_reads":0,"crm_writes":0,"gigachat_calls":0,
                  "production_writer_enabled":False},ensure_ascii=False))
             return 0
-        must(args.webhook_from_env and args.queue_db is not None,
-             "LIVE_READONLY_ARGS_MISSING")
+        must(args.webhook_from_env and (args.queue_db is not None) != (args.item_id > 0),
+             "LIVE_READONLY_EXACTLY_ONE_SOURCE_REQUIRED")
+        must(type(args.item_id) is int and 0<=args.item_id<=MAX_ITEM_ID,
+             "EXACT_ITEM_ID_INVALID")
         secret=os.environ.pop("SERVICEIT_EVENT_READONLY_WEBHOOK","")
         must(bool(secret),"LIVE_WEBHOOK_MISSING")
         with httpx.Client(trust_env=False,follow_redirects=False) as client:
-            result=examine_queue(args.queue_db,_rest_reader(secret,client),args.limit)
+            reader=_rest_reader(secret,client)
+            result=(examine_ids([args.item_id],reader) if args.item_id
+                    else examine_queue(args.queue_db,reader,args.limit))
         print(json.dumps(result,ensure_ascii=False,indent=2))
         return 0
     except (ReadOnlyWorkerBlocked,OSError,ValueError,TypeError,KeyError,sqlite3.Error):

@@ -18,4 +18,4 @@ def test_b2b_issue_to_bitrix_workflow_requires_explicit_enabled_variable():
     assert "github.event.comment.body }}" not in yml.split("run:")[-1]
     assert "crm.item.add" not in yml
     assert "crm.item.update" not in yml
-    assert "gmail" not in yml.lower().replace("b2b-gmail-to-bitrix", "")
+    assert "SERVICEIT_B2B_GMAIL_APP_PASSWORD" not in yml

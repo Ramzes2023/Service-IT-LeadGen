@@ -15,18 +15,39 @@ def test_empty_category_starts_after_7():
 
 
 def test_last_existing_card_is_high_water_mark():
+    calls = []
     def rest(method, args):
-        return {"items": [
-            {"id": 25, "entityTypeId": 1062, "categoryId": 21},
-            {"id": 22, "entityTypeId": 1062, "categoryId": 21},
-        ]}
+        calls.append((method, args))
+        if method == "crm.item.list":
+            # Real Bitrix24 response drops entityTypeId, even if selected.
+            assert args["select"] == ["id", "categoryId"]
+            return {"items": [
+                {"id": 25, "categoryId": 21},
+                {"id": 22, "categoryId": 21},
+            ]}
+        assert method == "crm.item.get" and args["id"] == 25
+        return {"item": {"id": 25, "entityTypeId": 1062, "categoryId": 21}}
     assert latest_existing_card_id(rest) == 25
+    assert [name for name, _ in calls] == ["crm.item.list", "crm.item.get"]
 
 
 def test_historical_card_7_not_written_or_enqueued():
     def rest(method, args):
-        return {"items": [{"id": 7, "entityTypeId": 1062, "categoryId": 21}]}
+        if method == "crm.item.list":
+            return {"items": [{"id": 7, "categoryId": 21}]}
+        assert method == "crm.item.get"
+        assert args["id"] == 7
+        return {"item": {"id": 7, "entityTypeId": 1062, "categoryId": 21}}
     assert latest_existing_card_id(rest) == 7
+
+
+def test_cutover_never_trusts_type_missing_from_list():
+    def rest(method, args):
+        if method == "crm.item.list":
+            return {"items": [{"id": 58, "categoryId": 21}]}
+        return {"item": {"id": 58, "entityTypeId": 999, "categoryId": 21}}
+    with pytest.raises(ValueError, match="CUTOVER_TOP_ITEM_IDENTITY_UNVERIFIED"):
+        latest_existing_card_id(rest)
 
 
 @pytest.mark.parametrize("items", [

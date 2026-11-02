@@ -123,3 +123,70 @@ def test_invalid_gmail_message_budget_rejected():
         with pytest.raises(GmailSourceBlocked, match="MESSAGE_LIMIT_INVALID"):
             list(source(client).recent_messages(max_messages=1000))
     assert transport.requests == []
+
+
+def test_owner_private_bundle_account_checked_before_list(tmp_path, monkeypatch):
+    from leadpilot.serviceit_v2_oauth_local import save_owner_secret
+    from leadpilot.serviceit_v2_gmail_api import PROFILE_URL
+    private=tmp_path/"private"
+    private.mkdir(mode=0o700)
+    private.chmod(0o700)
+    creds=private/"gmail.json"
+    save_owner_secret(creds,{
+        "client_id":"google-client-id-long",
+        "client_secret":"google-client-secret-long"
+    },"google-refresh-token-long","owner@example.org")
+    monkeypatch.setenv("SERVICEIT_V2_GMAIL_OAUTH_FILE",str(creds))
+    monkeypatch.setenv("SERVICEIT_V2_GMAIL_EXPECTED_EMAIL","owner@example.org")
+    for name in ("SERVICEIT_V2_GMAIL_CLIENT_ID",
+                 "SERVICEIT_V2_GMAIL_CLIENT_SECRET",
+                 "SERVICEIT_V2_GMAIL_REFRESH_TOKEN"):
+        monkeypatch.delenv(name,raising=False)
+    original=Transport()
+    def handler(req):
+        if str(req.url)==PROFILE_URL:
+            return httpx.Response(200,json={"emailAddress":"owner@example.org"})
+        return original(req)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        emails=list(from_environment(client).recent_messages())
+    assert len(emails)==1
+    assert [method for method,_ in original.requests]==["POST","GET","GET"]
+
+
+def test_owner_wrong_mailbox_aborts_before_vendor_search(tmp_path,monkeypatch):
+    from leadpilot.serviceit_v2_oauth_local import save_owner_secret
+    from leadpilot.serviceit_v2_gmail_api import PROFILE_URL
+    private=tmp_path/"private"
+    private.mkdir(mode=0o700)
+    private.chmod(0o700)
+    creds=private/"gmail.json"
+    save_owner_secret(creds,{
+        "client_id":"google-client-id-long",
+        "client_secret":"google-client-secret-long"
+    },"google-refresh-token-long","owner@example.org")
+    monkeypatch.setenv("SERVICEIT_V2_GMAIL_OAUTH_FILE",str(creds))
+    monkeypatch.setenv("SERVICEIT_V2_GMAIL_EXPECTED_EMAIL","owner@example.org")
+    for name in ("SERVICEIT_V2_GMAIL_CLIENT_ID",
+                 "SERVICEIT_V2_GMAIL_CLIENT_SECRET",
+                 "SERVICEIT_V2_GMAIL_REFRESH_TOKEN"):
+        monkeypatch.delenv(name,raising=False)
+    calls=[]
+    def handler(req):
+        calls.append(req.method+" "+str(req.url).split("?")[0])
+        if str(req.url)==GOOGLE_TOKEN:
+            return httpx.Response(200,json={"access_token":"0123456789ACCESS_TOKEN"})
+        if str(req.url)==PROFILE_URL:
+            return httpx.Response(200,json={"emailAddress":"wrong@example.org"})
+        pytest.fail("WRONG_MAILBOX_MUST_NOT_FETCH_MESSAGES")
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(GmailSourceBlocked,match="GMAIL_WRONG_ACCOUNT_BLOCKED"):
+            list(from_environment(client).recent_messages())
+    assert len(calls)==2 and calls[0].startswith("POST ") and calls[1].startswith("GET ")
+
+
+def test_mixed_bundle_and_environment_secrets_denied(tmp_path,monkeypatch):
+    with httpx.Client(transport=httpx.MockTransport(lambda r: pytest.fail("network"))) as client:
+        monkeypatch.setenv("SERVICEIT_V2_GMAIL_OAUTH_FILE",str(tmp_path/"private.json"))
+        monkeypatch.setenv("SERVICEIT_V2_GMAIL_REFRESH_TOKEN","unauthorized")
+        with pytest.raises(GmailSourceBlocked,match="MIXED_OAUTH"):
+            from_environment(client)

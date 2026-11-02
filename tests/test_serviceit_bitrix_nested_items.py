@@ -116,3 +116,13 @@ def test_new_card_poll_refuses_nested_record_from_wrong_category(tmp_path):
 def test_nested_empty_group_is_not_treated_as_empty_category():
     with pytest.raises(ItemListShapeError):
         strict_bitrix_items({"items": [[]]})
+
+
+def test_cutover_rejects_boolean_nested_id_before_full_get():
+    calls = []
+    def rest(method, _):
+        calls.append(method)
+        return {"items": [[item(True)]]}
+    with pytest.raises(ValueError, match="CUTOVER_CARD_ID_INVALID"):
+        latest_existing_card_id(rest)
+    assert calls == ["crm.item.list"]

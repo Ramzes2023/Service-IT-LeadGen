@@ -9,7 +9,7 @@ import os
 
 import httpx
 
-from .serviceit_enrichment_worker import Rest, validate_identity
+from .serviceit_enrichment_worker import Rest
 
 
 def latest_existing_card_id(rest) -> int:
@@ -18,7 +18,9 @@ def latest_existing_card_id(rest) -> int:
         "useOriginalUfNames": "Y",
         "filter": {"categoryId": 21},
         "order": {"id": "DESC"},
-        "select": ["id", "entityTypeId", "categoryId"],
+        # Bitrix24 drops entityTypeId from crm.item.list select. Verify
+        # the record identity separately via a read-only crm.item.get.
+        "select": ["id", "categoryId"],
         "start": 0,
     })
     items = result.get("items")
@@ -35,7 +37,8 @@ def latest_existing_card_id(rest) -> int:
             raise ValueError("CUTOVER_CARD_ID_INVALID") from exc
         if card_id < 1 or card_id > 2_000_000_000:
             raise ValueError("CUTOVER_CARD_ID_OUT_OF_BOUNDS")
-        if str(item.get("entityTypeId")) != "1062" or str(item.get("categoryId")) != "21":
+        if (("entityTypeId" in item and str(item["entityTypeId"]) != "1062")
+                or str(item.get("categoryId")) != "21"):
             raise ValueError("CUTOVER_CATEGORY_MISMATCH")
         if card_id in seen or (previous is not None and card_id >= previous):
             raise ValueError("CUTOVER_RESULT_NOT_DESCENDING")
@@ -44,8 +47,18 @@ def latest_existing_card_id(rest) -> int:
     if not items:
         return 7
     first = int(items[0]["id"])
-    if first >= 8:
-        validate_identity(items[0], first)
+    # The list operation hides the type marker. Get the highest existing
+    # item read-only and verify the server-provided entity type/category.
+    # This check also permits historical #3/#7 (read-only, never a write).
+    latest = rest("crm.item.get", {
+        "entityTypeId": 1062,
+        "id": first,
+        "useOriginalUfNames": "Y",
+    }).get("item")
+    if (not isinstance(latest, dict) or str(latest.get("id")) != str(first)
+            or str(latest.get("entityTypeId")) != "1062"
+            or str(latest.get("categoryId")) != "21"):
+        raise ValueError("CUTOVER_TOP_ITEM_IDENTITY_UNVERIFIED")
     return max(7, first)
 
 

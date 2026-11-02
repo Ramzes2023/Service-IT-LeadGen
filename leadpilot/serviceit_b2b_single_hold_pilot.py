@@ -62,7 +62,11 @@ def load_existing_review(client, github_token):
         follow_redirects=False,
         timeout=15,
     )
-    if response.status_code != 200 or len(response.content) > 4096:
+    # GitHub's metadata envelope exceeds 4096 UTF-8 bytes even when the
+    # owner-supplied notice body is only a few hundred characters. Keep
+    # a bounded 12 KiB API envelope; notice_from_event separately caps the
+    # owner-authored notice to 2500 characters and validates every field.
+    if response.status_code != 200 or len(response.content) > 12000:
         raise OneCardPilotBlocked("ORIGINAL_COMMENT_NOT_AVAILABLE")
     comment = response.json()
     if not isinstance(comment, dict) or (

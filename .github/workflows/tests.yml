@@ -105,3 +105,30 @@ jobs:
       - name: Strictly offline event queue read-only PowerShell operator
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_EVENT_QUEUE_CRM_READONLY.ps1
+  docker-event-receiver-private:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check loopback-only Compose config without production credentials
+        env:
+          SERVICEIT_BITRIX_APPLICATION_TOKEN: SYNTHETIC-CI-NOT-A-REAL-BITRIX-APPLICATION-TOKEN-00000
+        run: docker compose -f deploy/serviceit-event-receiver.compose.yml config --quiet
+      - name: Build event-only container (no production secrets)
+        run: docker build --file Dockerfile.serviceit-event-receiver --tag serviceit-event-receiver:ci .
+      - name: Run synthetic authenticated intake and duplicate smoke
+        env:
+          SERVICEIT_BITRIX_APPLICATION_TOKEN: SYNTHETIC-CI-NOT-A-REAL-BITRIX-APPLICATION-TOKEN-00000
+        run: |
+          docker run -d --name serviceit-event-ci \
+            -p 127.0.0.1:18780:8000 \
+            -e SERVICEIT_BITRIX_APPLICATION_TOKEN \
+            -e SERVICEIT_BITRIX_EVENT_QUEUE_DB=/var/lib/serviceit/new-card-events.sqlite3 \
+            serviceit-event-receiver:ci
+          for n in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18780/health > /dev/null; then break; fi
+            sleep 1
+          done
+          python scripts/TEST_SERVICEIT_EVENT_RECEIVER_DOCKER.py
+      - name: Stop temporary receiver
+        if: always()
+        run: docker rm -f serviceit-event-ci || true

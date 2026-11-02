@@ -63,3 +63,10 @@ jobs:
       - name: Synthetic explicit reconciliation and SecureString handoff
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_KANBAN_BADGE_RECONCILIATION.ps1
+  windows-all-lead-score-batch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic offline batch score PowerShell operator
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_ALL_LEAD_SCORE_PREVIEW.ps1

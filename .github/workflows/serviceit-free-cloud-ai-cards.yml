@@ -1,0 +1,47 @@
+name: ServiceIT Free Cloud AI Cards
+
+on:
+  schedule:
+    # Deliberately avoid the busiest top-of-hour minute.
+    - cron: "3/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# At most one job at a time; never cancel a possibly completed external CRM write.
+concurrency:
+  group: serviceit-free-cloud-1062-21
+  cancel-in-progress: false
+
+jobs:
+  guarded-new-card-ai:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_FREE_CLOUD_ENABLED == 'YES'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      SERVICEIT_FREE_CLOUD_ENABLED: "YES_1062_21_FREE_GITHUB"
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_GH_START_AFTER_ID: ${{ vars.SERVICEIT_GH_START_AFTER_ID }}
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
+      GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
+      GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minimal ServiceIT worker dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Guarded AI-card polling and encrypted checkpoint
+        shell: bash
+        run: python -m leadpilot.serviceit_github_free_worker

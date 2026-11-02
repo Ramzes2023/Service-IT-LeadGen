@@ -42,3 +42,10 @@ jobs:
       - name: Synthetic Bitrix and GigaChat handoff (no external calls)
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_AI_COCKPIT_GIGACHAT_HANDOFF.ps1
+  windows-score-badge:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic guarded score badge operator and SecureString handoff
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_KANBAN_SCORE_BADGE.ps1

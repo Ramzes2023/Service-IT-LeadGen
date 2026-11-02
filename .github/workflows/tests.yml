@@ -56,3 +56,10 @@ jobs:
       - name: Recovery diagnostic uses only SecureString and read-only CLI flags
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_KANBAN_BADGE_READONLY_DIAG.ps1
+  windows-kanban-badge-reconciliation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic explicit reconciliation and SecureString handoff
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_KANBAN_BADGE_RECONCILIATION.ps1

@@ -6,6 +6,7 @@ on:
       - 'tests/test_serviceit_v2_*'
       - 'deploy/serviceit-v2*'
       - 'Dockerfile.serviceit-v2'
+      - 'Dockerfile.serviceit-v2-render'
       - 'requirements-v2.txt'
       - '.github/workflows/serviceit-v2-ci.yml'
       - 'integrations/apps_script/**'
@@ -47,7 +48,7 @@ jobs:
       - name: Compile modules
         run: python -m compileall -q leadpilot
       - name: Mock OAuth and REAL disposable PostgreSQL test
-        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py tests/test_serviceit_v2_fns_release.py tests/test_serviceit_v2_fns_zip.py tests/test_serviceit_v2_oauth_local.py tests/test_serviceit_v2_apps_receiver.py
+        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py tests/test_serviceit_v2_fns_release.py tests/test_serviceit_v2_fns_zip.py tests/test_serviceit_v2_oauth_local.py tests/test_serviceit_v2_apps_receiver.py tests/test_serviceit_v2_render_entrypoint.py
       - name: Offline Node.js Apps Script HMAC + Gmail contract
         run: node integrations/apps_script/tests/test_apps_script.cjs
       - name: Compose safety / isolation check
@@ -61,5 +62,33 @@ jobs:
           assert 'ports:' not in text and 'SERVICEIT_V2_GMAIL_AUTOPOLL_ENABLED' in text
           assert 'serviceit_v2_db:' in text and 'crm.item.add' not in text
           PY
+      - name: Validate non-applied Render internal DB reference and free-only gate
+        run: |
+          python -m pip install --quiet 'PyYAML>=6,<7'
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          spec = yaml.safe_load(Path('deploy/serviceit-v2-render-blueprint.safe.yaml').read_text())
+          assert set(spec) == {'services'}
+          assert len(spec['services']) == 1
+          svc = spec['services'][0]
+          assert svc['name'] == 'serviceit-v2-gmail-ingress-canary'
+          assert svc['type'] == 'web'
+          assert svc['runtime'] == 'docker'
+          assert svc['plan'] == 'free' and svc['region'] == 'frankfurt'
+          assert svc['autoDeployTrigger'] == 'off'
+          assert svc['branch'] == 'feat/serviceit-v2-render-safe-preflight-20261102'
+          assert svc['dockerfilePath'] == './Dockerfile.serviceit-v2-render'
+          vars_ = {x['key']: x for x in svc['envVars']}
+          assert vars_['SERVICEIT_V2_APPS_RECEIVER_ENABLED']['value'] == 'NO'
+          assert vars_['SERVICEIT_V2_GMAIL_EXPECTED_EMAIL']['value'] == 'ramzesisayev444@gmail.com'
+          assert vars_['DATABASE_URL']['fromDatabase'] == {
+              'name': 'serviceit-v2-gmail-canary-db', 'property':'connectionString'}
+          assert not any('value' in entry for name,entry in vars_.items()
+                         if name == 'DATABASE_URL')
+          print('RENDER_BLUEPRINT_INTERNAL_DB_FREE_OFF=PASS')
+          PY
       - name: Build V2 isolated source container
         run: docker build -f Dockerfile.serviceit-v2 -t serviceit-v2:ci .
+      - name: Build isolated Render entrypoint image (no runtime enable)
+        run: docker build -f Dockerfile.serviceit-v2-render -t serviceit-v2-render:ci .

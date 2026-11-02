@@ -1,0 +1,26 @@
+# Service IT V2 — SPEC ONLY, NOT APPLIED.
+# Existing FREE services under owner-confirmed Render "My Workspace".
+# This document must only be synced to the intended existing service.
+# Do NOT use as a new duplicate Blueprint (Render may suffix resource names).
+# DB credential is resolved BY Render, never held in GitHub / ChatGPT.
+services:
+  - type: web
+    name: serviceit-v2-gmail-ingress-canary
+    runtime: docker
+    repo: https://github.com/Ramzes2023/Service-IT-LeadGen
+    branch: feat/serviceit-v2-render-safe-preflight-20261102
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile.serviceit-v2-render
+    dockerContext: .
+    autoDeployTrigger: "off"
+    healthCheckPath: /health
+    envVars:
+      - key: SERVICEIT_V2_APPS_RECEIVER_ENABLED
+        value: "NO"
+      - key: SERVICEIT_V2_GMAIL_EXPECTED_EMAIL
+        value: ramzesisayev444@gmail.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: serviceit-v2-gmail-canary-db
+          property: connectionString

@@ -1,0 +1,13 @@
+# Render-only ServiceIT V2 ingress. NEVER reuse another project's image/volume.
+# The actual default is OFF. Deployments require owner-selected workspace.
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+COPY requirements.txt requirements-v2.txt ./
+RUN pip install --no-cache-dir -r requirements-v2.txt
+COPY leadpilot/ /app/leadpilot/
+RUN groupadd -g 10001 serviceit && useradd -u 10001 -g 10001 -M -s /usr/sbin/nologin serviceit
+USER 10001:10001
+EXPOSE 10000
+ENV SERVICEIT_V2_APPS_RECEIVER_ENABLED=NO
+CMD ["python", "-m", "leadpilot.serviceit_v2_render_entrypoint"]

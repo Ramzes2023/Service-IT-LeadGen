@@ -35,9 +35,13 @@ function environment(options = {}) {
           assert.match(options.q,/marketplace@b2b-center.ru/);
           calls.listed++; return {messages:[{id:MID}]};
         },
-        get: (user,id,options) => {
-          assert.strictEqual(options.format,'raw');
-          calls.got++; return {id,raw:options.raw || raw};
+        get: (user,id,request) => {
+          assert.strictEqual(request.format,'raw');
+          // The environment-level option is the fake vendor payload. Do not
+          // shadow it with the Gmail API request options (which contain format).
+          calls.got++;
+          return {id, raw:Object.prototype.hasOwnProperty.call(options,'raw')
+            ? options.raw : raw};
         }
       }
     }

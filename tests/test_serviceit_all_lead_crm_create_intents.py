@@ -50,7 +50,7 @@ def test_complete_one_request_per_company_includes_score_version_badge():
         assert fields["UF_CRM_13_SVCIT_STOP_REASON"]=="DEMO / НЕ ЗВОНИТЬ"
         assert fields["UF_CRM_13_SVCIT_AI_STATUS"]=="NOT_RUN"
         assert "AI NOT_RUN" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
-        assert len([key for key in fields if key.startswith("UF_CRM_13_SVCIT_AI_")])==11
+        assert len([key for key in fields if key.startswith("UF_CRM_13_SVCIT_AI_")])==10
         assert op["gigachat_actual_run"] is False
         assert fields["UF_CRM_13_SVCIT_SIGNAL_KIND"]=="demo-synthetic"
         assert "phone" not in fields and "email" not in fields

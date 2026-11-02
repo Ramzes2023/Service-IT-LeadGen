@@ -18,7 +18,7 @@ from typing import Mapping
 
 from .core import score_company, SCORE_VERSION, SERVICES, normalize_inn
 from .bitrix_synthetic_text_guard import synthetic_action_is_safe
-from .serviceit_kanban_presentation import BADGE_FIELD, decorate_assessment, fields_from_assessment
+from .serviceit_kanban_presentation import BADGE_FIELD, decorate_assessment, score_label
 
 REGIONS = ("Москва", "Московская область", "Ингушетия")
 APPROVED_STATES = frozenset({"VERIFIED", "BLOCKED", "UNKNOWN"})
@@ -208,7 +208,7 @@ def plan_serviceit_ai_signals(assessments: list[dict]) -> dict:
         plans.append({
             "fingerprint":fingerprint, "score":report["lead_score"],
             "score_version":report["score_version"],
-            "kanban_score_badge":fields_from_assessment(report)[BADGE_FIELD],
+            "kanban_score_badge":score_label(report["lead_score"]),
             "kanban_score_field_code":BADGE_FIELD,
             "score_badge_write_performed":False,
             "status":report["status"],

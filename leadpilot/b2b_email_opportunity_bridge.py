@@ -32,14 +32,51 @@ BULLETIN_START = re.compile(
     re.I,
 )
 INVITE_START = re.compile(r"(?=Организатор\s+закупки\s*:)", re.I)
+# Strict ServiceIT domains. A generic "integration", "implementation",
+# "monitoring", "service", "marking" or "equipment" is NOT proof of IT demand.
 KINDS = {
-    "1C": re.compile(r"(?<!\w)1[сc](?!\w)|1С:|1C:", re.I),
-    "IT_SUPPORT": re.compile(r"ит.аутсорс|техподдержк|техническ(?:ой|ое)\s+обслуживани.{0,80}(?:ит|систем|сервер)", re.I),
-    "CRM": re.compile(r"битрикс\s*24|(?:^|\W)crm(?:\W|$)|(?:^|\W)срм(?:\W|$)", re.I),
-    "KKT_EDO": re.compile(r"ккт|кассов|маркировк|эдо|криптопро|диадок", re.I),
-    "SERVERS": re.compile(r"сервер|компьютер|монитор|сетев|ноутбук|маршрутизатор|субд", re.I),
-    "INTEGRATION": re.compile(r"внедрени|интеграц|доработк|обмен\s+данными|экстрактор", re.I),
+    "1C": re.compile(r"(?<!\w)1[сc](?!\w)|1[сc]:", re.I),
+    "IT_SUPPORT": re.compile(
+        r"(?<!\w)(?:ит|it)[\s-]*(?:аутсорс\w*|поддержк\w*|обслуживан\w*|инфраструктур\w*)"
+        r"|(?:технич\w*|сервисн\w*)\s+(?:поддержк\w*|обслуживан\w*)"
+        r".{0,80}(?:сервер\w*|сетев\w*|компьютер\w*|информационн\w*\s+систем\w*|(?:ит|it)[\s-]*инфраструктур\w*)",
+        re.I),
+    "CRM": re.compile(r"битрикс[\s-]*24|(?<!\w)(?:crm|срм)(?!\w)|amocrm", re.I),
+    "KKT_EDO": re.compile(
+        r"(?<!\w)(?:ккт|эдо)(?!\w)|онлайн[\s-]*касс\w*|контрольно[\s-]*кассов\w*"
+        r"|кассов\w*\s+(?:оборудован\w*|аппарат\w*|техник\w*|систем\w*)"
+        r"|криптопро|диадок|электронн\w*\s+документооборот\w*"
+        r"|маркировк\w*\s+(?:товар\w*|продукц\w*|остатк\w*)"
+        r"|торгов\w*\s+оборудован\w*|(?<!\w)тсд(?!\w)",
+        re.I),
+    "SERVERS": re.compile(
+        r"сервер\w*|сетев\w*\s+оборудован\w*|коммутатор\w*"
+        r"|маршрутизатор\w*|ноутбук\w*|компьютер\w*"
+        r"|рабоч\w*\s+станци\w*|(?<!\w)монитор\w*(?!\w)",
+        re.I),
 }
+IT_CONTEXT = re.compile(
+    r"(?<!\w)1[сc](?!\w)|1[сc]:|битрикс[\s-]*24|(?<!\w)(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!\w)"
+    r"|программ\w*\s+обеспечен\w*|информационн\w*\s+систем\w*"
+    r"|баз\w*\s+данн\w*|сайт\w*|веб[\s-]*приложен\w*"
+    r"|интернет[\s-]*магазин\w*|сервер\w*|сетев\w*\s+инфраструктур\w*",
+    re.I,
+)
+IT_INTEGRATION = re.compile(r"внедрен\w*|интеграц\w*|доработк\w*|обмен\w*\s+данными|экстрактор\w*", re.I)
+
+
+def classify_services(title: str) -> list[str]:
+    """Classify an individual tender SUBJECT, never the whole email.
+
+    The output is service fit, NOT lead approval or proof of buyer identity.
+    """
+    if not isinstance(title, str):
+        return []
+    groups = [group for group, pattern in KINDS.items() if pattern.search(title)]
+    if IT_CONTEXT.search(title) and IT_INTEGRATION.search(title):
+        groups.append("INTEGRATION")
+    return sorted(groups)
+
 
 
 class InputRejected(ValueError):
@@ -161,7 +198,7 @@ def parse_email(raw: bytes) -> dict:
             block, re.I,
         )
         item = next((x for x in candidates if head and x[1] == head.group(1)), None) or candidates[0]
-        kinds = sorted(k for k, regex in KINDS.items() if regex.search(title))
+        kinds = classify_services(title)
         found.append({
             "source": "B2B-Center", "tender_id": item[1], "source_url": item[0],
             "subject": title, "organizer_as_named_in_email": buyer,

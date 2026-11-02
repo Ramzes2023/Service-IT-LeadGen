@@ -63,7 +63,7 @@ def test_gmail_only_uses_readonly_get_and_refresh_token():
     assert emails[0][1] == transport.mail
     assert [method for method, _ in transport.requests] == ["POST", "GET", "GET"]
     assert "from%3Amarketplace%40b2b-center.ru" in transport.requests[1][1]
-    assert "in%3Ainbox" in transport.requests[1][1]
+    assert "in%3Ainbox" not in transport.requests[1][1]
 
 
 def test_durable_database_filter_skips_existing_gmail_bodies():

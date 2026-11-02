@@ -21,6 +21,30 @@ jobs:
         run: python -m compileall -q leadpilot
       - name: Run local tests
         run: python scripts/serviceit_offline_pytest.py
+  windows-serviceit-autofill:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Offline scheduled new-card worker and shared detail layout tests
+        run: python -m pytest -q tests/test_serviceit_windows_autofill.py tests/test_serviceit_common_card_layout.py tests/test_serviceit_windows_autofill_schedule_contract.py
+      - name: Parse Windows PowerShell 5.1 scripts without executing or reading secrets
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @(
+              'scripts/INSTALL_SERVICEIT_ALL_CARD_AUTOFILL.ps1',
+              'scripts/RUN_SERVICEIT_ALL_CARD_AUTOFILL.ps1'
+          )) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors.Count -gt 0) { foreach ($e in $errors) { Write-Output ($path + ': ' + $e.ToString()) }; throw 'AUTOFILL_PS51_SYNTAX_FAILURE' }
+              Write-Output 'AUTOFILL_PS51_PARSE_PASS'
+          }
   windows-universal-worker:
     runs-on: windows-latest
     steps:

@@ -1,0 +1,64 @@
+{
+  "contract_version": "serviceit-source-batch-v1",
+  "as_of": "2026-11-02",
+  "source_kind": "synthetic",
+  "entries": [
+    {
+      "company": {
+        "inn": "7700000009",
+        "name": "DEMO COMPANY-001",
+        "region": "Москва",
+        "industry": "торговля"
+      },
+      "checks": {},
+      "signals": [
+        {
+          "signal_type": "new_store",
+          "signal_date": "2026-10-31",
+          "source_url": "https://example.invalid/serviceit-demo/request/001",
+          "evidence": "УЧЕБНЫЙ СИГНАЛ: компания открывает магазин; возможна проверка 1С и ККТ"
+        }
+      ]
+    },
+    {
+      "company": {
+        "inn": "7700000009",
+        "name": "DEMO COMPANY-001",
+        "region": "Москва",
+        "industry": "торговля"
+      },
+      "checks": {},
+      "signals": [
+        {
+          "signal_type": "new_store",
+          "signal_date": "2026-10-31",
+          "source_url": "https://example.invalid/serviceit-demo/request/001",
+          "evidence": "УЧЕБНЫЙ СИГНАЛ: компания открывает магазин; возможна проверка 1С и ККТ"
+        },
+        {
+          "signal_type": "crm_need",
+          "signal_date": "2026-10-30",
+          "source_url": "https://example.invalid/serviceit-demo/request/002",
+          "evidence": "УЧЕБНЫЙ СИГНАЛ: публичная информация предполагает интерес к CRM-интеграции"
+        }
+      ]
+    },
+    {
+      "company": {
+        "inn": "7707083893",
+        "name": "DEMO COMPANY-002",
+        "region": "Московская область",
+        "industry": "услуги"
+      },
+      "checks": {},
+      "signals": [
+        {
+          "signal_type": "it_vacancy",
+          "signal_date": "2026-10-28",
+          "source_url": "https://example.invalid/serviceit-demo/request/003",
+          "evidence": "УЧЕБНЫЙ СИГНАЛ: вакансия ИТ-специалиста для оценки возможной потребности"
+        }
+      ]
+    }
+  ]
+}

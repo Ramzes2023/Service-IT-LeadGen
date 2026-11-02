@@ -19,6 +19,8 @@ services:
         value: "NO"
       - key: SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED
         value: "NO"
+      - key: SERVICEIT_CLOUD_START_AFTER_ID
+        sync: false
       - key: SERVICEIT_BITRIX_WEBHOOK
         sync: false
       - key: GIGACHAT_CREDENTIALS

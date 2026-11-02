@@ -62,9 +62,12 @@ class ReadOnlyBitrix:
             result = self.client.post(self.base + "/" + method + ".json",
                                       json=params, follow_redirects=False,
                                       timeout=12)
-            _must(result.status_code == 200 and len(result.content) <= 256000,
-                  "REST_HTTP_DENIED")
+            # Do not swallow a deliberate fail-closed gate exception as a transport error.
+            if result.status_code != 200 or len(result.content) > 256000:
+                raise PreflightBlocked("REST_HTTP_DENIED")
             response = result.json()
+        except PreflightBlocked:
+            raise
         except (httpx.HTTPError, ValueError, TypeError):
             raise PreflightBlocked("REST_TRANSPORT_OR_PARSE_DENIED") from None
         _must(isinstance(response, dict)

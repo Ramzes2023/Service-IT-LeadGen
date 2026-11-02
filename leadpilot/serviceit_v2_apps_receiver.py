@@ -162,9 +162,15 @@ async def ingest(request: Request):
         return JSONResponse({"status": "BODY_TOO_LARGE"}, status_code=413)
     if request.headers.get("content-type", "").split(";")[0].lower() != "application/json":
         return JSONResponse({"status": "CONTENT_TYPE_REJECTED"}, status_code=415)
-    body = await request.body()
-    if len(body) > MAX_BODY:
-        return JSONResponse({"status": "BODY_TOO_LARGE"}, status_code=413)
+    # Limit memory even when a client lies about Content-Length or streams chunks.
+    pieces = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > MAX_BODY:
+            return JSONResponse({"status": "BODY_TOO_LARGE"}, status_code=413)
+        pieces.append(chunk)
+    body = b"".join(pieces)
     try:
         result = process_signed_message(request.headers, body, connect=_connect)
         return JSONResponse(result, status_code=200 if result["status"] == "ALREADY_INGESTED" else 202)

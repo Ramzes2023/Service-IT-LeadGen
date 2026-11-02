@@ -15,6 +15,7 @@ import httpx
 from .b2b_email_opportunity_bridge import classify_services, clean_tender_url
 from .b2b_bitrix_readiness import ReadOnlyBitrix, preflight
 from .bitrix_metadata_audit import validate_webhook
+from .serviceit_b2b_hold_ai_fields import AI_FIELDS, hold_analysis_fields
 
 REPO = "Ramzes2023/Service-IT-LeadGen"
 OWNER = "Ramzes2023"
@@ -30,7 +31,7 @@ FIELDS = frozenset({
     "UF_CRM_13_SVCIT_SIGNAL_SOURCE", "UF_CRM_13_SVCIT_SIGNAL_URL",
     "UF_CRM_13_SVCIT_SUGGESTED_SERVICE", "UF_CRM_13_SVCIT_COMPANY_NAME",
     "UF_CRM_13_SVCIT_EVIDENCE_STATUS", "UF_CRM_13_SVCIT_REVIEW_DECISION",
-    "UF_CRM_13_SVCIT_STOP_REASON", KEY,
+    "UF_CRM_13_SVCIT_STOP_REASON", KEY, *AI_FIELDS,
 })
 
 
@@ -116,6 +117,7 @@ def hold_payload(notice, groups):
             "Проверить закупку и покупателя; не контактировать",
         "UF_CRM_13_SVCIT_STOP_REASON": "Не квалифицированный B2B-лид",
         KEY: "B2B-HOLD-" + fingerprint,
+        **hold_analysis_fields(notice, groups),
     }
     must(set(fields) == FIELDS | {"title", "categoryId", "stageId"},
          "UNEXPECTED_CRM_FIELDS")

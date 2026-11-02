@@ -13,7 +13,7 @@ services:
     region: frankfurt
     dockerfilePath: ./Dockerfile.serviceit-v2-render
     dockerContext: .
-    autoDeployTrigger: off
+    autoDeployTrigger: "off"
     healthCheckPath: /health
     envVars:
       - key: SERVICEIT_V2_APPS_RECEIVER_ENABLED

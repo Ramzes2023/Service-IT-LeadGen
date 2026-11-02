@@ -8,6 +8,7 @@ on:
       - 'Dockerfile.serviceit-v2'
       - 'requirements-v2.txt'
       - '.github/workflows/serviceit-v2-ci.yml'
+      - 'integrations/apps_script/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -34,6 +35,7 @@ jobs:
       SERVICEIT_V2_PG_PASSWORD: synthetic_compose_config_only
       SERVICEIT_V2_GMAIL_EXPECTED_EMAIL: ci-synthetic@example.org
       SERVICEIT_V2_OAUTH_SECRET_HOST_FILE: ./deploy/serviceit-v2.env.example
+      SERVICEIT_V2_APPS_HMAC_HOST_FILE: ./deploy/serviceit-v2.env.example
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,10 +47,13 @@ jobs:
       - name: Compile modules
         run: python -m compileall -q leadpilot
       - name: Mock OAuth and REAL disposable PostgreSQL test
-        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py tests/test_serviceit_v2_fns_release.py tests/test_serviceit_v2_fns_zip.py tests/test_serviceit_v2_oauth_local.py
+        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py tests/test_serviceit_v2_fns_release.py tests/test_serviceit_v2_fns_zip.py tests/test_serviceit_v2_oauth_local.py tests/test_serviceit_v2_apps_receiver.py
+      - name: Offline Node.js Apps Script HMAC + Gmail contract
+        run: node integrations/apps_script/tests/test_apps_script.cjs
       - name: Compose safety / isolation check
         run: |
           docker compose -f deploy/serviceit-v2.compose.yml config --quiet
+          docker compose -f deploy/serviceit-v2.compose.yml -f deploy/serviceit-v2.apps-ingress.compose.yml --profile apps-live config --quiet
           docker compose -f deploy/serviceit-v2.compose.yml -f deploy/serviceit-v2.gmail-secret.override.yml --profile gmail-live config --quiet
           python - <<'PY'
           from pathlib import Path

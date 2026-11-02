@@ -20,7 +20,7 @@ import httpx
 from .ai import AIProvider, config_from_env
 from .bitrix_metadata_audit import PORTAL, validate_webhook
 from .bitrix_1062_mapping import FIELD_MAP, _is_valid_inn
-from .serviceit_bitrix_list_shape import strict_bitrix_items
+from .serviceit_bitrix_list_shape import strict_bitrix_items, ItemListShapeError
 from .serviceit_ai_lead_engine import assess_lead
 from .serviceit_ai_report import build_report, plain
 from .serviceit_manager_ai_card import format_verified_card
@@ -307,10 +307,32 @@ def poll(store, rest, minimum_id):
     result = rest('crm.item.list', {'entityTypeId':1062,'useOriginalUfNames':'Y',
                   'filter':{'categoryId':21,'>id':cursor},'order':{'id':'ASC'},
                   'select':['id','categoryId'],'start':0})
+    fallback_broad = False
     try:
         items = strict_bitrix_items(result)
+    except ItemListShapeError as exc:
+        if exc.kind != 'EMPTY':
+            raise Blocked('POLL_RESPONSE_UNTRUSTED') from None
+        # Category-filtered Bitrix24 returned a nonstandard empty nested
+        # array. Recheck against all categories with the SAME >id cursor.
+        # Never interpret [[]] as evidence that no new cards exist.
+        fallback_broad = True
+        broad = rest('crm.item.list', {
+            'entityTypeId':1062,'useOriginalUfNames':'Y',
+            'filter':{'>id':cursor},'order':{'id':'ASC'},
+            'select':['id','categoryId'],'start':0})
+        try:
+            items = strict_bitrix_items(broad)
+        except ValueError:
+            raise Blocked('POLL_BROAD_RESPONSE_UNTRUSTED') from None
+        # If the filtered result is structurally corrupt and the alternate
+        # list is empty, an explicit total=0 is required. Otherwise we might
+        # skip a real newly created item while advancing a cursor.
+        if not items and (broad.get('total') != 0 or 'next' in broad):
+            raise Blocked('POLL_BROAD_EMPTY_UNVERIFIED')
     except ValueError:
         raise Blocked('POLL_RESPONSE_UNTRUSTED') from None
+    inserted = 0
     for item in items:
         require(isinstance(item,dict), 'POLL_ITEM_INVALID')
         # Bitrix24 crm.item.list silently drops entityTypeId from select.
@@ -322,16 +344,35 @@ def poll(store, rest, minimum_id):
             'POLL_ID_INVALID')
         item_id = int(raw_id)
         require(8 <= item_id <= 2_000_000_000
-                and str(item.get('categoryId')) == '21'
-                and ('entityTypeId' not in item
-                     or str(item['entityTypeId']) == '1062'),
+                and ('entityTypeId' not in item or
+                     str(item['entityTypeId']) == '1062')
+                and (type(item.get('categoryId')) is int and
+                     0 <= item['categoryId'] <= 10_000_000 or
+                     type(item.get('categoryId')) is str and
+                     item['categoryId'].isascii() and
+                     item['categoryId'].isdecimal() and
+                     0 <= int(item['categoryId']) <= 10_000_000),
                 'POLL_ITEM_IDENTITY_INVALID')
+        if not fallback_broad:
+            require(str(item['categoryId']) == '21',
+                    'POLL_ITEM_IDENTITY_INVALID')
         require(item_id > cursor, 'POLL_ORDER_INVALID')
-        store.enqueue(item_id)
+        if fallback_broad:
+            # Only trust all-category IDs after a separate scoped read.
+            full = rest('crm.item.get', {
+                'entityTypeId':1062,'id':item_id,'useOriginalUfNames':'Y'}).get('item')
+            require(isinstance(full,dict)
+                    and str(full.get('id')) == str(item_id)
+                    and str(full.get('entityTypeId')) == '1062'
+                    and str(full.get('categoryId')) == str(item.get('categoryId')),
+                    'POLL_BROAD_IDENTITY_UNVERIFIED')
+        if str(item['categoryId']) == '21':
+            store.enqueue(item_id)
+            inserted += 1
         cursor = item_id
     with store.db() as db:
         db.execute("INSERT OR REPLACE INTO worker_meta VALUES ('cursor',?)", (str(cursor),))
-    return len(items)
+    return inserted
 
 
 def load_approval(directory, item_id):

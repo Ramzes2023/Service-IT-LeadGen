@@ -1,0 +1,149 @@
+name: Service IT V2 isolated Docker-to-Postgres synthetic E2E
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/serviceit-v2-render-synthetic-e2e.yml'
+      - 'Dockerfile.serviceit-v2-render'
+      - 'leadpilot/serviceit_v2_render_entrypoint.py'
+      - 'leadpilot/serviceit_v2_apps_receiver.py'
+      - 'leadpilot/serviceit_v2_store.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-signed-http-to-disposable-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: serviceitv2_test
+          POSTGRES_USER: serviceitv2_test
+          POSTGRES_PASSWORD: synthetic_ci_only_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U serviceitv2_test -d serviceitv2_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      SYNTHETIC_DB_DSN: host=127.0.0.1 port=5433 dbname=serviceitv2_test user=serviceitv2_test password=synthetic_ci_only_password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install synthetic-only PostgreSQL test client
+        run: python -m pip install 'psycopg[binary]>=3.2,<4'
+      - name: Build actual isolated Render image
+        run: docker build -f Dockerfile.serviceit-v2-render -t serviceit-v2-render:synthetic .
+      - name: Start isolated receiver and test real signed HTTP plus DB dedup
+        run: |
+          set -euo pipefail
+          # Only disposable GitHub-hosted PostgreSQL. No Render account access.
+          secret='SYNTHETIC-CONTAINER-E2E-ONLY-UNSAFE-FOR-REAL-USE-1234567'
+          secret_b64="$(printf '%s' "$secret" | base64 -w0)"
+          docker run -d --rm --name serviceit-v2-synthetic-e2e --network host \
+            -e PORT=10000 \
+            -e SERVICEIT_V2_APPS_RECEIVER_ENABLED=YES \
+            -e SERVICEIT_V2_GMAIL_EXPECTED_EMAIL=ramzesisayev444@gmail.com \
+            -e SERVICEIT_V2_DB_DSN="$SYNTHETIC_DB_DSN" \
+            -e SERVICEIT_V2_APPS_HMAC_SECRET_B64="$secret_b64" \
+            serviceit-v2-render:synthetic
+          trap 'docker rm -f serviceit-v2-synthetic-e2e >/dev/null 2>&1 || true' EXIT
+          python - <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import os
+          import time
+          from email.message import EmailMessage
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+          import psycopg
+
+          host = 'http://127.0.0.1:10000'
+          health = None
+          for _ in range(30):
+              try:
+                  with urlopen(host + '/health', timeout=2) as response:
+                      health = json.load(response)
+                  break
+              except (OSError, TimeoutError, URLError):
+                  time.sleep(1)
+          assert health == {
+              'status': 'SERVICEIT_V2_APPS_RECEIVER_ALIVE',
+              'crm_writes': 0, 'source_enabled': True
+          }, f'SYNTHETIC_CONTAINER_NOT_READY:{health}'
+          print('CONTAINER_SYNTHETIC_HEALTH=PASS', flush=True)
+
+          msg = EmailMessage()
+          msg['From'] = 'marketplace@b2b-center.ru'
+          msg['To'] = 'ramzesisayev444@gmail.com'
+          msg['Subject'] = 'Актуальные торги по вашему профилю'
+          msg['Date'] = 'Mon, 02 Nov 2026 10:52:07 +0300'
+          msg.set_content(
+              'Запрос предложений № 4661617\n'
+              'Организатор: АО Техническая инспекция ЕЭС\n'
+              'Предмет договора: Сопровождение 1С\n'
+              'https://www.b2b-center.ru/market/soprovozhdenie-1s/tender-4661617/\n'
+          )
+          mid = 'feedd00d20261102'
+          body = json.dumps({
+              'version': 'serviceit-appsscript-v1',
+              'mailbox': 'ramzesisayev444@gmail.com',
+              'gmail_message_id': mid,
+              'raw_b64url': base64.urlsafe_b64encode(msg.as_bytes())
+                                .decode().rstrip('=')
+          }, separators=(',', ':'), ensure_ascii=False).encode()
+          key = b'SYNTHETIC-CONTAINER-E2E-ONLY-UNSAFE-FOR-REAL-USE-1234567'
+          def send(signature_override=None):
+              stamp = str(int(time.time()))
+              sig = hmac.new(key, stamp.encode() + b'.' + body, hashlib.sha256).hexdigest()
+              if signature_override is not None:
+                  sig = signature_override
+              req = Request(host + '/api/v2/gmail/ingest', data=body, method='POST',
+                  headers={
+                      'Content-Type': 'application/json',
+                      'X-ServiceIT-Timestamp': stamp,
+                      'X-ServiceIT-Signature': 'sha256=' + sig
+                  })
+              try:
+                  with urlopen(req, timeout=10) as res:
+                      return res.status, json.load(res)
+              except HTTPError as err:
+                  return err.code, json.load(err)
+
+          first_status, first = send()
+          assert first_status == 202 and first['status'] == 'INGESTED', (first_status, first)
+          assert first['new_opportunities'] == 1
+          second_status, second = send()
+          assert second_status == 200 and second['status'] == 'ALREADY_INGESTED'
+          invalid_status, invalid = send('0' * 64)
+          assert invalid_status == 403 and invalid == {'status': 'INGRESS_REJECTED'}
+
+          with psycopg.connect(os.environ['SYNTHETIC_DB_DSN']) as db:
+              assert db.execute(
+                  'SELECT count(*) FROM serviceit_v2_messages WHERE gmail_message_id=%s',
+                  (mid,)
+              ).fetchone()[0] == 1
+              assert db.execute(
+                  "SELECT count(*) FROM serviceit_v2_opportunities WHERE source='B2B-Center' AND tender_id='4661617'"
+              ).fetchone()[0] == 1
+              assert db.execute(
+                  'SELECT count(*) FROM serviceit_v2_crm_outbox'
+              ).fetchone()[0] == 0
+              assert db.execute(
+                  'SELECT count(*) FROM serviceit_v2_opportunities WHERE qualified_lead=TRUE'
+              ).fetchone()[0] == 0
+
+          print('CONTAINER_SYNTHETIC_FIRST_SIGNED_POST=PASS', flush=True)
+          print('CONTAINER_SYNTHETIC_DUPLICATE_DEDUP=PASS', flush=True)
+          print('CONTAINER_SYNTHETIC_FORGED_HMAC_REJECTED=PASS', flush=True)
+          print('CONTAINER_SYNTHETIC_POSTGRES_WRITES_ONLY=PASS', flush=True)
+          print('CONTAINER_SYNTHETIC_CRM_WRITES=0', flush=True)
+          PY

@@ -5,6 +5,7 @@ param(
     [switch]$InspectLive,
     [string]$PythonPath = '',
     [string]$QueueDb = '',
+    [ValidateRange(0,2000000000)][int]$ItemId = 0,
     [ValidateRange(1,10)][int]$Limit = 10
 )
 Set-StrictMode -Version Latest
@@ -15,11 +16,17 @@ if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { throw 'APPROVED_
 if (Test-Path Env:\SERVICEIT_EVENT_READONLY_WEBHOOK) { throw 'PREEXISTING_WEBHOOK_ENV_REFUSED' }
 $pythonArgs = @('-m','leadpilot.serviceit_bitrix_event_queue_readonly_worker')
 if ($InspectLive) {
-    if (-not $QueueDb -or -not (Test-Path -LiteralPath $QueueDb -PathType Leaf)) {
-        throw 'PERSISTENT_EVENT_QUEUE_REQUIRED'
+    if ($ItemId -gt 0 -and $QueueDb) { throw 'CHOOSE_ONLY_ONE_READONLY_SOURCE' }
+    if ($ItemId -le 0 -and -not $QueueDb) { throw 'ITEM_ID_OR_EVENT_QUEUE_REQUIRED' }
+    if ($ItemId -gt 0) {
+        $pythonArgs += @('--inspect-live','--webhook-from-env','--item-id',"$ItemId")
+    } else {
+        if (-not (Test-Path -LiteralPath $QueueDb -PathType Leaf)) {
+            throw 'PERSISTENT_EVENT_QUEUE_REQUIRED'
+        }
+        if (-not [IO.Path]::IsPathRooted($QueueDb)) { throw 'QUEUE_PATH_MUST_BE_ABSOLUTE' }
+        $pythonArgs += @('--inspect-live','--webhook-from-env','--queue-db',$QueueDb,'--limit',"$Limit")
     }
-    if (-not [IO.Path]::IsPathRooted($QueueDb)) { throw 'QUEUE_PATH_MUST_BE_ABSOLUTE' }
-    $pythonArgs += @('--inspect-live','--webhook-from-env','--queue-db',$QueueDb,'--limit',"$Limit")
 }
 Push-Location $root
 try {

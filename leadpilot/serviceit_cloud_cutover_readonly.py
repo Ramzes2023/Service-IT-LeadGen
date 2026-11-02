@@ -1,0 +1,69 @@
+"""Read-only trusted cutover inventory for free GitHub Actions ServiceIT worker.
+
+The live REST webhook is read only from an environment variable and never printed.
+No CRM writes, model calls, or source changes. Does not create a test item.
+"""
+from __future__ import annotations
+
+import os
+
+import httpx
+
+from .serviceit_enrichment_worker import Rest, validate_identity
+
+
+def latest_existing_card_id(rest) -> int:
+    result = rest("crm.item.list", {
+        "entityTypeId": 1062,
+        "useOriginalUfNames": "Y",
+        "filter": {"categoryId": 21},
+        "order": {"id": "DESC"},
+        "select": ["id", "entityTypeId", "categoryId"],
+        "start": 0,
+    })
+    items = result.get("items")
+    if not isinstance(items, list) or len(items) > 50:
+        raise ValueError("CUTOVER_INVENTORY_INVALID")
+    seen = set()
+    previous = None
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("CUTOVER_ITEM_INVALID")
+        try:
+            card_id = int(item.get("id", ""))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("CUTOVER_CARD_ID_INVALID") from exc
+        if card_id < 1 or card_id > 2_000_000_000:
+            raise ValueError("CUTOVER_CARD_ID_OUT_OF_BOUNDS")
+        if str(item.get("entityTypeId")) != "1062" or str(item.get("categoryId")) != "21":
+            raise ValueError("CUTOVER_CATEGORY_MISMATCH")
+        if card_id in seen or (previous is not None and card_id >= previous):
+            raise ValueError("CUTOVER_RESULT_NOT_DESCENDING")
+        seen.add(card_id)
+        previous = card_id
+    if not items:
+        return 7
+    first = int(items[0]["id"])
+    if first >= 8:
+        validate_identity(items[0], first)
+    return max(7, first)
+
+
+def main() -> int:
+    webhook = os.environ.pop("SERVICEIT_BITRIX_WEBHOOK", "")
+    if not webhook:
+        print("SERVICEIT_CLOUD_CUTOVER=BLOCKED_MISSING_WEBHOOK")
+        return 2
+    try:
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=20) as client:
+            latest = latest_existing_card_id(Rest(webhook, client))
+        print(f"SERVICEIT_CLOUD_CUTOVER_MAX_ID={latest}")
+        print("SERVICEIT_CLOUD_CUTOVER_CRM_WRITES=0")
+        return 0
+    except Exception:
+        print("SERVICEIT_CLOUD_CUTOVER=UNVERIFIED_READ_ONLY")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

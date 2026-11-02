@@ -151,3 +151,33 @@ def test_source_contains_no_updates_or_gigachat_calls():
                   "classify_cockpit_signal","GIGACHAT_CREDENTIALS",
                   "tasks.task.add","DELETE FROM new_cards","UPDATE new_cards"):
         assert token not in text
+
+
+def test_exact_existing_card_7_readonly_without_queue():
+    # Proven live log recorded B2B-CENTER-4661617 as corporate item ID=7.
+    item={**KEYS,"id":7}
+    operations=[]
+    def only_read(method,params):
+        operations.append((method,params))
+        assert method=="crm.item.get"
+        assert params=={"entityTypeId":1062,"id":7,"useOriginalUfNames":"Y"}
+        return {"item":item}
+    result=examine_ids([7],only_read)
+    assert result["inspected"]==1 and result["crm_reads"]==1
+    assert result["items"][0]["decision"]=="HOLD_MISSING_PRELIMINARY_AI"
+    assert result["crm_writes"]==result["gigachat_calls"]==0
+    assert result["queue_claims"]==0
+    assert len(operations)==1
+
+
+def test_live_item_or_queue_must_be_exclusive_and_no_network(monkeypatch,capsys):
+    monkeypatch.setenv("SERVICEIT_EVENT_READONLY_WEBHOOK",
+        "https://serviseit.bitrix24.ru/rest/2/SYNTHETICONLY123456")
+    import leadpilot.serviceit_bitrix_event_queue_readonly_worker as module
+    monkeypatch.setattr(module.httpx,"Client",
+        lambda *args,**kwargs:pytest.fail("HTTP_CLIENT_MUST_NOT_BE_CREATED"))
+    assert module.main(["--inspect-live","--webhook-from-env","--item-id","7",
+                        "--queue-db","/tmp/nonexistent.sqlite3"])==2
+    assert json.loads(capsys.readouterr().out)["crm_writes"]==0
+    assert module.main(["--inspect-live","--webhook-from-env"])==2
+    assert json.loads(capsys.readouterr().out)["crm_writes"]==0

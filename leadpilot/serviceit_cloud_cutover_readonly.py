@@ -21,35 +21,61 @@ class CutoverItemShapeError(ValueError):
         super().__init__("CUTOVER_ITEM_INVALID")
 
 
-def latest_existing_card_id(rest) -> int:
-    result = rest("crm.item.list", {
-        "entityTypeId": 1062,
-        "useOriginalUfNames": "Y",
-        "filter": {"categoryId": 21},
+def _valid_id(item):
+    raw_id = item.get("id")
+    if not (type(raw_id) is int or
+            (type(raw_id) is str and raw_id.isascii() and raw_id.isdecimal())):
+        raise ValueError("CUTOVER_CARD_ID_INVALID")
+    value = int(raw_id)
+    if not 0 < value <= 2_000_000_000:
+        raise ValueError("CUTOVER_CARD_ID_OUT_OF_BOUNDS")
+    return value
+
+
+def _get_items(rest, *, filtered):
+    params = {
+        "entityTypeId": 1062, "useOriginalUfNames": "Y",
         "order": {"id": "DESC"},
-        # Bitrix24 drops entityTypeId from crm.item.list select. Verify
-        # the record identity separately via a read-only crm.item.get.
-        "select": ["id", "categoryId"],
-        "start": 0,
-    })
+        "select": ["id", "categoryId"], "start": 0,
+    }
+    if filtered:
+        params["filter"] = {"categoryId": 21}
+    response = rest("crm.item.list", params)
     try:
-        items = strict_bitrix_items(result)
+        return strict_bitrix_items(response)
     except ItemListShapeError as exc:
+        if exc.kind == "EMPTY" and filtered:
+            # A nonstandard nested empty group from the category-filtered
+            # endpoint is not evidence of no historical cards. Retry with an
+            # independent all-category view of the *same* type 1062.
+            return None
         raise CutoverItemShapeError(exc.index, exc.kind) from None
     except ValueError:
         raise ValueError("CUTOVER_INVENTORY_INVALID") from None
+
+
+def latest_existing_card_id(rest) -> int:
+    """Highest visible ID across ALL categories, a conservative safe cutover.
+
+    The category-filtered list is preferred. When it returns the known
+    nonstandard [[]] shape, a fresh unfiltered list is mandatory. If there are
+    other-category newer items, use their larger IDs instead of replaying them.
+    The highest item is verified with crm.item.get, never written.
+    """
+    filtered = _get_items(rest, filtered=True)
+    used_broad = filtered is None
+    items = _get_items(rest, filtered=False) if used_broad else filtered
+    if used_broad and not items:
+        raise ValueError("CUTOVER_BROAD_EMPTY_UNVERIFIED")
     seen = set()
     previous = None
-    for index, item in enumerate(items):
-        raw_id = item.get("id")
-        if not (type(raw_id) is int or
-                (type(raw_id) is str and raw_id.isascii() and raw_id.isdecimal())):
-            raise ValueError("CUTOVER_CARD_ID_INVALID")
-        card_id = int(raw_id)
-        if card_id < 1 or card_id > 2_000_000_000:
-            raise ValueError("CUTOVER_CARD_ID_OUT_OF_BOUNDS")
-        if (("entityTypeId" in item and str(item["entityTypeId"]) != "1062")
-                or str(item.get("categoryId")) != "21"):
+    for item in items:
+        card_id = _valid_id(item)
+        if ("entityTypeId" in item and str(item["entityTypeId"]) != "1062"):
+            raise ValueError("CUTOVER_CATEGORY_MISMATCH")
+        if not used_broad and str(item.get("categoryId")) != "21":
+            raise ValueError("CUTOVER_CATEGORY_MISMATCH")
+        if used_broad and "categoryId" not in item:
             raise ValueError("CUTOVER_CATEGORY_MISMATCH")
         if card_id in seen or (previous is not None and card_id >= previous):
             raise ValueError("CUTOVER_RESULT_NOT_DESCENDING")
@@ -57,21 +83,17 @@ def latest_existing_card_id(rest) -> int:
         previous = card_id
     if not items:
         return 7
-    first = int(items[0]["id"])
-    # The list operation hides the type marker. Get the highest existing
-    # item read-only and verify the server-provided entity type/category.
-    # This check also permits historical #3/#7 (read-only, never a write).
-    latest = rest("crm.item.get", {
+    first = _valid_id(items[0])
+    full = rest("crm.item.get", {
         "entityTypeId": 1062,
         "id": first,
         "useOriginalUfNames": "Y",
     }).get("item")
-    if (not isinstance(latest, dict) or str(latest.get("id")) != str(first)
-            or str(latest.get("entityTypeId")) != "1062"
-            or str(latest.get("categoryId")) != "21"):
+    if (not isinstance(full, dict) or str(full.get("id")) != str(first)
+            or str(full.get("entityTypeId")) != "1062"
+            or str(full.get("categoryId")) != str(items[0].get("categoryId"))):
         raise ValueError("CUTOVER_TOP_ITEM_IDENTITY_UNVERIFIED")
     return max(7, first)
-
 
 # Diagnostic labels are closed enums. Never print exceptions, API messages,
 # webhook URLs, raw JSON, client identity or arbitrary server-controlled strings.
@@ -80,7 +102,7 @@ _SAFE_REASONS = frozenset({
     "CUTOVER_INVENTORY_INVALID", "CUTOVER_ITEM_INVALID",
     "CUTOVER_CARD_ID_INVALID", "CUTOVER_CARD_ID_OUT_OF_BOUNDS",
     "CUTOVER_CATEGORY_MISMATCH", "CUTOVER_RESULT_NOT_DESCENDING",
-    "CUTOVER_TOP_ITEM_IDENTITY_UNVERIFIED",
+    "CUTOVER_TOP_ITEM_IDENTITY_UNVERIFIED", "CUTOVER_BROAD_EMPTY_UNVERIFIED",
     "BITRIX24_WEBHOOK_MISSING_OR_BAD_FORMAT",
     "BITRIX24_WEBHOOK_MUST_BE_OFFICIAL_PORTAL",
 })
@@ -140,7 +162,7 @@ def main() -> int:
             rest = Rest(webhook, client)
             def traced(method, params):
                 nonlocal stage
-                stage = "LIST" if method == "crm.item.list" else "GET_TOP"
+                stage = ("LIST_BROAD" if "filter" not in params else "LIST") if method == "crm.item.list" else "GET_TOP"
                 return rest(method, params)
             latest = latest_existing_card_id(traced)
         print(f"SERVICEIT_CLOUD_CUTOVER_MAX_ID={latest}")

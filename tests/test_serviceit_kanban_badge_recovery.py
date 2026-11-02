@@ -95,7 +95,8 @@ def test_ledger_does_not_initialize_or_write(tmp_path):
     before = path.read_bytes()
     status = rec.ledger_readonly(tmp_path)
     assert status["items"] == {"badge:1062:13:field:v1":"VERIFIED",
-                               "badge:1062:21:3:v1":"UNCERTAIN"}
+                               "badge:1062:21:3:v1":"UNCERTAIN",
+                               "badge:1062:21:3:reconciliation-v1":"NOT_RESERVED"}
     assert path.read_bytes() == before
 
 
@@ -122,3 +123,20 @@ def test_source_contains_no_mutation_calls():
                       "state.reserve(", "state.backup(", "getpass.getpass(",
                       "crm.item.details.configuration.set", "tasks.task.add"):
         assert forbidden not in s
+
+
+
+def test_reconciliation_ledger_verdict_readonly(tmp_path):
+    path = tmp_path / "cockpit-report-v1.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE cockpit_ops (key TEXT PRIMARY KEY,state TEXT,digest TEXT)")
+        db.executemany("INSERT INTO cockpit_ops VALUES (?,?,?)", [
+            ("badge:1062:13:field:v1","VERIFIED","mock"),
+            ("badge:1062:21:3:v1","UNCERTAIN","mock"),
+            ("badge:1062:21:3:reconciliation-v1","UNCERTAIN","mock"),
+        ])
+    before=path.read_bytes()
+    result=rec.ledger_readonly(tmp_path)
+    assert result["items"]["badge:1062:21:3:reconciliation-v1"]=="UNCERTAIN"
+    assert result["items"]["badge:1062:21:3:v1"]=="UNCERTAIN"
+    assert path.read_bytes()==before

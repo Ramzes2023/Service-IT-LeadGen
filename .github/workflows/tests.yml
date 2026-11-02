@@ -139,3 +139,10 @@ jobs:
       - name: Exact item7 backfill one-shot approval gate and secure mock
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_B2B_CARD7_PRELIMINARY_BACKFILL.ps1
+  windows-card7-forensic-readonly:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No-apply card7 forensic SecureString Windows test
+        shell: powershell
+        run: .\scripts\TEST_SERVICEIT_B2B_CARD7_FORENSIC_READONLY.ps1

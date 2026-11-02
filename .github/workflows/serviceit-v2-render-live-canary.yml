@@ -1,0 +1,79 @@
+name: Service IT V2 Render public fail-closed canary
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/serviceit-v2-render-live-canary.yml'
+      - 'leadpilot/serviceit_v2_render_entrypoint.py'
+      - 'leadpilot/serviceit_v2_apps_receiver.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-no-mail-no-crm-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify TLS GET health and unsigned synthetic POST cannot ingest
+        env:
+          HEALTH_URL: https://serviceit-v2-gmail-ingress-canary.onrender.com/health
+          INGEST_URL: https://serviceit-v2-gmail-ingress-canary.onrender.com/api/v2/gmail/ingest
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import ssl
+          import time
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          assert os.environ["HEALTH_URL"].startswith("https://")
+          assert os.environ["INGEST_URL"].startswith("https://")
+          ssl_ctx = ssl.create_default_context()
+
+          last = None
+          # Render Free can sleep; allow cold start without claiming 24/7 service.
+          for attempt in range(8):
+              try:
+                  with urlopen(Request(os.environ["HEALTH_URL"], method="GET"),
+                               timeout=25, context=ssl_ctx) as response:
+                      assert response.status == 200
+                      health = json.load(response)
+                  last = None
+                  break
+              except (HTTPError, URLError, TimeoutError, OSError) as error:
+                  last = type(error).__name__
+                  if attempt < 7:
+                      time.sleep(8)
+          if last is not None:
+              raise AssertionError("PUBLIC_HEALTH_UNAVAILABLE:" + last)
+          assert health == {
+              "status": "SERVICEIT_V2_APPS_RECEIVER_ALIVE",
+              "crm_writes": 0,
+              "source_enabled": False,
+          }, "FAIL_CLOSED_HEALTH_MISMATCH"
+          print("LIVE_RENDER_HEALTH_OFF=PASS", flush=True)
+
+          # A synthetically shaped, UNSIGNED request. It contains no mailbox,
+          # no real message ID or MIME, no API keys, and no vendor data.
+          test_body = b'{"synthetic_canary":true}'
+          post = Request(
+              os.environ["INGEST_URL"], data=test_body, method="POST",
+              headers={"Content-Type": "application/json"}
+          )
+          try:
+              with urlopen(post, timeout=25, context=ssl_ctx) as response:
+                  status = response.status
+                  reply = response.read(512)
+          except HTTPError as error:
+              status = error.code
+              reply = error.read(512)
+          assert status == 503, "FAIL_CLOSED_POST_DID_NOT_RETURN_503"
+          assert json.loads(reply) == {
+              "status": "INGRESS_UNAVAILABLE"
+          }, "FAIL_CLOSED_POST_BODY_MISMATCH"
+          print("LIVE_RENDER_UNSIGNED_SYNTHETIC_POST_REJECTED=PASS", flush=True)
+          print("LIVE_RENDER_REAL_GMAIL_MESSAGES=0; BITRIX_WRITES=0", flush=True)
+          PY

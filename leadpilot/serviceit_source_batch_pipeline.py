@@ -71,7 +71,8 @@ def _clean_checks(row: Any) -> dict:
     return {name: row.get(name, "UNKNOWN") for name in sorted(GATE_KEYS)}
 
 
-def plan_source_batch(payload: dict) -> dict:
+def assess_source_batch(payload: dict) -> dict:
+    """Validated in-memory assessment only. Keeps company identity out of stdout."""
     _require(isinstance(payload, dict)
              and set(payload) == {"contract_version", "as_of", "source_kind", "entries"}
              and payload["contract_version"] == CONTRACT, "BATCH_CONTRACT_INVALID")
@@ -131,6 +132,23 @@ def plan_source_batch(payload: dict) -> dict:
                              demo=payload["source_kind"] == "synthetic")
         reports.append(result)
 
+    return {
+        "source_kind": payload["source_kind"],
+        "as_of": when.isoformat(),
+        "input_entries": len(entries),
+        "unique_companies": len(companies),
+        "repeated_signals_ignored": repeated,
+        "assessments": reports,
+    }
+
+
+def plan_source_batch(payload: dict) -> dict:
+    validated = assess_source_batch(payload)
+    when = date.fromisoformat(validated["as_of"])
+    entries = payload["entries"]
+    companies = {x["company_inn"]: x for x in validated["assessments"]}
+    repeated = validated["repeated_signals_ignored"]
+    reports = validated["assessments"]
     planned = plan_serviceit_ai_signals(reports)
     masked = []
     for report, item in zip(reports, planned["items"]):

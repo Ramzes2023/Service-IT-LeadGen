@@ -31,6 +31,8 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - name: SQLite concurrency, recovery and universal worker mocks
         run: python -m pytest -q tests/test_serviceit_enrichment_worker.py
+      - name: Read-only production readiness mocks (no real CRM)
+        run: python -m pytest -q tests/test_serviceit_production_readiness.py
   windows-cockpit-secure-input:
     runs-on: windows-latest
     steps:

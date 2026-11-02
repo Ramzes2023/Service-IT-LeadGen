@@ -23,7 +23,8 @@ from .bitrix_1062_ai_cockpit import PREFIX
 
 SCOPE_Y = {"entityTypeId": 1062, "id": 3, "useOriginalUfNames": "Y"}
 SCOPE_N = {"entityTypeId": 1062, "id": 3, "useOriginalUfNames": "N"}
-LEDGER_KEYS = ("badge:1062:13:field:v1", "badge:1062:21:3:v1")
+LEDGER_KEYS = ("badge:1062:13:field:v1", "badge:1062:21:3:v1",
+               "badge:1062:21:3:reconciliation-v1")
 FINAL_STATES = frozenset(("VERIFIED", "UNCERTAIN", "NOT_RESERVED"))
 TARGET_NORMALIZED = re.sub(r"[^a-z0-9]", "", CODE.lower())
 
@@ -133,7 +134,7 @@ def ledger_readonly(state_dir):
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)) as db:
             rows = db.execute(
-                "SELECT key,state FROM cockpit_ops WHERE key IN (?,?)", LEDGER_KEYS
+                "SELECT key,state FROM cockpit_ops WHERE key IN (?,?,?)", LEDGER_KEYS
             ).fetchall()
     except sqlite3.Error:
         raise CockpitBlocked("LEDGER_READ_BLOCKED") from None

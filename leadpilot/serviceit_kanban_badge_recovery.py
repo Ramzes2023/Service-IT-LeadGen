@@ -23,7 +23,8 @@ from .bitrix_1062_ai_cockpit import PREFIX
 
 SCOPE_Y = {"entityTypeId": 1062, "id": 3, "useOriginalUfNames": "Y"}
 SCOPE_N = {"entityTypeId": 1062, "id": 3, "useOriginalUfNames": "N"}
-LEDGER_KEYS = ("badge:1062:13:field:v1", "badge:1062:21:3:v1")
+LEDGER_KEYS = ("badge:1062:13:field:v1", "badge:1062:21:3:v1",
+               "badge:1062:21:3:reconciliation-v1")
 FINAL_STATES = frozenset(("VERIFIED", "UNCERTAIN", "NOT_RESERVED"))
 TARGET_NORMALIZED = re.sub(r"[^a-z0-9]", "", CODE.lower())
 

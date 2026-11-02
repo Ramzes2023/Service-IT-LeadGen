@@ -201,6 +201,8 @@ def download_release(client: httpx.Client, release: Release, destination: Path,
                         target = response.headers.get("location", "")
                         url = urljoin(url, target)
                         _path(url, ZIP_RE)
+                        require(urlsplit(url).path == urlsplit(release.zip_url).path,
+                                "FNS_REDIRECT_RELEASE_CHANGED")
                         continue
                     require(response.status_code == 200,
                             "FNS_ZIP_DOWNLOAD_HTTP_INVALID")

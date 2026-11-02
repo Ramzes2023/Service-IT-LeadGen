@@ -75,7 +75,7 @@ $ActionArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle H
 $Action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $ActionArgs -WorkingDirectory $Repo
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 365)
 $Principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-$Settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable
+$Settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $Name -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description 'Guarded new-card 1062/21 AI review worker, owner interactive Windows session' | Out-Null
 Write-Host 'SERVICEIT_AUTOFILL_TASK_REGISTERED=YES' -ForegroundColor Green
 Write-Host 'INTERVAL_MINUTES=5; HISTORICAL_IDS_3_7=EXCLUDED; STATUS=ENABLED_ON_WINDOWS_LOGIN'

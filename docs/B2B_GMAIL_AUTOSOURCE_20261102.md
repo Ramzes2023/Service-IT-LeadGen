@@ -30,3 +30,31 @@ The earlier one-shot Bitrix HOLD writer in this PR requires independent original
 
 ## Validation
 Use CI synthetic IMAP mock tests, PowerShell 5.1 AST/ASCII checks, local exact user-provided email replay and owner-approved live Gmail -Poll followed by another -Poll to confirm idempotency. GitHub CI success alone is not live IMAP authentication or live Bitrix delivery. Keep PR DRAFT pending host acceptance and authorizations.
+
+
+## November 2: Optional always-on route WITHOUT Gmail IMAP app password
+
+The owner's ChatGPT Gmail connector already has permission to READ incoming official B2B-Center notices. This permission cannot be exported to a Windows service or GitHub Actions. Instead, the already-enabled once-hourly ChatGPT automation `6ae61cca18b481918b20bbf0f3bc5eaf` now watches new Gmail notices and for each NEW eligible procedure can create a **strictly typed, sanitized** comment on private [Issue #66](https://github.com/Ramzes2023/Service-IT-LeadGen/issues/66). This stage does not need a local Gmail app password and does not need the owner's PC to stay on. The source may be detected up to about one hour after arrival, not necessarily instantly; the newly updated action's future execution still needs live acceptance.
+
+`leadpilot/b2b_github_to_bitrix.py` parses only comments of the following exact form (two lines, no markdown):
+```text
+SERVICEIT_B2B_NOTICE_V1
+{"schema":"serviceit-b2b-notice-v1","source":"B2B-Center","email_message_id":"1a19b7630301bafb","tender_id":"4661617","source_url":"https://www.b2b-center.ru/market/podderzhka-1s/tender-4661617/","subject":"Поддержка 1С:ЗУП","organizer":"ООО «Тест»","buyer_inn":null,"fns_msp":null,"region":null,"original_publication_verified":false,"contact_approved":false,"qualified_lead":false}
+```
+The above is a SYNTHETIC EXAMPLE ONLY, not a historical procurement description. Never post fixture notice into production issue as if real. The actual automation must use canonical vendor URLs and the original **real Gmail message ID** for each notice. It must omit unsupported category matches.
+
+New workflow `.github/workflows/b2b-gmail-to-bitrix-hold.yml` listens for `issue_comment: created` on issue #66, but **only when the workflow is merged onto the default branch**, and only for comments authored by owner Ramzes2023. It dry-runs exact source ID, official URL (no tracking), strict IT service subject and false/null verification flags. Every such message MUST be `TENDER_OPPORTUNITY_HOLD`, NEVER a qualified lead. A private LLC name (ООО) alone is not proof of official SME registry status.
+
+### Required ONCE: corporate authorization (user/admin only)
+
+This ChatGPT/GitHub connector CANNOT write repository Actions secrets or read the webhook that the owner entered into Windows PowerShell. Do not paste the webhook into chat, an issue, a commit or a public URL. The repository owner or Bitrix24 administrator must approve this continuous automation and perform:
+
+1. Grant the corporate Bitrix webhook only appropriate CRM access to existing smart-process **entityTypeId 1062, category 21** with permission to read/list/add only where possible. Existing demo cards and AI fields should not be modified. Use a dedicated Bitrix24 integration identity, not a personal broad-permission webhook when possible.
+2. In the private GitHub repo [Actions secrets settings](https://github.com/Ramzes2023/Service-IT-LeadGen/settings/secrets/actions), add exactly one **Repository secret**: `SERVICEIT_BITRIX_WEBHOOK`, value = complete approved corporate HTTPS REST webhook, entered **directly into GitHub UI**. Do not share with the assistant.
+3. Only after code is merged to main, read-only acceptance, manager approval, and a controlled real HOLD item test, in [Actions variables settings](https://github.com/Ramzes2023/Service-IT-LeadGen/settings/variables/actions), create repository **Variable** `SERVICEIT_B2B_CRM_AUTO_ENABLED` with value `YES`. If absent or anything other than exact YES, GitHub will NOT attempt a CRM write. **Do not enable** until manager authorized source-to-CRM automation.
+4. After activation, each new eligible official notice becomes at most one HOLD card in Bitrix smart-process 1062/21; a unique bot-authored ledger reservation is written on Issue #66 BEFORE any potential `crm.item.add`. Repo-wide concurrency prevents overlap. A failed write/readback keeps the lock; no automatic retries or mass fills.
+5. Inspect Actions logs for the controlled first card's `ONE_TENDER_HOLD_VERIFIED`, then use corporate CRM readback and Kanban UI to confirm exact fields. If it fails, leave `SERVICEIT_B2B_CRM_AUTO_ENABLED` unset/disabled and investigate before restarting. Do not delete bot ledger comments or change source numbers to work around the lock.
+
+**Important:** This is the implementation for automatic **tender-opportunity HOLD** staging, not actual `QUALIFIED_LEAD` generation. No INN/FNS/region/contact verification exists in the source email, and there is still **NO** independently approved automatic lead promotion path. For a true lead, separate trusted official FNS SME, buyer INN/region, corporate contact and global CRM duplicate/STOP checks are necessary, with documented human policy approval. No dummy lead creation, business outreach, task creation, bids or unsupported FNS claims.
+
+Current live outcome remains `CRM_WRITES=0` until the corporate secret, explicit enabled variable, a merged main workflow, and actual host acceptance are confirmed.

@@ -1,4 +1,4 @@
-# One-time installation. Owner must execute locally with interactive Windows session.
+﻿# One-time installation. Owner must execute locally with interactive Windows session.
 # Poll every 5 min only while the same Windows user is logged on.
 # Strictly limited to ServiceIT 1062/21, new item IDs >=8. No source changes.
 [CmdletBinding()]

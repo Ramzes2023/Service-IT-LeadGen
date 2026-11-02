@@ -31,14 +31,14 @@ try {
         Write-Output 'B2B_TO_BITRIX=PREVIEW_ONLY; CRM_WRITES=0; USE_EXPLICIT_APPLY_ONLY_AFTER_AUTHORIZATION'
         return
     }
-    $Check = Read-Host 'Открыли оригинальную закупку и проверили ее статус? Напишите ПРОВЕРЕНО'
-    if ($Check -cne 'ПРОВЕРЕНО') { throw 'ORIGINAL_PROCUREMENT_NOT_VERIFIED' }
-    $Check = Read-Host 'Подтверждаете ОДНУ карточку HOLD в 1062/21 без контактов, задач и лидов? Напишите СОГЛАСЕН'
-    if ($Check -cne 'СОГЛАСЕН') { throw 'ONE_CARD_HOLD_APPROVAL_MISSING' }
+    $Check = Read-Host 'Original procurement independently verified? Type VERIFIED'
+    if ($Check -cne 'VERIFIED') { throw 'ORIGINAL_PROCUREMENT_NOT_VERIFIED' }
+    $Check = Read-Host 'Approve ONE unqualified HOLD card in 1062/21 (no contacts, tasks or leads)? Type APPROVE'
+    if ($Check -cne 'APPROVE') { throw 'ONE_CARD_HOLD_APPROVAL_MISSING' }
     if (Test-Path Env:BITRIX24_B2B_ONE_SHOT_WEBHOOK) {
         throw 'BITRIX_B2B_ONE_SHOT_WEBHOOK_ALREADY_SET_CLEAR_FIRST'
     }
-    $Secret = Read-Host -Prompt 'Введите корпоративный Bitrix24 webhook (скрытый ввод)' -AsSecureString
+    $Secret = Read-Host -Prompt 'Corporate Bitrix24 webhook (hidden input)' -AsSecureString
     $Ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
     try {
         $Plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Ptr)

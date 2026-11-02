@@ -124,3 +124,23 @@ def test_narrow_database_support_service_fit_no_generic_service():
     assert "IT_SUPPORT" in classify_services("Сервисная поддержка СУБД")
     assert not classify_services("Техническое обслуживание складских стеллажей")
     assert not classify_services("Техническое обслуживание базы отдыха")
+
+
+def test_github_api_envelope_over_4kb_is_ok_when_owner_notice_is_small():
+    comment = public_source_comment()
+    comment["github_metadata_envelope_padding"] = "q" * 4500
+    payload = json.dumps(comment).encode("utf-8")
+    assert 4096 < len(payload) < 12000
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json=comment))) as client:
+        event = pilot.load_existing_review(client, "github-test-token-notreal")
+    assert event["issue"]["number"] == 66
+
+
+def test_github_api_envelope_above_12k_rejected():
+    comment = public_source_comment()
+    comment["github_metadata_envelope_padding"] = "q" * 13000
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json=comment))) as client:
+        with pytest.raises(pilot.OneCardPilotBlocked, match="ORIGINAL_COMMENT_NOT_AVAILABLE"):
+            pilot.load_existing_review(client, "github-test-token-notreal")

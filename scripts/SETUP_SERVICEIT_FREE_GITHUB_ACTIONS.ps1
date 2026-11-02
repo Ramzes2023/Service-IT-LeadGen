@@ -44,7 +44,12 @@ if ($LASTEXITCODE -ne 0 -or $FullName -cne $Repository) { throw 'GITHUB_REPO_IDE
 $Visibility = (& $Gh api "repos/$Repository" --jq '.private' | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $Visibility -cne 'false') { throw 'PUBLIC_FREE_REPOSITORY_REQUIRED' }
 
+$Ledger = (& $Gh api "repos/$Repository/contents/.serviceit/encrypted-ledger.txt?ref=serviceit-ai-encrypted-ledger" --jq '.sha' 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Ledger)) {
+    throw 'DURABLE_ENCRYPTED_GITHUB_LEDGER_BRANCH_UNAVAILABLE'
+}
 Write-Host "FREE_GITHUB_REPO=VERIFIED"
+Write-Host 'ENCRYPTED_LEDGER_BRANCH=VERIFIED'
 Write-Host "SCOPE=$Scope"
 if (-not $Apply) {
     Write-Host 'CLOUD_SETUP=READONLY_PREFLIGHT_PASS'

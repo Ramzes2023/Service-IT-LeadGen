@@ -6,6 +6,7 @@ on:
       - 'tests/test_serviceit_v2_*'
       - 'deploy/serviceit-v2*'
       - 'Dockerfile.serviceit-v2'
+      - 'Dockerfile.serviceit-v2-render'
       - 'requirements-v2.txt'
       - '.github/workflows/serviceit-v2-ci.yml'
       - 'integrations/apps_script/**'
@@ -47,7 +48,7 @@ jobs:
       - name: Compile modules
         run: python -m compileall -q leadpilot
       - name: Mock OAuth and REAL disposable PostgreSQL test
-        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py tests/test_serviceit_v2_fns_release.py tests/test_serviceit_v2_fns_zip.py tests/test_serviceit_v2_oauth_local.py tests/test_serviceit_v2_apps_receiver.py
+        run: python -m pytest -q tests/test_serviceit_v2_gmail.py tests/test_serviceit_v2_postgres.py tests/test_serviceit_v2_delivery.py tests/test_serviceit_v2_fns_qualification.py tests/test_serviceit_v2_buyer_reviews.py tests/test_serviceit_v2_fns_release.py tests/test_serviceit_v2_fns_zip.py tests/test_serviceit_v2_oauth_local.py tests/test_serviceit_v2_apps_receiver.py tests/test_serviceit_v2_render_entrypoint.py
       - name: Offline Node.js Apps Script HMAC + Gmail contract
         run: node integrations/apps_script/tests/test_apps_script.cjs
       - name: Compose safety / isolation check
@@ -63,3 +64,5 @@ jobs:
           PY
       - name: Build V2 isolated source container
         run: docker build -f Dockerfile.serviceit-v2 -t serviceit-v2:ci .
+      - name: Build isolated Render entrypoint image (no runtime enable)
+        run: docker build -f Dockerfile.serviceit-v2-render -t serviceit-v2-render:ci .

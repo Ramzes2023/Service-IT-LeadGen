@@ -16,13 +16,14 @@ const raw = Buffer.from(
   'Procurement 4661617'
 ).toString('base64url');
 
-function environment() {
+function environment(options = {}) {
   const properties = {
     SERVICEIT_RECEIVER_URL: URL,
     SERVICEIT_HMAC_SECRET: SECRET,
     SERVICEIT_SEND_ENABLED: 'YES'
   };
-  let account = EMAIL;
+  Object.assign(properties, options.properties || {});
+  let account = options.account || EMAIL;
   const calls = {listed:0,got:0,sent:0,log:[],triggers:[]};
   const cache = new Map();
   const gmail = {
@@ -36,7 +37,7 @@ function environment() {
         },
         get: (user,id,options) => {
           assert.strictEqual(options.format,'raw');
-          calls.got++; return {id,raw};
+          calls.got++; return {id,raw:options.raw || raw};
         }
       }
     }
@@ -91,9 +92,9 @@ function environment() {
         .update(ts+'.'+config.payload).digest('hex');
       assert.strictEqual(config.headers['X-ServiceIT-Signature'],'sha256='+expected);
       return {
-        getResponseCode:()=>202,
+        getResponseCode:()=>options.status || 202,
         getContentText:()=>JSON.stringify({
-          status:'INGESTED',gmail_message_id:MID,crm_writes:0})
+          status:options.ack || 'INGESTED',gmail_message_id:MID,crm_writes:0})
       };
     }}
   };
@@ -157,4 +158,40 @@ test('single five-minute trigger and explicit stop',()=>{
   e.context.stopPollingTrigger();
   assert.strictEqual(e.calls.triggers.length,0);
   assert.strictEqual(e.properties.SERVICEIT_SEND_ENABLED,'NO');
+});
+
+test('unconfirmed server acknowledgement never caches Gmail ID',()=>{
+  const e=environment({ack:'UNCONFIRMED'});
+  assert.throws(()=>e.context.pollAndForwardB2B(),/SERVICEIT_POLL_BLOCKED/);
+  assert.strictEqual(e.calls.sent,1);
+  assert.strictEqual(e.calls.got,1);
+  assert.throws(()=>e.context.pollAndForwardB2B(),/SERVICEIT_POLL_BLOCKED/);
+  assert.strictEqual(e.calls.sent,2);
+  assert.strictEqual(e.calls.got,2);
+});
+
+test('server 503 never records successful delivery',()=>{
+  const e=environment({status:503});
+  assert.throws(()=>e.context.pollAndForwardB2B(),/SERVICEIT_POLL_BLOCKED/);
+  assert.strictEqual(e.calls.sent,1);
+  assert.match(e.properties.SERVICEIT_LAST_RESULT,/BLOCKED/);
+});
+
+test('unapproved private-host endpoint cannot transmit',()=>{
+  const e=environment({properties:{
+    SERVICEIT_RECEIVER_URL:'https://localhost/api/v2/gmail/ingest'}});
+  assert.throws(()=>e.context.pollAndForwardB2B(),/SERVICEIT_POLL_BLOCKED/);
+  assert.strictEqual(e.calls.sent,0);
+});
+
+test('invalid Gmail base64url is blocked without transmission',()=>{
+  const e=environment({raw:'INVALID!'});
+  assert.throws(()=>e.context.pollAndForwardB2B(),/SERVICEIT_POLL_BLOCKED/);
+  assert.strictEqual(e.calls.sent,0);
+});
+
+test('preview does not send even when receiver is enabled',()=>{
+  const e=environment();
+  e.context.checkB2BCenter();
+  assert.strictEqual(e.calls.sent,0);
 });

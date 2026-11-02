@@ -7,6 +7,7 @@ required to read/assess/update actual CRM cards.
 from __future__ import annotations
 
 import os
+import sqlite3
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -48,7 +49,7 @@ async def new_card(request: Request):
             } else "EVENT_UNTRUSTED"},
             status_code=403 if reason in {"AUTH_MISSING","EVENT_TOKEN_INVALID",
                                           "PORTAL_NOT_APPROVED"} else 400)
-    except (OSError,ValueError,TypeError):
+    except (OSError,ValueError,TypeError,sqlite3.Error):
         return JSONResponse({"status":"QUEUE_UNAVAILABLE"},status_code=503)
     return JSONResponse(result,status_code=202 if result.get("queued") else 200)
 

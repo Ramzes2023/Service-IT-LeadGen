@@ -58,6 +58,7 @@ def pending_ids(queue: Path, limit: int=MAX_BATCH) -> list[int]:
     with closing(sqlite3.connect(queue.resolve().as_uri()+"?mode=ro",uri=True,timeout=5)) as db:
         rows=db.execute(
             "SELECT entity_type_id,item_id,status FROM new_cards "
+            "WHERE status='PENDING_SOURCE_CHECK' "
             "ORDER BY item_id ASC LIMIT ?",(limit,)).fetchall()
     ids=[]
     for typeid,item,status in rows:

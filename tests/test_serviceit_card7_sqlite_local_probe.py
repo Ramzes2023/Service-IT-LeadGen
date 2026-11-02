@@ -76,8 +76,13 @@ def test_fixed_localappdata_path_and_no_webhook(monkeypatch,tmp_path,capsys):
 
 def test_existing_symlink_is_rejected_without_write(tmp_path):
     link=tmp_path/"link"
-    link.symlink_to(tmp_path,target_is_directory=True)
     import pytest
+    try:
+        link.symlink_to(tmp_path,target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc,'winerror',None)==1314:
+            pytest.skip('Windows account lacks symlink privilege; exercised on Linux CI')
+        raise
     with pytest.raises(p.ProbeBlocked,match="UNEXPECTED_SYMLINK_DIRECTORY"):
         p.probe_sqlite_storage(link/"backfill-v1.sqlite3")
 

@@ -20,7 +20,17 @@ jobs:
       - name: Compile source
         run: python -m compileall -q leadpilot
       - name: Run local tests
-        run: python -m pytest -q -p no:cacheprovider tests --basetemp="${{ runner.temp }}/serviceit-pytest-${{ github.run_id }}-${{ github.run_attempt }}"
+        run: python scripts/serviceit_offline_pytest.py
+  windows-universal-worker:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: SQLite concurrency, recovery and universal worker mocks
+        run: python -m pytest -q tests/test_serviceit_enrichment_worker.py
   windows-cockpit-secure-input:
     runs-on: windows-latest
     steps:
@@ -115,6 +125,24 @@ jobs:
         run: docker compose -f deploy/serviceit-event-receiver.compose.yml config --quiet
       - name: Build event-only container (no production secrets)
         run: docker build --file Dockerfile.serviceit-event-receiver --tag serviceit-event-receiver:ci .
+      - name: Worker cold start stays offline and rejects missing approval
+        run: |
+          docker run --rm serviceit-event-receiver:ci python -m leadpilot.serviceit_enrichment_worker
+          set +e
+          docker run --rm serviceit-event-receiver:ci python -m leadpilot.serviceit_enrichment_worker --serve
+          result=$?
+          set -e
+          test "$result" -eq 2
+      - name: Validate receiver and worker overlay with synthetic paths only
+        env:
+          SERVICEIT_BITRIX_APPLICATION_TOKEN: SYNTHETIC-CI-NOT-A-REAL-BITRIX-APPLICATION-TOKEN-00000
+        run: |
+          mkdir -p "$RUNNER_TEMP/serviceit-approvals"
+          echo SYNTHETIC-NONSECRET > "$RUNNER_TEMP/serviceit-secret"
+          export SERVICEIT_APPROVAL_HOST_DIR="$RUNNER_TEMP/serviceit-approvals"
+          export SERVICEIT_REST_SECRET_FILE="$RUNNER_TEMP/serviceit-secret"
+          export SERVICEIT_GIGACHAT_SECRET_FILE="$RUNNER_TEMP/serviceit-secret"
+          docker compose -f deploy/serviceit-event-receiver.compose.yml -f deploy/serviceit-enrichment.compose.yml config --quiet
       - name: Run synthetic authenticated intake and duplicate smoke
         env:
           SERVICEIT_BITRIX_APPLICATION_TOKEN: SYNTHETIC-CI-NOT-A-REAL-BITRIX-APPLICATION-TOKEN-00000

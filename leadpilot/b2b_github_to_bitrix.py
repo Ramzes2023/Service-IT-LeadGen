@@ -225,6 +225,10 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
     if exact_duplicate(client, base, source_id):
         return {"status": "ALREADY_EXISTS_IN_CRM",
                 "tender_id": notice["tender_id"], "qualified_leads": 0, "crm_writes": 0}
+    # Reserve the source BEFORE an optional model request as well as BEFORE
+    # the CRM add. An ambiguous model completion cannot be repeated for the
+    # same source, preventing duplicate model costs and duplicate cards.
+    ledger.reserve(source_id)
     # Optional one model call on the supplier email SUBJECT ONLY. No names,
     # company INN, source URL, message body, client records or contact details.
     # It is a hypothesis on unverified evidence, never a qualified lead/Score.
@@ -247,8 +251,7 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
             # Provider unavailable or untrusted text: still create an honest
             # HOLD with AI_STATUS=NOT_RUN_SOURCE_UNVERIFIED, never fake success.
             pass
-    # Durable reservation before first possible CRM write, no automatic retry.
-    ledger.reserve(source_id)
+    # One permitted CRM write after the durable source reservation.
     added = bitrix_call(client, base, "crm.item.add", payload)
     created = added["result"].get("item")
     must(isinstance(created, dict) and type(created.get("id")) is int

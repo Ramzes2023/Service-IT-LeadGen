@@ -355,23 +355,41 @@ def test_multiple_cards_are_paced_one_per_schedule_not_bursted():
 
 
 
-def test_owner_activation_missing_gigachat_privacy_stays_no_external_model():
+def test_owner_activation_missing_or_invalid_privacy_is_safe_no_with_gh_jq():
     from pathlib import Path
     source = Path("scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1").read_text("utf-8")
-    assert "SERVICEIT_GIGACHAT_PRIVACY=UNSET_SAFE_NO_EXTERNAL_MODEL" in source
+    assert "Get-GhVarValue 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED'" in source
+    assert "Get-GhVarValue 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED'" in source
+    assert "--jq', $Filter" in source
+    assert "SERVICEIT_GIGACHAT_PRIVACY=UNVERIFIED_SAFE_NO_EXTERNAL_MODEL" in source
     assert "SERVICEIT_GIGACHAT_PRIVACY=SAFE_NO_PERSISTED" in source
     assert "$PrivacyNeedsDefault = $true" in source
     assert "$PrivacyValue = 'NO'" in source
-    assert "SERVICEIT_PUBLIC_TITLE_AI_PRIVACY_CONFLICT" in source
+    assert "$RawPrivacy -ceq 'YES' -or $RawPrivacy -ceq 'NO'" in source
     assert "SERVICEIT_GIGACHAT_CREDENTIALS_MISSING" in source
-    assert "SERVICEIT_GIGACHAT_PRIVACY_VALUE_INVALID" in source
-    assert "if ($PrivacyNeedsDefault)" in source
+    assert "SERVICEIT_PUBLIC_TITLE_AI=OFF_UNTIL_SEPARATE_APPROVAL" in source
+    assert "if ($PublicTitleNeedsOff)" in source
+    assert "Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' 'NO'" in source
     assert "Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'" in source
     assert "Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'" not in source
-    assert source.index("SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED") < source.index(
-        "Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'")
-    assert source.index("Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'") < source.index(
-        "Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'YES_1062_21_CLOUD'")
+    assert "Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' 'YES'" not in source
+    # Neither default may be saved before the owner explicitly agrees.
+    ack = source.index("SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED")
+    assert ack < source.index("Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'")
+    assert ack < source.index("Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' 'NO'")
+    assert source.index("Set-GhVar 'SERVICEIT_BITRIX_POLL_ENABLED' 'NO'") < source.index(
+        "Set-GhVar 'SERVICEIT_BITRIX_POLL_ENABLED' 'YES_1062_21_READONLY'")
+
+
+def test_privacy_variable_json_is_never_printed_unredacted():
+    from pathlib import Path
+    source = Path("scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1").read_text("utf-8")
+    assert ".[] | select(.name ==" in source
+    assert "Write-Host $RawPrivacy" not in source
+    assert "Write-Host $RawPublicTitleAI" not in source
+    assert "Write-Host $Settings" not in source
+    assert "gh variable list --repo" not in source
+    assert "SERVICEIT_GITHUB_VARIABLE_NAME_INVALID" in source
 
 
 def test_missing_privacy_default_preserves_worker_model_fail_closed_gate():

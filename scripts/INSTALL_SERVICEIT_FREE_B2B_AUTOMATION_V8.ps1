@@ -47,6 +47,16 @@ function Set-GhVar([string]$Name,[string]$Value) {
 
 foreach($f in @($BitrixFile,$GigaFile,$ScopeFile)){if(-not(Test-Path -LiteralPath $f -PathType Leaf)){throw 'SERVICEIT_DPAPI_INPUT_MISSING'}}
 if(-not(Test-Path -LiteralPath (Join-Path $Repo '.git') -PathType Container)){throw 'SERVICEIT_GITHUB_CLONE_MISSING'}
+if(-not(Get-Command 'node.exe' -ErrorAction SilentlyContinue) -or
+   -not(Get-Command 'npm.cmd' -ErrorAction SilentlyContinue) -or
+   -not(Get-Command 'npx.cmd' -ErrorAction SilentlyContinue)){
+    $Winget=Get-Command winget -ErrorAction SilentlyContinue
+    if(-not $Winget){throw 'NODE_LTS_MISSING_AND_WINGET_UNAVAILABLE'}
+    & $Winget.Source install --id OpenJS.NodeJS.LTS --exact --source winget --accept-package-agreements --accept-source-agreements
+    if($LASTEXITCODE -ne 0){throw 'NODE_LTS_INSTALL_FAILED'}
+    $NodeDir=Join-Path $env:ProgramFiles 'nodejs'
+    if(Test-Path -LiteralPath $NodeDir){$env:Path=$NodeDir+';'+$env:Path}
+}
 foreach($c in @('node.exe','npm.cmd','npx.cmd','git.exe')){if(-not(Get-Command $c -ErrorAction SilentlyContinue)){throw ('TOOL_MISSING_'+$c)}}
 $Scope=(Get-Content -LiteralPath $ScopeFile -Raw -Encoding UTF8).Trim()
 if($Scope -notin @('GIGACHAT_API_PERS','GIGACHAT_API_B2B','GIGACHAT_API_CORP')){throw 'GIGACHAT_SCOPE_INVALID'}

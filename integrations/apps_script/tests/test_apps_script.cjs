@@ -214,7 +214,16 @@ test('HTML-only B2B-Center bulletin parses a database-maintenance tender safely'
   msg.payload.body.data=b64url(html);
   e.setMessage(msg);
   const parsed=e.context.parseEmailMessage_(msg,MID);
-  assert.strictEqual(parsed.observations.length,1, JSON.stringify({text:e.context.messageText_(msg),parsed:parsed}));
+  const debugText=e.context.messageText_(msg);
+  const debugUrls=debugText.match(/https:\/\/[^\s<>'"\[\]]{1,2000}/ig)||[];
+  assert.strictEqual(parsed.observations.length,1, JSON.stringify({
+    text:debugText,
+    title:e.context.getField_(debugText,'Предмет договора'),
+    organizer:e.context.getField_(debugText,'Организатор'),
+    cleaned:debugUrls.map(x=>e.context.cleanTenderUrl_(x)),
+    services:e.context.classifyServices_(e.context.getField_(debugText,'Предмет договора')),
+    parsed:parsed
+  }));
   assert.strictEqual(parsed.observations[0].notice.tender_id,'1234568');
   assert.strictEqual(parsed.observations[0].notice.organizer,'АО "СО ЕЭС"');
   assert.strictEqual(parsed.observations[0].notice.subject,

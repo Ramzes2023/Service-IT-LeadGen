@@ -44,6 +44,31 @@ if (-not (Test-Path $Python -PathType Leaf)) {
     if (-not $PythonCommand) { throw 'PYTHON_NOT_FOUND' }
     $Python = $PythonCommand.Source
 }
+# Check before creating another Codex worktree: local model development may
+# finish successfully even while its sandbox cannot install Python packages.
+# Install required dependencies in the owner's isolated venv, NEVER in Codex.
+$PreviousErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & $Python -c 'import pytest, cryptography, fastapi, httpx, defusedxml' 2>$null
+    $DepsAvailable = ($LASTEXITCODE -eq 0)
+}
+finally { $ErrorActionPreference = $PreviousErrorActionPreference }
+if (-not $DepsAvailable) {
+    Write-Host 'SERVICEIT_PYTHON_DEPENDENCIES=INSTALLING_FROM_REQUIREMENTS'
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Python -m pip install --disable-pip-version-check -r (Join-Path $Repo 'requirements.txt')
+        $PipStatus = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $PreviousErrorActionPreference }
+    if ($PipStatus -ne 0) { throw 'SERVICEIT_PYTHON_REQUIREMENTS_INSTALL_FAILED_NO_CODEX_RUN' }
+    & $Python -c 'import pytest, cryptography, fastapi, httpx, defusedxml'
+    if ($LASTEXITCODE -ne 0) { throw 'SERVICEIT_PYTHON_DEPENDENCY_IMPORT_FAILED_NO_CODEX_RUN' }
+}
+Write-Host 'SERVICEIT_PYTHON_DEPENDENCIES=READY'
+
 . (Join-Path $PSScriptRoot 'ENSURE_SERVICEIT_NODE_LTS.ps1')
 $Node = Ensure-ServiceITNode
 if (-not $Node) { throw 'SERVICEIT_NODE_BOOTSTRAP_DID_NOT_RETURN_NODE' }

@@ -30,6 +30,10 @@ services:
         sync: false
       - key: SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED
         value: "NO"
+      - key: SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED
+        value: "NO"
+      - key: SERVICEIT_PRELIMINARY_PUBLIC_HOSTS
+        value: ""
       - key: AI_ENABLE
         value: "0"
       - key: AI_PROVIDER

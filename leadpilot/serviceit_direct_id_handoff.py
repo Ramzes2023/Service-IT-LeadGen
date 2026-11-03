@@ -140,3 +140,44 @@ def receive_encrypted_handoff(client, token, secret_key, source_id):
         raise
     except Exception:
         raise DirectHandoffBlocked("HANDOFF_DECRYPT_OR_SHAPE_UNVERIFIED") from None
+
+
+def verify_direct_target(rest, event):
+    """One exact CRM get by producer ID. No lists, no model, no CRM write.
+
+    This validates receipt-to-card identity only. Corporate company/source/
+    contact checks are STILL required separately for any Lead Score.
+    """
+    if not isinstance(event, dict):
+        raise DirectHandoffBlocked("HANDOFF_UNEXPECTED_DATA")
+    known = receipt(event.get("card_id"), event.get("source_id"),
+                    ai_status=event.get("ai_status"))
+    if known != event:
+        raise DirectHandoffBlocked("HANDOFF_UNEXPECTED_DATA")
+    try:
+        response = rest("crm.item.get", {
+            "entityTypeId": 1062, "id": known["card_id"],
+            "useOriginalUfNames": "Y",
+        })
+        item = response["item"]
+    except Exception:
+        raise DirectHandoffBlocked("HANDOFF_TARGET_READ_UNVERIFIED") from None
+    if not isinstance(item, dict):
+        raise DirectHandoffBlocked("HANDOFF_TARGET_READ_UNVERIFIED")
+    if (str(item.get("id")) != str(known["card_id"])
+            or str(item.get("entityTypeId")) != "1062"
+            or str(item.get("categoryId")) != "21"):
+        raise DirectHandoffBlocked("HANDOFF_TARGET_SCOPE_CONFLICT")
+    from .serviceit_enrichment_worker import normalized
+    try:
+        fields = normalized(item)
+    except Exception:
+        raise DirectHandoffBlocked("HANDOFF_TARGET_FIELDS_UNVERIFIED") from None
+    if (fields.get("UF_CRM_13_SVCIT_SIGNAL_ID") != known["source_id"]
+            or fields.get("UF_CRM_13_SVCIT_AI_STATUS") != known["ai_status"]):
+        raise DirectHandoffBlocked("HANDOFF_TARGET_SOURCE_OR_STATUS_MISMATCH")
+    return {
+        "status": "DIRECT_ID_PRELIMINARY_READBACK_ONLY",
+        "crm_reads": 1, "crm_writes": 0,
+        "gigachat_calls": 0, "lead_score_calculated": False,
+    }

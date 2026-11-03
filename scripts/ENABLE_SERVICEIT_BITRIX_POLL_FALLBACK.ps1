@@ -64,9 +64,9 @@ try {
     $Cutoff = [DateTime]::UtcNow.AddMinutes(-10).ToString('yyyy-MM-ddTHH:mm:ss+00:00')
     $Payload = @{
         entityTypeId = 1062
-        useOriginalUfNames = 'Y'
+        useOriginalUfNames = 'N'
         filter = @{ categoryId = 21; '>=createdTime' = $Cutoff }
-        order = @{ createdTime = 'ASC'; id = 'ASC' }
+        order = @{ id = 'ASC' }
         select = @('id','categoryId','createdTime')
         start = 0
     } | ConvertTo-Json -Depth 6 -Compress
@@ -122,7 +122,7 @@ Guard ($Privacy.Count -eq 1 -and $Privacy[0].value -in @('YES','NO')) 'SERVICEIT
 if ($Privacy[0].value -ceq 'YES') {
     Guard ($PresentSecrets -contains 'GIGACHAT_CREDENTIALS') 'SERVICEIT_GIGACHAT_CREDENTIALS_MISSING'
 }
-$OwnerAck = Read-Host 'Activate ONLY new 1062/21 cards through scheduled read-only discovery and existing guarded AI worker? Type YES'
+$OwnerAck = Read-Host 'After read-only N-mode check, authorize scheduling ONLY future 1062/21 card IDs to guarded AI worker (not existing cards)? Type YES'
 Guard ($OwnerAck -ceq 'YES') 'SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED'
 $StartUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 $Started = $false

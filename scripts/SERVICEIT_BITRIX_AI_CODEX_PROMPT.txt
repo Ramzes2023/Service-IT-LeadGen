@@ -56,4 +56,4 @@ COMPLETION WORK (do it, do not just write an architectural plan):
    ONE_COMMAND_TO_INSTALL. State whether Bitrix outgoing webhook UI requires
    authorized user/admin action and never suggest TinyFish.
 
-DO NOT fabricate successes or bypass Bitrix permissions. Do not publish secrets.
+DO NOT fabricate successes or bypass Bitrix permissions. Never paste secret tokens. Do not publish secrets.

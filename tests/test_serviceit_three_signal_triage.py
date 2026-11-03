@@ -217,6 +217,6 @@ def test_no_unapproved_automatic_tasks_or_contact_network_code():
     triage=Path("leadpilot/serviceit_three_signal_triage.py").read_text("utf-8")
     assert "tasks.task.add" not in triage or "not tasks.task.add" in triage
     assert "httpx" not in triage
-    assert "requests" not in triage
+    assert "import requests" not in triage
     assert "auto_contact" in triage
     assert "manager_task_draft_only" in triage

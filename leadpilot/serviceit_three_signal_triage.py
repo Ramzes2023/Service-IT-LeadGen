@@ -263,7 +263,8 @@ def classify_signal(data: Mapping, *, now: datetime,
     if typ == TENDER:
         action = ("Проверить оригинальную закупку, регламент, крайний срок, условия участия, "
                   "обеспечение, комплект документов, релевантность услуг, партнёров "
-                  "и ответственного за тендер. Передать на тендерную экспертизу до дедлайна.")
+                  "и ответственного за тендер. Передать на тендерную экспертизу и "
+                  "уполномоченным партнёрам только по решению менеджера до дедлайна.")
     elif typ == VACANCY:
         action = ("Перепроверить вакансию и компанию; выяснить, нужен ли именно штатный "
                   "сотрудник или допустимо сопровождение 1С/ИТ по договору. "
@@ -283,10 +284,15 @@ def classify_signal(data: Mapping, *, now: datetime,
         action += " В тексте указано требование штатного сотрудника — риск неприменимости аутсорсинга."
     suggested_due = None
     if typ == TENDER and freshness == "SOURCE_CURRENT_VERIFIED" and deadline:
-        # Urgent internal task no later than 24h before the true deadline.
-        due = min(now + timedelta(hours=24), deadline - timedelta(hours=24))
-        if due > now:
-            suggested_due = due.isoformat()
+        # Always leave time BEFORE the confirmed deadline, including
+        # tenders closing in less than 24h. This is an internal verification
+        # task, not automatic tender submission or supplier outreach.
+        remaining = deadline - now
+        if remaining > timedelta(0):
+            due = min(now + timedelta(hours=24),
+                      now + remaining / 2)
+            if due < deadline:
+                suggested_due = due.isoformat()
     if typ == DIRECT and freshness == "SOURCE_CURRENT_VERIFIED":
         suggested_due = (now + timedelta(hours=24)).isoformat()
     rationale = ("Основание классификации: " + reason + ". "

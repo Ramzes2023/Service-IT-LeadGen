@@ -65,6 +65,9 @@ jobs:
               if ($errors.Count -gt 0) { foreach ($e in $errors) { Write-Output ($path + ': ' + $e.ToString()) }; throw 'AUTOFILL_PS51_SYNTAX_FAILURE' }
               Write-Output 'AUTOFILL_PS51_PARSE_PASS'
           }
+      - name: Execute mocked GitHub variable get in native PowerShell 5.1 (offline)
+        shell: powershell
+        run: .\\tests\\TEST_SERVICEIT_POLL_PRIVACY_CLI_PS51.ps1
       - name: Validate native Codex CLI stderr/exit-code behavior in PowerShell 5.1
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_CODEX_NATIVE_STDERR.ps1

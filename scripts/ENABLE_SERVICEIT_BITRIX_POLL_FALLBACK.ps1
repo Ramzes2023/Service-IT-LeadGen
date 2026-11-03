@@ -120,12 +120,27 @@ foreach ($Needed in @('SERVICEIT_BITRIX_WEBHOOK',
 # Always redact values: console sees only vetted YES/NO or safe enum codes.
 function Get-GhVarValue([string]$Name) {
     Guard ($Name -match '^[A-Z0-9_]{8,100}$') 'SERVICEIT_GITHUB_VARIABLE_NAME_INVALID'
-    $Filter = '.[] | select(.name == "' + $Name + '") | .value'
-    $LookupArgs = @('variable', 'list', '--repo', $RepositoryName,
-              '--json', 'name,value', '--jq', $Filter)
-    $Code = 'SERVICEIT_GH_VARIABLE_LOOKUP_FAILED_' + $Name
-    $Text = SafeGh $LookupArgs $Code
-    return $Text
+    # First list ONLY names (no configuration values). This distinguishes
+    # a genuinely missing setting from a CLI/auth/permissions failure.
+    $NamesJson = SafeGh @('variable', 'list', '--repo', $RepositoryName,
+                          '--json', 'name') 'SERVICEIT_GH_VARIABLE_NAMES_LOOKUP_FAILED'
+    Guard (-not [string]::IsNullOrWhiteSpace($NamesJson) -and
+           $NamesJson.TrimStart().StartsWith('[')) 'SERVICEIT_GH_VARIABLE_NAMES_SHAPE_INVALID'
+    try {
+        $AllNames = ConvertFrom-Json -InputObject $NamesJson
+    } catch {
+        throw 'SERVICEIT_GH_VARIABLE_NAMES_JSON_INVALID'
+    }
+    $Matches = @($AllNames | Where-Object { $_.name -ceq $Name })
+    Guard ($Matches.Count -le 1) 'SERVICEIT_GH_VARIABLE_NAMES_AMBIGUOUS'
+    if ($Matches.Count -eq 0) {
+        return ''
+    }
+    # The supported plain-text 'gh variable get' command avoids jq quoting
+    # differences on legacy Windows PowerShell 5.1 entirely. Never show the
+    # value or any untrusted GitHub error text to console.
+    $Scalar = SafeGh @('variable', 'get', $Name, '--repo', $RepositoryName) ('SERVICEIT_GH_VARIABLE_GET_FAILED_' + $Name)
+    return $Scalar.Trim()
 }
 $RawPrivacy = Get-GhVarValue 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED'
 $PrivacyNeedsDefault = $false

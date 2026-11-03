@@ -355,12 +355,18 @@ def test_multiple_cards_are_paced_one_per_schedule_not_bursted():
 
 
 
-def test_owner_activation_missing_or_invalid_privacy_is_safe_no_with_gh_jq():
+def test_owner_activation_missing_or_invalid_privacy_is_safe_no_with_plain_cli():
     from pathlib import Path
     source = Path("scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1").read_text("utf-8")
     assert "Get-GhVarValue 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED'" in source
     assert "Get-GhVarValue 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED'" in source
-    assert "--jq', $Filter" in source
+    assert "'variable', 'get', $Name, '--repo', $RepositoryName" in source
+    assert "'variable', 'list', '--repo', $RepositoryName" in source
+    assert "'--json', 'name'" in source
+    # A separate repository identity check can use --jq; the per-variable
+    # lookup must not depend on jq quoting in PowerShell 5.1.
+    privacy_lookup = source[source.index("function Get-GhVarValue"):source.index("$RawPrivacy = Get-GhVarValue")]
+    assert "'--jq'" not in privacy_lookup
     assert "SERVICEIT_GIGACHAT_PRIVACY=UNVERIFIED_SAFE_NO_EXTERNAL_MODEL" in source
     assert "SERVICEIT_GIGACHAT_PRIVACY=SAFE_NO_PERSISTED" in source
     assert "$PrivacyNeedsDefault = $true" in source
@@ -386,7 +392,10 @@ def test_owner_activation_missing_or_invalid_privacy_is_safe_no_with_gh_jq():
 def test_privacy_variable_json_is_never_printed_unredacted():
     from pathlib import Path
     source = Path("scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1").read_text("utf-8")
-    assert ".[] | select(.name ==" in source
+    assert "SERVICEIT_GH_VARIABLE_NAMES_LOOKUP_FAILED" in source
+    assert "SERVICEIT_GH_VARIABLE_NAMES_JSON_INVALID" in source
+    assert "SERVICEIT_GH_VARIABLE_NAMES_AMBIGUOUS" in source
+    assert "SERVICEIT_GH_VARIABLE_GET_FAILED_" in source
     assert "Write-Host $RawPrivacy" not in source
     assert "Write-Host $RawPublicTitleAI" not in source
     assert "Write-Host $Settings" not in source
@@ -411,3 +420,17 @@ def test_missing_privacy_default_preserves_worker_model_fail_closed_gate():
     assert gate({**base, "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "NO"}) == "READY"
     assert gate({**base, "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": ""}) == "PRIVACY_DECISION_REQUIRED"
     assert gate({**base, "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "YES"}) == "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"
+
+
+
+def test_real_windows_powershell_cli_mock_is_in_windows_ci():
+    from pathlib import Path
+    workflow = Path(".github/workflows/tests.yml").read_text("utf-8")
+    testscript = Path("tests/TEST_SERVICEIT_POLL_PRIVACY_CLI_PS51.ps1").read_text("utf-8")
+    assert "TEST_SERVICEIT_POLL_PRIVACY_CLI_PS51.ps1" in workflow
+    assert "Invoke-Expression $found[0].Extent.Text" in testscript
+    assert "SERVICEIT_POLL_PRIVACY_POWERSHELL51_MOCK=PASS" in testscript
+    assert "SafeGh([string[]]$Arguments" in testscript
+    assert "JQ_PATH_FORBIDDEN" in testscript
+    assert "GET_DENIAL_NOT_BLOCKED" in testscript
+    assert "LIST_DENIAL_NOT_BLOCKED" in testscript

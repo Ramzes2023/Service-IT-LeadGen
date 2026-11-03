@@ -234,14 +234,7 @@ try {
     Write-Host 'Create ONE NEW approved TEST card in Bitrix smart process 1062/category 21 NOW.'
     Write-Host 'Do not use or edit historical cards, real customers or deleted card 7.'
     $CanaryText=Read-Host 'Paste ONLY the internal numeric ID of the NEW TEST card'
-    if($CanaryText -notmatch '^[1-9][0-9]{0,9}
-} finally {
-    $Webhook=$null;$Hmac=$null;$GithubToken=$null;$AppToken=$null
-    # A private script project retains its secrets for its own deployment.
-    # Never git-add this folder or expose it through the public repo.
-    Write-Host ('PRIVATE_APPS_SCRIPT_PROJECT=' + $Project)
-}
- -or
+    if($CanaryText -notmatch '^[1-9][0-9]{0,9}$' -or
        [long]$CanaryText -lt 8 -or [long]$CanaryText -gt 2000000000){
         Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'
         throw 'CANARY_ITEM_ID_MISSING_CLOUD_DISABLED'

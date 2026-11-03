@@ -33,6 +33,6 @@ def test_real_nonzero_exit_is_not_masked_and_synthetic_test_is_in_ci():
     assert "Invoke-SyntheticNative 23" in SMOKE
     assert "STDERR_WARNING_MASKED_REAL_NONZERO_EXIT" in SMOKE
     assert "SERVICEIT_CODEX_NATIVE_STDERR_PS51=PASS" in SMOKE
-    assert "scripts/TEST_SERVICEIT_CODEX_NATIVE_STDERR.ps1" in CI
+    assert "TEST_SERVICEIT_CODEX_NATIVE_STDERR.ps1" in CI
     for blocked in ("crm.item.update", "gh secret", "SERVICEIT_BITRIX_WEBHOOK", "bitrix-rest.dpapi"):
         assert blocked not in SMOKE

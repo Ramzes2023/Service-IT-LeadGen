@@ -27,7 +27,7 @@ EXPECTED_MAILBOX = "ramzesisayev444@gmail.com"
 EVENT_TYPE = "serviceit_b2b_notice"
 MAX_EVENT_BYTES = 100_000
 MAX_PAYLOAD_BYTES = 5_000
-MAX_AGE_SECONDS = 300
+MAX_AGE_SECONDS = 900
 
 
 class IngestBlocked(ValueError):

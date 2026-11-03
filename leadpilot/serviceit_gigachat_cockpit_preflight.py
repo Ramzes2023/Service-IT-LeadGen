@@ -94,11 +94,26 @@ def main(argv=None):
                   "crm_writes": 0, "ledger_reservations": 0}
     else:
         try:
-            from .ai import config_from_env
+            from .ai import AIProvider, config_from_env
             cfg = config_from_env()
             if cfg.provider != "gigachat":
                 raise ValueError("PROVIDER_INVALID")
-            output = run_preflight()
+            # Reuse one process-lived provider to distinguish OAuth/TLS from
+            # model/response failure. NEVER print any exception or response.
+            with AIProvider(cfg, retry_unauthorized=False) as provider:
+                try:
+                    provider._get_token()
+                except Exception:
+                    output = {"status": "GIGACHAT_PREFLIGHT_BLOCKED",
+                              "safe_reason_code": "GIGACHAT_OAUTH_OR_TLS_FAILED",
+                              "crm_writes": 0, "ledger_reservations": 0}
+                else:
+                    try:
+                        output = run_preflight(classifier=provider.classify)
+                    except Exception:
+                        output = {"status": "GIGACHAT_PREFLIGHT_BLOCKED",
+                                  "safe_reason_code": "GIGACHAT_MODEL_OR_RESPONSE_FAILED",
+                                  "crm_writes": 0, "ledger_reservations": 0}
         except Exception:
             # Never expose remote error bodies, raw model output, OAuth
             # endpoints, credential values, or user/client data.

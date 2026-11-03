@@ -69,7 +69,7 @@ def runtime_config(env: dict, *, is_mount=None) -> dict:
         raw_hosts = env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", "")
         entries = [x.strip().lower() for x in raw_hosts.split(",") if x.strip()]
         require(0 < len(entries) <= 20 and all(
-            re.fullmatch(r"(?:[a-z0-9-]{1,63}\\.)+[a-z]{2,20}", x)
+            re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", x)
             and not x.endswith((".test", ".invalid", ".localhost", ".example", ".local"))
             and not x.startswith(("localhost.", "127.", "0."))
             for x in entries

@@ -26,7 +26,7 @@ def verified():
     }
     signal = {
         "signal_type": "new_store", "signal_date": date.today().isoformat(),
-        "source_url": "https://example.invalid/audited-source/demo001",
+        "source_url": "https://example.org/audited-source/fixture001",
         "evidence": "Независимо проверено открытие новой торговой точки и закупка 1С",
     }
     checks = {k: "VERIFIED" for k in REQUIRED_GATES}
@@ -196,3 +196,17 @@ def test_existing_hold_status_refuses_false_promotion_even_with_high_score():
     card[STOP_REASON] = "Не квалифицированный B2B-лид"
     with pytest.raises(ManagerReadinessBlocked):
         manager_readiness(card, 101, assess, approved)
+
+
+def test_synthetic_or_private_source_host_does_not_pass_manager_handoff():
+    card, assessment, approval = verified()
+    for bad_url in (
+        "https://example.invalid/audited-source/fixture001",
+        "https://example.localhost/route",
+        "https://user:pass@example.org/source",
+    ):
+        card[SIGNAL_URL] = bad_url
+        assessment["evidence_url"] = bad_url
+        approval["signals"][0]["source_url"] = bad_url
+        with pytest.raises(ManagerReadinessBlocked, match="MANAGER_PRIMARY_SOURCE_URL_INVALID"):
+            manager_readiness(card, 101, assessment, approval)

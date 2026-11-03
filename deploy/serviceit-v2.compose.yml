@@ -1,0 +1,54 @@
+# Isolated Service IT v2; no published ports, no reuse of VALYQON volumes.
+# Copy approved environment values only onto the host, never into git.
+name: serviceit-lead-engine-v2
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: serviceitv2
+      POSTGRES_USER: serviceitv2
+      POSTGRES_PASSWORD: "${SERVICEIT_V2_PG_PASSWORD:?set a dedicated local DB password}"
+    volumes:
+      - serviceit_v2_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serviceitv2 -d serviceitv2"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+    networks: [serviceit_private]
+  gmail-worker:
+    # Not even started until an authorized operator selects this profile.
+    profiles: [gmail-live]
+    build:
+      context: ..
+      dockerfile: Dockerfile.serviceit-v2
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    pids_limit: 80
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SERVICEIT_V2_DB_DSN: "host=db port=5432 dbname=serviceitv2 user=serviceitv2"
+      PGPASSWORD: "${SERVICEIT_V2_PG_PASSWORD:?set a dedicated local DB password}"
+      SERVICEIT_V2_GMAIL_AUTOPOLL_ENABLED: "${SERVICEIT_V2_GMAIL_AUTOPOLL_ENABLED:-NO}"
+      SERVICEIT_V2_GMAIL_EXPECTED_EMAIL: "${SERVICEIT_V2_GMAIL_EXPECTED_EMAIL:-}"
+      SERVICEIT_V2_GMAIL_CLIENT_ID: "${SERVICEIT_V2_GMAIL_CLIENT_ID:-}"
+      SERVICEIT_V2_GMAIL_CLIENT_SECRET: "${SERVICEIT_V2_GMAIL_CLIENT_SECRET:-}"
+      SERVICEIT_V2_GMAIL_REFRESH_TOKEN: "${SERVICEIT_V2_GMAIL_REFRESH_TOKEN:-}"
+    networks: [serviceit_private]
+networks:
+  serviceit_private:
+    internal: false
+volumes:
+  serviceit_v2_db:

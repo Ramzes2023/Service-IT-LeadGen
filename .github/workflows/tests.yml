@@ -59,10 +59,10 @@ jobs:
               [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$tokens, [ref]$errors) | Out-Null
               if ($errors.Count -gt 0) { foreach ($e in $errors) { Write-Output ($path + ': ' + $e.ToString()) }; throw 'AUTOFILL_PS51_SYNTAX_FAILURE' }
               Write-Output 'AUTOFILL_PS51_PARSE_PASS'
+          }
       - name: Validate native Codex CLI stderr/exit-code behavior in PowerShell 5.1
         shell: powershell
         run: .\scripts\TEST_SERVICEIT_CODEX_NATIVE_STDERR.ps1
-          }
   windows-universal-worker:
     runs-on: windows-latest
     steps:

@@ -18,7 +18,7 @@ import tempfile
 
 import certifi
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization, padding
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.x509.oid import NameOID
 
 PIN_SHA256 = "d26d2d0231b7c39f92cc738512ba54103519e4405d68b5bd703e9788ca8ecf31"

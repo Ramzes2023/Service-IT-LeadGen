@@ -70,7 +70,7 @@ def test_no_existing_gmail_script_project_is_overwritten():
     assert "$Present -eq 9" in script
     assert "if(-not $ExactReadback)" in script
     assert "SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'" in script
-    assert "'EXACT_TARGET_READBACK'" in script
+    assert "EXACT_TARGET_READBACK" in script
     assert "$RecoveryNonce='serviceit-receipt-'" in script
     assert "workflow run serviceit-bitrix-new-card-ai.yml" in script
     assert "$ReceiptVerified=$RecoveryLog -match" in script

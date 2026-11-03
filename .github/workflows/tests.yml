@@ -7,6 +7,15 @@ on:
 permissions:
   contents: read
 jobs:
+  apps-script-free-ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Offline Apps Script V8 Gmail parser, HMAC, dedup and trigger tests
+        run: node integrations/apps_script/tests/test_apps_script.cjs
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -37,7 +46,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           foreach ($path in @(
               'scripts/INSTALL_SERVICEIT_ALL_CARD_AUTOFILL.ps1',
-              'scripts/RUN_SERVICEIT_ALL_CARD_AUTOFILL.ps1'
+              'scripts/RUN_SERVICEIT_ALL_CARD_AUTOFILL.ps1',
+              'scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V8.ps1'
           )) {
               $tokens = $null
               $errors = $null

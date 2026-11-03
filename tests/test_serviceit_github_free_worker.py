@@ -146,7 +146,9 @@ def test_workflow_only_main_explicitly_enabled_and_concurrency():
     assert "cancel-in-progress: false" in s
     assert "vars.SERVICEIT_FREE_CLOUD_ENABLED == 'YES'" in s
     assert "refs/heads/main" in s
-    assert "3/5 * * * *" in s
+    assert "workflow_dispatch:" in s
+    assert "schedule:" not in s
+    assert "3/5 * * * *" not in s
     assert "SERVICEIT_GH_LEDGER_KEY" in s
     assert "SERVICEIT_GH_START_AFTER_ID" in s
     assert "python -m leadpilot.serviceit_github_free_worker" in s

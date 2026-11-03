@@ -241,7 +241,9 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
     # Optional one model call on supplier email SUBJECT ONLY. No names,
     # company INN, source URL, message body, contacts or full CRM records.
     # This remains a hypothesis, NOT a qualified lead or Lead Score.
+    gigachat_attempted = False
     if use_gigachat:
+        gigachat_attempted = True
         try:
             from .serviceit_ai_report import plain
             subject=plain(notice["subject"],240)
@@ -291,7 +293,8 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
             handoff_state = "UNCONFIRMED_DO_NOT_RETRY"
     return {"status": "ONE_TENDER_HOLD_VERIFIED", "tender_id": notice["tender_id"],
             "card_id": card_id, "qualified_leads": 0, "crm_writes": 1,
-            "handoff_state": handoff_state}
+            "handoff_state": handoff_state, "ai_status": payload["fields"][
+                "UF_CRM_13_SVCIT_AI_STATUS"], "gigachat_attempted": gigachat_attempted}
 
 
 def main(argv=None):

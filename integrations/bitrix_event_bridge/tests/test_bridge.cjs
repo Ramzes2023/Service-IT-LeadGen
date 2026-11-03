@@ -109,12 +109,25 @@ test("real JSON event and form event accepted",()=>{
 test("public endpoint returns generic result without leaking item or auth",()=>{
   const f=fixture();
   assert.strictEqual(f.context.doPost(form(101)).body,"SERVICEIT_EVENT_RECEIVED");
-  assert.strictEqual(f.context.doGet({}).body,"SERVICEIT_BITRIX_BRIDGE");
+  assert.strictEqual(f.context.doGet({}).body,"SERVICEIT_BITRIX_BRIDGE_READY_V1");
   assert.strictEqual(f.requests.length,1);
 });
 test("source contains no CRM read/write or B2B/Gmail collectors",()=>{
   assert(!code.includes("crm.item.list"));
   assert(!code.includes("crm.item.update"));
   assert(!code.includes("Gmail.Users"));
+});
+test("anonymous deployment probe proves this configured HMAC version",()=>{
+  const f=fixture(), probe="0123456789abcdef0123456789abcdef";
+  const expected=crypto.createHmac("sha256",KEY).update("health-v1|"+probe).digest("hex");
+  assert.strictEqual(f.context.doGet({parameter:{probe}}).body,
+    "SERVICEIT_BITRIX_BRIDGE_READY_V1:"+expected);
+  assert.strictEqual(f.requests.length,0);
+});
+test("duplicate security parameter rejected before dispatch",()=>{
+  const f=fixture(), e=form();
+  e.parameters["auth[application_token]"]=[TOKEN,TOKEN];
+  assert.throws(()=>f.context.processBitrixEvent_(e),/DUPLICATE_EVENT_FIELD/);
+  assert.strictEqual(f.requests.length,0);
 });
 process.stdout.write("ALL_SERVICEIT_BITRIX_BRIDGE_TESTS_PASS\n");

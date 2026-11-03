@@ -193,5 +193,17 @@ function doPost(e) {
 }
 
 function doGet(_e) {
-  return ContentService.createTextOutput("SERVICEIT_BITRIX_BRIDGE");
+  // Anonymous installer probe also proves the deployed version is configured.
+  try {
+    const secret = bridgeSecrets_();
+    const probe = _e && _e.parameter && _e.parameter.probe;
+    if (typeof probe === "string" && /^[a-f0-9]{32}$/.test(probe)) {
+      return ContentService.createTextOutput("SERVICEIT_BITRIX_BRIDGE_READY_V1:" + hex_(
+        Utilities.computeHmacSha256Signature("health-v1|" + probe,
+          secret.hmacKey, Utilities.Charset.UTF_8)));
+    }
+    return ContentService.createTextOutput("SERVICEIT_BITRIX_BRIDGE_READY_V1");
+  } catch (_ignored) {
+    return ContentService.createTextOutput("SERVICEIT_BITRIX_BRIDGE_DISABLED");
+  }
 }

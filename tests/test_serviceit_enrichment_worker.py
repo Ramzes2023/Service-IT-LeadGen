@@ -142,6 +142,24 @@ def test_authenticated_event_genuine_provider_one_update_exact_readback(tmp_path
         'crm.type.getByEntityTypeId','userfieldconfig.list','userfieldconfig.get'}
 
 
+def test_explicit_snapshot_approval_can_upgrade_preliminary_hold(tmp_path):
+    from leadpilot.serviceit_windows_autofill import preliminary_fields
+    crm = CRM()
+    crm.item.update(preliminary_fields(crm.item))
+    store, crm, approved, worker = setup(tmp_path, crm)
+    approved['replace_preliminary_hold_authorized'] = True
+    assert worker.once() == 'VERIFIED'
+    assert crm.writes == 1 and crm.item[PREFIX+'LEAD_SCORE'] == 90
+
+
+def test_empty_list_with_positive_total_does_not_advance_cursor(tmp_path):
+    store = Store(tmp_path / 'empty.sqlite3')
+    with pytest.raises(ValueError, match='POLL_EMPTY_PAGE_CONTRADICTS_METADATA'):
+        poll(store, lambda *args: {'items': [], 'total': 1}, 8)
+    with store.db() as db:
+        assert db.execute("SELECT value FROM worker_meta WHERE key='cursor'").fetchone() is None
+
+
 def test_b2b_nine_preliminary_fields_without_model_or_score(tmp_path):
     crm=CRM()
     crm.item.update({PREFIX+'SIGNAL_ID':'B2B-CENTER-123456',PREFIX+'SIGNAL_KIND':'tender-opportunity',

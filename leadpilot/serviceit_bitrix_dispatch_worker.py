@@ -14,7 +14,6 @@ No source processing, task, stage, contact, outreach, or Score fabrication.
 from __future__ import annotations
 
 import base64
-from contextlib import nullcontext
 from hashlib import sha256
 import hmac
 import json
@@ -31,6 +30,7 @@ from .ai import AIProvider, config_from_env
 from .serviceit_enrichment_store import Store
 from .serviceit_enrichment_worker import Rest
 from .serviceit_windows_autofill import preliminary_once
+from .serviceit_enrichment_worker import Worker, normalized, validate_identity, AI_FIELDS, FIELDS
 
 REPOSITORY = "Ramzes2023/Service-IT-LeadGen"
 PORTAL = "serviseit.bitrix24.ru"
@@ -92,7 +92,7 @@ def verify_event(event: dict, secret: str, *, now: int | None = None) -> int:
 
 
 class EncryptedEventFence:
-    """GitHub Contents branch: no overwrite on intake; ambiguous writes stay fenced."""
+    """GitHub CAS receipt: ambiguous writes allow observation, never blind replay."""
 
     def __init__(self, client: httpx.Client, token: str, key: str):
         require(isinstance(client, httpx.Client), "GITHUB_CLIENT_INVALID")
@@ -112,6 +112,7 @@ class EncryptedEventFence:
         }
         self.file_sha = None
         self.reservation_url = None
+        self.receipt = None
 
     def url(self, card: int) -> str:
         # Public branch filenames must not reveal guessable numeric CRM IDs.
@@ -128,6 +129,11 @@ class EncryptedEventFence:
                 url, params={"ref": BRANCH}, headers=self.headers,
                 follow_redirects=False, timeout=20)
             if existing.status_code == 200:
+                body = existing.json()
+                if isinstance(body.get("content"), str):
+                    receipt = json.loads(self.cipher.decrypt(base64.b64decode(body["content"])))
+                    require(receipt.get("card") == card, "FENCE_IDENTITY_CONFLICT")
+                    self.receipt = receipt
                 return "ALREADY_FENCED_NO_RETRY"
             require(existing.status_code == 404,
                     "FENCE_REMOTE_STATE_UNVERIFIED")
@@ -158,11 +164,13 @@ class EncryptedEventFence:
             return False
         safe_statuses = {
             "HOLD_9_WRITTEN", "HOLD", "UNCERTAIN", "LEASE_LOST",
-            "IDLE", "NEEDS_REVIEW",
+            "IDLE", "NEEDS_REVIEW", "VERIFIED", "HOLD_9_PRESENT",
         }
         status = result if result in safe_statuses else "NEEDS_REVIEW"
         payload = {"schema": "serviceit-event-v1", "card": card,
                    "status": status}
+        if self.receipt and "expected" in self.receipt:
+            payload["expected"] = self.receipt["expected"]
         ciphertext = self.cipher.encrypt(
             json.dumps(payload, separators=(",", ":")).encode("utf-8"))
         try:
@@ -173,9 +181,39 @@ class EncryptedEventFence:
                     "message": "checkpoint(serviceit): exact Bitrix result",
                     "content": base64.b64encode(ciphertext).decode("ascii"),
                 })
-            return response.status_code == 200
+            if response.status_code == 200:
+                self.file_sha = response.json()["content"]["sha"]
+                return True
+            return False
         except httpx.HTTPError:
             return False
+
+    def checkpoint_write(self, card, fields):
+        require(set(fields) in (AI_FIELDS, FIELDS), "CHECKPOINT_FIELDS_INVALID")
+        self.receipt = {"expected": fields}
+        require(self.finalize(card, "UNCERTAIN"), "WRITE_CHECKPOINT_UNVERIFIED")
+
+    def reconcile(self, card, rest):
+        """Retry observation only; never replay an ambiguous model or CRM write."""
+        expected = (self.receipt or {}).get("expected")
+        if not isinstance(expected, dict) or set(expected) not in (AI_FIELDS, FIELDS):
+            return "ALREADY_FENCED_NO_RETRY"
+        item = normalized(rest("crm.item.get", {
+            "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y"})["item"])
+        validate_identity(item, card)
+        return ("EXACT_TARGET_READBACK" if all(item.get(k) == v for k, v in expected.items())
+                else "UNCERTAIN_REMAINS")
+
+    def observe(self, card, rest):
+        """Owner-requested recovery: only GETs, even if no receipt exists."""
+        require(type(card) is int and MIN_CARD <= card <= MAX_CARD, "RECOVERY_ID_INVALID")
+        response = self.client.get(self.url(card), params={"ref": BRANCH},
+                                   headers=self.headers, follow_redirects=False, timeout=20)
+        require(response.status_code == 200, "RECOVERY_RECEIPT_NOT_FOUND")
+        self.receipt = json.loads(self.cipher.decrypt(
+            base64.b64decode(response.json()["content"])))
+        require(self.receipt.get("card") == card, "RECOVERY_IDENTITY_CONFLICT")
+        return {"status": self.reconcile(card, rest), "crm_writes": 0}
 
 
 def gate(env: dict):
@@ -208,40 +246,50 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
         client, env["GITHUB_TOKEN"], env["SERVICEIT_GH_LEDGER_KEY"])
     reserved = remote.reserve(card)
     if reserved != "RESERVED":
-        return {"status": reserved, "crm_writes": 0}
-    # IMPORTANT: after the remote reservation, any missing/ambiguous response
-    # is a permanent REVIEW, not an automatic replay. This is deliberate.
+        return {"status": remote.reconcile(card, Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)),
+                "crm_writes": 0}
+    # After reservation, ambiguity permits GET-only recovery, never replay.
     observed = "NEEDS_REVIEW"
     with tempfile.TemporaryDirectory(prefix="serviceit-exact-event-") as temp:
         store = Store(Path(temp) / "new-card-events.sqlite3")
         store.enqueue(card)
         provider = None
         try:
-            rest = Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)
+            raw_rest = Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)
+            def rest(method, params):
+                if method == "crm.item.update":
+                    remote.checkpoint_write(card, params["fields"])
+                return raw_rest(method, params)
             model = None
             public_hosts = frozenset()
-            if env.get("SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED") == "YES":
+            approvals = json.loads(env.get("SERVICEIT_CORPORATE_APPROVALS_JSON") or "{}")
+            require(type(approvals) is dict, "APPROVAL_ADAPTER_INVALID")
+            approval = approvals.get(str(card))
+            if approval is not None or env.get("SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED") == "YES":
                 require(env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES",
                         "MODEL_PRIVACY_CONSENT_REQUIRED")
-                from .serviceit_bitrix_event_autofill_app import runtime_config
                 # Only the hostname allowlist parser is needed; no remote server
                 # instance is started. Validate externally configured public
                 # domains in a strict inline form to avoid fake hosts.
                 raw = env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", "")
-                names = raw.split(",")
-                require(0 < len(names) <= 20 and all(
+                names = raw.split(",") if raw else []
+                require((approval is not None and not names) or (0 < len(names) <= 20 and all(
                     bool(re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", x))
                     and not x.endswith((".test", ".invalid", ".local", ".localhost"))
-                    for x in names), "PUBLIC_HOST_ALLOWLIST_INVALID")
+                    for x in names)), "PUBLIC_HOST_ALLOWLIST_INVALID")
                 public_hosts = frozenset(names)
                 provider = AIProvider(
                     config_from_env({**env, "AI_ENABLE": "1",
                                      "AI_PROVIDER": "gigachat"}),
                     retry_unauthorized=False)
-                model = provider.classify
-            observed = preliminary_once(
-                store, rest, card, model=model,
-                public_ai_hosts=public_hosts)
+                def model(text):
+                    return {**provider.classify(text), "provider": "gigachat",
+                            "model": provider.config.model}
+            if approval is not None:
+                observed = Worker(store, rest, lambda _: approval, model, enabled=True).once(card)
+            else:
+                observed = preliminary_once(store, rest, card, model=model,
+                                            public_ai_hosts=public_hosts)
         except Exception:
             observed = "NEEDS_REVIEW"
         finally:
@@ -250,14 +298,14 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
     finalized = remote.finalize(card, observed)
     return {
         "status": ("SERVICEIT_NEW_CARD_EVENT_PROCESSED"
-                   if observed == "HOLD_9_WRITTEN"
+                   if observed in ("HOLD_9_WRITTEN", "HOLD_9_PRESENT", "VERIFIED")
                    else "SERVICEIT_NEW_CARD_NEEDS_REVIEW"),
         "result": observed,
         "remote_fence_finalized": finalized,
         "replay_allowed": False,
         # This is NOT a claim that a CRM write happened for every outcome.
-        "crm_writes": 1 if observed == "HOLD_9_WRITTEN" else "UNVERIFIED",
-        "qualified_leads": 0,
+        "crm_writes": 1 if observed in ("HOLD_9_WRITTEN", "VERIFIED") else "UNVERIFIED",
+        "qualified_leads": int(observed == "VERIFIED"),
     }
 
 
@@ -271,9 +319,18 @@ def main() -> int:
                 "GITHUB_EVENT_MISSING")
         event = json.loads(path.read_text(encoding="utf-8"))
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
-            safe = run(event, env, client=client)
+            if env.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+                require(env.get("GITHUB_REPOSITORY") == REPOSITORY
+                        and env.get("GITHUB_REF") == "refs/heads/main", "RECOVERY_SCOPE_INVALID")
+                raw_id = event.get("inputs", {}).get("item_id", "")
+                require(type(raw_id) is str and re.fullmatch(r"[1-9][0-9]{0,9}", raw_id),
+                        "RECOVERY_ID_INVALID")
+                remote = EncryptedEventFence(client, env["GITHUB_TOKEN"], env["SERVICEIT_GH_LEDGER_KEY"])
+                safe = remote.observe(int(raw_id), Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client))
+            else:
+                safe = run(event, env, client=client)
         code = 0 if safe["status"] in (
-            "DISABLED", "ALREADY_FENCED_NO_RETRY",
+            "DISABLED", "ALREADY_FENCED_NO_RETRY", "EXACT_TARGET_READBACK",
             "SERVICEIT_NEW_CARD_EVENT_PROCESSED") else 2
     except Exception:
         code = 2

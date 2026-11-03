@@ -63,5 +63,21 @@ def test_no_existing_gmail_script_project_is_overwritten():
     assert "Service IT Gmail" not in script
     assert "create --type webapp" in script
     assert "APPROVAL" in script or "approval" in script
-    assert "LIVE_CANARY_NINE_FIELDS_READBACK_PASS" in script
+    # The new installer requires BOTH nine nonempty fields and an independently
+    # encrypted exact-write receipt. A renamed success marker alone is insufficient.
     assert "CANARY_NINE_AI_FIELDS_NOT_CONFIRMED_CLOUD_DISABLED_NO_REPLAY" in script
+    assert "$ExpectedFields=@(" in script
+    assert "$Present -eq 9" in script
+    assert "if(-not $ExactReadback)" in script
+    assert "SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'" in script
+    assert "EXACT_TARGET_READBACK" in script
+    assert "$RecoveryNonce='serviceit-receipt-'" in script
+    assert "workflow run serviceit-bitrix-new-card-ai.yml" in script
+    assert "$ReceiptVerified=$RecoveryLog -match" in script
+    assert "if(-not $ReceiptVerified){throw 'EXACT_EXPECTED_FIELDS_RECEIPT_UNVERIFIED'}" in script
+    assert "LIVE_NEW_CANARY_EXACT_RECEIPT_READBACK_PASS" in script
+    assert script.index("if(-not $ExactReadback)") < script.index("if(-not $ReceiptVerified)")
+    assert script.index("if(-not $ReceiptVerified)") < script.index(
+        "LIVE_NEW_CANARY_EXACT_RECEIPT_READBACK_PASS")
+    # Any failure must turn the cloud trigger back OFF.
+    assert "catch {\n    Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'" in script

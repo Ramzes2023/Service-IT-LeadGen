@@ -53,7 +53,8 @@ jobs:
               'scripts/RUN_SERVICEIT_BITRIX_AI_CODEX_HEADLESS.ps1',
               'scripts/INSTALL_SERVICEIT_BITRIX_EVENT_BRIDGE.ps1',
               'scripts/ENSURE_SERVICEIT_NODE_LTS.ps1',
-              'scripts/RESUME_SERVICEIT_BITRIX_AI_CODEX_WORKTREE.ps1'
+              'scripts/RESUME_SERVICEIT_BITRIX_AI_CODEX_WORKTREE.ps1',
+              'scripts/PUBLISH_SERVICEIT_CODEX_WORKTREE_DRAFT.ps1'
           )) {
               $tokens = $null
               $errors = $null

@@ -21,11 +21,13 @@ def test_list_shapes_include_nested_empty_without_exposing_rows():
 
 
 def test_only_fixed_scoped_list_calls_and_two_exact_gets():
-    assert len(LIST_CASES) == 6
+    assert len(LIST_CASES) == 10
     assert {k for k, _ in LIST_CASES} == {
         "KNOWN_Y_SELECTED", "KNOWN_Y_NO_SELECT",
         "CATEGORY_Y_ID_ONLY", "BROAD_Y_ID_ONLY",
-        "ID_3_Y_SELECTED", "BROAD_N_ID_ONLY"}
+        "ID_3_Y_SELECTED", "BROAD_N_ID_ONLY",
+        "CATEGORY_N_ID_ONLY", "ID_3_N_SELECTED",
+        "CATEGORY_N_GT_3_ORDER", "CATEGORY_N_RECENT"}
     for _, params in LIST_CASES:
         assert params["entityTypeId"] == 1062
         assert params["start"] == 0
@@ -73,3 +75,19 @@ def test_workflow_stays_readonly_and_owner_only():
     assert "r.json()" in module
     assert "row.get(SIGNAL) == KNOWN_SOURCE" in module
     assert "CRM_WRITES=0" in module
+
+
+
+def test_universal_n_scope_probes_do_not_change_crm_and_are_id_only():
+    variants = {name: query for name, query in LIST_CASES}
+    for label in ("CATEGORY_N_ID_ONLY", "ID_3_N_SELECTED",
+                  "CATEGORY_N_GT_3_ORDER", "CATEGORY_N_RECENT"):
+        query = variants[label]
+        assert query["entityTypeId"] == 1062
+        assert query["useOriginalUfNames"] == "N"
+        assert query["start"] == 0
+        assert all(v in ("id", "categoryId", "createdTime") for v in query["select"])
+    assert variants["CATEGORY_N_GT_3_ORDER"]["filter"][">id"] == 3
+    assert variants["CATEGORY_N_GT_3_ORDER"]["order"] == {"id": "ASC"}
+    assert variants["CATEGORY_N_RECENT"]["filter"]["categoryId"] == 21
+    assert ">=" in "".join(variants["CATEGORY_N_RECENT"]["filter"])

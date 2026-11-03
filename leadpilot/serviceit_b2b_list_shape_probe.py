@@ -33,6 +33,22 @@ LIST_CASES = (
                          "select": ["id", "categoryId"], "start": 0}),
     ("BROAD_N_ID_ONLY", {"entityTypeId": 1062, "useOriginalUfNames": "N",
                          "select": ["id", "categoryId"], "start": 0}),
+    ("CATEGORY_N_ID_ONLY", {"entityTypeId": 1062, "useOriginalUfNames": "N",
+                            "filter": {"categoryId": 21},
+                            "select": ["id", "categoryId"], "start": 0}),
+    ("ID_3_N_SELECTED", {"entityTypeId": 1062, "useOriginalUfNames": "N",
+                         "filter": {"id": 3},
+                         "select": ["id", "categoryId"], "start": 0}),
+    ("CATEGORY_N_GT_3_ORDER", {"entityTypeId": 1062, "useOriginalUfNames": "N",
+                               "filter": {"categoryId": 21, ">id": 3},
+                               "order": {"id": "ASC"},
+                               "select": ["id", "categoryId", "createdTime"],
+                               "start": 0}),
+    ("CATEGORY_N_RECENT", {"entityTypeId": 1062, "useOriginalUfNames": "N",
+                            "filter": {"categoryId": 21,
+                                       ">=createdTime": "2026-11-03T00:00:00+03:00"},
+                            "select": ["id", "categoryId", "createdTime"],
+                            "start": 0}),
 )
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from datetime import date
+from urllib.parse import urlsplit
 import json
 import re
 
@@ -172,6 +173,17 @@ def manager_readiness(card, item_id, assessment, approval):
            and card.get(REGION) == assessment.get("region")
            and card.get(SIGNAL_URL) == assessment.get("evidence_url"),
            "MANAGER_SOURCE_OR_COMPANY_MISMATCH")
+    # Block synthetic hosts and injected URL credentials even when the
+    # supplied approval JSON asserts a source was checked.
+    try:
+        url = urlsplit(card.get(SIGNAL_URL, ""))
+        source_ok = (url.scheme == "https" and bool(url.hostname)
+                     and not url.username and not url.password
+                     and not url.hostname.endswith((".invalid", ".localhost"))
+                     and url.port in (None, 443))
+    except (ValueError, TypeError):
+        source_ok = False
+    _guard(source_ok, "MANAGER_PRIMARY_SOURCE_URL_INVALID")
     _guard(assessment.get("region") in ("Москва", "Московская область"),
            "MANAGER_MVP_REGION_NOT_ELIGIBLE")
     _guard(isinstance(card.get(SIGNAL_ID), str)

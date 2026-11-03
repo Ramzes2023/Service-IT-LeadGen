@@ -1,8 +1,10 @@
 """No webhook-admin permission polling fallback, entirely offline synthetic tests."""
 from datetime import datetime, timedelta, timezone
 import json
+import base64
 
 import httpx
+from cryptography.fernet import Fernet
 import pytest
 
 from leadpilot.serviceit_bitrix_poll_fallback import (
@@ -18,6 +20,7 @@ START = NOW - timedelta(minutes=20)
 SECRET = "correct-hmac-secret-for-tests-only-123456789"
 WEBHOOK = "https://serviseit.bitrix24.ru/rest/789/authorized_dummy_token_12345"
 TOKEN = "synthetic_github_token_123456"
+LEDGER_KEY = base64.urlsafe_b64encode(b"test-key-32-bytes-are-needed....."[:32]).decode("ascii")
 
 
 def card(n=101, when=None, category=21):
@@ -36,6 +39,7 @@ def fake_env(**updates):
         "SERVICEIT_BITRIX_WEBHOOK": WEBHOOK,
         "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY": SECRET,
         "GITHUB_TOKEN": TOKEN,
+        "SERVICEIT_GH_LEDGER_KEY": LEDGER_KEY,
     }
     data.update(updates)
     return data
@@ -44,7 +48,7 @@ def fake_env(**updates):
 def test_time_cursor_requires_future_card_after_owner_enables():
     assert after_activation(fake_env(), NOW) == START
     assert after_activation(fake_env(SERVICEIT_BITRIX_POLL_START_UTC=
-                                   (NOW - timedelta(hours=3)).isoformat()), NOW) == NOW - timedelta(hours=2)
+                                   (NOW - timedelta(days=9)).isoformat()), NOW) == NOW - timedelta(days=7)
     with pytest.raises(PollBlocked, match="ACTIVATION_TIMESTAMP"):
         after_activation(fake_env(SERVICEIT_BITRIX_POLL_START_UTC=
                                   (NOW + timedelta(seconds=1)).isoformat()), NOW)
@@ -134,9 +138,13 @@ def test_scheduled_poll_posts_signed_id_only_and_never_calls_crm_update():
     signed = []
 
     def handler(request):
-        endpoints.append(request.url.host + request.url.path)
+        endpoints.append((request.method, request.url.host + request.url.path))
         if request.url.host == "serviseit.bitrix24.ru":
             return httpx.Response(200, json={"result": {"items": [card()]}, "total": 1})
+        if request.method == "GET":
+            assert "/contents/.serviceit/new-card-events/" in request.url.path
+            assert request.url.params.get("ref") == "serviceit-ai-encrypted-ledger"
+            return httpx.Response(404)
         event = json.loads(request.content)
         assert event["event_type"] == EVENT
         assert set(event["client_payload"]) == {
@@ -148,9 +156,10 @@ def test_scheduled_poll_posts_signed_id_only_and_never_calls_crm_update():
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = run(fake_env(), client=client, now=NOW)
     assert result == {"status": "POLL_DISPATCHED_ID_ONLY",
-                      "crm_writes": 0, "dispatches": 1}
-    assert len(endpoints) == 2
-    assert all("crm.item.update" not in value for value in endpoints)
+                      "crm_writes": 0, "dispatches": 1,
+                      "already_fenced": 0, "pending_capped": False}
+    assert len(endpoints) == 3
+    assert all("crm.item.update" not in value for _, value in endpoints)
     assert signed[0]["portal"] == "serviseit.bitrix24.ru"
 
 
@@ -184,6 +193,7 @@ def test_owner_powershell_safeguards_and_workflow_double_gate():
     assert "SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY'" in workflow
     assert "SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'" in workflow
     assert "cron:" in workflow
+    assert "SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}" in workflow
     assert "repository_dispatch" not in module or "dispatch" in module
     assert "crm.item.update" not in module
 
@@ -281,3 +291,64 @@ def test_readonly_github_workflow_owner_marker_and_disabled_activation_gate():
     assert "vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY'" in wf
     assert "vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'" in wf
     assert "python -m leadpilot.serviceit_bitrix_poll_fallback --probe" in wf
+
+
+def test_encrypted_one_use_receipt_skips_fenced_card_and_dispatches_next():
+    events = []
+    source_a = 101
+    source_b = 102
+    receipt_plain = json.dumps({"schema": "serviceit-event-v1",
+                                "card": source_a, "status": "RESERVED_UNVERIFIED"}).encode()
+    ciphertext = Fernet(LEDGER_KEY.encode()).encrypt(receipt_plain)
+    def handler(request):
+        if request.url.host == "serviseit.bitrix24.ru":
+            return httpx.Response(200, json={"result": {"items": [
+                card(source_a), card(source_b)]}, "total": 2})
+        if request.method == "GET":
+            if len(events) == 0:
+                events.append("GET_RECEIPT_101")
+                return httpx.Response(200, json={"content": base64.b64encode(ciphertext).decode()})
+            events.append("GET_RECEIPT_102")
+            return httpx.Response(404)
+        assert request.method == "POST"
+        packet = json.loads(request.content)
+        assert packet["client_payload"]["item_id"] == 102
+        events.append("DISPATCH_102")
+        return httpx.Response(204)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        outcome = run(fake_env(), client=client, now=NOW)
+    assert outcome == {"status": "POLL_DISPATCHED_ID_ONLY",
+                       "crm_writes": 0, "dispatches": 1,
+                       "already_fenced": 1, "pending_capped": False}
+    assert events == ["GET_RECEIPT_101", "GET_RECEIPT_102", "DISPATCH_102"]
+
+
+def test_cryptographically_invalid_receipt_blocks_new_dispatch():
+    events = []
+    def handler(request):
+        events.append(request.method)
+        if request.url.host == "serviseit.bitrix24.ru":
+            return httpx.Response(200, json={"result": {"items":[card()]}, "total":1})
+        assert request.method == "GET"
+        return httpx.Response(200, json={"content":"NOT_A_VALID_ENCRYPTED_RECEIPT"})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PollBlocked, match="POLL_LEDGER_RECEIPT_UNVERIFIED"):
+            run(fake_env(), client=client, now=NOW)
+    assert events == ["POST", "GET"]
+
+
+def test_multiple_cards_are_paced_one_per_schedule_not_bursted():
+    events = []
+    def handler(request):
+        if request.url.host == "serviseit.bitrix24.ru":
+            return httpx.Response(200, json={"result": {"items": [
+                card(101), card(102), card(103)]}, "total":3})
+        if request.method == "GET":
+            return httpx.Response(404)
+        events.append(json.loads(request.content)["client_payload"]["item_id"])
+        return httpx.Response(204)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = run(fake_env(), client=client, now=NOW)
+    assert result["dispatches"] == 1
+    assert result["pending_capped"] is True
+    assert events == [101]

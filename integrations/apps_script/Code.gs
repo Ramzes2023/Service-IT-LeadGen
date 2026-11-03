@@ -17,8 +17,8 @@ const SERVICEIT_CONFIG = Object.freeze({
   repository: "Ramzes2023/Service-IT-LeadGen",
   eventType: "serviceit_b2b_notice",
   mailbox: "ramzesisayev444@gmail.com",
-  sender: "marketplace@b2b-center.ru",
-  gmailQuery: "from:marketplace@b2b-center.ru newer_than:30d -in:spam -in:trash",
+  senderDomain: "b2b-center.ru",
+  gmailQuery: "from:(b2b-center.ru) newer_than:30d -in:spam -in:trash",
   maxPages: 10,
   pageSize: 100,
   maxMessagesPerCycle: 20,
@@ -152,12 +152,11 @@ function htmlToText_(html) {
 function messageText_(message) {
   const output = {plain: [], html: []};
   collectParts_(message.payload || {}, output);
-  let text = "";
-  if (output.plain.length) {
-    text = output.plain.join("\n");
-  } else if (output.html.length) {
-    text = output.html.map(htmlToText_).join("\n");
-  }
+  const candidates = output.plain.concat(output.html.map(htmlToText_));
+  const text = candidates.sort(function (a, b) {
+    return (b.match(/b2b-center\\.ru/gi) || []).length -
+      (a.match(/b2b-center\\.ru/gi) || []).length;
+  })[0] || "";
   if (!text || text.length > SERVICEIT_CONFIG.maxEmailText) {
     throw new Error("SERVICEIT_EMAIL_CONTENT_INVALID");
   }
@@ -221,7 +220,7 @@ function parseEmailMessage_(message, messageId) {
   const headers = messageHeaders_(message);
   const from = String(headers.from || "");
   const senderMatch = from.match(/<?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})>?/i);
-  if (!senderMatch || senderMatch[1].toLowerCase() !== SERVICEIT_CONFIG.sender) {
+  if (!senderMatch || !senderMatch[1].toLowerCase().endsWith("@" + SERVICEIT_CONFIG.senderDomain)) {
     throw new Error("SERVICEIT_SENDER_NOT_VENDOR");
   }
   const internalDate = Number(message.internalDate || 0);

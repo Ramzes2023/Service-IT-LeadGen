@@ -12,7 +12,7 @@ services:
     autoDeployTrigger: off
     buildCommand: pip install -r requirements.txt
     startCommand: mkdir -p /opt/render/project/src/storage/approvals && uvicorn leadpilot.serviceit_bitrix_event_autofill_app:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
-    healthCheckPath: /health
+    healthCheckPath: /integrations/serviceit/bitrix24/worker-health
     disk:
       name: serviceit-bitrix-event-ledger
       mountPath: /opt/render/project/src/storage

@@ -178,6 +178,11 @@ try {
         try {
             & $npx.Source --yes '@google/clasp@latest' login
             Check-Exit 'GOOGLE_CLASP_LOGIN'
+            $Authorized=(& $npx.Source --yes '@google/clasp@latest' show-authorized-user --json 2>&1 | Out-String)
+            if($LASTEXITCODE -ne 0 -or
+               $Authorized -notmatch [regex]::Escape('ramzesisayev444@gmail.com')){
+                throw 'WRONG_GOOGLE_ACCOUNT_FOR_SERVICEIT_OWNER_ONLY_BRIDGE'
+            }
             & $npx.Source --yes '@google/clasp@latest' create --type webapp --title 'ServiceIT Bitrix24 AI New Card Bridge'
             Check-Exit 'NEW_OWNER_ONLY_GOOGLE_SCRIPT_CREATION'
         } finally {Pop-Location}

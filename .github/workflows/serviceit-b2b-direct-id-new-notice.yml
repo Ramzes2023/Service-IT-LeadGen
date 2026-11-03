@@ -1,0 +1,51 @@
+name: ServiceIT B2B direct-ID new notice (free, opt-in)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: write
+
+# Same key as original single-card pilot; never run two source writers at once.
+concurrency:
+  group: serviceit-b2b-bitrix-issue-66
+  cancel-in-progress: false
+
+jobs:
+  source-to-direct-id:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event.issue.number == 66 &&
+      !github.event.issue.pull_request &&
+      github.actor == 'Ramzes2023' &&
+      startsWith(github.event.comment.body, 'SERVICEIT_B2B_NOTICE_V1') &&
+      vars.SERVICEIT_B2B_DIRECT_AUTO_ENABLED == 'YES'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # A separate owner opt-in is required for publishing even encrypted IDs.
+      SERVICEIT_DIRECT_ID_HANDOFF_ENABLED: ${{ vars.SERVICEIT_DIRECT_ID_HANDOFF_ENABLED }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      # This is a *hypothesis-only* GigaChat call on source SUBJECT, NOT Score.
+      # OFF unless source privacy + GigaChat API usage have been approved.
+      SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED: ${{ vars.SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED }}
+      SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED: ${{ vars.SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED }}
+      AI_ENABLE: ${{ vars.SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED == 'YES' && '1' || '0' }}
+      AI_PROVIDER: gigachat
+      GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
+      GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependency-locked ServiceIT runtime
+        run: python -m pip install -r requirements.txt
+      - name: Guarded source notice to exact Bitrix 1062/21 HOLD and encrypted ID receipt
+        run: python -m leadpilot.b2b_github_to_bitrix --event "$GITHUB_EVENT_PATH" --live

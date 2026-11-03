@@ -131,6 +131,34 @@ def discover(rest, start: datetime, now: datetime) -> list[int]:
     raise PollBlocked("POLL_TOO_MANY_PAGES_NO_DISPATCH")
 
 
+def calibrate_known_card(rest) -> None:
+    """Read-only positive control: N-mode ID 3 must expose creation time.
+
+    A recent-list query that happens to return [] does NOT prove new-card
+    discovery works. Pair it with a fixed historical ID positive control.
+    ID 3 is never dispatched or updated; this is only an API shape check.
+    """
+    response = rest("crm.item.list", {
+        "entityTypeId": 1062,
+        "useOriginalUfNames": "N",
+        "filter": {"id": 3},
+        "select": ["id", "categoryId", "createdTime"],
+        "start": 0,
+    })
+    require(type(response) is dict, "POLL_CALIBRATION_RESULT_INVALID")
+    items = response.get("items")
+    require(type(items) is list and len(items) == 1,
+            "POLL_CALIBRATION_POSITIVE_MISSING")
+    item = items[0]
+    require(type(item) is dict and str(item.get("id")) == "3"
+            and str(item.get("categoryId")) == "21",
+            "POLL_CALIBRATION_IDENTITY_INVALID")
+    date_value(item.get("createdTime"))
+    require(response.get("next") is None
+            and response.get("total") in (None, 1),
+            "POLL_CALIBRATION_PAGINATION_INVALID")
+
+
 def signed_payload(item_id: int, secret: str, now: int) -> dict:
     require(type(item_id) is int and MIN_CARD <= item_id <= MAX_CARD,
             "POLL_DISPATCH_ID_INVALID")
@@ -168,7 +196,7 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
     """Probe is GET/read-only only. Live requires BOTH explicit owner gates."""
     require(env.get("GITHUB_REPOSITORY") == REPOSITORY
             and env.get("GITHUB_REF") == "refs/heads/main"
-            and env.get("GITHUB_EVENT_NAME") in ("schedule", "workflow_dispatch"),
+            and env.get("GITHUB_EVENT_NAME") in ("schedule", "workflow_dispatch", "issue_comment"),
             "POLL_GITHUB_SCOPE_INVALID")
     if not probe_only:
         require(env.get("GITHUB_EVENT_NAME") == "schedule", "POLL_SCHEDULE_REQUIRED")
@@ -190,7 +218,9 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
                 and params.get("entityTypeId") == 1062
                 and params.get("useOriginalUfNames") == "N"
                 and params.get("select") == ["id", "categoryId", "createdTime"]
-                and params.get("filter", {}).get("categoryId") == 21,
+                and (params.get("filter", {}).get("categoryId") == 21
+                     or (probe_only and params.get("filter") == {"id": 3}))
+                and params.get("start") in (0, 50, 100, 150),
                 "POLL_READONLY_METHOD_REQUIRED")
         response = client.post(base + "/crm.item.list.json", json=params,
                                follow_redirects=False, timeout=25)
@@ -208,10 +238,13 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
                     raise PollBlocked("POLL_PAGINATION_METADATA_CONFLICT")
                 result[name] = body[name]
         return result
+    if probe_only:
+        calibrate_known_card(list_only)
     cards = discover(list_only, lower, current)
     if probe_only:
         return {"status": "POLL_READONLY_LIST_PASS", "crm_writes": 0,
-                "dispatches": 0, "items_seen": len(cards)}
+                "dispatches": 0, "calibration": "KNOWN_ID_3_NMODE_PASS",
+                "items_seen": len(cards)}
     require(type(env.get("SERVICEIT_BITRIX_EVENT_BRIDGE_KEY")) is str
             and len(env["SERVICEIT_BITRIX_EVENT_BRIDGE_KEY"]) >= 32,
             "POLL_BRIDGE_HMAC_MISSING")

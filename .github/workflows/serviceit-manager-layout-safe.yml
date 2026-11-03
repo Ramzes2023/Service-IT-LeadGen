@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: serviceit-1062-21-shared-manager-layout
@@ -50,7 +51,34 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Preview shared layout without writes
         if: ${{ github.event_name == 'issue_comment' || !inputs.apply }}
-        run: python -m leadpilot.serviceit_manager_layout_operator
+        shell: bash
+        run: |
+          set +e
+          python -m leadpilot.serviceit_manager_layout_operator > "$RUNNER_TEMP/serviceit-layout-preview.json"
+          code=$?
+          set -e
+          echo "SERVICEIT_PREVIEW_EXIT=$code" >> "$GITHUB_ENV"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"]) / "serviceit-layout-preview.json"
+          try:
+              data = json.loads(path.read_text("utf-8"))
+              status = data.get("status")
+          except (OSError, ValueError, AttributeError, TypeError):
+              status = None
+          safe = {"PREVIEW_ONLY", "ALREADY_PRESENT", "BITRIX_WEBHOOK_MISSING",
+                  "REPOSITORY_SCOPE_BLOCKED",
+                  "LAYOUT_BLOCKED_OR_UNCERTAIN_REVIEW_REQUIRED"}
+          print("SERVICEIT_LAYOUT_PREVIEW_STATUS="
+                + (status if type(status) is str and status in safe else "BLOCKED_REVIEW"))
+          PY
+      - name: Post strict redacted status to owner Issue
+        if: ${{ github.event_name == 'issue_comment' }}
+        run: python -m leadpilot.serviceit_manager_layout_status_comment --result "$RUNNER_TEMP/serviceit-layout-preview.json"
+      - name: Require read-only preview success
+        if: ${{ github.event_name == 'issue_comment' || !inputs.apply }}
+        run: test "$SERVICEIT_PREVIEW_EXIT" = "0"
       - name: Approved backup-first shared layout change with readback
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
         run: python -m leadpilot.serviceit_manager_layout_operator --apply

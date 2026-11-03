@@ -63,4 +63,5 @@ def test_no_existing_gmail_script_project_is_overwritten():
     assert "Service IT Gmail" not in script
     assert "create --type webapp" in script
     assert "APPROVAL" in script or "approval" in script
-    assert "LIVE_E2E=NOT_YET_PROVED_UNTIL_CANARY" in script
+    assert "LIVE_CANARY_NINE_FIELDS_READBACK_PASS" in script
+    assert "CANARY_NINE_AI_FIELDS_NOT_CONFIRMED_CLOUD_DISABLED_NO_REPLAY" in script

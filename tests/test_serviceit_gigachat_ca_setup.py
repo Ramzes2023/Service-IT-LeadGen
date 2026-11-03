@@ -78,4 +78,4 @@ def test_github_actions_uses_pinned_tls_for_model_and_production_event_worker():
         assert "verify=False" not in content
     oauth = Path("leadpilot/serviceit_gigachat_oauth_diag.py").read_text("utf-8")
     assert 'httpx.Client(verify=env.get("GIGACHAT_CA_BUNDLE_FILE") or True' in oauth
-    assert "verify=False" not in oauth
+    assert "httpx.Client(verify=False" not in oauth

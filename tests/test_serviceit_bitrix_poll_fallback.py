@@ -366,7 +366,9 @@ def test_owner_activation_missing_or_invalid_privacy_is_safe_no_with_gh_jq():
     assert "$PrivacyNeedsDefault = $true" in source
     assert "$PrivacyValue = 'NO'" in source
     assert "$RawPrivacy -ceq 'YES' -or $RawPrivacy -ceq 'NO'" in source
-    assert "SERVICEIT_GIGACHAT_CREDENTIALS_MISSING" in source
+    assert "SERVICEIT_GIGACHAT=CONFIG_MISSING_SAFE_HOLD_ONLY" in source
+    assert "$PresentSecrets -notcontains 'GIGACHAT_CREDENTIALS'" in source
+    assert "$PrivacyValue = 'NO'" in source
     assert "SERVICEIT_PUBLIC_TITLE_AI=OFF_UNTIL_SEPARATE_APPROVAL" in source
     assert "if ($PublicTitleNeedsOff)" in source
     assert "Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' 'NO'" in source

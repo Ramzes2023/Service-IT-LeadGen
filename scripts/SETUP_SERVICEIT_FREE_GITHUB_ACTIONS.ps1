@@ -3,7 +3,7 @@
 # command-line arguments, Git working tree, or the public encrypted-state branch.
 # Requires GitHub CLI (gh) interactive auth and owner confirmation.
 [CmdletBinding()]
-param([switch]$Apply, [switch]$DiagnoseCutover)
+param([switch]$Apply, [switch]$DiagnoseCutover, [int]$CurrentCardId = 0)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Repository = 'Ramzes2023/Service-IT-LeadGen'
@@ -73,6 +73,9 @@ function Read-DpapiSecret([string]$Path) {
 
 # Read-only diagnosis: no secret transfer, no task disable, no cloud enable.
 if ($DiagnoseCutover) {
+    if ($CurrentCardId -ne 0 -and ($CurrentCardId -lt 8 -or $CurrentCardId -gt 2000000000)) {
+        throw 'READONLY_CURRENT_CARD_ID_NOT_ALLOWED'
+    }
     $BitrixDiagnostic = Read-DpapiSecret $BitrixFile
     try {
         $env:SERVICEIT_BITRIX_WEBHOOK = $BitrixDiagnostic
@@ -95,6 +98,9 @@ if ($DiagnoseCutover) {
             # record contents or API error descriptions in the console.
             $ProbeLines = @()
             $ProbeExit = 2
+            if ($CurrentCardId -ge 8) {
+                $env:SERVICEIT_CUTOVER_CURRENT_CARD_ID = [string]$CurrentCardId
+            }
             try {
                 Push-Location $Repo
                 try {
@@ -107,9 +113,11 @@ if ($DiagnoseCutover) {
                 # Never print native command errors; they can contain a
                 # webhook path or unexpected CRM data in future versions.
                 Write-Host 'CUTOVER_ACCESS_PROBE=UNAVAILABLE_SAFE'
+            } finally {
+                Remove-Item Env:\SERVICEIT_CUTOVER_CURRENT_CARD_ID -ErrorAction SilentlyContinue
             }
             foreach ($Line in $ProbeLines) {
-                if ($Line -cmatch '^SERVICEIT_CUTOVER_PROBE_(TYPE|LIST_MINIMAL|LIST_CATEGORY_ONLY|GET_7|GET_3|CRM_WRITES|GIGACHAT_CALLS|STATUS)=[A-Z0-9_]+$') {
+                if ($Line -cmatch '^SERVICEIT_CUTOVER_PROBE_(TYPE|LIST_MINIMAL|LIST_CATEGORY_ONLY|GET_CURRENT|GET_3|CRM_WRITES|GIGACHAT_CALLS|STATUS)=[A-Z0-9_]+$') {
                     Write-Host $Line
                 }
             }

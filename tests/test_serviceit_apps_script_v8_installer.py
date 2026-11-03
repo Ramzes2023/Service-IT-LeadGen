@@ -40,6 +40,8 @@ def test_installer_does_not_enable_legacy_comment_ingest_or_broken_crm_list_poll
     assert "SERVICEIT_FREE_CLOUD_ENABLED" not in script
     assert "Render" not in script
     assert "SERVICEIT_DIRECT_ID_HANDOFF_ENABLED" in script
+    assert "OpenJS.NodeJS.LTS" in script
+    assert "NODE_LTS_INSTALL_FAILED" in script
 
 
 def test_private_google_config_is_temp_injected_and_cleaned():

@@ -48,6 +48,9 @@ def test_time_cursor_requires_future_card_after_owner_enables():
     with pytest.raises(PollBlocked, match="ACTIVATION_TIMESTAMP"):
         after_activation(fake_env(SERVICEIT_BITRIX_POLL_START_UTC=
                                   (NOW + timedelta(seconds=1)).isoformat()), NOW)
+    assert build_query(START, 0)["useOriginalUfNames"] == "N"
+    assert build_query(START, 0)["select"] == ["id", "categoryId", "createdTime"]
+    assert build_query(START, 0)["order"] == {"id": "ASC"}
     assert build_query(START, 0)["filter"]["categoryId"] == 21
     assert build_query(START, 0)["filter"][">=createdTime"].startswith("2026-11-03")
 
@@ -113,6 +116,7 @@ def test_manual_probe_only_gets_metadata_no_github_dispatch_and_no_gate_needed()
                       "dispatches": 0, "items_seen": 0}
     assert len(requested) == 1
     assert requested[0][0:2] == ("POST", "/rest/789/authorized_dummy_token_12345/crm.item.list.json")
+    assert requested[0][2]["useOriginalUfNames"] == "N"
     assert requested[0][2]["select"] == ["id", "categoryId", "createdTime"]
     assert requested[0][2]["filter"]["categoryId"] == 21
 
@@ -174,3 +178,55 @@ def test_owner_powershell_safeguards_and_workflow_double_gate():
     assert "cron:" in workflow
     assert "repository_dispatch" not in module or "dispatch" in module
     assert "crm.item.update" not in module
+
+
+
+def test_live_n_mode_list_filter_is_consistent_with_existing_verified_readonly_probe():
+    from pathlib import Path
+    source = Path("leadpilot/serviceit_bitrix_poll_fallback.py").read_text("utf-8")
+    old = Path("leadpilot/serviceit_b2b_list_shape_probe.py").read_text("utf-8")
+    assert '"useOriginalUfNames": "N"' in source
+    assert '"useOriginalUfNames": "Y"' not in source
+    assert "CATEGORY_N_ID_ONLY" in old
+    assert "CATEGORY_N_GT_3_ORDER" in old
+    assert "CATEGORY_N_RECENT" in old
+    ps = Path("scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1").read_text("utf-8")
+    assert "useOriginalUfNames = 'N'" in ps
+    assert "useOriginalUfNames = 'Y'" not in ps
+
+
+def test_conflicting_pagination_metadata_is_rejected_without_dispatch():
+    env = fake_env(GITHUB_EVENT_NAME="workflow_dispatch")
+    def handler(request):
+        assert request.url.path.endswith("crm.item.list.json")
+        return httpx.Response(200, json={
+            "result": {"items": [], "total": 2},
+            "total": 0,
+        })
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PollBlocked, match="POLL_PAGINATION_METADATA_CONFLICT"):
+            run(env, client=client, now=NOW, probe_only=True)
+
+
+def test_server_ignoring_created_time_filter_never_dispatches_old_card():
+    def handler(request):
+        if request.url.host == "serviseit.bitrix24.ru":
+            return httpx.Response(200, json={
+                "result": {"items": [card(101, START - timedelta(hours=1))]},
+                "total": 1,
+            })
+        pytest.fail("no GitHub dispatch for old card")
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PollBlocked, match="POLL_ITEM_BEFORE_ACTIVATION_OR_FUTURE"):
+            run(fake_env(), client=client, now=NOW)
+
+
+def test_empty_list_api_flat_shape_alone_does_not_prove_live_ai_activation():
+    env = fake_env(GITHUB_EVENT_NAME="workflow_dispatch",
+                   SERVICEIT_BITRIX_POLL_ENABLED="NO",
+                   SERVICEIT_BITRIX_EVENT_AI_ENABLED="NO")
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"result":{"items":[]}, "total":0}))) as client:
+        assert run(env, client=client, now=NOW, probe_only=True)["status"] == "POLL_READONLY_LIST_PASS"
+    assert env["SERVICEIT_BITRIX_POLL_ENABLED"] == "NO"
+    assert env["SERVICEIT_BITRIX_EVENT_AI_ENABLED"] == "NO"

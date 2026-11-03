@@ -1,0 +1,55 @@
+name: ServiceIT Bitrix24 new-card polling fallback (no outgoing webhook)
+
+on:
+  # Offset from top of hour; cron is best-effort, not a guaranteed real-time SLA.
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+    inputs:
+      probe_only:
+        description: 'Always READ-ONLY: validate crm.item.list without dispatch or CRM writes'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: serviceit-bitrix-poll-fallback
+  cancel-in-progress: false
+
+jobs:
+  readonly-probe-or-scheduled-scan:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' &&
+        vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
+        vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_BITRIX_POLL_ENABLED: ${{ vars.SERVICEIT_BITRIX_POLL_ENABLED }}
+      SERVICEIT_BITRIX_EVENT_AI_ENABLED: ${{ vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install reviewed dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Read-only probe - never dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: python -m leadpilot.serviceit_bitrix_poll_fallback --probe
+      - name: Scan recent new-card IDs and dispatch signed events
+        if: github.event_name == 'schedule'
+        run: python -m leadpilot.serviceit_bitrix_poll_fallback

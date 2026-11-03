@@ -38,6 +38,7 @@ It does **not** send the raw email, MIME/HTML body, attachments, contact names, 
 ## One-time activation
 
 Run scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V8.ps1 on the owner's Windows account. It:
+- bootstraps Node.js LTS through winget if Node/npm/clasp prerequisites are missing;
 - reads the dedicated ServiceIT Bitrix/GigaChat DPAPI files;
 - uploads only the needed GitHub Actions secrets via stdin;
 - generates/retains local DPAPI HMAC and Fernet keys without printing them;

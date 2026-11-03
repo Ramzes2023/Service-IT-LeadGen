@@ -50,6 +50,7 @@ jobs:
       GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
       GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
       GIGACHAT_MODEL: ${{ vars.GIGACHAT_MODEL }}
+      GIGACHAT_CA_BUNDLE_FILE: ${{ runner.temp }}/serviceit-gigachat-verified-ca.pem
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,5 +61,7 @@ jobs:
           cache: pip
       - name: Install locked ServiceIT dependencies
         run: python -m pip install -r requirements.txt
+      - name: Verify pinned Ministry root and create GigaChat-only TLS trust
+        run: python -m leadpilot.serviceit_gigachat_ca_setup "$GIGACHAT_CA_BUNDLE_FILE"
       - name: Verify HMAC, create encrypted one-use receipt, analyze exact Bitrix card
         run: python -m leadpilot.serviceit_bitrix_dispatch_worker

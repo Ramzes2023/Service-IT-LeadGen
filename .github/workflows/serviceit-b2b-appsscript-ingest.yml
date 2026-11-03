@@ -59,6 +59,7 @@ jobs:
               "crm_writes": d.get("crm_writes"),
               "qualified_leads": 0,
               "gigachat_attempted": d.get("gigachat_attempted"),
-              "ai_status": d.get("ai_status")
+              "ai_status": d.get("ai_status"),
+              "reason": d.get("reason")
           },ensure_ascii=False))
           PY

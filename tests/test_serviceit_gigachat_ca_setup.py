@@ -67,8 +67,10 @@ def test_github_actions_uses_pinned_tls_for_model_and_production_event_worker():
     ):
         wf = Path(".github/workflows") / name
         content = wf.read_text("utf-8")
-        assert "GIGACHAT_CA_BUNDLE_FILE: ${{ runner.temp }}/serviceit-gigachat-verified-ca.pem" in content
-        assert 'python -m leadpilot.serviceit_gigachat_ca_setup "$GIGACHAT_CA_BUNDLE_FILE"' in content
+        assert "serviceit-gigachat-verified-ca.pem" in content
+        assert 'python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"' in content
+        assert 'echo "GIGACHAT_CA_BUNDLE_FILE=$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem" >> "$GITHUB_ENV"' in content
+        assert "${{ runner.temp }}" not in content
         assert content.index("serviceit_gigachat_ca_setup") < (
             content.index("serviceit_gigachat_cockpit_preflight") if "synthetic" in name
             else content.index("serviceit_bitrix_dispatch_worker")

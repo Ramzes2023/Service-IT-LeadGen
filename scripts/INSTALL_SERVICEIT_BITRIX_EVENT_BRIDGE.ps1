@@ -225,10 +225,64 @@ try {
     $Enable=Read-Host 'ENABLE new-card AI/HOLD writes for FUTURE Bitrix 1062/21 events only? Type YES'
     if($Enable -cne 'YES'){throw 'OWNER_LIVE_ACTIVATION_MISSING'}
     Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'YES_1062_21_CLOUD'
-    Write-Host 'SERVICEIT_BITRIX_EVENT_AI=ENABLED_FOR_FUTURE_EVENTS'
-    Write-Host 'GITHUB_WORKFLOW=ServiceIT new Bitrix card to AI manager'
-    Write-Host 'NEXT_STEP=Create ONE new authorized 1062/21 canary; verify actual GitHub Action + Bitrix card readback.'
-    Write-Host 'LIVE_E2E=NOT_YET_PROVED_UNTIL_CANARY'
+    Write-Host 'SERVICEIT_BITRIX_EVENT_AI=CANARY_MODE_STARTED'
+    Write-Host 'Create ONE NEW approved TEST card in Bitrix smart process 1062/category 21 NOW.'
+    Write-Host 'Do not use or edit historical cards, real customers or deleted card 7.'
+    $CanaryText=Read-Host 'Paste ONLY the internal numeric ID of the NEW TEST card'
+    if($CanaryText -notmatch '^[1-9][0-9]{0,9}
+} finally {
+    $Webhook=$null;$Hmac=$null;$GithubToken=$null;$AppToken=$null
+    # A private script project retains its secrets for its own deployment.
+    # Never git-add this folder or expose it through the public repo.
+    Write-Host ('PRIVATE_APPS_SCRIPT_PROJECT=' + $Project)
+}
+ -or
+       [long]$CanaryText -lt 8 -or [long]$CanaryText -gt 2000000000){
+        Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'
+        throw 'CANARY_ITEM_ID_MISSING_CLOUD_DISABLED'
+    }
+    $Canary=[int]$CanaryText
+    $ExpectedFields=@(
+        'UF_CRM_13_SVCIT_AI_STATUS',
+        'UF_CRM_13_SVCIT_AI_SUMMARY',
+        'UF_CRM_13_SVCIT_AI_HYPOTHESIS',
+        'UF_CRM_13_SVCIT_AI_QUOTE',
+        'UF_CRM_13_SVCIT_AI_RECOMMENDATION',
+        'UF_CRM_13_SVCIT_AI_LIMITATIONS',
+        'UF_CRM_13_SVCIT_AI_FULL_REPORT',
+        'UF_CRM_13_SVCIT_AI_MANAGER_BRIEF',
+        'UF_CRM_13_SVCIT_AI_NEXT_ACTION'
+    )
+    $ExactReadback=$false
+    for($Attempt=0;$Attempt -lt 15;$Attempt++){
+        Start-Sleep -Seconds 12
+        try{
+            $Read=Call-ReadOnly $Webhook 'crm.item.get' @{
+                entityTypeId=1062;id=$Canary;useOriginalUfNames='Y'
+            }
+            $Item=$Read.result.item
+            if(-not $Item -or [string]$Item.id -ne $CanaryText -or
+               [string]$Item.entityTypeId -ne '1062' -or
+               [string]$Item.categoryId -ne '21'){continue}
+            $Present=0
+            foreach($Code in $ExpectedFields){
+                $Value=$Item.PSObject.Properties[$Code].Value
+                if($Value -is [string] -and -not [string]::IsNullOrWhiteSpace($Value)){$Present++}
+            }
+            if($Present -eq 9){$ExactReadback=$true;break}
+        }catch{
+            # No raw REST error, CRM data or secret in console output.
+        }
+    }
+    if(-not $ExactReadback){
+        Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'
+        Write-Host 'GITHUB_WORKFLOW=Check ServiceIT new Bitrix card to AI manager'
+        throw 'CANARY_NINE_AI_FIELDS_NOT_CONFIRMED_CLOUD_DISABLED_NO_REPLAY'
+    }
+    Write-Host 'SERVICEIT_BITRIX_EVENT_AI=LIVE_CANARY_NINE_FIELDS_READBACK_PASS'
+    Write-Host 'BITRIX_MANAGER_REPORT=CONFIRMED'
+    Write-Host 'LAPTOP_REQUIRED_AFTER_INSTALL=NO'
+    Write-Host 'NOTE=GIGACHAT_TITLE_ONLY_REQUIRES_SEPARATE_PRIVACY_AND_SOURCE_APPROVAL'
 } finally {
     $Webhook=$null;$Hmac=$null;$GithubToken=$null;$AppToken=$null
     # A private script project retains its secrets for its own deployment.

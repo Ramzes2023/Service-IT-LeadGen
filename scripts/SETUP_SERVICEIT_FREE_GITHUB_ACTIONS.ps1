@@ -90,7 +90,17 @@ if ($DiagnoseCutover) {
             }
         }
         Write-Host "CUTOVER_DIAGNOSTIC_EXIT_CODE=$DiagnosticExit"
-        if ($DiagnosticExit -ne 0) { exit 2 }
+        if ($DiagnosticExit -ne 0) {
+            # Additional bounded read-only investigation: never include CRM
+            # record contents or API error descriptions in the console.
+            $ProbeLines = @(& $Python -m leadpilot.serviceit_cutover_access_probe 2>$null)
+            foreach ($Line in $ProbeLines) {
+                if ($Line -cmatch '^SERVICEIT_CUTOVER_PROBE_(TYPE|LIST_MINIMAL|LIST_CATEGORY_ONLY|GET_7|GET_3|CRM_WRITES|GIGACHAT_CALLS|STATUS)=[A-Z0-9_]+$') {
+                    Write-Host $Line
+                }
+            }
+            exit 2
+        }
         exit 0
     } finally {
         Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue

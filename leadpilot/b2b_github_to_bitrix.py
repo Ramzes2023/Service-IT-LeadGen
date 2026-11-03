@@ -225,19 +225,21 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
     if exact_duplicate(client, base, source_id):
         return {"status": "ALREADY_EXISTS_IN_CRM",
                 "tender_id": notice["tender_id"], "qualified_leads": 0, "crm_writes": 0}
-    # Reserve the source BEFORE an optional model request as well as BEFORE
-    # the CRM add. An ambiguous model completion cannot be repeated for the
-    # same source, preventing duplicate model costs and duplicate cards.
-    ledger.reserve(source_id)
-    # Optional one model call on the supplier email SUBJECT ONLY. No names,
-    # company INN, source URL, message body, client records or contact details.
-    # It is a hypothesis on unverified evidence, never a qualified lead/Score.
-    if os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED") == "YES":
+    # Validate privacy and model authorization BEFORE any GitHub/CRM write.
+    # Reserve the source AFTER approval but BEFORE the optional model API call
+    # so failed/ambiguous model requests cannot be repeatedly billed.
+    use_gigachat = os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED") == "YES"
+    if use_gigachat:
         must(os.environ.get("SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED") == "YES"
              and os.environ.get("AI_ENABLE") == "1"
              and os.environ.get("AI_PROVIDER") == "gigachat"
              and bool(os.environ.get("GIGACHAT_CREDENTIALS")),
              "B2B_GIGACHAT_PRIVACY_OR_CREDENTIALS_NOT_APPROVED")
+    ledger.reserve(source_id)
+    # Optional one model call on supplier email SUBJECT ONLY. No names,
+    # company INN, source URL, message body, contacts or full CRM records.
+    # This remains a hypothesis, NOT a qualified lead or Lead Score.
+    if use_gigachat:
         try:
             from .serviceit_ai_report import plain
             subject=plain(notice["subject"],240)

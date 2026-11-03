@@ -134,7 +134,7 @@ def test_manager_edits_stage_or_stop_are_not_overwritten(name, value):
     (COMPANY_INN, "7711111111"),
     (COMPANY_NAME, "Другая компания"),
     (REGION, "Ингушетия"),
-    (SIGNAL_URL, "https://example.invalid/some-other-source"),
+    (SIGNAL_URL, "https://example.org/some-other-source"),
 ])
 def test_source_company_fingerprint_conflicts_never_route_manager(name, value):
     card, assess, approved = verified()

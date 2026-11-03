@@ -7,6 +7,7 @@ not be mistaken for an empty CRM: it may hide existing records.
 from __future__ import annotations
 
 import os
+import re
 
 import httpx
 
@@ -47,11 +48,20 @@ def main() -> int:
         print("CRM_WRITES=0")
         print("GIGACHAT_CALLS=0")
         return 0
-    except (DuplicateSearchBlocked, BridgeBlocked, httpx.HTTPError, ValueError,
-            TypeError, KeyError, AttributeError):
-        # No response bodies, Bitrix IDs, tender subjects, source keys or
-        # secret-bearing REST URLs in owner or GitHub logs.
+    except (DuplicateSearchBlocked, BridgeBlocked) as exc:
+        # Only our fixed error codes, not remote REST error descriptions.
+        reason = str(exc)
+        if not re.fullmatch(r"[A-Z0-9_]{4,96}", reason):
+            reason = "UNTRUSTED_DIAGNOSTIC"
         print("B2B_EXACT_DUPLICATE_READONLY=UNVERIFIED")
+        print("B2B_EXACT_DUPLICATE_REASON=" + reason)
+        print("NO_NEW_CARDS_OR_AI_ACTIVATED=YES")
+        return 2
+    except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
+        # Never reveal request URLs (they embed the incoming REST token),
+        # response bodies, customer data or source keys in console logs.
+        print("B2B_EXACT_DUPLICATE_READONLY=UNVERIFIED")
+        print("B2B_EXACT_DUPLICATE_REASON=TRANSPORT_OR_RESPONSE")
         print("NO_NEW_CARDS_OR_AI_ACTIVATED=YES")
         return 2
 

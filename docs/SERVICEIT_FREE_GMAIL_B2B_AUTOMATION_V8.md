@@ -48,7 +48,7 @@ Run scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V8.ps1 on the owner's Windows 
 - pulls it back and compares SHA-256 hashes;
 - enables the GitHub workflow only after successful readback.
 
-The installer asks separately for approval to send minimal tender metadata to GitHub, to send only the tender title to GigaChat, and (optionally) to modify the shared Bitrix manager layout. The Apps Script project must remain owner-only because its private secrets.gs contains the GitHub dispatch token and HMAC key.
+The installer asks separately for approval to store the GitHub CLI token in the owner-only Apps Script project, send minimal tender metadata to GitHub, send only the tender title to GigaChat, and (optionally) modify the shared Bitrix manager layout. The Apps Script project must remain owner-only because its private secrets.gs contains the GitHub dispatch token and HMAC key.
 
 After the installer opens Apps Script, select installPollingTrigger() and click Run once. Authorize Gmail read-only, external HTTPS and trigger creation. This installs one five-minute trigger; the laptop may then be turned off.
 

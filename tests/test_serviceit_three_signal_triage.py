@@ -6,7 +6,7 @@ import pytest
 
 from leadpilot.serviceit_three_signal_triage import (
     BADGES, TENDER, VACANCY, DIRECT, REVIEW, TRIAGE_VERSION,
-    TriageBlocked, classify_signal, task_draft,
+    TriageBlocked, classify_signal, task_draft, source_created_title,
 )
 from leadpilot.serviceit_windows_autofill import preliminary_fields
 from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX, AI_FIELDS
@@ -220,3 +220,32 @@ def test_no_unapproved_automatic_tasks_or_contact_network_code():
     assert "import requests" not in triage
     assert "auto_contact" in triage
     assert "manager_task_draft_only" in triage
+
+
+
+def test_source_created_title_three_badges_no_history_or_repeated_prefix():
+    for typ, label in ((TENDER,"📑 ТЕНДЕР"),(VACANCY,"👥 ВАКАНСИЯ"),
+                       (DIRECT,"🎯 ЗАПРОС УСЛУГ")):
+        report={"type":typ}
+        title=source_created_title("Пример запроса",report)
+        assert title.startswith(label)
+        assert source_created_title(title,report)==title
+    with pytest.raises(TriageBlocked, match="CONFLICTING_SOURCE_BADGE"):
+        source_created_title("📑 ТЕНДЕР Пример",{"type":VACANCY})
+
+
+def test_existing_new_card_recruitment_description_explicit_outsourcing_ban():
+    obj={"id":150,
+         "title":"Вакансия 1С программиста",
+         "comments":"Требуется постоянный работник в штат. Аутсорсинг не предлагать.",
+         PREFIX+"SIGNAL_KIND":"1c_vacancy",
+         PREFIX+"SIGNAL_SOURCE":"Работа России",
+         PREFIX+"COMPANY_NAME":"ООО Пример",
+         PREFIX+"REGION":"Москва"}
+    report=preliminary_fields(obj)
+    assert set(report)==AI_FIELDS
+    assert report[PREFIX+"AI_SUMMARY"].startswith("👥 ВАКАНСИЯ")
+    assert "Не звонить и не писать" in report[PREFIX+"AI_NEXT_ACTION"]
+    assert "ДА — НЕ КОНТАКТИРОВАТЬ" in report[PREFIX+"AI_FULL_REPORT"]
+    assert "Задача в Bitrix ещё НЕ создана" in report[PREFIX+"AI_MANAGER_BRIEF"]
+    assert "Lead Score: НЕ РАССЧИТАН" in report[PREFIX+"AI_FULL_REPORT"]

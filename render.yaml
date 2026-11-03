@@ -1,0 +1,42 @@
+# ONE Bitrix event receiver + one exact-ID manager AI worker, on ONE paid instance.
+# Persistent disk is required: NEVER launch a live event consumer on ephemeral storage.
+# Production stays disabled until the corporate Bitrix application token, inbound
+# REST webhook, event subscription, privacy approval and E2E readback are checked.
+services:
+  - type: web
+    name: serviceit-bitrix-automatic-manager
+    runtime: python
+    region: frankfurt
+    plan: starter
+    branch: main
+    autoDeployTrigger: off
+    buildCommand: pip install -r requirements.txt
+    startCommand: mkdir -p /opt/render/project/src/storage/approvals && uvicorn leadpilot.serviceit_bitrix_event_autofill_app:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
+    healthCheckPath: /health
+    disk:
+      name: serviceit-bitrix-event-ledger
+      mountPath: /opt/render/project/src/storage
+      sizeGB: 1
+    envVars:
+      - key: SERVICEIT_EVENT_AUTOFILL_ENABLED
+        value: "NO"
+      - key: SERVICEIT_BITRIX_EVENT_QUEUE_DB
+        value: /opt/render/project/src/storage/new-card-events.sqlite3
+      - key: SERVICEIT_APPROVAL_DIR
+        value: /opt/render/project/src/storage/approvals
+      - key: SERVICEIT_BITRIX_APPLICATION_TOKEN
+        sync: false
+      - key: SERVICEIT_BITRIX_WEBHOOK
+        sync: false
+      - key: SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED
+        value: "NO"
+      - key: AI_ENABLE
+        value: "0"
+      - key: AI_PROVIDER
+        value: gigachat
+      - key: GIGACHAT_CREDENTIALS
+        sync: false
+      - key: GIGACHAT_SCOPE
+        value: GIGACHAT_API_CORP
+      - key: GIGACHAT_MODEL
+        value: GigaChat-2

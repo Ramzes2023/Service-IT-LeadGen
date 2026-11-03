@@ -137,6 +137,17 @@ def manager_readiness(card, item_id, assessment, approval):
                and re.fullmatch(r"[A-Za-z0-9_.:/-]{6,200}",
                                 record["evidence_ref"]) is not None,
                "CORPORATE_" + name.upper() + "_UNVERIFIED")
+    # Block synthetic hosts and injected URL credentials even when the
+    # supplied approval JSON asserts a source was checked.
+    try:
+        url = urlsplit(card.get(SIGNAL_URL, ""))
+        source_ok = (url.scheme == "https" and bool(url.hostname)
+                     and not url.username and not url.password
+                     and not url.hostname.endswith((".invalid", ".localhost"))
+                     and url.port in (None, 443))
+    except (ValueError, TypeError):
+        source_ok = False
+    _guard(source_ok, "MANAGER_PRIMARY_SOURCE_URL_INVALID")
     # Recalculate with the actual versioned deterministic scorer. Neither
     # model confidence nor an arbitrary score in approval can set priority.
     try:
@@ -173,17 +184,6 @@ def manager_readiness(card, item_id, assessment, approval):
            and card.get(REGION) == assessment.get("region")
            and card.get(SIGNAL_URL) == assessment.get("evidence_url"),
            "MANAGER_SOURCE_OR_COMPANY_MISMATCH")
-    # Block synthetic hosts and injected URL credentials even when the
-    # supplied approval JSON asserts a source was checked.
-    try:
-        url = urlsplit(card.get(SIGNAL_URL, ""))
-        source_ok = (url.scheme == "https" and bool(url.hostname)
-                     and not url.username and not url.password
-                     and not url.hostname.endswith((".invalid", ".localhost"))
-                     and url.port in (None, 443))
-    except (ValueError, TypeError):
-        source_ok = False
-    _guard(source_ok, "MANAGER_PRIMARY_SOURCE_URL_INVALID")
     _guard(assessment.get("region") in ("Москва", "Московская область"),
            "MANAGER_MVP_REGION_NOT_ELIGIBLE")
     _guard(isinstance(card.get(SIGNAL_ID), str)

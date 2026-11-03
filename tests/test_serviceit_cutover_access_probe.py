@@ -120,3 +120,17 @@ def test_powershell_diagnostic_runs_probe_only_in_failed_readonly_branch():
     assert "crm.item.update" not in diagnosis
     assert "GIGACHAT_CREDENTIALS" not in diagnosis
     assert "SERVICEIT_CUTOVER_PROBE_" in diagnosis
+
+
+def test_secondary_probe_executes_with_repo_working_directory_even_from_home():
+    ps = Path("scripts/SETUP_SERVICEIT_FREE_GITHUB_ACTIONS.ps1").read_text("utf-8")
+    branch = ps[ps.index("if ($DiagnosticExit -ne 0) {"):ps.index("function Set-SecretFromStdin")]
+    assert branch.index("Push-Location $Repo") < branch.index(
+        "$Python -m leadpilot.serviceit_cutover_access_probe")
+    assert branch.index("$Python -m leadpilot.serviceit_cutover_access_probe") < branch.index(
+        "Pop-Location")
+    assert "CUTOVER_ACCESS_PROBE=UNAVAILABLE_SAFE" in branch
+    assert "Write-Host $_" not in branch
+    assert "Disable-ScheduledTask" not in branch
+    assert "Set-SecretFromStdin" not in branch
+    assert "Set-Variable 'SERVICEIT_FREE_CLOUD_ENABLED'" not in branch

@@ -93,11 +93,28 @@ if ($DiagnoseCutover) {
         if ($DiagnosticExit -ne 0) {
             # Additional bounded read-only investigation: never include CRM
             # record contents or API error descriptions in the console.
-            $ProbeLines = @(& $Python -m leadpilot.serviceit_cutover_access_probe 2>$null)
+            $ProbeLines = @()
+            $ProbeExit = 2
+            try {
+                Push-Location $Repo
+                try {
+                    $ProbeLines = @(& $Python -m leadpilot.serviceit_cutover_access_probe 2>$null)
+                    $ProbeExit = $LASTEXITCODE
+                } finally {
+                    Pop-Location
+                }
+            } catch {
+                # Never print native command errors; they can contain a
+                # webhook path or unexpected CRM data in future versions.
+                Write-Host 'CUTOVER_ACCESS_PROBE=UNAVAILABLE_SAFE'
+            }
             foreach ($Line in $ProbeLines) {
                 if ($Line -cmatch '^SERVICEIT_CUTOVER_PROBE_(TYPE|LIST_MINIMAL|LIST_CATEGORY_ONLY|GET_7|GET_3|CRM_WRITES|GIGACHAT_CALLS|STATUS)=[A-Z0-9_]+$') {
                     Write-Host $Line
                 }
+            }
+            if ($ProbeExit -ne 0) {
+                Write-Host 'CUTOVER_ACCESS_PROBE_EXIT=NOT_OK'
             }
             exit 2
         }

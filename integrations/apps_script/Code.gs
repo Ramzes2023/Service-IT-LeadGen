@@ -391,13 +391,14 @@ function pollAndDispatchB2B() {
       pending.push(id);
       if (pending.length >= SERVICEIT_CONFIG.maxMessagesPerCycle) break;
     }
-    let messages = 0, dispatched = 0, skipped = 0, review = 0;
+    let messages = 0, dispatched = 0, skipped = 0, review = 0, uncertain = 0;
     for (const id of pending) {
       try {
         const result = processMessage_(id);
         messages++;
         dispatched += result.sent;
         skipped += result.skipped;
+        uncertain += result.uncertain || 0;
       } catch (_error) {
         props.setProperty("SERVICEIT_EMAIL_" + id, "REVIEW_REQUIRED");
         review++;
@@ -409,6 +410,7 @@ function pollAndDispatchB2B() {
       dispatched: dispatched,
       skipped: skipped,
       review_required: review,
+      uncertain_dispatches: uncertain,
       external_transmission: dispatched,
       crm_writes: 0
     };

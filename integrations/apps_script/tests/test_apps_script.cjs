@@ -57,7 +57,7 @@ function environment(options={}) {
         Messages: {
           list: (_user, args) => {
             assert.strictEqual(_user,'me');
-            assert.match(args.q,/from:marketplace@b2b-center\.ru/);
+            assert.match(args.q,/from:\\(b2b-center\\.ru\\)/);
             assert.strictEqual(args.maxResults,100);
             calls.list++;
             return {messages:[{id:currentMessage.id}]};

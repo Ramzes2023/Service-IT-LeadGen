@@ -32,12 +32,18 @@ def allowed_public_title(item: dict, hosts: frozenset[str]) -> str:
     source_url = item.get(PREFIX + "SIGNAL_URL")
     if not isinstance(source_url, str) or len(source_url) > 1200:
         raise PreliminaryAIBlocked("PUBLIC_URL_REQUIRED")
-    url = urlsplit(source_url)
-    if (url.scheme != "https" or url.port not in (None, 443)
-            or url.username or url.password or url.fragment
-            or not url.hostname):
+    try:
+        url = urlsplit(source_url)
+        scheme, port, username, password, fragment, host = (
+            url.scheme, url.port, url.username, url.password,
+            url.fragment, url.hostname,
+        )
+    except ValueError:
+        raise PreliminaryAIBlocked("PUBLIC_URL_INVALID") from None
+    if (scheme != "https" or port not in (None, 443)
+            or username or password or fragment or not host):
         raise PreliminaryAIBlocked("PUBLIC_URL_INVALID")
-    host = url.hostname.lower()
+    host = host.lower()
     if host not in hosts and not any(host.endswith("." + item) for item in hosts):
         raise PreliminaryAIBlocked("PUBLIC_HOST_NOT_APPROVED")
     title = item.get("title")

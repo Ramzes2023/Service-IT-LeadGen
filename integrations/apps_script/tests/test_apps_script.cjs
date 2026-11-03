@@ -241,7 +241,8 @@ test('baseline email older than cutover is not dispatched',()=>{
 test('GitHub 503 fences source and never blindly retries',()=>{
   const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'},responseCode:503});
   const result=e.context.pollAndDispatchB2B();
-  assert.strictEqual(result.review_required,1);
+  assert.strictEqual(result.review_required,0);
+  assert.strictEqual(result.uncertain_dispatches,1);
   assert.strictEqual(e.calls.dispatch.length,1);
   assert.match(e.properties.SERVICEIT_SOURCE_1234567,/DISPATCH_UNCERTAIN/);
   e.setResponseCode(204);

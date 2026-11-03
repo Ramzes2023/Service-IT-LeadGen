@@ -25,7 +25,7 @@ class CRM:
             PREFIX+"SIGNAL_ID": "SOME-PUBLIC-TENDER-1234567",
             PREFIX+"SIGNAL_KIND": "tender-opportunity",
             PREFIX+"SIGNAL_URL": source,
-            PREFIX+"SIGNAL_SOURCE": "B2B-Center email subscription",
+            PREFIX+"SIGNAL_SOURCE": "Public procurement feed",
             PREFIX+"STOP_REASON": "",
             PREFIX+"COMPANY_NAME": "Заказчик только в CRM",
             PREFIX+"COMPANY_INN": "7701234567",

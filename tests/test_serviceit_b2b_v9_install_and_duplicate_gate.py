@@ -115,3 +115,28 @@ def test_private_keys_only_owner_local_and_no_unsafe_outputs():
     assert "StandardInput.Write($Value)" in source
     assert "Remove-Item Env:\\SERVICEIT_BITRIX_WEBHOOK" in source
     assert "SERVICEIT_APPS_SCRIPT_V9=INSTALLED_AND_READBACK_VERIFIED" in source
+
+
+
+def test_v9_uses_existing_verified_node_bootstrap_instead_of_winget_retry():
+    script = Path("scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V9.ps1").read_text("utf-8")
+    bootstrap = Path("scripts/ENSURE_SERVICEIT_NODE_LTS.ps1").read_text("utf-8")
+    assert "Join-Path $PSScriptRoot 'ENSURE_SERVICEIT_NODE_LTS.ps1'" in script
+    assert ". $NodeBootstrap" in script
+    assert "$Node = Ensure-ServiceITNode" in script
+    assert "SERVICEIT_NODE_BOOTSTRAP_INCOMPLETE" in script
+    assert "SERVICEIT_SHARED_NODE_BOOTSTRAP_MISSING" in script
+    assert "OpenJS.NodeJS.LTS" not in script
+    assert "NODE_LTS_INSTALL_FAILED" not in script
+    assert "Get-Command 'npm.cmd'" in script
+    assert "Get-Command 'npx.cmd'" in script
+    assert "FOUND_INSTALLED_OR_CACHED" in bootstrap
+    assert "node.exe" in bootstrap and "npm.cmd" in bootstrap and "npx.cmd" in bootstrap
+    assert "OFFICIAL_NODE_SHA256_MISMATCH" in bootstrap
+
+
+def test_v9_node_bootstrap_is_before_cloud_secrets_and_writes():
+    script = Path("scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V9.ps1").read_text("utf-8")
+    assert script.index("$Node = Ensure-ServiceITNode") < script.index("Set-GhSecret 'SERVICEIT_BITRIX_WEBHOOK'")
+    assert script.index("$Node = Ensure-ServiceITNode") < script.index("Set-GhVar 'SERVICEIT_B2B_INGEST_ENABLED' 'YES'")
+    assert script.index("$Node = Ensure-ServiceITNode") < script.index("SERVICEIT_GMAIL_PROJECT=NEW_CREATED_ID_PERSISTED")

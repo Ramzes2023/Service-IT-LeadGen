@@ -1,0 +1,56 @@
+name: ServiceIT manager and AI form layout (guarded free)
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Shared layout change (requires company administrator approval)"
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: serviceit-1062-21-shared-manager-layout
+  cancel-in-progress: false
+
+jobs:
+  safe-manager-layout:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issue_comment' &&
+        github.event.issue.number == 74 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_MANAGER_LAYOUT_READONLY_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_MANAGER_LAYOUT_APPLY: ${{ vars.SERVICEIT_MANAGER_LAYOUT_APPLY }}
+      SERVICEIT_MANAGER_LAYOUT_ADMIN_APPROVED: ${{ vars.SERVICEIT_MANAGER_LAYOUT_ADMIN_APPROVED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install checked requirements
+        run: python -m pip install -r requirements.txt
+      - name: Preview shared layout without writes
+        if: ${{ github.event_name == 'issue_comment' || !inputs.apply }}
+        run: python -m leadpilot.serviceit_manager_layout_operator
+      - name: Approved backup-first shared layout change with readback
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
+        run: python -m leadpilot.serviceit_manager_layout_operator --apply

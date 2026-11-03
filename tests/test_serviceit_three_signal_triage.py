@@ -15,10 +15,10 @@ NOW = datetime(2026, 11, 3, 13, 0, tzinfo=timezone.utc)
 
 
 def item(**kwargs):
-    return {"title": "Компания ищет 1С-программиста в штат",
+    return {**{"title": "Компания ищет 1С-программиста в штат",
             "description": "требуется программист 1С 8.3",
             "signal_kind": "1c_vacancy", "source": "Работа России",
-            "region": "Москва", "company": "ООО Пример", **kwargs}
+            "region": "Москва", "company": "ООО Пример"}, **kwargs}
 
 
 def verified(**kwargs):

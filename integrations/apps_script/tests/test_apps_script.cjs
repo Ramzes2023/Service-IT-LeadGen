@@ -126,9 +126,11 @@ function environment(options={}) {
           ['dispatch_id','email_message_id','mailbox','notice','version'].sort());
         assert.strictEqual(payload.mailbox,EMAIL);
         assert.strictEqual(payload.email_message_id,MID);
-        assert.strictEqual(payload.notice.tender_id,'1234567');
+        assert(['1234567', '1234568'].includes(payload.notice.tender_id));
         assert.strictEqual(payload.notice.source_url,
-          'https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/');
+          payload.notice.tender_id === '1234567'
+            ? 'https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/'
+            : 'https://www.b2b-center.ru/market/podderzhka-serverov/tender-1234568/');
         assert.strictEqual(payload.notice.buyer_inn,null);
         assert.strictEqual(payload.notice.contact_approved,false);
         assert(!cp.payload_json.includes('raw_b64url'));
@@ -186,6 +188,31 @@ test('signed minimal tender dispatch is accepted once',()=>{
   assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'DONE');
   e.context.pollAndDispatchB2B();
   assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('two IT tenders from one email are dispatched across separate cycles, never burst',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  e.setMessage(message(MID,{body:[
+    'Организатор закупки: АО "СО ЕЭС"',
+    'Предмет закупки: Услуги технической поддержки IT-инфраструктуры и серверов',
+    'https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/',
+    'Организатор закупки: ООО "Пример"',
+    'Предмет закупки: Услуги поддержки серверов и сетевой инфраструктуры',
+    'https://www.b2b-center.ru/market/podderzhka-serverov/tender-1234568/'
+  ].join('\n')}));
+  const first=e.context.pollAndDispatchB2B();
+  assert.strictEqual(first.dispatched,1);
+  assert.strictEqual(first.pending_tenders_deferred,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'PENDING');
+  const second=e.context.pollAndDispatchB2B();
+  assert.strictEqual(second.dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,2);
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'DONE');
+  assert.strictEqual(e.calls.dispatch[0].notice.tender_id,'1234567');
+  assert.strictEqual(e.calls.dispatch[1].notice.tender_id,'1234568');
+  e.context.pollAndDispatchB2B();
+  assert.strictEqual(e.calls.dispatch.length,2);
 });
 
 test('existing tender 4665948 and retired tender 4661617 are never recreated',()=>{

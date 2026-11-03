@@ -121,10 +121,10 @@ foreach ($Needed in @('SERVICEIT_BITRIX_WEBHOOK',
 function Get-GhVarValue([string]$Name) {
     Guard ($Name -match '^[A-Z0-9_]{8,100}$') 'SERVICEIT_GITHUB_VARIABLE_NAME_INVALID'
     $Filter = '.[] | select(.name == "' + $Name + '") | .value'
-    $Args = @('variable', 'list', '--repo', $RepositoryName,
+    $LookupArgs = @('variable', 'list', '--repo', $RepositoryName,
               '--json', 'name,value', '--jq', $Filter)
     $Code = 'SERVICEIT_GH_VARIABLE_LOOKUP_FAILED_' + $Name
-    $Text = SafeGh $Args $Code
+    $Text = SafeGh $LookupArgs $Code
     return $Text
 }
 $RawPrivacy = Get-GhVarValue 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED'

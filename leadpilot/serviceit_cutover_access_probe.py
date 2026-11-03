@@ -1,0 +1,118 @@
+"""Bounded read-only Bitrix24 access probe for the ServiceIT free-cloud cutover.
+
+Run only with an authorized SERVICEIT_BITRIX_WEBHOOK environment secret.
+Outputs fixed non-sensitive status codes, NEVER source/CRM text, API response,
+customer names, webhook URLs, token, or arbitrary exception strings.
+
+We probe the documented list operation using minimal parameters separately
+from known existing historical card IDs 3/7 (read-only ONLY), to determine
+whether the repeated nested empty responses are filter/visibility related.
+This code does not declare an upper-bound cutover and cannot activate cloud.
+"""
+from __future__ import annotations
+
+import os
+
+import httpx
+
+from .serviceit_enrichment_worker import Rest
+
+
+def _list_kind(result):
+    if not isinstance(result, dict):
+        return "INVALID_RESULT"
+    records = result.get("items")
+    if type(records) is not list or len(records) > 50:
+        return "INVALID_ITEMS"
+    if not records:
+        return "FLAT_EMPTY"
+    if all(type(item) is dict for item in records):
+        return "FLAT_OBJECTS"
+    if all(type(group) is list for group in records):
+        if all(len(group) == 0 for group in records):
+            return "NESTED_EMPTY"
+        if all(group and all(type(x) is dict for x in group) for group in records):
+            return "NESTED_OBJECTS"
+        return "NESTED_MALFORMED"
+    return "MIXED_OR_INVALID"
+
+
+def _safe_list(rest, params):
+    try:
+        return _list_kind(rest("crm.item.list", params))
+    except Exception:
+        return "API_UNAVAILABLE"
+
+
+def _safe_card(rest, card_id):
+    try:
+        result = rest("crm.item.get", {
+            "entityTypeId": 1062, "id": card_id, "useOriginalUfNames": "Y",
+        })
+        item = result.get("item")
+        if not isinstance(item, dict):
+            return "INVALID_RESULT"
+        if (str(item.get("id")) == str(card_id)
+                and str(item.get("entityTypeId")) == "1062"
+                and str(item.get("categoryId")) == "21"):
+            return "VISIBLE_1062_21"
+        if (str(item.get("id")) == str(card_id)
+                and str(item.get("entityTypeId")) == "1062"):
+            return "VISIBLE_OTHER_CATEGORY"
+        return "IDENTITY_UNVERIFIED"
+    except Exception:
+        return "API_UNAVAILABLE"
+
+
+def _safe_type(rest):
+    try:
+        result = rest("crm.type.getByEntityTypeId", {"entityTypeId": 1062})
+        row = result.get("type")
+        if (isinstance(row, dict) and
+                str(row.get("entityTypeId")) == "1062"):
+            return "VERIFIED_1062"
+        return "UNVERIFIED"
+    except Exception:
+        return "API_UNAVAILABLE"
+
+
+def probe(rest):
+    """Only five GET/read-only-equivalent REST calls in the specified scope."""
+    return {
+        "TYPE": _safe_type(rest),
+        "LIST_MINIMAL": _safe_list(rest, {
+            "entityTypeId": 1062, "useOriginalUfNames": "Y",
+            "select": ["id", "categoryId"], "start": 0,
+        }),
+        "LIST_CATEGORY_ONLY": _safe_list(rest, {
+            "entityTypeId": 1062, "useOriginalUfNames": "Y",
+            "filter": {"categoryId": 21},
+            "select": ["id", "categoryId"], "start": 0,
+        }),
+        "GET_7": _safe_card(rest, 7),
+        "GET_3": _safe_card(rest, 3),
+    }
+
+
+def main():
+    webhook = os.environ.pop("SERVICEIT_BITRIX_WEBHOOK", "")
+    if not webhook:
+        print("SERVICEIT_CUTOVER_PROBE_STATUS=NO_WEBHOOK")
+        return 2
+    try:
+        with httpx.Client(
+            trust_env=False, follow_redirects=False, timeout=20,
+        ) as client:
+            statuses = probe(Rest(webhook, client))
+    except Exception:
+        print("SERVICEIT_CUTOVER_PROBE_STATUS=BLOCKED")
+        return 2
+    for label in ("TYPE", "LIST_MINIMAL", "LIST_CATEGORY_ONLY", "GET_7", "GET_3"):
+        print("SERVICEIT_CUTOVER_PROBE_" + label + "=" + statuses[label])
+    print("SERVICEIT_CUTOVER_PROBE_CRM_WRITES=0")
+    print("SERVICEIT_CUTOVER_PROBE_GIGACHAT_CALLS=0")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

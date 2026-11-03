@@ -56,7 +56,8 @@ jobs:
               'scripts/RESUME_SERVICEIT_BITRIX_AI_CODEX_WORKTREE.ps1',
               'scripts/PUBLISH_SERVICEIT_CODEX_WORKTREE_DRAFT.ps1',
               'scripts/PROBE_SERVICEIT_EXISTING_REST_FALLBACK.ps1',
-              'scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V9.ps1'
+              'scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V9.ps1',
+              'scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1'
           )) {
               $tokens = $null
               $errors = $null

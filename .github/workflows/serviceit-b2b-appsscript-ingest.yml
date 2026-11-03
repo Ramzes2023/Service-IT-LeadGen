@@ -9,7 +9,10 @@ permissions:
   issues: write
 
 concurrency:
-  group: serviceit-b2b-appsscript-ingest
+  # All legacy issue-based HOLD writers use the same group. Without this,
+  # an Apps Script dispatch and issue-comment writer can race between
+  # GitHub source marker GET and reservation POST and create a duplicate.
+  group: serviceit-b2b-bitrix-issue-66
   cancel-in-progress: false
 
 jobs:

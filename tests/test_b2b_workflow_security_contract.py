@@ -19,3 +19,19 @@ def test_b2b_issue_to_bitrix_workflow_requires_explicit_enabled_variable():
     assert "crm.item.add" not in yml
     assert "crm.item.update" not in yml
     assert "SERVICEIT_B2B_GMAIL_APP_PASSWORD" not in yml
+
+
+
+def test_all_b2b_source_writers_share_one_non_cancelling_concurrency_group():
+    from pathlib import Path
+    for workflow in (
+        "b2b-gmail-to-bitrix-hold.yml",
+        "serviceit-b2b-single-hold-pilot.yml",
+        "serviceit-b2b-direct-id-new-notice.yml",
+        "serviceit-b2b-appsscript-ingest.yml",
+    ):
+        text = (Path(".github/workflows") / workflow).read_text("utf-8")
+        assert "concurrency:" in text, workflow
+        assert "group: serviceit-b2b-bitrix-issue-66" in text, workflow
+        assert "cancel-in-progress: false" in text, workflow
+    # A serial queue prevents concurrent "read marker then reserve" races.

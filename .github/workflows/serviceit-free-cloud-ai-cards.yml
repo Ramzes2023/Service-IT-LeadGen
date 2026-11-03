@@ -1,9 +1,8 @@
 name: ServiceIT Free Cloud AI Cards
 
+# Legacy list-poller retained for manual forensic use only. It is not scheduled:
+# Bitrix crm.item.list currently returns an untrusted nested empty shape.
 on:
-  schedule:
-    # Deliberately avoid the busiest top-of-hour minute.
-    - cron: "3/5 * * * *"
   workflow_dispatch:
 
 permissions:

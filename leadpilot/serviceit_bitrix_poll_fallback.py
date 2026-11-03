@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import base64
+import binascii
 from hashlib import sha256
 import hmac
 import json
@@ -238,7 +239,8 @@ def encrypted_receipt_exists(client: httpx.Client, card: int,
                 and type(receipt.get("card")) is int
                 and receipt["card"] == card,
                 "POLL_LEDGER_RECEIPT_MISMATCH")
-    except (ValueError, TypeError, UnicodeError, InvalidToken, KeyError):
+    except (ValueError, TypeError, UnicodeError, InvalidToken, KeyError,
+            binascii.Error):
         raise PollBlocked("POLL_LEDGER_RECEIPT_UNVERIFIED") from None
     return True
 

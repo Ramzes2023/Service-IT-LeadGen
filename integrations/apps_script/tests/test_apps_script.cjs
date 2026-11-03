@@ -206,7 +206,7 @@ test('HTML-only B2B-Center bulletin parses a database-maintenance tender safely'
   const e=environment();
   const html=[
     '<div>Конкурс № 1234568</div>',
-    '<div>Организатор: АО "СО ЕЭС"</div>',
+    '<div>Организатор: <a href="https://www.b2b-center.ru/firms/ao/1/">АО "СО ЕЭС"</a></div>',
     '<div>Предмет&nbsp;договора:&nbsp;Право заключения договора оказания услуг по техническому обслуживанию базы данных</div>',
     '<a href="https://www.b2b-center.ru/market/pravo-zakliucheniia-dogovora/tender-1234568/?utm_source=mail">Конкурс № 1234568</a>'
   ].join('');

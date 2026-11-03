@@ -185,10 +185,22 @@ def bitrix_call(client, base, method, params):
 
 
 def exact_duplicate(client, base, source_id):
+    """Fail-closed source duplicate check: list for candidate IDs, exact GET proof.
+
+    Bitrix CRM documentation explicitly says `entityTypeId` is dropped from
+    list `select` and must not be required in list result items. If the list
+    contains malformed nested arrays or ambiguous pages, never interpret it
+    as "no duplicate"; block the write. Each returned ID is independently
+    checked via crm.item.get for 1062/category 21 and exact source ID.
+    """
+    must(isinstance(source_id, str)
+         and re.fullmatch(r"B2B-CENTER-\d{5,12}", source_id),
+         "CRM_SOURCE_ID_INVALID")
     response = bitrix_call(client, base, "crm.item.list", {
         "entityTypeId": 1062, "useOriginalUfNames": "Y",
         "filter": {"categoryId": 21, SIGNAL: source_id},
-        "select": ["id", "entityTypeId", "categoryId", SIGNAL], "start": 0})
+        # entityTypeId is NOT a supported list select field (Bitrix drops it).
+        "select": ["id", "categoryId", SIGNAL], "start": 0})
     body = response["result"]
     must("next" not in body and "next" not in response,
          "CRM_PAGED_UNCERTAIN")
@@ -197,16 +209,27 @@ def exact_duplicate(client, base, source_id):
          "CRM_LIST_INCOMPLETE")
     for item in items:
         must(isinstance(item, dict)
-             and str(item.get("entityTypeId")) == "1062"
              and str(item.get("categoryId")) == "21"
              and item.get(SIGNAL) == source_id
-             and type(item.get("id")) is int and item["id"] > 0,
+             and type(item.get("id")) is int and 0 < item["id"] <= 2_000_000_000,
              "CRM_ITEM_OUT_OF_SCOPE")
-    if "total" in body:
-        must(type(body["total"]) is int and body["total"] == len(items),
-             "CRM_TOTAL_MISMATCH")
+        # Exact GET checks the type independently because Bitrix removes
+        # entityTypeId from list select output.
+        exact = bitrix_call(client, base, "crm.item.get", {
+            "entityTypeId": 1062, "id": item["id"],
+            "useOriginalUfNames": "Y"})
+        found = exact["result"].get("item")
+        must(isinstance(found, dict)
+             and str(found.get("id")) == str(item["id"])
+             and str(found.get("entityTypeId")) == "1062"
+             and str(found.get("categoryId")) == "21"
+             and found.get(SIGNAL) == source_id,
+             "CRM_DUPLICATE_EXACT_GET_UNVERIFIED")
+    for total in (response.get("total"), body.get("total")):
+        if total is not None:
+            must(type(total) is int and total == len(items),
+                 "CRM_TOTAL_MISMATCH")
     return items
-
 
 def run_once(event, *, client=None, github_token="", webhook="", live=False):
     notice, services = notice_from_event(event)

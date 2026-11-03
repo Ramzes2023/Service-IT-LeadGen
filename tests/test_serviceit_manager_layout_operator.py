@@ -182,3 +182,16 @@ def test_reference_urls_never_touch_customer_information():
     assert "tasks.task.add" not in source
     assert "crm.item.details.configuration.set" in source
     assert "trust_env=False" in source
+
+
+def test_owner_issue_marker_triggers_only_readonly_layout_probe():
+    from pathlib import Path
+    text = Path(".github/workflows/serviceit-manager-layout-safe.yml").read_text()
+    assert "issue_comment:" in text
+    assert "github.event.issue.number == 74" in text
+    assert "github.actor == 'Ramzes2023'" in text
+    assert "SERVICEIT_MANAGER_LAYOUT_READONLY_V1" in text
+    assert "github.event_name == 'issue_comment' || !inputs.apply" in text
+    assert "github.event_name == 'workflow_dispatch' && inputs.apply" in text
+    assert "SERVICEIT_MANAGER_LAYOUT_APPLY" in text
+    assert "serviceit-1062-21-shared-manager-layout" in text

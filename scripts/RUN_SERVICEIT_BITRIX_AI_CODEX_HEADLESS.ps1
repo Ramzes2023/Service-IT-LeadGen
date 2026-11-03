@@ -79,12 +79,48 @@ Write-Host 'SERVICEIT_CODEX_METHOD=HEADLESS_STDIN'
 Write-Host ('SERVICEIT_WORKTREE=' + $Worktree)
 Write-Host 'BITRIX_SCOPE=1062_21_ALL_NEW_CARDS'
 Write-Host 'CODEX_REAL_CRM_WRITES=FORBIDDEN'
-$Instructions | & $Codex @Args 2>&1 | Tee-Object -FilePath $CodexLog
-$CodexExit = $LASTEXITCODE
-if ($CodexExit -ne 0) {
-    Write-Host ('CODEX_LOG=' + $CodexLog)
-    throw 'CODEX_HEADLESS_NONZERO'
+# Windows PowerShell 5.1 promotes native stderr to NativeCommandError when
+# ErrorActionPreference=Stop. Codex can print a non-fatal model-catalog
+# refresh timeout and still complete successfully. Capture the REAL exit
+# status; do not treat a diagnostic stderr line as a deployment success/fail.
+$CodexExit = $null
+for ($Attempt = 1; $Attempt -le 2; $Attempt++) {
+    Write-Host ('SERVICEIT_CODEX_ATTEMPT=' + $Attempt)
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $Instructions | & $Codex @Args 2>&1 |
+            ForEach-Object { $_.ToString() } |
+            Tee-Object -FilePath $CodexLog -Append
+        $CodexExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+    if ($CodexExit -eq 0) { break }
+
+    # A network timeout justifies ONE retry only if the isolated worktree
+    # is still pristine. Never blindly rerun modified code or a CRM call.
+    $ModifiedBeforeRetry = @(& git -C $Worktree status --porcelain)
+    if ($LASTEXITCODE -ne 0) { throw 'CODEX_WORKTREE_RETRY_STATE_UNVERIFIED' }
+    $TimedOut = (Test-Path -LiteralPath $CodexLog -PathType Leaf) -and
+        (Select-String -LiteralPath $CodexLog -SimpleMatch
+            -Pattern 'failed to refresh available models: request timed out' -Quiet)
+    if ($Attempt -ge 2 -or $ModifiedBeforeRetry.Count -ne 0 -or -not $TimedOut) {
+        Write-Host ('CODEX_LOG=' + $CodexLog)
+        Write-Host ('CODEX_EXIT_CODE=' + $CodexExit)
+        throw 'CODEX_HEADLESS_NONZERO_REVIEW_REQUIRED'
+    }
+    Write-Host 'SERVICEIT_CODEX_NETWORK_TIMEOUT=RETRY_ONCE_PRISTINE_WORKTREE'
+    Start-Sleep -Seconds 5
 }
+if ($CodexExit -ne 0) { throw 'CODEX_HEADLESS_NONZERO' }
+if (-not (Test-Path -LiteralPath $Report -PathType Leaf) -or
+    (Get-Item -LiteralPath $Report).Length -eq 0) {
+    Write-Host ('CODEX_LOG=' + $CodexLog)
+    throw 'CODEX_FINAL_REPORT_MISSING_DEPLOY_BLOCKED'
+}
+Write-Host 'SERVICEIT_CODEX_EXIT=0_FINAL_REPORT_PRESENT'
 
 Push-Location $Worktree
 try {

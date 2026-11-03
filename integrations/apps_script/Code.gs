@@ -154,8 +154,8 @@ function messageText_(message) {
   collectParts_(message.payload || {}, output);
   const candidates = output.plain.concat(output.html.map(htmlToText_));
   const text = candidates.sort(function (a, b) {
-    return (b.match(/b2b-center\\.ru/gi) || []).length -
-      (a.match(/b2b-center\\.ru/gi) || []).length;
+    return (b.match(/b2b-center\.ru/gi) || []).length -
+      (a.match(/b2b-center\.ru/gi) || []).length;
   })[0] || "";
   if (!text || text.length > SERVICEIT_CONFIG.maxEmailText) {
     throw new Error("SERVICEIT_EMAIL_CONTENT_INVALID");

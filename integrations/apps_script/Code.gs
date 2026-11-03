@@ -194,7 +194,10 @@ function getField_(block, name) {
   const escaped = name.replace(/[.*+?^|()[\]\\]/g, "\\$&");
   const re = new RegExp(escaped + "\\s*:\\s*(.+?)\\s*(?:\\n|$)", "i");
   const match = String(block).match(re);
-  return match ? match[1].trim().replace(/\s+/g, " ").slice(0, 320) : null;
+  if (!match) return null;
+  return match[1]
+    .replace(/\s*\[https?:\/\/[^\]]+\]/gi, "")
+    .trim().replace(/\s+/g, " ").slice(0, 320);
 }
 
 function classifyServices_(title) {

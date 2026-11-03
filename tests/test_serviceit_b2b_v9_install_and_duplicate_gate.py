@@ -206,3 +206,22 @@ def test_github_owner_readonly_duplicate_gate_cannot_modify_crm_or_expose_secret
     assert "B2B_EXACT_DUPLICATE_REASON=" in probe
     assert "NO_NEW_CARDS_OR_AI_ACTIVATED=YES" in probe
     assert "crm.item.add" not in probe and "crm.item.update" not in probe
+
+
+
+def test_v9_preserves_preexisting_encrypted_ledger_secret_without_rotation():
+    script = Path("scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V9.ps1").read_text("utf-8")
+    assert "SERVICEIT_GH_LEDGER_KEY=EXISTING_REMOTE_REUSED_NO_ROTATION" in script
+    assert "$UploadLedgerKey=$false" in script
+    assert "if($UploadLedgerKey){Set-GhSecret 'SERVICEIT_GH_LEDGER_KEY' $Fernet}" in script
+    assert "REMOTE_FERNET_KEY_WITHOUT_LOCAL_COPY" not in script
+    assert "NEW_LOCAL_KEY_CREATED" in script
+    assert script.index("if($names -contains 'SERVICEIT_GH_LEDGER_KEY')") < script.index(
+        "if($UploadLedgerKey){Set-GhSecret 'SERVICEIT_GH_LEDGER_KEY' $Fernet}")
+
+
+def test_v9_error_cleanup_removes_remote_readback_secret_copies():
+    script = Path("scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V9.ps1").read_text("utf-8")
+    assert "foreach($folder in @('stage','readback','backup','extract'))" in script
+    assert "Remove-Item -LiteralPath $secretFile -Force" in script
+    assert "SERVICEIT_BACKUP_AND_DIAGNOSTICS" in script

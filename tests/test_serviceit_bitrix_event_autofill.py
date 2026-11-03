@@ -89,6 +89,9 @@ def test_one_real_event_produces_nine_manager_report_fields_without_crm_listing(
     assert crm.item[PREFIX+"AI_STATUS"] == "NOT_RUN_SOURCE_UNVERIFIED"
     assert "Менеджер" in crm.item[PREFIX+"AI_FULL_REPORT"] or "менеджер" in crm.item[PREFIX+"AI_FULL_REPORT"]
     assert "Следующий шаг" in crm.item[PREFIX+"AI_FULL_REPORT"]
+    assert "Услуги IT-аутсорсинга" in crm.item[PREFIX+"AI_SUMMARY"]
+    assert "new-verified-source-pending" in crm.item[PREFIX+"AI_FULL_REPORT"]
+    assert "Эти сведения ещё не проверены" in crm.item[PREFIX+"AI_FULL_REPORT"]
     assert crm.item[PREFIX+"LEAD_SCORE"] is None
     assert crm.item[PREFIX+"AI_SCORE_BADGE"] is None
     assert event_worker.run_event_cycle(store, crm, approvals_dir=approvals)["event_ids_seen"] == 0

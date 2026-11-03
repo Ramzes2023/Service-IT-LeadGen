@@ -29,6 +29,8 @@ try {
     if ($ErrorActionPreference -cne 'Stop') { throw 'ERR_ACTION_NOT_RESTORED' }
     $Logged = @(Select-String -LiteralPath $TempLog -SimpleMatch -Pattern 'SYNTHETIC_CODEX_MODEL_CATALOG_TIMEOUT')
     if ($Logged.Count -lt 2) { throw 'STDERR_DIAGNOSTIC_NOT_LOGGED' }
+    # The preceding intentional synthetic exit 23 must not become this CI step's exit.
+    $global:LASTEXITCODE = 0
     Write-Output 'SERVICEIT_CODEX_NATIVE_STDERR_PS51=PASS'
 }
 finally {

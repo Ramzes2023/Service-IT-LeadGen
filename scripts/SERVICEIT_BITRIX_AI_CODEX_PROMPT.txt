@@ -1,0 +1,59 @@
+ROLE: Senior engineer responsible for ServiceIT BITRIX24 INTERNAL automation ONLY.
+Use repo Ramzes2023/Service-IT-LeadGen, portal serviseit.bitrix24.ru,
+smart process entityTypeId=1062, categoryId=21.
+The task: EVERY new card (any source) -> actual GigaChat when approved ->
+accurate fields/full report -> manager in existing Bitrix24. No sources/Gmail.
+Historical CRM cards #3 and deleted #7 MUST NOT be modified.
+
+COMPLETION WORK (do it, do not just write an architectural plan):
+1. Inspect and fix leadpilot/serviceit_bitrix_dispatch_worker.py,
+   integrations/bitrix_event_bridge/Code.gs and appsscript.json,
+   .github/workflows/serviceit-bitrix-new-card-ai.yml.
+   This free event path is Bitrix24 official outgoing webhook ->
+   owner-only Google Apps Script standalone web app -> signed GitHub dispatch ->
+   GitHub Actions -> exact crm.item.get -> safe manager AI fields ->
+   exact crm.item.update readback. Do NOT use crm.item.list.
+2. Complete scripts/INSTALL_SERVICEIT_BITRIX_EVENT_BRIDGE.ps1:
+   owner-local ONE-TIME deployment, no TinyFish. Read the existing same-user
+   DPAPI REST webhook at LOCALAPPDATA/ServiceIT/AI-Autofill/bitrix-rest.dpapi.
+   Use GitHub CLI secret set by stdin (not command-line args). Generate a
+   dedicated HMAC key and store in DPAPI, install only a NEW standalone
+   Apps Script project using clasp; NEVER overwrite the existing Gmail app.
+   Verify Google owner and GitHub repo identities. Start GitHub AI event var
+   OFF. Obtain fresh Bitrix outgoing webhook application_token with a hidden
+   owner prompt after the official webhook builder has created it; do NOT
+   invent that token, impersonate admin or use the inbound REST webhook as
+   outgoing token. The web app must execute as the owner and allow external
+   unauthenticated HTTP callback but VERIFY Bitrix domain/application_token.
+   Verify deployed public /exec URL, and fail closed if its anonymous
+   execution access cannot be confirmed. Never echo passwords, tokens, or
+   customer fields. Require explicit authorization before any CRM update.
+   Only after all acknowledgments enable the GitHub event workflow.
+3. Fix existing source-independent CRM automation bugs if revealed by tests,
+   especially real source cards that already contain preliminary HOLD fields,
+   unexpected empty list response, and permanent no-retry on ambiguous writes.
+   Preserve business fields, stages, manager, contacts, tasks, existing clients.
+4. For each new card fill NINE honest AI fields with actual source context,
+   manager report and next action. When independently verified corporate
+   approval with nine evidence gates exists, use existing GigaChat +
+   deterministic scoring/version/badge, and exact readback. Never manufacture
+   Score/qualification for unverified tender notices. For unverified cards,
+   optional title-only GigaChat is allowed ONLY with explicit corporate privacy
+   decision; do not send full CRM or contact/INN data to personal model.
+   Model remains GigaChat as primary with future provider config switch.
+5. Add synthetic end-to-end and regression tests. Run Python compile/pytest,
+   Node offline Apps Script tests, and PowerShell 5.1 script syntax checks.
+   Never perform real corporate CRM writes, real GigaChat requests, alter
+   production variables, deploy paid resources or read user's DPAPI secrets
+   from THIS Codex session. Those actions are exclusively for the separate,
+   owner-run approved installer AFTER code review.
+6. Produce tests results, architecture and exact activation blockers in
+   docs/SERVICEIT_BITRIX_FREE_EVENT_AI.md. Keep previous infrastructure
+   unchanged, and do not call the automation LIVE until one genuine new
+   1062/21 card is processed and exact CRM readback proves manager report.
+7. Minimize user steps and never ask for data already saved in local DPAPI.
+   In the final answer use headings IMPLEMENTED / TESTS / BLOCKED_LIVE_GATES /
+   ONE_COMMAND_TO_INSTALL. State whether Bitrix outgoing webhook UI requires
+   authorized user/admin action and never suggest TinyFish.
+
+DO NOT fabricate successes or bypass Bitrix permissions. Never paste secret tokens. Do not publish secrets.

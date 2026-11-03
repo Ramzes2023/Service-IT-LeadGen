@@ -25,7 +25,7 @@ import httpx
 from .serviceit_bitrix_dispatch_worker import (
     EVENT, LIVE_FLAG, MAX_CARD, MIN_CARD, PORTAL, REPOSITORY,
 )
-from .serviceit_enrichment_worker import Rest
+from .bitrix_metadata_audit import validate_webhook
 
 POLL_FLAG = "YES_1062_21_READONLY"
 WINDOW = timedelta(hours=2)
@@ -178,11 +178,30 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     lower = (current - timedelta(minutes=10) if probe_only
              else after_activation(env, current))
-    # Existing Rest allowlist does not permit update without a separate call
-    # from the event worker. Here ONLY crm.item.list may be invoked.
+    # Read-only REST call preserves Bitrix TOP-LEVEL "next" and "total".
+    # The general CRM Rest wrapper intentionally strips these pagination
+    # markers; using it here would risk dropping records after the first 50.
+    base = validate_webhook(webhook)
     def list_only(method, params):
-        require(method == "crm.item.list", "POLL_READONLY_METHOD_REQUIRED")
-        return Rest(webhook, client)(method, params)
+        require(method == "crm.item.list" and type(params) is dict
+                and params.get("entityTypeId") == 1062
+                and params.get("useOriginalUfNames") == "Y"
+                and params.get("select") == ["id", "categoryId", "createdTime"]
+                and params.get("filter", {}).get("categoryId") == 21,
+                "POLL_READONLY_METHOD_REQUIRED")
+        response = client.post(base + "/crm.item.list.json", json=params,
+                               follow_redirects=False, timeout=25)
+        require(response.status_code == 200 and len(response.content) <= 512000,
+                "POLL_REST_HTTP_UNVERIFIED")
+        body = response.json()
+        require(type(body) is dict and "error" not in body
+                and type(body.get("result")) is dict,
+                "POLL_REST_RESPONSE_INVALID")
+        result = body["result"]
+        for name in ("next", "total"):
+            if name in body:
+                result[name] = body[name]
+        return result
     cards = discover(list_only, lower, current)
     if probe_only:
         return {"status": "POLL_READONLY_LIST_PASS", "crm_writes": 0,

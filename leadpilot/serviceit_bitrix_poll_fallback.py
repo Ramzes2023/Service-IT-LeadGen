@@ -66,10 +66,10 @@ def after_activation(env: dict, now: datetime) -> datetime:
 def build_query(lower: datetime, start: int) -> dict:
     return {
         "entityTypeId": 1062,
-        "useOriginalUfNames": "Y",
+        "useOriginalUfNames": "N",
         "filter": {"categoryId": 21,
                    ">=createdTime": lower.isoformat(timespec="seconds")},
-        "order": {"createdTime": "ASC", "id": "ASC"},
+        "order": {"id": "ASC"},
         "select": ["id", "categoryId", "createdTime"],
         "start": start,
     }
@@ -97,6 +97,9 @@ def discover(rest, start: datetime, now: datetime) -> list[int]:
         if not items:
             require(response.get("next") is None and (total in (None, 0) or next_start >= total),
                     "POLL_LIST_EMPTY_PAGE_UNVERIFIED")
+        # A Bitrix installation may return a flat list but ignore a time
+        # filter. Individual timestamps are validated below; NEVER trust
+        # the server-side filter alone to protect historical cards.
         for item in items:
             require(type(item) is dict, "POLL_ITEM_INVALID")
             raw_id = item.get("id")
@@ -185,7 +188,7 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
     def list_only(method, params):
         require(method == "crm.item.list" and type(params) is dict
                 and params.get("entityTypeId") == 1062
-                and params.get("useOriginalUfNames") == "Y"
+                and params.get("useOriginalUfNames") == "N"
                 and params.get("select") == ["id", "categoryId", "createdTime"]
                 and params.get("filter", {}).get("categoryId") == 21,
                 "POLL_READONLY_METHOD_REQUIRED")
@@ -200,6 +203,9 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
         result = body["result"]
         for name in ("next", "total"):
             if name in body:
+                # Reject conflicting metadata before trusting a page as complete.
+                if name in result and result[name] != body[name]:
+                    raise PollBlocked("POLL_PAGINATION_METADATA_CONFLICT")
                 result[name] = body[name]
         return result
     cards = discover(list_only, lower, current)

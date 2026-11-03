@@ -89,9 +89,10 @@ if(-not (Test-Path (Join-Path $LocalRepo '.git') -PathType Container)){throw 'LO
 $ghcmd=Get-Command gh -ErrorAction SilentlyContinue
 if(-not $ghcmd){throw 'GITHUB_CLI_NOT_AVAILABLE'}
 $Gh=$ghcmd.Source
-$node=Get-Command node.exe -ErrorAction SilentlyContinue
+. (Join-Path $PSScriptRoot 'ENSURE_SERVICEIT_NODE_LTS.ps1')
+$node=Ensure-ServiceITNode
 $npx=Get-Command npx.cmd -ErrorAction SilentlyContinue
-if(-not $node -or -not $npx){throw 'NODE_LTS_AND_NPX_REQUIRED'}
+if(-not $node -or -not $npx){throw 'SERVICEIT_NODE_BOOTSTRAP_INCOMPLETE'}
 New-Item -ItemType Directory -Path $Root,$Project -Force | Out-Null
 
 $Allowed=Read-Host 'Is corporate ServiceIT manager approval given to write ONLY new 1062/21 AI fields? Type YES'

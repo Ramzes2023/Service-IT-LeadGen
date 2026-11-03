@@ -67,6 +67,27 @@ def test_unverified_card_gets_all_nine_honest_report_fields():
     assert all(0 < len(value) <= 12000 for value in fields.values())
 
 
+def test_source_preliminary_hold_is_preserved(tmp_path, fast_schema):
+    crm = CRM()
+    crm.item.update(preliminary_fields(crm.item))
+    original = deepcopy(crm.item)
+    store = Store(tmp_path / "hold.sqlite3")
+    store.enqueue(101)
+    assert preliminary_once(store, crm, 101) == "HOLD_9_PRESENT"
+    assert crm.writes == 0 and crm.item == original
+
+
+def test_partial_source_hold_only_fills_missing_fields(tmp_path, fast_schema):
+    crm = CRM()
+    crm.item[PREFIX + "AI_STATUS"] = "NOT_RUN_SOURCE_UNVERIFIED"
+    crm.item[PREFIX + "AI_SUMMARY"] = "Existing manager source context"
+    store = Store(tmp_path / "partial.sqlite3")
+    store.enqueue(101)
+    assert preliminary_once(store, crm, 101) == "HOLD_9_WRITTEN"
+    assert crm.item[PREFIX + "AI_SUMMARY"] == "Existing manager source context"
+    assert all(crm.item[k] for k in AI_FIELDS)
+
+
 def test_one_real_contract_write_and_repeat_exactly_once(tmp_path, fast_schema):
     state = Store(tmp_path / "new-card-events.sqlite3")
     approvals = tmp_path / "approvals"

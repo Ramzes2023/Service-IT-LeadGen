@@ -202,12 +202,22 @@ class Worker:
         posted = False
         try:
             item = self.read(item_id)
-            empty_analysis(item)
-            decision = classify_item(item, requested_id=item_id)
             approval = self.approvals(item_id)
             approval_check(approval, item, item_id)
+            if approval.get('replace_preliminary_hold_authorized') is True:
+                require(all(k in item for k in FIELDS)
+                        and all(item[k] in (None, '') for k in FIELDS - AI_FIELDS)
+                        and item.get(PREFIX+'AI_STATUS') == 'NOT_RUN_SOURCE_UNVERIFIED',
+                        'ONLY_PRELIMINARY_HOLD_REPLACEMENT_ALLOWED')
+            else:
+                empty_analysis(item)
+            decision = classify_item(item, requested_id=item_id)
             limits = schema_limits(self.rest)
-            is_hold = decision['decision'] == 'HOLD_MISSING_PRELIMINARY_AI'
+            independently_verified = all(
+                approval.get('checks', {}).get(g, {}).get('state') == 'VERIFIED'
+                for g in GATES)
+            release_hold = independently_verified and approval.get('verified_source_reassessment') is True
+            is_hold = not release_hold and decision['decision'] == 'HOLD_MISSING_PRELIMINARY_AI'
             if is_hold:
                 tid = item[PREFIX+'SIGNAL_ID'].removeprefix('B2B-CENTER-')
                 notice = {'source':'B2B-Center','tender_id':tid,
@@ -217,9 +227,12 @@ class Worker:
                 require(approval.get('preliminary_hold_authorized') is True, 'HOLD_UPDATE_NOT_AUTHORIZED')
                 fields = hold_analysis_fields(notice, approval.get('services'))
             else:
-                require(decision['source_kind'] not in ('synthetic','b2b_center_hold'),
+                require(decision['source_kind'] != 'synthetic' and (
+                    decision['source_kind'] != 'b2b_center_hold' or release_hold),
                         'SOURCE_CONTRACT_HOLD')
-                require(not item.get(PREFIX+'STOP_REASON'), 'CRM_STOP_REASON_HOLD')
+                require(not item.get(PREFIX+'STOP_REASON') or (
+                    independently_verified and approval.get('preliminary_stop_reviewed') is True),
+                    'CRM_STOP_REASON_HOLD')
                 fields = verified_fields(approval,item,self.store,item_id,owner,self.model)
             require(set(fields) == (AI_FIELDS if is_hold else FIELDS), 'WRITE_FIELDS_NOT_ALLOWLISTED')
             require(all((type(v) is int and k == SCORE_FIELD and 0<=v<=100)
@@ -332,6 +345,8 @@ def poll(store, rest, minimum_id):
             raise Blocked('POLL_BROAD_EMPTY_UNVERIFIED')
     except ValueError:
         raise Blocked('POLL_RESPONSE_UNTRUSTED') from None
+    require(items or (result.get('total') in (None, 0) and 'next' not in result),
+            'POLL_EMPTY_PAGE_CONTRADICTS_METADATA')
     inserted = 0
     for item in items:
         require(isinstance(item,dict), 'POLL_ITEM_INVALID')

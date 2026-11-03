@@ -138,9 +138,23 @@ def preliminary_once(store, rest, requested_id, *, model=None,
         validate_identity(item, item_id)
         decision = classify_item(item, requested_id=item_id)
         _must(decision.get("source_kind") not in SKIP, "SYNTHETIC_OR_OUT_OF_SCOPE")
-        empty_analysis(item)
+        # A source may already have supplied a complete preliminary HOLD.
+        # Preserve it verbatim; fill only absent AI fields, never overwrite prose.
+        _must(all(k in item for k in FIELDS), "UNREADABLE_ANALYSIS")
+        _must(all(item[k] in (None, '') for k in FIELDS - AI_FIELDS),
+              "EXISTING_QUALIFICATION")
+        existing = {k: item[k] for k in AI_FIELDS if item[k] not in (None, '')}
+        _must(not existing or item.get(PREFIX + "AI_STATUS") in (
+            "NOT_RUN_SOURCE_UNVERIFIED", "HOLD", "NOT_RUN"),
+              "EXISTING_ANALYSIS_REQUIRES_REVIEW")
+        _must(all(type(v) is str and len(v) <= 12000 for v in existing.values()),
+              "EXISTING_ANALYSIS_INVALID")
+        if len(existing) == 9:
+            store.finish(item_id, owner, "HOLD", "EXISTING_NINE_FIELDS_PRESERVED")
+            return "HOLD_9_PRESENT"
         fields = preliminary_fields(item)
-        if model is not None and public_ai_hosts:
+        fields.update(existing)
+        if model is not None and public_ai_hosts and not existing:
             try:
                 public_title = allowed_public_title(item, public_ai_hosts)
             except PreliminaryAIBlocked:

@@ -5,7 +5,7 @@ param([switch]$Apply)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $Repo='Ramzes2023/Service-IT-LeadGen'
-$LocalRepo=Join-Path $HOME 'Service_IT_GitHub_Repo\Service-IT-LeadGen'
+$LocalRepo=Split-Path $PSScriptRoot -Parent
 $Root=Join-Path $env:LOCALAPPDATA 'ServiceIT\Bitrix-Event-Bridge'
 $Project=Join-Path $Root 'script-project'
 $SecretDir=Join-Path $env:LOCALAPPDATA 'ServiceIT\AI-Autofill'
@@ -84,8 +84,14 @@ if(-not $Apply){
     Write-Host 'NO_CRM_WRITES; NO_GIGACHAT; NO_GITHUB_ENABLE.'
     exit 0
 }
+# A fresh standalone project is mandatory. Never push into a pre-existing clasp ID.
+if(Test-Path (Join-Path $Project '.clasp.json')){throw 'EXISTING_CLASP_PROJECT_REFUSE_OVERWRITE'}
 if(-not (Test-Path $RestFile -PathType Leaf)){throw 'LOCAL_DPAPI_BITRIX_WEBHOOK_MISSING'}
 if(-not (Test-Path (Join-Path $LocalRepo '.git') -PathType Container)){throw 'LOCAL_SERVICEIT_REPO_MISSING'}
+$Origin=(& git -C $LocalRepo remote get-url origin 2>$null | Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or $Origin -notmatch '^(https://github\.com/|git@github\.com:)Ramzes2023/Service-IT-LeadGen(\.git)?$'){
+    throw 'LOCAL_REPOSITORY_IDENTITY_FAILED'
+}
 $ghcmd=Get-Command gh -ErrorAction SilentlyContinue
 if(-not $ghcmd){throw 'GITHUB_CLI_NOT_AVAILABLE'}
 $Gh=$ghcmd.Source
@@ -103,10 +109,15 @@ $IdApproval=Read-Host 'Allow forwarding ONLY new Bitrix internal numeric card ID
 if($IdApproval -cne 'YES'){throw 'GITHUB_EVENT_CARD_ID_PRIVACY_CONSENT_REQUIRED'}
 $Privacy=Read-Host 'Send public tender title ONLY to GigaChat? Requires corporate privacy approval. Type YES or NO'
 $GigaAllowed=$Privacy -ceq 'YES'
+if($Privacy -cnotin @('YES','NO')){throw 'EXPLICIT_PRIVACY_DECISION_REQUIRED'}
 Write-Host 'STEP=SECURE_PREFLIGHT_START'
 & $Gh auth status 1>$null 2>$null;Check-Exit 'GITHUB_AUTH'
 $repoIdentity=(& $Gh api "repos/$Repo" --jq '.full_name' | Out-String).Trim()
 if($LASTEXITCODE -ne 0 -or $repoIdentity -cne $Repo){throw 'GITHUB_IDENTITY_FAILED'}
+$GithubOwner=(& $Gh api user --jq '.login' 2>$null | Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or $GithubOwner -cne 'Ramzes2023'){throw 'GITHUB_OWNER_IDENTITY_FAILED'}
+# Start OFF before any secret uploads or deployment.
+Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'
 
 $Webhook=$null;$Hmac=$null;$GithubToken=$null;$AppToken=$null
 try {
@@ -145,6 +156,14 @@ try {
         Set-GhSecret 'SERVICEIT_GH_LEDGER_KEY' $ledgerKey
         $ledgerKey=$null
     }
+    & $Gh api "repos/$Repo/git/ref/heads/serviceit-ai-encrypted-ledger" 1>$null 2>$null
+    if($LASTEXITCODE -ne 0){
+        $MainSha=(& $Gh api "repos/$Repo/git/ref/heads/main" --jq '.object.sha' 2>$null | Out-String).Trim()
+        Check-Exit 'GITHUB_MAIN_REF'
+        if($MainSha -notmatch '^[a-f0-9]{40}$'){throw 'GITHUB_MAIN_SHA_INVALID'}
+        & $Gh api "repos/$Repo/git/refs" -f ref=refs/heads/serviceit-ai-encrypted-ledger -f "sha=$MainSha" 1>$null 2>$null
+        Check-Exit 'GITHUB_LEDGER_BRANCH'
+    }
     if($GigaAllowed){
         $GigaFile=Join-Path $SecretDir 'gigachat.dpapi'
         $ScopeFile=Join-Path $SecretDir 'gigachat-scope.txt'
@@ -181,15 +200,18 @@ try {
             Check-Exit 'GOOGLE_CLASP_LOGIN'
             $Authorized=(& $npx.Source --yes '@google/clasp@latest' show-authorized-user --json 2>&1 | Out-String)
             if($LASTEXITCODE -ne 0 -or
-               $Authorized -notmatch [regex]::Escape('ramzesisayev444@gmail.com')){
+               $Authorized -notmatch '(?i)(?<![a-z0-9._%+-])ramzesisayev444@gmail\.com(?![a-z0-9.-])'){
                 throw 'WRONG_GOOGLE_ACCOUNT_FOR_SERVICEIT_OWNER_ONLY_BRIDGE'
             }
             & $npx.Source --yes '@google/clasp@latest' create --type webapp --title 'ServiceIT Bitrix24 AI New Card Bridge'
             Check-Exit 'NEW_OWNER_ONLY_GOOGLE_SCRIPT_CREATION'
         } finally {Pop-Location}
     }
+    # clasp create can generate a default manifest; restore the reviewed one.
+    Copy-Item $sourceCode (Join-Path $Project 'Code.gs') -Force
+    Copy-Item $sourceManifest (Join-Path $Project 'appsscript.json') -Force
     # First push is disabled. Deployment is configured by owner in Google UI.
-    New-PrivateSource ('NOT-YET-ACTIVATED-OUTGOING-TOKEN-000000000') $GithubToken $Hmac 'NO'
+    New-PrivateSource '' $GithubToken $Hmac 'NO'
     Push-Location $Project
     try{
         & $npx.Source --yes '@google/clasp@latest' push --force
@@ -207,7 +229,9 @@ try {
     Write-Host 'BITRIX_SETUP=Handler URL is the Google receiver above. Choose OnCrmDynamicItemAdd or specific 1062 event. Save.'
     $SecureToken=Read-Host 'Paste Bitrix-generated OUTGOING application_token (hidden)' -AsSecureString
     try { $AppToken=Plain $SecureToken } finally {$SecureToken.Dispose()}
-    if($AppToken.Length -lt 24){throw 'BITRIX_OUTGOING_APPLICATION_TOKEN_NOT_VALID'}
+    if($AppToken.Length -lt 24 -or $Webhook.Contains($AppToken)){
+        throw 'BITRIX_OUTGOING_APPLICATION_TOKEN_NOT_VALID'
+    }
     New-PrivateSource $AppToken $GithubToken $Hmac 'YES'
     Push-Location $Project
     try {
@@ -221,9 +245,17 @@ try {
     $Confirmed=Read-Host 'Updated deployment to new version with same /exec URL? Type YES'
     if($Confirmed -cne 'YES'){throw 'GOOGLE_WEBAPP_VERSION_UNVERIFIED'}
     try{
-        $response=Invoke-WebRequest -Uri $Receiver -TimeoutSec 25 -UseBasicParsing
+        $Probe=[Guid]::NewGuid().ToString('N')
+        $ProbeHmac=New-Object Security.Cryptography.HMACSHA256
+        try {
+            $ProbeHmac.Key=[Text.Encoding]::UTF8.GetBytes($Hmac)
+            $ProbeDigest=([BitConverter]::ToString($ProbeHmac.ComputeHash(
+                [Text.Encoding]::UTF8.GetBytes('health-v1|'+$Probe)))).Replace('-','').ToLowerInvariant()
+        } finally {$ProbeHmac.Dispose()}
+        # Fresh anonymous HTTP client: no browser cookies or Google credentials.
+        $response=Invoke-WebRequest -Uri ($Receiver+'?probe='+$Probe) -TimeoutSec 25 -UseBasicParsing
         if($response.StatusCode -ne 200 -or
-           $response.Content -notmatch 'SERVICEIT_BITRIX_BRIDGE'){
+           $response.Content.Trim() -cne ('SERVICEIT_BITRIX_BRIDGE_READY_V1:'+$ProbeDigest)){
             throw 'GOOGLE_ANONYMOUS_WEBAPP_NOT_ACCESSIBLE'
         }
     }catch{throw 'GOOGLE_ANONYMOUS_WEBAPP_NOT_ACCESSIBLE'}
@@ -279,12 +311,38 @@ try {
         Write-Host 'GITHUB_WORKFLOW=Check ServiceIT new Bitrix card to AI manager'
         throw 'CANARY_NINE_AI_FIELDS_NOT_CONFIRMED_CLOUD_DISABLED_NO_REPLAY'
     }
-    Write-Host 'SERVICEIT_BITRIX_EVENT_AI=LIVE_CANARY_NINE_FIELDS_READBACK_PASS'
-    Write-Host 'BITRIX_MANAGER_REPORT=CONFIRMED'
+    # Nonempty fields alone are not proof: compare against the encrypted exact
+    # expected write receipt through the workflow's GET-only recovery path.
+    $RecoveryNonce='serviceit-receipt-'+[Guid]::NewGuid().ToString('N')
+    & $Gh workflow run serviceit-bitrix-new-card-ai.yml --repo $Repo --ref main -f "item_id=$CanaryText" -f "request_id=$RecoveryNonce" 1>$null 2>$null
+    Check-Exit 'EXACT_RECEIPT_READBACK_DISPATCH'
+    $ReceiptVerified=$false
+    for($Attempt=0;$Attempt -lt 20;$Attempt++){
+        Start-Sleep -Seconds 12
+        $RecoveryRuns=(& $Gh run list --repo $Repo --workflow serviceit-bitrix-new-card-ai.yml --event workflow_dispatch --limit 30 --json databaseId,displayTitle,status,conclusion 2>$null | Out-String)
+        Check-Exit 'EXACT_RECEIPT_RUN_LIST'
+        $Matching=@($RecoveryRuns | ConvertFrom-Json | Where-Object {$_.displayTitle -ceq $RecoveryNonce})
+        if($Matching.Count -ne 1){continue}
+        if($Matching[0].status -ne 'completed'){continue}
+        if($Matching[0].conclusion -ne 'success'){throw 'EXACT_RECEIPT_RECOVERY_FAILED'}
+        $RecoveryLog=(& $Gh run view $Matching[0].databaseId --repo $Repo --log 2>$null | Out-String)
+        Check-Exit 'EXACT_RECEIPT_RESULT'
+        $ReceiptVerified=$RecoveryLog -match '"status": "EXACT_TARGET_READBACK"'
+        $RecoveryLog=$null
+        break
+    }
+    if(-not $ReceiptVerified){throw 'EXACT_EXPECTED_FIELDS_RECEIPT_UNVERIFIED'}
+    Write-Host 'SERVICEIT_BITRIX_EVENT_AI=LIVE_NEW_CANARY_EXACT_RECEIPT_READBACK_PASS'
+    Write-Host 'BITRIX_MANAGER_REPORT=EXACT_EXPECTED_FIELDS_CONFIRMED'
     Write-Host 'LAPTOP_REQUIRED_AFTER_INSTALL=NO'
     Write-Host 'NOTE=GIGACHAT_TITLE_ONLY_REQUIRES_SEPARATE_PRIVACY_AND_SOURCE_APPROVAL'
+} catch {
+    Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'NO'
+    throw 'INSTALLATION_INCOMPLETE_EVENT_GATE_OFF_REVIEW_REQUIRED'
 } finally {
     $Webhook=$null;$Hmac=$null;$GithubToken=$null;$AppToken=$null
+    $PrivateFile=Join-Path $Project 'Private.gs'
+    if(Test-Path -LiteralPath $PrivateFile){Remove-Item -LiteralPath $PrivateFile -Force}
     # A private script project retains its secrets for its own deployment.
     # Never git-add this folder or expose it through the public repo.
     Write-Host ('PRIVATE_APPS_SCRIPT_PROJECT=' + $Project)

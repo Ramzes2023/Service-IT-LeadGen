@@ -166,3 +166,76 @@ def test_no_legacy_crm_list_polling_or_source_ingestion():
     assert "SERVICEIT_BITRIX_EVENT_AI_ENABLED" in workflow
     assert "SERVICEIT_BITRIX_WEBHOOK" in workflow
     assert "SERVICEIT_GH_LEDGER_KEY" in workflow
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+@pytest.mark.parametrize("approved", [False, True])
+def test_signed_event_end_to_end_and_readonly_recovery(monkeypatch, ambiguous, approved):
+    from types import SimpleNamespace
+    from test_serviceit_enrichment_worker import CRM, approval, model
+    crm = CRM()
+    if ambiguous:
+        crm.fail = TimeoutError("synthetic write acknowledgement lost")
+    monkeypatch.setattr(worker, "Rest", lambda *args: crm)
+    key = Fernet.generate_key().decode()
+    saved = {}
+    def github(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=saved) if saved else httpx.Response(404)
+        body = json.loads(request.content)
+        code = 200 if "sha" in body else 201
+        saved.update(content=body["content"], sha="checkpoint-sha")
+        return httpx.Response(code, json={"content": {"sha": "checkpoint-sha"}})
+    env = settings(SERVICEIT_GH_LEDGER_KEY=key)
+    model_calls = []
+    if approved:
+        class Provider:
+            config = SimpleNamespace(model="GigaChat")
+            def __init__(self, *args, **kwargs):
+                pass
+            def classify(self, text):
+                model_calls.append(text)
+                return model(text)
+            def close(self):
+                pass
+        monkeypatch.setattr(worker, "AIProvider", Provider)
+        env.update(SERVICEIT_CORPORATE_APPROVALS_JSON=json.dumps({"101": approval(crm)}),
+                   SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED="YES", AI_ENABLE="1",
+                   AI_PROVIDER="gigachat", GIGACHAT_CREDENTIALS="synthetic-not-real")
+    with httpx.Client(transport=httpx.MockTransport(github)) as client:
+        result = worker.run(event(101), env, client=client)
+        assert result["result"] == ("UNCERTAIN" if ambiguous else
+                                    "VERIFIED" if approved else "HOLD_9_WRITTEN")
+        result = worker.run(event(101), env, client=client)
+        assert result == {"status": "EXACT_TARGET_READBACK", "crm_writes": 0}
+    assert crm.writes == 1
+    assert len(model_calls) == int(approved)
+    assert all(crm.item[k] for k in worker.AI_FIELDS)
+    assert not any(method == "crm.item.list" for method, _ in crm.calls)
+
+
+def test_checkpoint_must_be_acknowledged_before_crm_update():
+    key = Fernet.generate_key().decode()
+    def github(request):
+        if request.method == "GET":
+            return httpx.Response(404)
+        if "sha" not in json.loads(request.content):
+            return httpx.Response(201, json={"content": {"sha": "reserved"}})
+        return httpx.Response(503)
+    with httpx.Client(transport=httpx.MockTransport(github)) as client:
+        fence = worker.EncryptedEventFence(client, TOKEN, key)
+        assert fence.reserve(101) == "RESERVED"
+        with pytest.raises(worker.EventCloudBlocked, match="WRITE_CHECKPOINT_UNVERIFIED"):
+            fence.checkpoint_write(101, {k: "synthetic" for k in worker.AI_FIELDS})
+
+
+def test_manual_recovery_missing_receipt_never_writes():
+    methods = []
+    def github(request):
+        methods.append(request.method)
+        return httpx.Response(404)
+    with httpx.Client(transport=httpx.MockTransport(github)) as client:
+        fence = worker.EncryptedEventFence(client, TOKEN, Fernet.generate_key().decode())
+        with pytest.raises(worker.EventCloudBlocked, match="RECOVERY_RECEIPT_NOT_FOUND"):
+            fence.observe(101, lambda *args: pytest.fail("CRM must not be called"))
+    assert methods == ["GET"]

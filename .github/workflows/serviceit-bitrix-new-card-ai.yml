@@ -1,6 +1,17 @@
 name: ServiceIT new Bitrix card to AI manager (free event)
+run-name: ${{ github.event.inputs.request_id || 'ServiceIT signed new-card event' }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      item_id:
+        description: 'Read-only exact receipt recovery for one new card; never replays writes or AI'
+        required: true
+        type: string
+      request_id:
+        description: 'Owner-local recovery correlation nonce (no customer data)'
+        required: false
+        type: string
   repository_dispatch:
     types: [serviceit_bitrix_item_add_v1]
 
@@ -18,8 +29,9 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
-      github.event.action == 'serviceit_bitrix_item_add_v1' &&
-      vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.action == 'serviceit_bitrix_item_add_v1' &&
+        vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -31,6 +43,8 @@ jobs:
       SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
       SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
       SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      # Trusted, short-lived independent evidence adapter; never event/CRM prose.
+      SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
       AI_PROVIDER: gigachat
       AI_ENABLE: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED == 'YES' && '1' || '0' }}
       GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}

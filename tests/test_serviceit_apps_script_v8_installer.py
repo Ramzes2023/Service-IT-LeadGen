@@ -23,6 +23,8 @@ def test_v8_installer_requires_separate_owner_privacy_and_admin_approvals():
     assert "GigaConsent" in script
     assert "shared manager-form update" in script
     assert "APPS_SCRIPT_OWNER_ONLY_CONFIRMATION_MISSING" in script
+    assert "GITHUB_TOKEN_STORAGE_CONSENT_MISSING" in script
+    assert "GitHub CLI repository token" in script
 
 
 def test_ingest_is_enabled_only_after_apps_script_push_and_readback():

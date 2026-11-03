@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import os
+import re
 from pathlib import Path
 import threading
 import time
@@ -59,12 +60,26 @@ def runtime_config(env: dict, *, is_mount=None) -> dict:
                 "GIGACHAT_OPT_IN_REQUIRED")
         # Do not log or return any credentials. No HTTP calls here.
         config_from_env(env)
+    preliminary = env.get("SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED", "NO")
+    require(preliminary in ("YES", "NO"), "PRELIMINARY_AI_CONSENT_INVALID")
+    require(not (preliminary == "YES" and privacy != "YES"),
+            "PRELIMINARY_AI_PRIVACY_REQUIRED")
+    hosts = frozenset()
+    if preliminary == "YES":
+        raw_hosts = env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", "")
+        entries = [x.strip().lower() for x in raw_hosts.split(",") if x.strip()]
+        require(0 < len(entries) <= 20 and all(
+            re.fullmatch(r"(?:[a-z0-9-]{1,63}\\.)+[a-z]{2,20}", x)
+            for x in entries
+        ), "PRELIMINARY_AI_PUBLIC_HOST_ALLOWLIST_REQUIRED")
+        hosts = frozenset(entries)
     return {
         "enabled": True,
         "db_path": db,
         "approvals_dir": approvals,
         "webhook": env["SERVICEIT_BITRIX_WEBHOOK"],
         "model_enabled": privacy == "YES",
+        "public_ai_hosts": hosts,
     }
 
 
@@ -88,7 +103,8 @@ class Runtime:
                     try:
                         run_event_cycle(
                             store, rest, approvals_dir=cfg["approvals_dir"],
-                            model=model, max_items=10,
+                            model=model, public_ai_hosts=cfg["public_ai_hosts"],
+                            max_items=10,
                         )
                         # Only a numeric heartbeat, no CRM/customer/model data.
                         with store.db() as db:
@@ -109,6 +125,7 @@ class Runtime:
     def start(self, cfg: dict, env: dict):
         if not cfg["enabled"]:
             return
+        self.stop.clear()
         # Initialize the on-disk store before accepting Bitrix callbacks.
         Store(cfg["db_path"])
         self.status = "STARTING"

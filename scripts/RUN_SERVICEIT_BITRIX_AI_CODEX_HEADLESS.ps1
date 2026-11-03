@@ -44,8 +44,9 @@ if (-not (Test-Path $Python -PathType Leaf)) {
     if (-not $PythonCommand) { throw 'PYTHON_NOT_FOUND' }
     $Python = $PythonCommand.Source
 }
-$Node = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $Node) { throw 'NODE_NOT_FOUND_FOR_JS_BRIDGE_TESTS' }
+. (Join-Path $PSScriptRoot 'ENSURE_SERVICEIT_NODE_LTS.ps1')
+$Node = Ensure-ServiceITNode
+if (-not $Node) { throw 'SERVICEIT_NODE_BOOTSTRAP_DID_NOT_RETURN_NODE' }
 
 $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $OutputEncoding

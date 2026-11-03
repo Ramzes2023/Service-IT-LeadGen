@@ -191,7 +191,9 @@ def test_owner_issue_marker_triggers_only_readonly_layout_probe():
     assert "github.event.issue.number == 74" in text
     assert "github.actor == 'Ramzes2023'" in text
     assert "SERVICEIT_MANAGER_LAYOUT_READONLY_V1" in text
-    assert "github.event_name == 'issue_comment' || !inputs.apply" in text
+    assert "github.event.comment.body == 'SERVICEIT_MANAGER_LAYOUT_READONLY_V1')" in text
+    assert "github.event.comment.body == 'SERVICEIT_MANAGER_LAYOUT_APPLY_V1')" in text
+    assert "github.event_name == 'issue_comment' && github.event.comment.body == 'SERVICEIT_MANAGER_LAYOUT_READONLY_V1'" in text
     assert "github.event_name == 'workflow_dispatch' && inputs.apply" in text
     assert "SERVICEIT_MANAGER_LAYOUT_APPLY" in text
     assert "serviceit-1062-21-shared-manager-layout" in text

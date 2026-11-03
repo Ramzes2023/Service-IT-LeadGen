@@ -41,6 +41,11 @@ DETAIL_SECTIONS = (
         PREFIX + "AI_MANAGER_BRIEF",
     )),
     ("04 · Полный отчёт", (PREFIX + "AI_FULL_REPORT",)),
+    ("05 · Проверка менеджером", (
+        PREFIX + "MANAGER_NEXT_ACTION",
+        PREFIX + "REVIEW_DECISION",
+        PREFIX + "STOP_REASON",
+    )),
 )
 AI_ORDER = (
     "AI_STATUS", "AI_SUMMARY", "AI_QUOTE", "AI_HYPOTHESIS",

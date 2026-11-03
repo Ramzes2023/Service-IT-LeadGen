@@ -101,6 +101,9 @@ class EncryptedEventFence:
             self.cipher = Fernet(key.encode("ascii"))
         except Exception:
             raise EventCloudBlocked("FENCE_ENCRYPTION_KEY_INVALID") from None
+        # Use an unguessable keyed path: plain SHA256 of sequential CRM IDs
+        # is enumerable in a PUBLIC repository.
+        self.path_key = base64.urlsafe_b64decode(key.encode("ascii"))
         self.client = client
         self.headers = {
             "Authorization": "Bearer " + token,
@@ -110,10 +113,11 @@ class EncryptedEventFence:
         self.file_sha = None
         self.reservation_url = None
 
-    @staticmethod
-    def url(card: int) -> str:
-        # Do not put customer names or item IDs in the public filename.
-        token = sha256(f"serviceit-v1:1062:21:{card}".encode()).hexdigest()
+    def url(self, card: int) -> str:
+        # Public branch filenames must not reveal guessable numeric CRM IDs.
+        token = hmac.new(
+            self.path_key, f"serviceit-v1:1062:21:{card}".encode(),
+            sha256).hexdigest()
         return ("https://api.github.com/repos/" + REPOSITORY
                 + "/contents/" + FOLDER + "/" + token + ".enc")
 

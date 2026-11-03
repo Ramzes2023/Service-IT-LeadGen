@@ -1,0 +1,72 @@
+name: ServiceIT live poll and model gates status (no CRM access)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  verify-cloud-activation-flags:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 74 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_CLOUD_FLAG_READONLY_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      POLL_MODE: ${{ vars.SERVICEIT_BITRIX_POLL_ENABLED }}
+      EVENT_MODE: ${{ vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED }}
+      PRIVACY_MODE: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
+      PUBLIC_AI_MODE: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
+      PUBLIC_AI_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      GIGACHAT_CREDENTIAL_PRESENT: ${{ secrets.GIGACHAT_CREDENTIALS != '' && 'YES' || 'NO' }}
+      REST_CREDENTIAL_PRESENT: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK != '' && 'YES' || 'NO' }}
+      LEDGER_CREDENTIAL_PRESENT: ${{ secrets.SERVICEIT_GH_LEDGER_KEY != '' && 'YES' || 'NO' }}
+      BRIDGE_CREDENTIAL_PRESENT: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY != '' && 'YES' || 'NO' }}
+    steps:
+      - name: Report ONLY bounded boolean/enum statuses, no secrets, no GitHub token or CRM requests
+        shell: bash
+        run: |
+          if [[ "$POLL_MODE" == YES_1062_21_READONLY ]]; then
+            echo "SERVICEIT_CLOUD_POLL=ENABLED"
+          else
+            echo "SERVICEIT_CLOUD_POLL=OFF_OR_UNVERIFIED"
+          fi
+          if [[ "$EVENT_MODE" == YES_1062_21_CLOUD ]]; then
+            echo "SERVICEIT_CLOUD_EVENT_WORKER=ENABLED"
+          else
+            echo "SERVICEIT_CLOUD_EVENT_WORKER=OFF_OR_UNVERIFIED"
+          fi
+          if [[ "$PRIVACY_MODE" == YES ]]; then
+            echo "SERVICEIT_MODEL_PRIVACY=YES"
+          elif [[ "$PRIVACY_MODE" == NO ]]; then
+            echo "SERVICEIT_MODEL_PRIVACY=NO"
+          else
+            echo "SERVICEIT_MODEL_PRIVACY=UNVERIFIED"
+          fi
+          if [[ "$PUBLIC_AI_MODE" == YES && -n "$PUBLIC_AI_HOSTS" ]]; then
+            echo "SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI=ON_WITH_HOSTS_PRESENT"
+          elif [[ "$PUBLIC_AI_MODE" == YES ]]; then
+            echo "SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI=ON_HOSTS_MISSING"
+          else
+            echo "SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI=OFF_OR_UNVERIFIED"
+          fi
+          if [[ "$GIGACHAT_CREDENTIAL_PRESENT" == YES ]]; then
+            echo "SERVICEIT_MODEL_KEY=CONFIGURED"
+          else
+            echo "SERVICEIT_MODEL_KEY=MISSING"
+          fi
+          if [[ "$REST_CREDENTIAL_PRESENT" == YES && "$LEDGER_CREDENTIAL_PRESENT" == YES && "$BRIDGE_CREDENTIAL_PRESENT" == YES ]]; then
+            echo "SERVICEIT_WORKER_SECRETS=ALL_PRESENT"
+          else
+            echo "SERVICEIT_WORKER_SECRETS=INCOMPLETE"
+          fi
+          echo "SERVICEIT_CRM_WRITES=0"
+          echo "SERVICEIT_GIGACHAT_REQUESTS=0"
+          echo "SERVICEIT_REPOSITORY_UPDATES=0"

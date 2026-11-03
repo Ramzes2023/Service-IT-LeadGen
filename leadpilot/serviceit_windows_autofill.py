@@ -125,34 +125,34 @@ def preliminary_fields(item):
     draft = task_draft(triage, int(item["id"])) if type(item.get("id")) is int and item["id"] >= FIRST_ID else None
     kind_header = triage["badge"] + " · " + triage["kind_title"]
     fields[PREFIX + "AI_SUMMARY"] = (
-        kind_header + " (предварительно, не квалифицированный лид)\\n"
+        kind_header + " (предварительно, не квалифицированный лид)\n"
         + fields[PREFIX + "AI_SUMMARY"])
     fields[PREFIX + "AI_RECOMMENDATION"] = (
         "Подходящие направления для проверки: " + ", ".join(triage["services"]) + ". "
         + fields[PREFIX + "AI_RECOMMENDATION"])
     fields[PREFIX + "AI_MANAGER_BRIEF"] = (
-        kind_header + "\\n"
+        kind_header + "\n"
         + "Приоритет проверки (НЕ Lead Score): "
         + str(triage["indicative_priority"]) + "/100; "
-        + triage["version"] + "\\n"
-        + "Задача: " + (draft["title"] if draft else triage["manager_action"]) + "\\n"
-        + "Срок и актуальность: " + triage["freshness"] + "\\n"
-        + "Контакты: не проверены — найти только опубликованные корпоративные с URL и датой.\\n"
-        + "Задача в Bitrix ещё НЕ создана; ответственный и права требуют проверки.\\n"
+        + triage["version"] + "\n"
+        + "Задача: " + (draft["title"] if draft else triage["manager_action"]) + "\n"
+        + "Срок и актуальность: " + triage["freshness"] + "\n"
+        + "Контакты: не проверены — найти только опубликованные корпоративные с URL и датой.\n"
+        + "Задача в Bitrix ещё НЕ создана; ответственный и права требуют проверки.\n"
         + fields[PREFIX + "AI_MANAGER_BRIEF"])
     fields[PREFIX + "AI_NEXT_ACTION"] = triage["manager_action"] + " " + fields[PREFIX + "AI_NEXT_ACTION"]
     fields[PREFIX + "AI_FULL_REPORT"] = (
-        kind_header + "\\n"
-        + "КЛАССИФИКАЦИЯ: " + triage["classification_reason"] + "\\n"
-        + "АКТУАЛЬНОСТЬ: " + triage["freshness"] + " — требуется перепроверка источника\\n"
-        + "ТИП ЗАДАЧИ: " + (draft["title"] if draft else "Нужна проверка") + "\\n"
-        + "КОНТАКТЫ: не подтверждены; AI не должен их выдумывать.\\n"
+        kind_header + "\n"
+        + "КЛАССИФИКАЦИЯ: " + triage["classification_reason"] + "\n"
+        + "АКТУАЛЬНОСТЬ: " + triage["freshness"] + " — требуется перепроверка источника\n"
+        + "ТИП ЗАДАЧИ: " + (draft["title"] if draft else "Нужна проверка") + "\n"
+        + "КОНТАКТЫ: не подтверждены; AI не должен их выдумывать.\n"
         + "ОЦЕНКА ПРИОРИТЕТА: " + str(triage["indicative_priority"])
-        + "/100 (ориентир проверки, НЕ квалифицированный Lead Score)\\n"
+        + "/100 (ориентир проверки, НЕ квалифицированный Lead Score)\n"
         + "ЗАПРЕТ ПРЕДЛОЖЕНИЙ: " + ("ДА — НЕ КОНТАКТИРОВАТЬ" if triage["contact_prohibited_by_text"] else "не подтверждён")
-        + "\\n"
-        + "НАЗНАЧЕНИЕ ЗАДАЧИ: только после подтверждения сотрудника/прав/дедупликации\\n"
-        + "────────────────────────────────\\n"
+        + "\n"
+        + "НАЗНАЧЕНИЕ ЗАДАЧИ: только после подтверждения сотрудника/прав/дедупликации\n"
+        + "────────────────────────────────\n"
         + fields[PREFIX + "AI_FULL_REPORT"])
     _must(set(fields) == AI_FIELDS and all(type(x) is str and 0 < len(x) <= 12000
                                           for x in fields.values()),

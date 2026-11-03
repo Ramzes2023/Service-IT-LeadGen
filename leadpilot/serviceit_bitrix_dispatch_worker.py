@@ -108,7 +108,7 @@ class EncryptedEventFence:
             "X-GitHub-Api-Version": "2022-11-28",
         }
         self.file_sha = None
-        self.url = None
+        self.reservation_url = None
 
     @staticmethod
     def url(card: int) -> str:
@@ -143,14 +143,14 @@ class EncryptedEventFence:
             require(type(body) is dict and type(body.get("content")) is dict
                     and type(body["content"].get("sha")) is str,
                     "FENCE_ACK_UNVERIFIED")
-            self.url, self.file_sha = url, body["content"]["sha"]
+            self.reservation_url, self.file_sha = url, body["content"]["sha"]
             return "RESERVED"
         except httpx.HTTPError:
             raise EventCloudBlocked("FENCE_TRANSPORT_UNVERIFIED") from None
 
     def finalize(self, card: int, result: str) -> bool:
         """Best-effort status; original RESERVE file still blocks duplicates."""
-        if self.file_sha is None or self.url is None:
+        if self.file_sha is None or self.reservation_url is None:
             return False
         safe_statuses = {
             "HOLD_9_WRITTEN", "HOLD", "UNCERTAIN", "LEASE_LOST",
@@ -163,7 +163,7 @@ class EncryptedEventFence:
             json.dumps(payload, separators=(",", ":")).encode("utf-8"))
         try:
             response = self.client.put(
-                self.url, headers=self.headers, follow_redirects=False,
+                self.reservation_url, headers=self.headers, follow_redirects=False,
                 timeout=25, json={
                     "branch": BRANCH, "sha": self.file_sha,
                     "message": "checkpoint(serviceit): exact Bitrix result",

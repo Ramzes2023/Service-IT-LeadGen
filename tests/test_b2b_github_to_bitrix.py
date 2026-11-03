@@ -126,11 +126,14 @@ class Endpoints:
         self.calls.append(method)
         body = json.loads(request.content)
         if method == "crm.item.list":
-            records = ([{"id": 23, "entityTypeId": 1062,
-                         "categoryId": 21, bridge.SIGNAL: "B2B-CENTER-4661617"}]
+            assert body["select"] == ["id", "categoryId", bridge.SIGNAL]
+            # Bitrix officially drops entityTypeId from list.select even when
+            # requested; test that we do NOT require it to be returned.
+            records = ([{"id": 23, "categoryId": 21,
+                         bridge.SIGNAL: "B2B-CENTER-4661617"}]
                        if self.existing else [])
-            return httpx.Response(200, json={"result": {"items": records,
-                                                         "total": len(records)}})
+            return httpx.Response(200, json={"result": {"items": records},
+                                             "total": len(records)})
         if method == "crm.item.add":
             assert len(self.reserved) == 1, "PRE-POST BOT RESERVATION IS MANDATORY"
             if self.post_error:
@@ -138,6 +141,10 @@ class Endpoints:
             self.add_fields = deepcopy(body["fields"])
             return httpx.Response(200, json={"result": {"item": {"id": 24}}})
         if method == "crm.item.get":
+            if self.existing and body.get("id") == 23:
+                return httpx.Response(200, json={"result": {"item": {
+                    "id": 23, "entityTypeId": 1062, "categoryId": 21,
+                    bridge.SIGNAL: "B2B-CENTER-4661617"}}})
             assert self.add_fields
             row = {**self.add_fields, "id": 24, "entityTypeId": 1062}
             if self.bad_readback:
@@ -170,7 +177,7 @@ def test_one_real_contract_write_after_reservation_and_exact_readback(monkeypatc
 def test_duplicate_in_crm_prevents_write(monkeypatch):
     target = Endpoints(existing=True)
     assert simulate(monkeypatch, target)["status"] == "ALREADY_EXISTS_IN_CRM"
-    assert target.calls == ["GH.GET", "crm.item.list"]
+    assert target.calls == ["GH.GET", "crm.item.list", "crm.item.get"]
 
 
 def test_prior_reserved_marker_blocks_any_second_post(monkeypatch):

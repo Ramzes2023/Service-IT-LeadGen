@@ -75,18 +75,33 @@ def main(argv=None):
         print(json.dumps({"status": "GIGACHAT_PREFLIGHT_OFFLINE_READY",
                           "model_called": False, "crm_writes": 0, "ledger_reservations": 0}))
         return 0
-    try:
-        from .ai import config_from_env
-        cfg = config_from_env()
-        if cfg.provider != "gigachat":
-            raise ValueError("PROVIDER_INVALID")
-        output = run_preflight()
-    except Exception:
-        # Never expose remote error bodies, raw model output, OAuth endpoints,
-        # credential values, traceback chains or file paths to the console.
+    # First check only public configuration shape; DO NOT send a paid
+    # completion or OAuth request if owner GitHub variable interpolates to
+    # an empty string (a common YAML env-vs-default trap).
+    import os
+    scope = os.environ.get("GIGACHAT_SCOPE")
+    model = os.environ.get("GIGACHAT_MODEL")
+    if scope not in {"GIGACHAT_API_PERS", "GIGACHAT_API_B2B", "GIGACHAT_API_CORP"}:
         output = {"status": "GIGACHAT_PREFLIGHT_BLOCKED",
-                  "safe_reason_code": "MODEL_OR_CONFIG_ERROR",
+                  "safe_reason_code": "GIGACHAT_SCOPE_UNSET_OR_INVALID",
                   "crm_writes": 0, "ledger_reservations": 0}
+    elif not isinstance(model, str) or not 1 <= len(model.strip()) <= 80:
+        output = {"status": "GIGACHAT_PREFLIGHT_BLOCKED",
+                  "safe_reason_code": "GIGACHAT_MODEL_UNSET_OR_INVALID",
+                  "crm_writes": 0, "ledger_reservations": 0}
+    else:
+        try:
+            from .ai import config_from_env
+            cfg = config_from_env()
+            if cfg.provider != "gigachat":
+                raise ValueError("PROVIDER_INVALID")
+            output = run_preflight()
+        except Exception:
+            # Never expose remote error bodies, raw model output, OAuth
+            # endpoints, credential values, or user/client data.
+            output = {"status": "GIGACHAT_PREFLIGHT_BLOCKED",
+                      "safe_reason_code": "MODEL_OR_CONFIG_ERROR",
+                      "crm_writes": 0, "ledger_reservations": 0}
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return 0 if output["status"] == "GIGACHAT_COCKPIT_PREFLIGHT_PASS" else 2
 

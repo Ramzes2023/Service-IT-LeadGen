@@ -10,10 +10,12 @@ separately authorized write-fenced adapter after readback and manager assignment
 from __future__ import annotations
 
 from hashlib import sha256
+from datetime import date
 import json
 import re
 
 from .serviceit_b2b_hold_ai_fields import PREFIX
+from .serviceit_ai_lead_engine import assess_lead
 from .serviceit_kanban_presentation import BADGE_FIELD, SCORE_FIELD, VERSION_FIELD, score_label
 
 TYPE = 1062
@@ -134,6 +136,24 @@ def manager_readiness(card, item_id, assessment, approval):
                and re.fullmatch(r"[A-Za-z0-9_.:/-]{6,200}",
                                 record["evidence_ref"]) is not None,
                "CORPORATE_" + name.upper() + "_UNVERIFIED")
+    # Recalculate with the actual versioned deterministic scorer. Neither
+    # model confidence nor an arbitrary score in approval can set priority.
+    try:
+        scoring_date = date.fromisoformat(approval["score_calculated_on"])
+        recomputed = assess_lead(
+            approval["company"], approval["signals"],
+            checks={gate: "VERIFIED" for gate in REQUIRED_GATES},
+            today=scoring_date,
+        )
+    except Exception:
+        raise ManagerReadinessBlocked("MANAGER_SCORING_RECOMPUTE_FAILED") from None
+    _guard(0 <= (date.today() - scoring_date).days <= 2,
+           "MANAGER_SCORING_TOO_OLD")
+    for key in ("lead_score", "score_version", "company_inn", "company_name",
+                "region", "evidence_url", "signal_type", "why_now",
+                "suggested_service", "identity_fingerprint"):
+        _guard(assessment.get(key) == recomputed.get(key),
+               "MANAGER_DETERMINISTIC_SCORE_MISMATCH")
     _guard(approval.get("manager_route_authorized") is True
            and approval.get("automated_outreach_allowed") is False
            and approval.get("source_review_authorized") is True

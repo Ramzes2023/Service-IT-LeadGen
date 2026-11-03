@@ -140,6 +140,11 @@ def manager_readiness(card, item_id, assessment, approval):
     # model confidence nor an arbitrary score in approval can set priority.
     try:
         scoring_date = date.fromisoformat(approval["score_calculated_on"])
+    except Exception:
+        raise ManagerReadinessBlocked("MANAGER_SCORING_DATE_INVALID") from None
+    _guard(0 <= (date.today() - scoring_date).days <= 2,
+           "MANAGER_SCORING_TOO_OLD")
+    try:
         recomputed = assess_lead(
             approval["company"], approval["signals"],
             checks={gate: "VERIFIED" for gate in REQUIRED_GATES},
@@ -147,8 +152,6 @@ def manager_readiness(card, item_id, assessment, approval):
         )
     except Exception:
         raise ManagerReadinessBlocked("MANAGER_SCORING_RECOMPUTE_FAILED") from None
-    _guard(0 <= (date.today() - scoring_date).days <= 2,
-           "MANAGER_SCORING_TOO_OLD")
     for key in ("lead_score", "score_version", "company_inn", "company_name",
                 "region", "evidence_url", "signal_type", "why_now",
                 "suggested_service", "identity_fingerprint"):

@@ -42,6 +42,8 @@ def _query(client: httpx.Client, base: str, method: str, args: dict):
                  and isinstance(data.get("result"), (list,dict)),
                  "TASK_PROBE_RESPONSE_INVALID")
         return data["result"]
+    except TaskGateBlocked:
+        raise
     except (httpx.HTTPError,ValueError,KeyError,TypeError):
         raise TaskGateBlocked("TASK_PROBE_TRANSPORT_OR_RESPONSE") from None
 

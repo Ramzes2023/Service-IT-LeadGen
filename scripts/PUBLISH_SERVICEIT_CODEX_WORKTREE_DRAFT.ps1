@@ -80,8 +80,26 @@ Guard ($StagedDiff -notmatch $Sensitive) 'SERVICEIT_SUSPECT_CREDENTIAL_BLOCKED'
 SafeNative 'git' @('-C', $Worktree, 'commit', '-m',
     'wip(serviceit): review finished Bitrix 1062/21 Codex changes') 'SERVICEIT_WIP_COMMIT_FAILED'
 SafeNative 'git' @('-C', $Worktree, 'push', '-u', 'origin', $Branch) 'SERVICEIT_DRAFT_BRANCH_PUSH_FAILED'
-$Existing = (& $Gh.Source pr view $Branch --repo $RepoName --json number --jq '.number' 2>$null | Out-String).Trim()
-if ($LASTEXITCODE -eq 0 -and $Existing -match '^[0-9]+$') {
+$BeforeCheck = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $Existing = (& $Gh.Source pr view $Branch --repo $RepoName --json number --jq '.number' 2>$null | Out-String).Trim()
+    $ExistingStatus = $LASTEXITCODE
+}
+finally { $ErrorActionPreference = $BeforeCheck }
+if ($ExistingStatus -eq 0 -and $Existing -match '^[0-9]+
+    Write-Host ('SERVICEIT_EXISTING_REVIEW_PR=' + $Existing)
+}
+else {
+    $Body = 'DRAFT / NOT FOR MERGE: completed Codex changes from owner worktree 20261103-162103, shared for review because local full offline acceptance has one failing installer canary contract. Original run reports 1518 passed, 1 failed, 1 skipped; cryptography installed in owner venv. Needs substantive audit of nine-field readback gate before any merge or live activation. Never run production webhooks or write CRM for this review.'
+    SafeNative $Gh.Source @('pr', 'create', '--draft', '--repo', $RepoName, '--base', 'main',
+        '--head', $Branch, '--title',
+        'WIP(serviceit): inspect completed universal Bitrix AI worktree and canary gate',
+        '--body', $Body) 'SERVICEIT_DRAFT_PR_CREATE_FAILED'
+}
+Write-Host 'SERVICEIT_CODEX_DRAFT_PR=READY_FOR_REVIEW_DO_NOT_MERGE'
+Write-Host 'SERVICEIT_BITRIX_AUTOMATION_LIVE=NO'
+) {
     Write-Host ('SERVICEIT_EXISTING_REVIEW_PR=' + $Existing)
 }
 else {

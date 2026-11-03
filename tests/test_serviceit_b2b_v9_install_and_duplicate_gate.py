@@ -63,7 +63,8 @@ def test_nested_empty_shape_never_mistaken_for_no_duplicates():
 
 
 def test_negative_probe_false_positive_also_blocks():
-    handler, calls = _handler_factory([_known()], [_known()])
+    impossible_duplicate = {**_known(), "UF_CRM_13_SVCIT_SIGNAL_ID": PROBE_NONEXISTENT}
+    handler, calls = _handler_factory([_known()], [impossible_duplicate])
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(DuplicateSearchBlocked, match="NEGATIVE_DUPLICATE"):
             verified_duplicate_lookup(client, URL)

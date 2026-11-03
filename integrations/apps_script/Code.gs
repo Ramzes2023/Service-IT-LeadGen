@@ -22,6 +22,10 @@ const SERVICEIT_CONFIG = Object.freeze({
   maxPages: 10,
   pageSize: 100,
   maxMessagesPerCycle: 20,
+  // GitHub Actions allows at most one running and one pending run in a
+  // concurrency group. Bursting many dispatches can silently cancel runs.
+  // Pace events; keep other tenders pending in script properties until later.
+  maxDispatchesPerCycle: 1,
   maxTendersPerEmail: 80,
   maxEmailText: 256000,
   triggerMinutes: 5,
@@ -360,7 +364,7 @@ function dispatchNotice_(notice, dispatchId) {
   return dispatchId;
 }
 
-function processMessage_(messageId) {
+function processMessage_(messageId, remainingDispatchBudget) {
   const props = scriptProperties_();
   const emailKey = "SERVICEIT_EMAIL_" + messageId;
   const current = props.getProperty(emailKey) || "";
@@ -379,12 +383,17 @@ function processMessage_(messageId) {
   let sent = 0;
   let matched = 0;
   let uncertain = 0;
+  let deferred = 0;
   for (const observation of parsed.observations) {
     matched++;
     const notice = observation.notice;
     const sourceKey = "SERVICEIT_SOURCE_" + notice.tender_id;
     const state = props.getProperty(sourceKey) || "";
     if (state) continue;
+    if (sent + uncertain >= remainingDispatchBudget) {
+      deferred++;
+      continue;
+    }
     const dispatchId = Utilities.getUuid();
     // Reserve before the external dispatch. Ambiguous dispatches are never
     // blindly replayed, because the GitHub workflow may have started.
@@ -404,10 +413,15 @@ function processMessage_(messageId) {
     props.setProperty(emailKey, "NO_MATCH");
   } else if (uncertain > 0) {
     props.setProperty(emailKey, "PARTIAL_REVIEW");
+  } else if (deferred > 0) {
+    // Never mark an email DONE when its remaining tender IDs still need
+    // bounded dispatch in a future five-minute trigger.
+    props.setProperty(emailKey, "PENDING");
   } else {
     props.setProperty(emailKey, "DONE");
   }
-  return {sent: sent, skipped: matched - sent, uncertain: uncertain};
+  return {sent: sent, skipped: matched - sent - deferred,
+          uncertain: uncertain, deferred: deferred};
 }
 
 function pollAndDispatchB2B() {
@@ -429,14 +443,18 @@ function pollAndDispatchB2B() {
       pending.push(id);
       if (pending.length >= SERVICEIT_CONFIG.maxMessagesPerCycle) break;
     }
-    let messages = 0, dispatched = 0, skipped = 0, review = 0, uncertain = 0;
+    let messages = 0, dispatched = 0, skipped = 0, review = 0, uncertain = 0, deferred = 0;
+    let budget = SERVICEIT_CONFIG.maxDispatchesPerCycle;
     for (const id of pending) {
+      if (budget <= 0) break;
       try {
-        const result = processMessage_(id);
+        const result = processMessage_(id, budget);
         messages++;
         dispatched += result.sent;
         skipped += result.skipped;
         uncertain += result.uncertain || 0;
+        deferred += result.deferred || 0;
+        budget -= result.sent + (result.uncertain || 0);
       } catch (_error) {
         props.setProperty("SERVICEIT_EMAIL_" + id, "REVIEW_REQUIRED");
         review++;
@@ -449,6 +467,7 @@ function pollAndDispatchB2B() {
       skipped: skipped,
       review_required: review,
       uncertain_dispatches: uncertain,
+      pending_tenders_deferred: deferred,
       external_transmission: dispatched,
       crm_writes: 0
     };

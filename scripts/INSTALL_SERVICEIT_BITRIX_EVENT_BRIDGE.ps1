@@ -142,6 +142,23 @@ try {
         Set-GhSecret 'SERVICEIT_GH_LEDGER_KEY' $ledgerKey
         $ledgerKey=$null
     }
+    if($GigaAllowed){
+        $GigaFile=Join-Path $SecretDir 'gigachat.dpapi'
+        $ScopeFile=Join-Path $SecretDir 'gigachat-scope.txt'
+        if(-not(Test-Path $GigaFile -PathType Leaf) -or -not(Test-Path $ScopeFile -PathType Leaf)){
+            throw 'GIGACHAT_LOCAL_DPAPI_OR_SCOPE_MISSING'
+        }
+        $Scope=(Get-Content -LiteralPath $ScopeFile -Raw -Encoding UTF8).Trim()
+        if($Scope -notin @('GIGACHAT_API_PERS','GIGACHAT_API_B2B','GIGACHAT_API_CORP')){
+            throw 'GIGACHAT_SCOPE_INVALID'
+        }
+        $Giga=Read-Dpapi $GigaFile
+        try {
+            if([string]::IsNullOrWhiteSpace($Giga)){throw 'GIGACHAT_SECRET_EMPTY'}
+            Set-GhSecret 'GIGACHAT_CREDENTIALS' $Giga
+        } finally { $Giga=$null }
+        Set-GhVar 'GIGACHAT_SCOPE' $Scope
+    }
     Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' $(if($GigaAllowed){'YES'}else{'NO'})
     Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' $(if($GigaAllowed){'YES'}else{'NO'})
     Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_HOSTS' 'b2b-center.ru,zakupki.gov.ru'

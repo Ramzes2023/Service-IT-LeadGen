@@ -67,7 +67,7 @@ def make_bundle(destination: Path, *, public_root: Path = PUBLIC_CERT,
     try:
         root = verified_public_root(public_root.read_bytes())
         base = (normal_ca or Path(certifi.where())).read_bytes()
-        if not base.startswith(b"-----BEGIN CERTIFICATE-----") or len(base) > 500_000:
+        if b"-----BEGIN CERTIFICATE-----" not in base or len(base) > 500_000:
             raise CertificateBlocked("SYSTEM_CA_BUNDLE_INVALID")
         destination.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".serviceit-ca-", dir=destination.parent)

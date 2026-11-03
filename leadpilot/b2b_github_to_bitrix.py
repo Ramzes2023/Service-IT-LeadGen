@@ -16,6 +16,7 @@ from .b2b_email_opportunity_bridge import classify_services, clean_tender_url
 from .b2b_bitrix_readiness import ReadOnlyBitrix, preflight
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, hold_analysis_fields
+from .serviceit_manager_readiness import MANAGER_NEXT, preliminary_manager_action
 
 REPO = "Ramzes2023/Service-IT-LeadGen"
 OWNER = "Ramzes2023"
@@ -31,7 +32,7 @@ FIELDS = frozenset({
     "UF_CRM_13_SVCIT_SIGNAL_SOURCE", "UF_CRM_13_SVCIT_SIGNAL_URL",
     "UF_CRM_13_SVCIT_SUGGESTED_SERVICE", "UF_CRM_13_SVCIT_COMPANY_NAME",
     "UF_CRM_13_SVCIT_EVIDENCE_STATUS", "UF_CRM_13_SVCIT_REVIEW_DECISION",
-    "UF_CRM_13_SVCIT_STOP_REASON", KEY, *AI_FIELDS,
+    "UF_CRM_13_SVCIT_STOP_REASON", KEY, MANAGER_NEXT, *AI_FIELDS,
 })
 
 
@@ -116,6 +117,7 @@ def hold_payload(notice, groups, *, ai=None):
         "UF_CRM_13_SVCIT_REVIEW_DECISION":
             "Проверить закупку и покупателя; не контактировать",
         "UF_CRM_13_SVCIT_STOP_REASON": "Не квалифицированный B2B-лид",
+        MANAGER_NEXT: preliminary_manager_action(notice, groups),
         KEY: "B2B-HOLD-" + fingerprint,
         **hold_analysis_fields(notice, groups, ai=ai),
     }

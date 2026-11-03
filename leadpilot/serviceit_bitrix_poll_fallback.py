@@ -22,6 +22,7 @@ import time
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
 
 from .serviceit_bitrix_dispatch_worker import (
     EVENT, LIVE_FLAG, MAX_CARD, MIN_CARD, PORTAL, REPOSITORY,
@@ -222,7 +223,24 @@ def encrypted_receipt_exists(client: httpx.Client, card: int,
                  "X-GitHub-Api-Version": "2022-11-28"},
         timeout=20, follow_redirects=False)
     require(response.status_code in (200, 404), "POLL_LEDGER_READ_UNVERIFIED")
-    return response.status_code == 200
+    if response.status_code == 404:
+        return False
+    try:
+        record = response.json()
+        require(type(record) is dict and type(record.get("content")) is str
+                and len(record["content"]) <= 32768,
+                "POLL_LEDGER_RECEIPT_INVALID")
+        plaintext = Fernet(ledger_key.encode("ascii")).decrypt(
+            base64.b64decode(record["content"]))
+        receipt = json.loads(plaintext)
+        require(type(receipt) is dict
+                and receipt.get("schema") == "serviceit-event-v1"
+                and type(receipt.get("card")) is int
+                and receipt["card"] == card,
+                "POLL_LEDGER_RECEIPT_MISMATCH")
+    except (ValueError, TypeError, UnicodeError, InvalidToken, KeyError):
+        raise PollBlocked("POLL_LEDGER_RECEIPT_UNVERIFIED") from None
+    return True
 
 
 def run(env: dict, *, client: httpx.Client, now: datetime | None = None,

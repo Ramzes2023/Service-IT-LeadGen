@@ -352,3 +352,42 @@ def test_multiple_cards_are_paced_one_per_schedule_not_bursted():
     assert result["dispatches"] == 1
     assert result["pending_capped"] is True
     assert events == [101]
+
+
+
+def test_owner_activation_missing_gigachat_privacy_stays_no_external_model():
+    from pathlib import Path
+    source = Path("scripts/ENABLE_SERVICEIT_BITRIX_POLL_FALLBACK.ps1").read_text("utf-8")
+    assert "SERVICEIT_GIGACHAT_PRIVACY=UNSET_SAFE_NO_EXTERNAL_MODEL" in source
+    assert "SERVICEIT_GIGACHAT_PRIVACY=SAFE_NO_PERSISTED" in source
+    assert "$PrivacyNeedsDefault = $true" in source
+    assert "$PrivacyValue = 'NO'" in source
+    assert "SERVICEIT_PUBLIC_TITLE_AI_PRIVACY_CONFLICT" in source
+    assert "SERVICEIT_GIGACHAT_CREDENTIALS_MISSING" in source
+    assert "SERVICEIT_GIGACHAT_PRIVACY_VALUE_INVALID" in source
+    assert "if ($PrivacyNeedsDefault)" in source
+    assert "Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'" in source
+    assert "Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'YES'" not in source
+    assert source.index("SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED") < source.index(
+        "Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'")
+    assert source.index("Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'") < source.index(
+        "Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'YES_1062_21_CLOUD'")
+
+
+def test_missing_privacy_default_preserves_worker_model_fail_closed_gate():
+    from inspect import getsource
+    from leadpilot.serviceit_bitrix_dispatch_worker import gate, LIVE_FLAG
+    source = getsource(gate)
+    assert 'decision not in ("YES", "NO")' in source
+    assert 'MODEL_PRIVACY_OR_CONFIG_INCOMPLETE' in source
+    base = {"SERVICEIT_BITRIX_EVENT_AI_ENABLED": LIVE_FLAG,
+            "GITHUB_REPOSITORY": "Ramzes2023/Service-IT-LeadGen",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_EVENT_NAME": "repository_dispatch",
+            "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY": "synthetic",
+            "SERVICEIT_GH_LEDGER_KEY": "synthetic",
+            "SERVICEIT_BITRIX_WEBHOOK": "synthetic",
+            "GITHUB_TOKEN": "synthetic"}
+    assert gate({**base, "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "NO"}) == "READY"
+    assert gate({**base, "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": ""}) == "PRIVACY_DECISION_REQUIRED"
+    assert gate({**base, "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "YES"}) == "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"

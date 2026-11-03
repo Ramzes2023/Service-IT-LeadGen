@@ -32,7 +32,7 @@ def test_synthetic_gigachat_has_no_bitrix_or_customer_data_or_repo_changes():
         assert forbidden not in WF
     source=Path("leadpilot/serviceit_gigachat_cockpit_preflight.py").read_text("utf-8")
     assert "from .bitrix_1062_demo_qualification import AI_TEXT" in source
-    assert "run_preflight()" in source
+    assert "run_preflight(classifier=provider.classify)" in source
     assert "CRM" not in WF or "no CRM" in WF
     assert "GIGACHAT_PREFLIGHT_BLOCKED" in source
     assert "ledger_reservations" in source

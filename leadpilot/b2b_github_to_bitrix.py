@@ -199,8 +199,12 @@ def exact_duplicate(client, base, source_id):
     response = bitrix_call(client, base, "crm.item.list", {
         "entityTypeId": 1062, "useOriginalUfNames": "Y",
         "filter": {"categoryId": 21, SIGNAL: source_id},
-        # entityTypeId is NOT a supported list select field (Bitrix drops it).
-        "select": ["id", "categoryId", SIGNAL], "start": 0})
+        # LIVE portal 2026-11-03 read-only: using select (even with
+        # supported fields) returned a row WITHOUT id, while the SAME exact
+        # source/category filter with NO select returned valid flat records.
+        # This request is narrowly scoped to one source. Exact GET verifies
+        # type/category/source before any write. Never broaden this request.
+        "start": 0})
     body = response["result"]
     must("next" not in body and "next" not in response,
          "CRM_PAGED_UNCERTAIN")

@@ -126,9 +126,9 @@ class Endpoints:
         self.calls.append(method)
         body = json.loads(request.content)
         if method == "crm.item.list":
-            assert body["select"] == ["id", "categoryId", bridge.SIGNAL]
-            # Bitrix officially drops entityTypeId from list.select even when
-            # requested; test that we do NOT require it to be returned.
+            assert "select" not in body
+            # Live portal 2026-11-03 gave a flat record with a valid ID only
+            # when the exact-source listing OMITTED select entirely.
             records = ([{"id": 23, "categoryId": 21,
                          bridge.SIGNAL: "B2B-CENTER-4661617"}]
                        if self.existing else [])

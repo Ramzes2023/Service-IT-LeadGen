@@ -31,7 +31,7 @@ def _handler_factory(known_items, absent_items):
             return httpx.Response(200, json={"result": {"item": item}})
         assert request.url.path.endswith("/crm.item.list.json")
         assert params["filter"]["categoryId"] == 21
-        assert params["select"] == ["id", "categoryId", "UF_CRM_13_SVCIT_SIGNAL_ID"]
+        assert "select" not in params  # Real portal returned id only in this mode
         source = params["filter"]["UF_CRM_13_SVCIT_SIGNAL_ID"]
         calls.append(source)
         assert source in (KNOWN_EXISTING, PROBE_NONEXISTENT)
@@ -177,14 +177,14 @@ def test_exact_get_wrong_scope_refuses_positive_duplicate():
             verified_duplicate_lookup(client, URL)
 
 
-def test_bitrix_list_select_complies_with_official_entity_type_exclusion():
+def test_bitrix_exact_duplicate_list_uses_live_verified_no_select_mode():
     from inspect import getsource
     from leadpilot.b2b_github_to_bitrix import exact_duplicate
     source = getsource(exact_duplicate)
-    assert '"select": ["id", "categoryId", SIGNAL]' in source
-    assert '"entityTypeId", "categoryId", SIGNAL' not in source
+    assert '"filter": {"categoryId": 21, SIGNAL: source_id}' in source
+    assert '"select":' not in source
     assert '"crm.item.get"' in source
-    assert 'CRM_DUPLICATE_EXACT_GET_UNVERIFIED' in source
+    assert "CRM_DUPLICATE_EXACT_GET_UNVERIFIED" in source
 
 
 

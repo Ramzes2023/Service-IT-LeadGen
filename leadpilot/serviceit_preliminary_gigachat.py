@@ -27,8 +27,12 @@ def allowed_public_title(item: dict, hosts: frozenset[str]) -> str:
     if not isinstance(item, dict) or not isinstance(hosts, frozenset) or not hosts:
         raise PreliminaryAIBlocked("PUBLIC_SOURCE_ALLOWLIST_MISSING")
     kind = item.get(PREFIX + "SIGNAL_KIND")
-    if kind != "tender-opportunity":
-        raise PreliminaryAIBlocked("PUBLIC_TENDER_KIND_REQUIRED")
+    # Public recruitment announcements can be analyzed on the same strict
+    # hostname+title-only privacy boundary as public tender notices.
+    # Private company CRM requests/forms NEVER qualify for this path.
+    if kind not in ("tender-opportunity", "1c_vacancy",
+                    "it_vacancy", "vacancy-opportunity"):
+        raise PreliminaryAIBlocked("PUBLIC_NOTICE_KIND_REQUIRED")
     source_url = item.get(PREFIX + "SIGNAL_URL")
     if not isinstance(source_url, str) or len(source_url) > 1200:
         raise PreliminaryAIBlocked("PUBLIC_URL_REQUIRED")
@@ -78,6 +82,10 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
     except (ValueError, KeyError, TypeError):
         raise PreliminaryAIBlocked("GIGACHAT_UNVERIFIED_OUTPUT") from None
     fields = dict(base_fields)
+    badge = fields.get(PREFIX + "AI_SUMMARY", "").splitlines()[0]
+    if not badge.startswith(("📑 ТЕНДЕР", "👥 ВАКАНСИЯ",
+                             "🎯 ЗАПРОС УСЛУГ", "⚪ УТОЧНИТЬ ТИП")):
+        badge = ""
     status = "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED"
     hypothesis = (
         "GigaChat (гипотеза, НЕ факт): " + possible_need
@@ -91,7 +99,8 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         + "». Проверить с менеджером; подтверждения спроса нет."
     )
     fields[PREFIX + "AI_SUMMARY"] = (
-        "GigaChat выделил возможную потребность по общедоступной теме тендера. "
+        (badge + "\n" if badge else "")
+        + "GigaChat выделил возможную потребность по общедоступной теме сигнала. "
         "Это НЕ подтверждённый лид. Lead Score не рассчитан. "
         "Нужны независимые проверки источника, ИНН, дублей, STOP и права контакта."
     )
@@ -100,7 +109,8 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         "её confidence не является Lead Score."
     )
     fields[PREFIX + "AI_FULL_REPORT"] = (
-        "СЕРВИС ИТ — ПРЕДВАРИТЕЛЬНЫЙ AI-ОТЧЁТ ДЛЯ МЕНЕДЖЕРА\n"
+        (badge + "\n" if badge else "")
+        + "СЕРВИС ИТ — ПРЕДВАРИТЕЛЬНЫЙ AI-ОТЧЁТ ДЛЯ МЕНЕДЖЕРА\n"
         "Статус: ГИПОТЕЗА GigaChat / источник и покупатель НЕ подтверждены\n"
         "Lead Score: НЕ РАССЧИТАН\n"
         "Контакт: НЕ РАЗРЕШЁН\n"
@@ -119,8 +129,12 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
 def attempted_but_unverified_fields(base_fields: dict) -> dict:
     fields = dict(base_fields)
     fields[PREFIX + "AI_STATUS"] = "GIGACHAT_ATTEMPT_UNVERIFIED"
+    badge = fields.get(PREFIX + "AI_SUMMARY", "").splitlines()[0]
+    badge = badge if badge.startswith(("📑 ТЕНДЕР", "👥 ВАКАНСИЯ",
+                                      "🎯 ЗАПРОС УСЛУГ", "⚪ УТОЧНИТЬ ТИП")) else ""
     fields[PREFIX + "AI_SUMMARY"] = (
-        "Анализ GigaChat был запрошен, но достоверный результат не получен. "
+        (badge + "\n" if badge else "")
+        + "Анализ GigaChat был запрошен, но достоверный результат не получен. "
         "Потребность не подтверждена, Score не рассчитан."
     )
     fields[PREFIX + "AI_FULL_REPORT"] = fields[PREFIX + "AI_FULL_REPORT"].replace(

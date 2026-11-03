@@ -104,7 +104,7 @@ def hold_payload(notice, groups, *, ai=None):
     source_id = "B2B-CENTER-" + number
     fingerprint = sha256(source_id.encode()).hexdigest()[:32]
     fields = {
-        "title": "ТЕНДЕР / проверка · B2B-Center №" + number,
+        "title": "📑 ТЕНДЕР / проверка · B2B-Center №" + number,
         "categoryId": 21, "stageId": HOLD_STAGE,
         "UF_CRM_13_SVCIT_SIGNAL_KIND": "tender-opportunity",
         SIGNAL: source_id,

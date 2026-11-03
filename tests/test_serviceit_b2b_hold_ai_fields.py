@@ -21,6 +21,11 @@ def test_all_nine_existing_fields_present_on_new_b2b_hold():
     assert set(fields)==AI_FIELDS
     assert len(fields)==9
     assert fields["UF_CRM_13_SVCIT_AI_STATUS"]=="NOT_RUN_SOURCE_UNVERIFIED"
+    assert fields["UF_CRM_13_SVCIT_AI_SUMMARY"].startswith("📑 ТЕНДЕР")
+    assert fields["UF_CRM_13_SVCIT_AI_MANAGER_BRIEF"].startswith("📑 ТЕНДЕР")
+    assert "дедлайн" in fields["UF_CRM_13_SVCIT_AI_MANAGER_BRIEF"]
+    assert "подрядчику" not in fields["UF_CRM_13_SVCIT_AI_NEXT_ACTION"]
+
     assert "AI-провайдер: NOT_RUN" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
     assert "НЕ РАССЧИТАН" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
     assert "контакт" in fields["UF_CRM_13_SVCIT_AI_LIMITATIONS"]
@@ -32,6 +37,9 @@ def test_all_nine_existing_fields_present_on_new_b2b_hold():
     assert "UF_CRM_13_SVCIT_LEAD_SCORE" not in payload["fields"]
     assert "UF_CRM_13_SVCIT_AI_SCORE_BADGE" not in payload["fields"]
     assert payload["fields"]["stageId"]=="DT1062_21:NEW"
+    # CRM title is visible before opening a Kanban card even when the shared
+    # AI_SUMMARY placement in the Kanban UI still needs corporate acceptance.
+    assert payload["fields"]["title"].startswith("📑 ТЕНДЕР")
 
 
 @pytest.mark.parametrize("key,value",[

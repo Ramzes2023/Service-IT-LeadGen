@@ -171,3 +171,37 @@ def test_after_write_handoff_failure_never_recreates_card(monkeypatch):
     assert r["handoff_state"] == "UNCONFIRMED_DO_NOT_RETRY"
     assert target.calls.count("crm.item.add") == 1
     assert target.calls.count("crm.item.get") == 1
+
+
+def test_b2b_direct_actions_all_fanout_is_off_by_default():
+    from pathlib import Path
+    source = Path(".github/workflows/serviceit-b2b-direct-id-new-notice.yml").read_text()
+    assert "issue_comment:" in source
+    assert "github.event.issue.number == 66" in source
+    assert "github.actor == 'Ramzes2023'" in source
+    assert "startsWith(github.event.comment.body, 'SERVICEIT_B2B_NOTICE_V1')" in source
+    assert "vars.SERVICEIT_B2B_DIRECT_AUTO_ENABLED == 'YES'" in source
+    assert "serviceit-b2b-bitrix-issue-66" in source
+    assert "cancel-in-progress: false" in source
+    assert "SERVICEIT_DIRECT_ID_HANDOFF_ENABLED" in source
+    assert "SERVICEIT_GH_LEDGER_KEY" in source
+    assert "GIGACHAT_CREDENTIALS" in source
+    assert "vars.SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED" in source
+    assert "AI_PROVIDER: gigachat" in source
+    assert 'python -m leadpilot.b2b_github_to_bitrix --event' in source
+    assert "SERVICEIT_FREE_CLOUD_ENABLED" not in source
+    # The opt-in source workflow does not invoke the broken list poller.
+    assert "serviceit_github_free_worker" not in source
+
+
+def test_source_reservation_precedes_optional_gigachat_and_crm_add():
+    import inspect
+    code = inspect.getsource(bridge.run_once)
+    assert code.index("ledger.reserve(source_id)") < code.index(
+        'os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED")')
+    assert code.index("ledger.reserve(source_id)") < code.index(
+        '"crm.item.add"')
+    assert code.index('"crm.item.add"') < code.index(
+        '"crm.item.get"')
+    assert code.index('"crm.item.get"') < code.index(
+        'post_encrypted_handoff')

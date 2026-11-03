@@ -225,15 +225,21 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
     if exact_duplicate(client, base, source_id):
         return {"status": "ALREADY_EXISTS_IN_CRM",
                 "tender_id": notice["tender_id"], "qualified_leads": 0, "crm_writes": 0}
-    # Optional one model call on the supplier email SUBJECT ONLY. No names,
-    # company INN, source URL, message body, client records or contact details.
-    # It is a hypothesis on unverified evidence, never a qualified lead/Score.
-    if os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED") == "YES":
+    # Validate privacy and model authorization BEFORE any GitHub/CRM write.
+    # Reserve the source AFTER approval but BEFORE the optional model API call
+    # so failed/ambiguous model requests cannot be repeatedly billed.
+    use_gigachat = os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED") == "YES"
+    if use_gigachat:
         must(os.environ.get("SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED") == "YES"
              and os.environ.get("AI_ENABLE") == "1"
              and os.environ.get("AI_PROVIDER") == "gigachat"
              and bool(os.environ.get("GIGACHAT_CREDENTIALS")),
              "B2B_GIGACHAT_PRIVACY_OR_CREDENTIALS_NOT_APPROVED")
+    ledger.reserve(source_id)
+    # Optional one model call on supplier email SUBJECT ONLY. No names,
+    # company INN, source URL, message body, contacts or full CRM records.
+    # This remains a hypothesis, NOT a qualified lead or Lead Score.
+    if use_gigachat:
         try:
             from .serviceit_ai_report import plain
             subject=plain(notice["subject"],240)
@@ -247,8 +253,7 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
             # Provider unavailable or untrusted text: still create an honest
             # HOLD with AI_STATUS=NOT_RUN_SOURCE_UNVERIFIED, never fake success.
             pass
-    # Durable reservation before first possible CRM write, no automatic retry.
-    ledger.reserve(source_id)
+    # One permitted CRM write after the durable source reservation.
     added = bitrix_call(client, base, "crm.item.add", payload)
     created = added["result"].get("item")
     must(isinstance(created, dict) and type(created.get("id")) is int
@@ -262,8 +267,29 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
          and str(actual.get("categoryId")) == "21"
          and all(actual.get(k) == v for k, v in payload["fields"].items()),
          "CRM_READBACK_UNCERTAIN_NO_RETRY")
+    # Producer-owned direct handoff: this exact ID comes from crm.item.add +
+    # exact crm.item.get readback, NEVER from crm.item.list. The sidecar is
+    # optional and off by default; if its remote checkpoint is ambiguous,
+    # keep the proven CRM write and NEVER attempt to create the card again.
+    handoff_state = "OFF"
+    if os.environ.get("SERVICEIT_DIRECT_ID_HANDOFF_ENABLED") == "YES":
+        try:
+            from .serviceit_direct_id_handoff import (
+                receipt, post_encrypted_handoff, DirectHandoffBlocked,
+            )
+            key = os.environ.get("SERVICEIT_GH_LEDGER_KEY", "")
+            event = receipt(card_id, source_id,
+                            ai_status=payload["fields"][
+                                "UF_CRM_13_SVCIT_AI_STATUS"])
+            handoff_state = post_encrypted_handoff(
+                client, github_token, key, event)
+        except Exception:
+            # A failure AFTER confirmed crm.item.add is not a reason to retry
+            # the source: the GitHub bot source reservation remains immutable.
+            handoff_state = "UNCONFIRMED_DO_NOT_RETRY"
     return {"status": "ONE_TENDER_HOLD_VERIFIED", "tender_id": notice["tender_id"],
-            "card_id": card_id, "qualified_leads": 0, "crm_writes": 1}
+            "card_id": card_id, "qualified_leads": 0, "crm_writes": 1,
+            "handoff_state": handoff_state}
 
 
 def main(argv=None):

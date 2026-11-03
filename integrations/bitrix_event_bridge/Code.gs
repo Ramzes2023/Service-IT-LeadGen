@@ -182,7 +182,13 @@ function processBitrixEvent_(e) {
 function doPost(e) {
   // Always respond with a generic acknowledgement; do not reveal webhook
   // token validity, item ID, GH status or sensitive exception content.
-  try { processBitrixEvent_(e); } catch (_ignored) {}
+  try {
+    const status = processBitrixEvent_(e);
+    console.log("SERVICEIT_BRIDGE=" + String(status).replace(/[^A-Z0-9_]/g, ""));
+  } catch (_ignored) {
+    // The owner sees a fixed safe diagnostic in Apps Script executions.
+    console.error("SERVICEIT_BRIDGE=REVIEW_REQUIRED_NO_AUTOMATIC_RETRY");
+  }
   return ContentService.createTextOutput("SERVICEIT_EVENT_RECEIVED");
 }
 

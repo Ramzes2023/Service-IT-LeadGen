@@ -69,7 +69,7 @@ def runtime_config(env: dict, *, is_mount=None) -> dict:
         raw_hosts = env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", "")
         entries = [x.strip().lower() for x in raw_hosts.split(",") if x.strip()]
         require(0 < len(entries) <= 20 and all(
-            re.fullmatch(r"(?:[a-z0-9-]{1,63}\\.)+[a-z]{2,20}", x)
+            re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", x)
             for x in entries
         ), "PRELIMINARY_AI_PUBLIC_HOST_ALLOWLIST_REQUIRED")
         hosts = frozenset(entries)

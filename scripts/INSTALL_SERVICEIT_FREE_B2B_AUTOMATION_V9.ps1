@@ -15,7 +15,6 @@ $HmacFile = Join-Path $Root 'b2b-ingest-hmac.dpapi'
 $ProjectRoot = Join-Path $Root 'Gmail-B2B-V9'
 $ProjectIdFile = Join-Path $ProjectRoot 'script-id.txt'
 $ProjectName = 'Service IT Gmail B2B Automated Intake V9'
-$ParserGitRef = 'origin/main'
 
 function FailIfExit([string]$Name) { if ($LASTEXITCODE -ne 0) { throw ($Name + '_FAILED') } }
 function Read-Dpapi([string]$Path) {
@@ -92,7 +91,7 @@ $UseGiga=$GigaConsent -ceq 'YES'
 $AdminConsent=Read-Host 'Are you a Bitrix24 administrator and approve the shared manager-form update? Type YES or NO'
 $UseAdmin=$AdminConsent -ceq 'YES'
 
-$Temp=Join-Path $env:TEMP ('serviceit-b2b-v8-'+[guid]::NewGuid().ToString('N'))
+$Temp=Join-Path $env:TEMP ('serviceit-b2b-v9-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Temp -Force | Out-Null
 $Bitrix=$null;$Giga=$null;$Fernet=$null;$Hmac=$null;$done=$false
 try {
@@ -133,44 +132,17 @@ try {
         $authz=(& npx.cmd --yes '@google/clasp@latest' show-authorized-user --json 2>&1 | Out-String)
     }
     if($authz -notmatch [regex]::Escape($ExpectedAccount)){throw 'WRONG_GOOGLE_ACCOUNT'}
-    # A dedicated cloud project is created only once; NEVER select or
-    # overwrite the unrelated Bitrix event-bridge or a Gmail V7 project.
+    # Never select or overwrite another Google project, including the
+    # previously created Bitrix event bridge. Own this script ID locally.
     if (-not (Test-Path -LiteralPath $ProjectRoot -PathType Container)) {
         New-Item -Path $ProjectRoot -ItemType Directory -Force | Out-Null
     }
     if (Test-Path -LiteralPath $ProjectIdFile -PathType Leaf) {
         $ScriptId=(Get-Content -LiteralPath $ProjectIdFile -Raw -Encoding UTF8).Trim()
-        if ($ScriptId -notmatch '^[A-Za-z0-9_-]{25,}
-    foreach($d in @($stage,$backup,$readback)){[IO.File]::WriteAllText((Join-Path $d '.clasp.json'),$clasp,[Text.UTF8Encoding]::new($false))}
-    $private=@{expectedMailbox=$ExpectedAccount;githubToken=$GitHubToken;hmacSecret=$Hmac;ownerApproval='YES';cutoverMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}|ConvertTo-Json -Compress
-    $secretSource='const SERVICEIT_PRIVATE_CONFIG = Object.freeze('+$private+');'+[Environment]::NewLine
-    [IO.File]::WriteAllText((Join-Path $stage 'secrets.gs'),$secretSource,[Text.UTF8Encoding]::new($false))
-    Push-Location $backup;try{& npx.cmd --yes '@google/clasp@latest' pull;FailIfExit 'APPS_SCRIPT_BACKUP'}finally{Pop-Location}
-    Push-Location $stage;try{& npx.cmd --yes '@google/clasp@latest' push --force;FailIfExit 'APPS_SCRIPT_PUSH'}finally{Pop-Location}
-    Push-Location $readback;try{& npx.cmd --yes '@google/clasp@latest' pull;FailIfExit 'APPS_SCRIPT_READBACK'}finally{Pop-Location}
-    foreach($name in @('Code.gs','appsscript.json','secrets.gs')){
-        $a=(Get-FileHash (Join-Path $stage $name) -Algorithm SHA256).Hash
-        $b=(Get-FileHash (Join-Path $readback $name) -Algorithm SHA256).Hash
-        if($a -cne $b){throw ('APPS_SCRIPT_READBACK_MISMATCH_'+$name)}
-    }
-    Set-GhVar 'SERVICEIT_B2B_INGEST_ENABLED' 'YES'
-    if($UseAdmin){& $Gh issue comment 74 --repo $Repository --body 'SERVICEIT_MANAGER_LAYOUT_APPLY_V1' *> $null;FailIfExit 'MANAGER_LAYOUT_MARKER'}
-    $done=$true
-    Write-Host 'SERVICEIT_APPS_SCRIPT_V8=INSTALLED_AND_READBACK_VERIFIED' -ForegroundColor Green
-    Write-Host 'GITHUB_B2B_INGEST=ENABLED'
-    Write-Host ('GIGACHAT_TITLE_ONLY='+$(if($UseGiga){'ENABLED'}else{'DISABLED'}))
-    Write-Host ('MANAGER_LAYOUT_APPLY='+$(if($UseAdmin){'REQUESTED'}else{'NOT_AUTHORIZED'}))
-    Write-Host 'NEXT_OWNER_ACTION=One-time Google authorization of installPollingTrigger() required; NO per-card work.'
-    Write-Host 'LOCAL_WINDOWS_TASK=UNCHANGED_UNTIL_CLOUD_TRIGGER_IS_CONFIRMED'
-    Push-Location $stage;try{& npx.cmd --yes '@google/clasp@latest' open-script}finally{Pop-Location}
-} finally {
-    Remove-Item -LiteralPath (Join-Path $Temp 'stage\secrets.gs') -Force -ErrorAction SilentlyContinue
-    $Bitrix=$null;$Giga=$null;$Fernet=$null;$Hmac=$null;$GitHubToken=$null;$private=$null
-    if($done){Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction SilentlyContinue}
-    else{Write-Host ('SERVICEIT_BACKUP_AND_DIAGNOSTICS='+$Temp)}
-}
-) { throw 'SERVICEIT_GMAIL_PROJECT_ID_INVALID' }
-        Write-Host 'SERVICEIT_GMAIL_PROJECT=REUSING_PREVIOUSLY_CREATED_V9_ONLY'
+        if ($ScriptId -notmatch '^[A-Za-z0-9_-]{25,}$') {
+            throw 'SERVICEIT_GMAIL_PROJECT_ID_INVALID'
+        }
+        Write-Host 'SERVICEIT_GMAIL_PROJECT=REUSING_PREVIOUS_V9_ONLY'
     } else {
         $create=Join-Path $Temp 'create'
         New-Item -Path $create -ItemType Directory -Force | Out-Null
@@ -184,42 +156,13 @@ try {
             }
             $detail=Get-Content -LiteralPath $created -Raw -Encoding UTF8 | ConvertFrom-Json
             $ScriptId=[string]$detail.scriptId
-            if ($ScriptId -notmatch '^[A-Za-z0-9_-]{25,}
-    foreach($d in @($stage,$backup,$readback)){[IO.File]::WriteAllText((Join-Path $d '.clasp.json'),$clasp,[Text.UTF8Encoding]::new($false))}
-    $private=@{expectedMailbox=$ExpectedAccount;githubToken=$GitHubToken;hmacSecret=$Hmac;ownerApproval='YES';cutoverMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}|ConvertTo-Json -Compress
-    $secretSource='const SERVICEIT_PRIVATE_CONFIG = Object.freeze('+$private+');'+[Environment]::NewLine
-    [IO.File]::WriteAllText((Join-Path $stage 'secrets.gs'),$secretSource,[Text.UTF8Encoding]::new($false))
-    Push-Location $backup;try{& npx.cmd --yes '@google/clasp@latest' pull;FailIfExit 'APPS_SCRIPT_BACKUP'}finally{Pop-Location}
-    Push-Location $stage;try{& npx.cmd --yes '@google/clasp@latest' push --force;FailIfExit 'APPS_SCRIPT_PUSH'}finally{Pop-Location}
-    Push-Location $readback;try{& npx.cmd --yes '@google/clasp@latest' pull;FailIfExit 'APPS_SCRIPT_READBACK'}finally{Pop-Location}
-    foreach($name in @('Code.gs','appsscript.json','secrets.gs')){
-        $a=(Get-FileHash (Join-Path $stage $name) -Algorithm SHA256).Hash
-        $b=(Get-FileHash (Join-Path $readback $name) -Algorithm SHA256).Hash
-        if($a -cne $b){throw ('APPS_SCRIPT_READBACK_MISMATCH_'+$name)}
-    }
-    Set-GhVar 'SERVICEIT_B2B_INGEST_ENABLED' 'YES'
-    if($UseAdmin){& $Gh issue comment 74 --repo $Repository --body 'SERVICEIT_MANAGER_LAYOUT_APPLY_V1' *> $null;FailIfExit 'MANAGER_LAYOUT_MARKER'}
-    $done=$true
-    Write-Host 'SERVICEIT_APPS_SCRIPT_V8=INSTALLED_AND_READBACK_VERIFIED' -ForegroundColor Green
-    Write-Host 'GITHUB_B2B_INGEST=ENABLED'
-    Write-Host ('GIGACHAT_TITLE_ONLY='+$(if($UseGiga){'ENABLED'}else{'DISABLED'}))
-    Write-Host ('MANAGER_LAYOUT_APPLY='+$(if($UseAdmin){'REQUESTED'}else{'NOT_AUTHORIZED'}))
-    Write-Host 'NEXT_OWNER_ACTION=Open Apps Script and run installPollingTrigger() once.'
-    Write-Host 'LOCAL_WINDOWS_TASK=UNCHANGED_UNTIL_CLOUD_TRIGGER_IS_CONFIRMED'
-    Push-Location $stage;try{& npx.cmd --yes '@google/clasp@latest' open-script}finally{Pop-Location}
-} finally {
-    Remove-Item -LiteralPath (Join-Path $Temp 'stage\secrets.gs') -Force -ErrorAction SilentlyContinue
-    $Bitrix=$null;$Giga=$null;$Fernet=$null;$Hmac=$null;$GitHubToken=$null;$private=$null
-    if($done){Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction SilentlyContinue}
-    else{Write-Host ('SERVICEIT_BACKUP_AND_DIAGNOSTICS='+$Temp)}
-}
-) {
+            if ($ScriptId -notmatch '^[A-Za-z0-9_-]{25,}$') {
                 throw 'SERVICEIT_GMAIL_CREATE_INVALID_ID'
             }
-            # Save the ID BEFORE any further upload; reruns reuse the same
-            # owner-only new script rather than creating duplicate projects.
+            # Persist before pushing, so recovery NEVER creates a second
+            # Gmail project or touches the owner's Bitrix event bridge.
             [IO.File]::WriteAllText($ProjectIdFile,$ScriptId,[Text.UTF8Encoding]::new($false))
-            Write-Host 'SERVICEIT_GMAIL_PROJECT=NEW_DEDICATED_CREATED_ID_PERSISTED'
+            Write-Host 'SERVICEIT_GMAIL_PROJECT=NEW_CREATED_ID_PERSISTED'
         } finally { Pop-Location }
     }
     $clasp=@{scriptId=$ScriptId;rootDir='.'}|ConvertTo-Json -Compress
@@ -238,11 +181,11 @@ try {
     Set-GhVar 'SERVICEIT_B2B_INGEST_ENABLED' 'YES'
     if($UseAdmin){& $Gh issue comment 74 --repo $Repository --body 'SERVICEIT_MANAGER_LAYOUT_APPLY_V1' *> $null;FailIfExit 'MANAGER_LAYOUT_MARKER'}
     $done=$true
-    Write-Host 'SERVICEIT_APPS_SCRIPT_V8=INSTALLED_AND_READBACK_VERIFIED' -ForegroundColor Green
+    Write-Host 'SERVICEIT_APPS_SCRIPT_V9=INSTALLED_AND_READBACK_VERIFIED' -ForegroundColor Green
     Write-Host 'GITHUB_B2B_INGEST=ENABLED'
     Write-Host ('GIGACHAT_TITLE_ONLY='+$(if($UseGiga){'ENABLED'}else{'DISABLED'}))
     Write-Host ('MANAGER_LAYOUT_APPLY='+$(if($UseAdmin){'REQUESTED'}else{'NOT_AUTHORIZED'}))
-    Write-Host 'NEXT_OWNER_ACTION=Open Apps Script and run installPollingTrigger() once.'
+    Write-Host 'NEXT_OWNER_ACTION=One-time Google consent for installPollingTrigger() required; no per-card manual work.'
     Write-Host 'LOCAL_WINDOWS_TASK=UNCHANGED_UNTIL_CLOUD_TRIGGER_IS_CONFIRMED'
     Push-Location $stage;try{& npx.cmd --yes '@google/clasp@latest' open-script}finally{Pop-Location}
 } finally {

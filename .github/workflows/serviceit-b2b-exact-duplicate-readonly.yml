@@ -1,0 +1,38 @@
+name: ServiceIT exact duplicate read-only gate (no owner PC)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: serviceit-b2b-duplicate-readonly
+  cancel-in-progress: false
+
+jobs:
+  bitrix-readonly-source-verification:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 74 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_EXACT_DUPLICATE_READONLY_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify known existing and distinct absent source (READ ONLY)
+        run: python -m leadpilot.serviceit_b2b_exact_duplicate_preflight

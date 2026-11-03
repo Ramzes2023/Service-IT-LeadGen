@@ -147,8 +147,15 @@ if ($PublicTitleNeedsOff) {
     # Do not touch any settings until one-time owner activation is confirmed.
     Write-Host 'SERVICEIT_PUBLIC_TITLE_AI=SAFETY_DISABLE_REQUIRED_ON_ACTIVATION'
 }
-if ($PrivacyValue -ceq 'YES') {
-    Guard ($PresentSecrets -contains 'GIGACHAT_CREDENTIALS') 'SERVICEIT_GIGACHAT_CREDENTIALS_MISSING'
+if ($PrivacyValue -ceq 'YES' -and
+    $PresentSecrets -notcontains 'GIGACHAT_CREDENTIALS') {
+    # Consent alone cannot make a missing model credential work. Switch to
+    # safe local HOLD processing rather than reserve each new-card receipt
+    # and fail an external-model invocation. Explicit owner YES still required.
+    $PrivacyValue = 'NO'
+    $PrivacyNeedsDefault = $true
+    $PublicTitleNeedsOff = ($RawPublicTitleAI -ceq 'YES')
+    Write-Host 'SERVICEIT_GIGACHAT=CONFIG_MISSING_SAFE_HOLD_ONLY'
 }
 $OwnerAck = Read-Host 'After read-only N-mode check, authorize scheduling ONLY future 1062/21 card IDs to guarded AI worker (not existing cards)? Type YES'
 Guard ($OwnerAck -ceq 'YES') 'SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED'

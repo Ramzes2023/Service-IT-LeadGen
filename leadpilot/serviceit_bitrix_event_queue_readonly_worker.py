@@ -93,8 +93,13 @@ def classify_item(item: dict, *, requested_id: int) -> dict:
     report=item.get(AI_REPORT)
     score=item.get(SCORE)
     badge=item.get(BADGE)
-    if not all(_text_or_empty(val) for val in
-               (signal,kind,source,stop,ai_status,report)):
+    if (not all(_text_or_empty(val) for val in
+                (signal, kind, source, stop, ai_status))
+            or not _text_or_empty(report, 12000)):
+        # AI_FULL_REPORT is an existing long CRM field (validated 12000
+        # char contract). It is not a short source identity field.
+        # A 2k limit here incorrectly rejected the newly enriched report
+        # and made a valid HOLD appear unprocessable to both workers.
         raise ReadOnlyWorkerBlocked("CRM_SOURCE_FIELD_TYPES_INVALID")
     if score is not None and score!="" and (type(score) is not int or not 0<=score<=100):
         raise ReadOnlyWorkerBlocked("CRM_EXISTING_SCORE_TYPE_INVALID")

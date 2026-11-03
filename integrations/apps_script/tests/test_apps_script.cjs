@@ -155,6 +155,17 @@ function test(name,fn) {
   process.stdout.write('PASS '+name+'\n');
 }
 
+test('Apps Script manifest grants only Gmail read, outbound HTTPS and time triggers',()=>{
+  const manifest=JSON.parse(fs.readFileSync(__dirname + '/../appsscript.json','utf8'));
+  assert.strictEqual(manifest.runtimeVersion,'V8');
+  assert.deepStrictEqual(manifest.oauthScopes.sort(),[
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/script.external_request',
+    'https://www.googleapis.com/auth/script.scriptapp'
+  ].sort());
+  assert.strictEqual(manifest.dependencies.enabledAdvancedServices[0].serviceId,'gmail');
+});
+
 test('read-only Gmail preflight never dispatches or writes CRM',()=>{
   const e=environment();
   const result=e.context.checkB2BCenter();

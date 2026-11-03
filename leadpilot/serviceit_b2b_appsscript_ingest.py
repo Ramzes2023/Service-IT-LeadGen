@@ -41,8 +41,9 @@ def require(ok: bool, code: str):
 
 def validate_dispatch(event: dict, secret: str, *, now: float | None = None) -> tuple[dict, str]:
     require(type(event) is dict, "EVENT_INVALID")
-    require(event.get("repository") == REPO, "REPOSITORY_SCOPE_BLOCKED")
-    require(event.get("event_name") == "repository_dispatch", "EVENT_NAME_BLOCKED")
+    repository = event.get("repository") or {}
+    require(type(repository) is dict and repository.get("full_name") == REPO,
+            "REPOSITORY_SCOPE_BLOCKED")
     require(event.get("action") == EVENT_TYPE, "EVENT_TYPE_BLOCKED")
     payload = event.get("client_payload")
     require(type(payload) is dict and set(payload) == {"timestamp", "payload_json", "signature"},

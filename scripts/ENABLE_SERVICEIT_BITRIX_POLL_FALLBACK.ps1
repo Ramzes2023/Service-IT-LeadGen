@@ -115,30 +115,40 @@ foreach ($Needed in @('SERVICEIT_BITRIX_WEBHOOK',
                        'SERVICEIT_GH_LEDGER_KEY')) {
     Guard ($PresentSecrets -contains $Needed) ('SERVICEIT_REQUIRED_GH_SECRET_MISSING_' + $Needed)
 }
-$Settings = @(SafeGh @('variable', 'list', '--repo', $RepositoryName,
-                     '--json', 'name,value') 'SERVICEIT_GH_VARIABLE_NAMES_FAILED' | ConvertFrom-Json)
-$Privacy = @($Settings | Where-Object { $_.name -ceq 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' })
+# Let gh/jq select a single variable rather than piping an ambiguous JSON
+# array through PowerShell 5.1 ConvertFrom-Json/@() enumeration semantics.
+# Always redact values: console sees only vetted YES/NO or safe enum codes.
+function Get-GhVarValue([string]$Name) {
+    Guard ($Name -match '^[A-Z0-9_]{8,100}$') 'SERVICEIT_GITHUB_VARIABLE_NAME_INVALID'
+    $Filter = '.[] | select(.name == "' + $Name + '") | .value'
+    return (SafeGh @('variable', 'list', '--repo', $RepositoryName,
+                      '--json', 'name,value', '--jq', $Filter)
+                   ('SERVICEIT_GH_VARIABLE_LOOKUP_FAILED_' + $Name))
+}
+$RawPrivacy = Get-GhVarValue 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED'
 $PrivacyNeedsDefault = $false
-if ($Privacy.Count -eq 0) {
-    # This separate worker variable is NOT created by the B2B Gmail
-    # installer. Missing consent must never be interpreted as YES.
-    # A NO default allows only the local evidence-based nine-field HOLD
-    # report. GigaChat and any CRM text transmission remain disabled.
+if ($RawPrivacy -ceq 'YES' -or $RawPrivacy -ceq 'NO') {
+    $PrivacyValue = $RawPrivacy
+    Write-Host ('SERVICEIT_GIGACHAT_PRIVACY=EXISTING_' + $PrivacyValue)
+} else {
+    # Unknown/blank/ambiguous value is NEVER treated as consent.
+    # The user already authorizes only public tender titles via an independent
+    # B2B source gate; that is not blanket approval for arbitrary CRM titles.
     $PrivacyValue = 'NO'
     $PrivacyNeedsDefault = $true
-    Write-Host 'SERVICEIT_GIGACHAT_PRIVACY=UNSET_SAFE_NO_EXTERNAL_MODEL'
-} else {
-    Guard ($Privacy.Count -eq 1 -and $Privacy[0].value -in @('YES','NO')) 'SERVICEIT_GIGACHAT_PRIVACY_VALUE_INVALID'
-    $PrivacyValue = [string]$Privacy[0].value
+    Write-Host 'SERVICEIT_GIGACHAT_PRIVACY=UNVERIFIED_SAFE_NO_EXTERNAL_MODEL'
+}
+$RawPublicTitleAI = Get-GhVarValue 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED'
+$PublicTitleNeedsOff = ($PrivacyValue -ceq 'NO' -and
+                        $RawPublicTitleAI -ceq 'YES')
+if ($PublicTitleNeedsOff) {
+    # Prevent "new-card receipt reserved then worker fails" where preexisting
+    # preliminary title AI flag conflicts with the safety default of NO.
+    # Do not touch any settings until one-time owner activation is confirmed.
+    Write-Host 'SERVICEIT_PUBLIC_TITLE_AI=SAFETY_DISABLE_REQUIRED_ON_ACTIVATION'
 }
 if ($PrivacyValue -ceq 'YES') {
     Guard ($PresentSecrets -contains 'GIGACHAT_CREDENTIALS') 'SERVICEIT_GIGACHAT_CREDENTIALS_MISSING'
-} else {
-    # Never enable an event worker that would reserve each card and fail
-    # later because the preliminary-title AI gate expects privacy YES.
-    $PublicTitleAI = @($Settings | Where-Object { $_.name -ceq 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' })
-    Guard ($PublicTitleAI.Count -le 1 -and
-           ($PublicTitleAI.Count -eq 0 -or $PublicTitleAI[0].value -ne 'YES')) 'SERVICEIT_PUBLIC_TITLE_AI_PRIVACY_CONFLICT'
 }
 $OwnerAck = Read-Host 'After read-only N-mode check, authorize scheduling ONLY future 1062/21 card IDs to guarded AI worker (not existing cards)? Type YES'
 Guard ($OwnerAck -ceq 'YES') 'SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED'
@@ -148,9 +158,13 @@ try {
     Set-GhVar 'SERVICEIT_BITRIX_POLL_ENABLED' 'NO'
     if ($PrivacyNeedsDefault) {
         # Only after the owner's explicit activation acknowledgement.
-        # Do not touch any existing YES/NO decision made for this worker.
+        # Invalid/unset privacy never becomes an external-model YES.
         Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'
         Write-Host 'SERVICEIT_GIGACHAT_PRIVACY=SAFE_NO_PERSISTED'
+    }
+    if ($PublicTitleNeedsOff) {
+        Set-GhVar 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' 'NO'
+        Write-Host 'SERVICEIT_PUBLIC_TITLE_AI=OFF_UNTIL_SEPARATE_APPROVAL'
     }
     Set-GhVar 'SERVICEIT_BITRIX_POLL_START_UTC' $StartUtc
     # The original signed event processor still has an independent gate.

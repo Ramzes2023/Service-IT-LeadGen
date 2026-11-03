@@ -46,7 +46,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           foreach ($path in @(
               'scripts/INSTALL_SERVICEIT_ALL_CARD_AUTOFILL.ps1',
-              'scripts/RUN_SERVICEIT_ALL_CARD_AUTOFILL.ps1'
+              'scripts/RUN_SERVICEIT_ALL_CARD_AUTOFILL.ps1',
+              'scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V8.ps1'
           )) {
               $tokens = $null
               $errors = $null

@@ -9,6 +9,7 @@ $Repo = Join-Path $HOME 'Service_IT_GitHub_Repo\Service-IT-LeadGen'
 $Root = Join-Path $env:LOCALAPPDATA 'ServiceIT\AI-Autofill'
 $BitrixFile = Join-Path $Root 'bitrix-rest.dpapi'
 $GigaFile = Join-Path $Root 'gigachat.dpapi'
+$Python = Join-Path $Repo '.venv\Scripts\python.exe'
 $ScopeFile = Join-Path $Root 'gigachat-scope.txt'
 $LedgerFile = Join-Path $Root 'github-ledger-key.dpapi'
 $HmacFile = Join-Path $Root 'b2b-ingest-hmac.dpapi'
@@ -97,6 +98,27 @@ $Bitrix=$null;$Giga=$null;$Fernet=$null;$Hmac=$null;$done=$false
 try {
     $Bitrix=Read-Dpapi $BitrixFile; $Giga=Read-Dpapi $GigaFile
     if([string]::IsNullOrWhiteSpace($Bitrix) -or [string]::IsNullOrWhiteSpace($Giga)){throw 'SERVICEIT_DPAPI_EMPTY'}
+    if(-not (Test-Path -LiteralPath $Python -PathType Leaf)){throw 'SERVICEIT_OWNER_VENV_PYTHON_MISSING'}
+    # The owner-visible earlier read-only diagnosis showed crm.item.list
+    # NESTED_EMPTY. Never silently activate automated source creation while
+    # the CRM cannot distinguish a duplicate from a nested malformed reply.
+    # This MUST pass with a KNOWN existing source and a definite absent source.
+    Set-GhVar 'SERVICEIT_B2B_INGEST_ENABLED' 'NO'
+    $savedErrorAction=$ErrorActionPreference
+    try {
+        $env:SERVICEIT_BITRIX_WEBHOOK=$Bitrix
+        Push-Location $Repo
+        try {
+            $ErrorActionPreference='Continue'
+            & $Python -m leadpilot.serviceit_b2b_exact_duplicate_preflight
+            $probeExit=$LASTEXITCODE
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:\SERVICEIT_BITRIX_WEBHOOK -ErrorAction SilentlyContinue
+        $ErrorActionPreference=$savedErrorAction
+    }
+    if($probeExit -ne 0){throw 'SERVICEIT_B2B_EXACT_DUPLICATE_PROBE_BLOCKED_NO_AUTOMATION'}
+    Write-Host 'SERVICEIT_B2B_DUPLICATE_SEARCH=READONLY_VERIFIED'
     $names=@(& $Gh secret list --repo $Repository --json name | ConvertFrom-Json | ForEach-Object {$_.name})
     if(Test-Path -LiteralPath $LedgerFile){$Fernet=Read-Dpapi $LedgerFile}
     elseif($names -contains 'SERVICEIT_GH_LEDGER_KEY'){throw 'REMOTE_FERNET_KEY_WITHOUT_LOCAL_COPY'}

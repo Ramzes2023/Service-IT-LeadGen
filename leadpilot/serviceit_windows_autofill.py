@@ -43,9 +43,34 @@ def preliminary_fields(item):
     # No untrusted title, URL, personal data or raw company fields copied into
     # generated prose or transmitted to an LLM.
     status = "NOT_RUN_SOURCE_UNVERIFIED"
-    summary = ("Карточка автоматически зарегистрирована для проверки. "
-               "Подтверждённой потребности и разрешения контакта пока нет. "
-               "GigaChat не вызывался, Lead Score не рассчитывался.")
+    # Preserve actual card context for the manager without calling the model.
+    # Every value is explicitly labeled as CRM-provided, NOT independent evidence.
+    # Reject control characters, markup, URLs and overly long user-provided text.
+    def card_text(code, maximum=180):
+        value = item.get(code)
+        if not isinstance(value, str):
+            return "не указано"
+        value = value.strip()
+        if (not value or len(value) > maximum or
+                any(ord(ch) < 32 or ord(ch) == 127 for ch in value) or
+                any(token in value for token in ("<", ">", "@", "{", "}", "[", "]"))):
+            return "не указано"
+        return value
+    given_title = card_text("title", 240)
+    given_company = card_text(PREFIX + "COMPANY_NAME", 150)
+    given_source = card_text(PREFIX + "SIGNAL_SOURCE", 150)
+    given_kind = card_text(PREFIX + "SIGNAL_KIND", 120)
+    given_service = card_text(PREFIX + "SUGGESTED_SERVICE", 120)
+    card_context = ("Название сигнала (из карточки): " + given_title + "\n"
+                    "Компания (из карточки): " + given_company + "\n"
+                    "Источник (заявлен): " + given_source + "\n"
+                    "Тип сигнала (заявлен): " + given_kind + "\n"
+                    "Направление (заявлено): " + given_service + "\n"
+                    "Эти сведения ещё не проверены по первоисточнику.")
+    summary = ("Новый сигнал получен в Битрикс24 и автоматически подготовлен для менеджера. "
+               + ("Тема: " + given_title + ". " if given_title != "не указано" else "")
+               + "Покупатель, потребность и законность контакта ещё не подтверждены. "
+               "GigaChat не вызывался; Lead Score не рассчитывался.")
     quote = "Подтверждённая дословная цитата из первоисточника отсутствует."
     hypothesis = ("Направление услуг и возможная потребность пока не подтверждены. "
                   "Это предварительная запись, не AI-заключение.")
@@ -65,6 +90,7 @@ def preliminary_fields(item):
             "GigaChat: NOT_RUN (не отправлялись корпоративные данные)\n"
             "Lead Score: НЕ РАССЧИТАН; цветной приоритет не назначен.\n"
             "Контакт с компанией: НЕ РАЗРЕШЁН\n\n"
+            "Данные исходной карточки (НЕ ПРОВЕРЕНЫ)\n" + card_context + "\n\n"
             "Краткий вывод\n" + summary + "\n\n"
             "Доказательства\n" + quote + "\n\n"
             "Гипотеза\n" + hypothesis + "\n\n"

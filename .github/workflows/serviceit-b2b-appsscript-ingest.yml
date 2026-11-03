@@ -1,0 +1,65 @@
+name: ServiceIT B2B Apps Script to Bitrix HOLD
+
+on:
+  repository_dispatch:
+    types: [serviceit_b2b_notice]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: serviceit-b2b-appsscript-ingest
+  cancel-in-progress: false
+
+jobs:
+  guarded-b2b-hold:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.action == 'serviceit_b2b_notice' &&
+      vars.SERVICEIT_B2B_INGEST_ENABLED == 'YES' &&
+      vars.SERVICEIT_B2B_DIRECT_AUTO_ENABLED == 'YES'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_B2B_INGEST_HMAC_KEY: \${{ secrets.SERVICEIT_B2B_INGEST_HMAC_KEY }}
+      SERVICEIT_BITRIX_WEBHOOK: \${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: \${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      GIGACHAT_CREDENTIALS: \${{ secrets.GIGACHAT_CREDENTIALS }}
+      GIGACHAT_SCOPE: \${{ vars.GIGACHAT_SCOPE }}
+      SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED: \${{ vars.SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED }}
+      SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED: \${{ vars.SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED }}
+      SERVICEIT_DIRECT_ID_HANDOFF_ENABLED: \${{ vars.SERVICEIT_DIRECT_ID_HANDOFF_ENABLED }}
+      AI_ENABLE: \${{ vars.SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED == 'YES' && vars.SERVICEIT_B2B_GIGACHAT_PRIVACY_APPROVED == 'YES' && '1' || '0' }}
+      AI_PROVIDER: gigachat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Validate signed Apps Script notice and run guarded HOLD writer
+        run: python -m leadpilot.serviceit_b2b_appsscript_ingest --result "$RUNNER_TEMP/serviceit-b2b-ingest-result.json"
+      - name: Print redacted result only
+        if: always()
+        run: |
+          if [ ! -f "$RUNNER_TEMP/serviceit-b2b-ingest-result.json" ]; then
+            echo '{"status":"SERVICEIT_B2B_INGEST_RESULT_MISSING","crm_writes":"UNVERIFIED","qualified_leads":0}' > "$RUNNER_TEMP/serviceit-b2b-ingest-result.json"
+          fi
+          python - <<'PY'
+          import json, os
+          p=os.path.join(os.environ["RUNNER_TEMP"],"serviceit-b2b-ingest-result.json")
+          d=json.load(open(p,encoding="utf-8"))
+          print(json.dumps({
+              "status": d.get("status"),
+              "result": d.get("result"),
+              "crm_writes": d.get("crm_writes"),
+              "qualified_leads": 0,
+              "gigachat_attempted": d.get("gigachat_attempted"),
+              "ai_status": d.get("ai_status")
+          },ensure_ascii=False))
+          PY

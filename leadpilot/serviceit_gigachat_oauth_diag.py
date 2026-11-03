@@ -74,7 +74,8 @@ def main() -> int:
     env = dict(os.environ)
     # This is the only available audited entry point, not a reusable bearer.
     try:
-        with httpx.Client(verify=True, trust_env=False, follow_redirects=False) as client:
+        with httpx.Client(verify=env.get("GIGACHAT_CA_BUNDLE_FILE") or True,
+                          trust_env=False, follow_redirects=False) as client:
             result = probe(client, env)
     except Exception:
         result = {"status": "OAUTH_UNVERIFIED", "oauth": "TRANSPORT_UNVERIFIED"}

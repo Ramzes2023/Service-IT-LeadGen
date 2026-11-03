@@ -64,6 +64,8 @@ def test_live_cli_redacts_external_exception(monkeypatch, capsys):
     monkeypatch.setenv("AI_ENABLE", "1")
     monkeypatch.setenv("AI_PROVIDER", "gigachat")
     monkeypatch.setenv("GIGACHAT_CREDENTIALS", "SYNTHETIC_PRIVATE_KEY")
+    monkeypatch.setenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
+    monkeypatch.setenv("GIGACHAT_MODEL", "GigaChat-2")
     monkeypatch.setattr(p, "run_preflight",
                         lambda: (_ for _ in ()).throw(RuntimeError("SYNTHETIC_PRIVATE_KEY remote payload")))
     assert p.main(["--live-synthetic"]) == 2
@@ -79,3 +81,31 @@ def test_no_bot_crm_or_files_apis_in_preflight_source():
                       "State(", "state.reserve(", "userfieldconfig.add",
                       "BITRIX24_AUDIT_WEBHOOK", ".env", "task.item.add", "send_email"):
         assert forbidden not in source or forbidden == ".env"  # .env appears only in no-file comment
+
+
+def test_missing_gigachat_scope_prevents_any_network_or_paid_model_call(monkeypatch, capsys):
+    monkeypatch.setenv("AI_ENABLE", "1")
+    monkeypatch.setenv("AI_PROVIDER", "gigachat")
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "SYNTHETIC_KEY_DO_NOT_LOG")
+    monkeypatch.setenv("GIGACHAT_SCOPE", "")
+    monkeypatch.setenv("GIGACHAT_MODEL", "GigaChat-2")
+    monkeypatch.setattr(p, "run_preflight",
+                        lambda: (_ for _ in ()).throw(AssertionError("MUST NOT CALL MODEL")))
+    assert p.main(["--live-synthetic"]) == 2
+    val = json.loads(capsys.readouterr().out)
+    assert val["safe_reason_code"] == "GIGACHAT_SCOPE_UNSET_OR_INVALID"
+    assert val["crm_writes"] == 0
+
+
+def test_missing_gigachat_model_prevents_any_network_or_paid_model_call(monkeypatch, capsys):
+    monkeypatch.setenv("AI_ENABLE", "1")
+    monkeypatch.setenv("AI_PROVIDER", "gigachat")
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "SYNTHETIC_KEY_DO_NOT_LOG")
+    monkeypatch.setenv("GIGACHAT_SCOPE", "GIGACHAT_API_B2B")
+    monkeypatch.setenv("GIGACHAT_MODEL", "")
+    monkeypatch.setattr(p, "run_preflight",
+                        lambda: (_ for _ in ()).throw(AssertionError("MUST NOT CALL MODEL")))
+    assert p.main(["--live-synthetic"]) == 2
+    val = json.loads(capsys.readouterr().out)
+    assert val["safe_reason_code"] == "GIGACHAT_MODEL_UNSET_OR_INVALID"
+    assert val["crm_writes"] == 0

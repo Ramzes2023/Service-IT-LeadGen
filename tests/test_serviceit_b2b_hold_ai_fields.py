@@ -37,6 +37,9 @@ def test_all_nine_existing_fields_present_on_new_b2b_hold():
     assert "UF_CRM_13_SVCIT_LEAD_SCORE" not in payload["fields"]
     assert "UF_CRM_13_SVCIT_AI_SCORE_BADGE" not in payload["fields"]
     assert payload["fields"]["stageId"]=="DT1062_21:NEW"
+    # CRM title is visible before opening a Kanban card even when the shared
+    # AI_SUMMARY placement in the Kanban UI still needs corporate acceptance.
+    assert payload["fields"]["title"].startswith("📑 ТЕНДЕР")
 
 
 @pytest.mark.parametrize("key,value",[

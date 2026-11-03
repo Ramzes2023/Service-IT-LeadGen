@@ -434,3 +434,101 @@ def test_real_windows_powershell_cli_mock_is_in_windows_ci():
     assert "JQ_PATH_FORBIDDEN" in testscript
     assert "GET_DENIAL_NOT_BLOCKED" in testscript
     assert "LIST_DENIAL_NOT_BLOCKED" in testscript
+
+
+def test_one_time_owner_github_comment_runs_only_future_cards_with_normal_live_flags(tmp_path):
+    import os
+    from pathlib import Path
+    owner_event = {
+        "action": "created",
+        "repository": {"full_name": "Ramzes2023/Service-IT-LeadGen"},
+        "sender": {"login": "Ramzes2023"},
+        "issue": {"number": 74},
+        "comment": {"body": "SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1",
+                    "user": {"login": "Ramzes2023"}},
+    }
+    eventfile = Path(tmp_path) / "owner-event.json"
+    eventfile.write_text(json.dumps(owner_event), encoding="utf-8")
+    env = fake_env(GITHUB_EVENT_NAME="issue_comment",
+                   GITHUB_ACTOR="Ramzes2023",
+                   GITHUB_EVENT_PATH=str(eventfile),
+                   SERVICEIT_BITRIX_POLL_ENABLED="YES_1062_21_READONLY",
+                   SERVICEIT_BITRIX_EVENT_AI_ENABLED="YES_1062_21_CLOUD")
+    observed = []
+    def handler(req):
+        observed.append(req.url.host + req.url.path)
+        assert req.url.host == "serviseit.bitrix24.ru"
+        assert req.url.path.endswith("crm.item.list.json")
+        assert json.loads(req.content)["filter"]["categoryId"] == 21
+        return httpx.Response(200, json={"result":{"items":[]}, "total":0})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        answer = run(env, client=client, now=NOW, owner_once=True)
+    assert answer == {"status": "POLL_DISPATCHED_ID_ONLY", "crm_writes": 0,
+                      "dispatches": 0, "already_fenced":0, "pending_capped":False}
+    assert len(observed) == 1
+    assert "github.com" not in "".join(observed)
+
+
+@pytest.mark.parametrize("patch", [
+    {"GITHUB_ACTOR":"other-user"},
+    {"body":"SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1"},
+    {"issue_number":83},
+    {"sender":"other-user"},
+    {"comment_user":"other-user"},
+    {"action":"edited"},
+    {"repo":"other-owner/fake"},
+])
+def test_owner_one_time_live_rejects_untrusted_markers_before_crm_read(tmp_path, patch):
+    from pathlib import Path
+    event = {
+        "action": patch.get("action", "created"),
+        "repository":{"full_name":patch.get("repo","Ramzes2023/Service-IT-LeadGen")},
+        "sender":{"login":patch.get("sender","Ramzes2023")},
+        "issue":{"number":patch.get("issue_number",74)},
+        "comment":{"body":patch.get("body","SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1"),
+                   "user":{"login":patch.get("comment_user","Ramzes2023")}},
+    }
+    file = Path(tmp_path) / "event.json"
+    file.write_text(json.dumps(event), encoding="utf-8")
+    env = fake_env(GITHUB_EVENT_NAME="issue_comment",
+                   GITHUB_ACTOR=patch.get("GITHUB_ACTOR","Ramzes2023"),
+                   GITHUB_EVENT_PATH=str(file))
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: pytest.fail("Unauthenticated event must never access CRM"))) as client:
+        with pytest.raises(PollBlocked, match="POLL_OWNER_ONCE_NOT_AUTHORIZED"):
+            run(env, client=client, now=NOW, owner_once=True)
+
+
+def test_one_time_owner_event_cannot_bypass_independent_cloud_gates(tmp_path):
+    from pathlib import Path
+    eventfile=Path(tmp_path)/"event.json"
+    eventfile.write_text(json.dumps({
+        "action":"created",
+        "repository":{"full_name":"Ramzes2023/Service-IT-LeadGen"},
+        "sender":{"login":"Ramzes2023"},
+        "issue":{"number":74},
+        "comment":{"body":"SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1",
+                   "user":{"login":"Ramzes2023"}},
+    }), encoding="utf-8")
+    env=fake_env(GITHUB_EVENT_NAME="issue_comment",
+                 GITHUB_ACTOR="Ramzes2023", GITHUB_EVENT_PATH=str(eventfile),
+                 SERVICEIT_BITRIX_POLL_ENABLED="NO")
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: pytest.fail("Off gate must not access REST"))) as client:
+        assert run(env,client=client,now=NOW,owner_once=True)["status"]=="POLL_DISABLED"
+
+
+def test_one_time_owner_mode_shares_prod_validation_and_has_no_card_create_call():
+    from pathlib import Path
+    file=Path(".github/workflows/serviceit-bitrix-poll-fallback.yml").read_text("utf-8")
+    mod=Path("leadpilot/serviceit_bitrix_poll_fallback.py").read_text("utf-8")
+    assert "SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1" in file
+    assert "SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1" in mod
+    assert "github.actor == 'Ramzes2023'" in file
+    assert "github.event.issue.number == 74" in file
+    assert "SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'" in file
+    assert "SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY'" in file
+    assert "python -m leadpilot.serviceit_bitrix_poll_fallback --owner-once" in file
+    assert "owner_once_event_verified(env)" in mod
+    assert '"schedule", "workflow_dispatch", "issue_comment"' in mod
+    assert "crm.item.add" not in mod and "crm.item.update" not in mod

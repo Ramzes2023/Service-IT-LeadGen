@@ -245,15 +245,63 @@ def encrypted_receipt_exists(client: httpx.Client, card: int,
     return True
 
 
+OWNER_ONCE_MARKER = "SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1"
+OWNER_ONCE_ISSUE = 74
+OWNER_LOGIN = "Ramzes2023"
+
+
+def owner_once_event_verified(env: dict) -> bool:
+    """Validate one exact owner comment, never ingest untrusted comment text.
+
+    This authorizes an immediate production-equivalent scan of future-only
+    cards. It does NOT authorize creating a new CRM card or changing a
+    historical record. Both existing live GitHub variable gates still apply.
+    """
+    if (env.get("GITHUB_EVENT_NAME") != "issue_comment"
+            or env.get("GITHUB_ACTOR") != OWNER_LOGIN):
+        return False
+    path = env.get("GITHUB_EVENT_PATH")
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        file = __import__("pathlib").Path(path)
+        if not file.is_file() or not 0 < file.stat().st_size <= 256_000:
+            return False
+        payload = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    repo = payload.get("repository")
+    sender = payload.get("sender")
+    issue = payload.get("issue")
+    comment = payload.get("comment")
+    return (payload.get("action") == "created"
+            and isinstance(repo, dict)
+            and repo.get("full_name") == REPOSITORY
+            and isinstance(sender, dict)
+            and sender.get("login") == OWNER_LOGIN
+            and isinstance(issue, dict)
+            and issue.get("number") == OWNER_ONCE_ISSUE
+            and not issue.get("pull_request")
+            and isinstance(comment, dict)
+            and comment.get("body") == OWNER_ONCE_MARKER
+            and isinstance(comment.get("user"), dict)
+            and comment["user"].get("login") == OWNER_LOGIN)
+
+
 def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
-        probe_only: bool = False) -> dict:
+        probe_only: bool = False, owner_once: bool = False) -> dict:
     """Probe is GET/read-only only. Live requires BOTH explicit owner gates."""
     require(env.get("GITHUB_REPOSITORY") == REPOSITORY
             and env.get("GITHUB_REF") == "refs/heads/main"
             and env.get("GITHUB_EVENT_NAME") in ("schedule", "workflow_dispatch", "issue_comment"),
             "POLL_GITHUB_SCOPE_INVALID")
     if not probe_only:
-        require(env.get("GITHUB_EVENT_NAME") == "schedule", "POLL_SCHEDULE_REQUIRED")
+        if owner_once:
+            require(owner_once_event_verified(env), "POLL_OWNER_ONCE_NOT_AUTHORIZED")
+        else:
+            require(env.get("GITHUB_EVENT_NAME") == "schedule", "POLL_SCHEDULE_REQUIRED")
         if env.get("SERVICEIT_BITRIX_POLL_ENABLED") != POLL_FLAG:
             return {"status": "POLL_DISABLED", "crm_writes": 0, "dispatches": 0}
         require(env.get("SERVICEIT_BITRIX_EVENT_AI_ENABLED") == LIVE_FLAG,
@@ -329,8 +377,12 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
 def main() -> int:
     env = dict(os.environ)
     try:
+        flags = sys.argv[1:]
+        require(all(flag in ("--probe", "--owner-once") for flag in flags)
+                and len(flags) <= 1, "POLL_CLI_FLAGS_INVALID")
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
-            outcome = run(env, client=client, probe_only="--probe" in sys.argv[1:])
+            outcome = run(env, client=client, probe_only="--probe" in flags,
+                          owner_once="--owner-once" in flags)
         print(json.dumps(outcome, sort_keys=True))
         return 0
     except (PollBlocked, ValueError, httpx.HTTPError, KeyError, TypeError) as exc:

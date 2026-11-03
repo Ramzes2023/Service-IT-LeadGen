@@ -31,7 +31,10 @@ jobs:
         github.actor == 'Ramzes2023' &&
         github.event.issue.number == 74 &&
         !github.event.issue.pull_request &&
-        github.event.comment.body == 'SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1') ||
+        (github.event.comment.body == 'SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1' ||
+         (github.event.comment.body == 'SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1' &&
+          vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
+          vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))) ||
        (github.event_name == 'schedule' &&
         vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
         vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))
@@ -56,8 +59,11 @@ jobs:
       - name: Install reviewed dependencies
         run: python -m pip install -r requirements.txt
       - name: Read-only probe - never dispatch
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'issue_comment'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issue_comment' && github.event.comment.body == 'SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1')
         run: python -m leadpilot.serviceit_bitrix_poll_fallback --probe
+      - name: Owner exact one-time LIVE scan of future-only 1062/21 card IDs
+        if: github.event_name == 'issue_comment' && github.event.comment.body == 'SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1'
+        run: python -m leadpilot.serviceit_bitrix_poll_fallback --owner-once
       - name: Scan recent new-card IDs and dispatch signed events
         if: github.event_name == 'schedule'
         run: python -m leadpilot.serviceit_bitrix_poll_fallback

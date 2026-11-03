@@ -98,6 +98,8 @@ $Allowed=Read-Host 'Is corporate ServiceIT manager approval given to write ONLY 
 if($Allowed -cne 'YES'){throw 'CORPORATE_CRM_AI_WRITE_APPROVAL_REQUIRED'}
 $OwnerOnly=Read-Host 'Will the new Google Apps Script project be owner-only with no other editors? Type YES'
 if($OwnerOnly -cne 'YES'){throw 'GOOGLE_SCRIPT_OWNER_ONLY_REQUIRED'}
+$IdApproval=Read-Host 'Allow forwarding ONLY new Bitrix internal numeric card IDs to GitHub Actions (no company details)? Type YES'
+if($IdApproval -cne 'YES'){throw 'GITHUB_EVENT_CARD_ID_PRIVACY_CONSENT_REQUIRED'}
 $Privacy=Read-Host 'Send public tender title ONLY to GigaChat? Requires corporate privacy approval. Type YES or NO'
 $GigaAllowed=$Privacy -ceq 'YES'
 Write-Host 'STEP=SECURE_PREFLIGHT_START'

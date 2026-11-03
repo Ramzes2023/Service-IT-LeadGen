@@ -194,7 +194,7 @@ def exact_duplicate(client, base, source_id):
     checked via crm.item.get for 1062/category 21 and exact source ID.
     """
     must(isinstance(source_id, str)
-         and re.fullmatch(r"B2B-CENTER-\\d{5,12}", source_id),
+         and re.fullmatch(r"B2B-CENTER-\d{5,12}", source_id),
          "CRM_SOURCE_ID_INVALID")
     response = bitrix_call(client, base, "crm.item.list", {
         "entityTypeId": 1062, "useOriginalUfNames": "Y",

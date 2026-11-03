@@ -90,7 +90,7 @@ def test_transport_failed_does_not_expose_url(monkeypatch, capsys):
 
 def test_windows_diagnostic_does_not_trigger_credential_upload_or_task_disable():
     source = Path("scripts/SETUP_SERVICEIT_FREE_GITHUB_ACTIONS.ps1").read_text("utf-8")
-    assert "param([switch]$Apply, [switch]$DiagnoseCutover)" in source
+    assert "param([switch]$Apply, [switch]$DiagnoseCutover, [int]$CurrentCardId = 0)" in source
     before = source.index("if ($DiagnoseCutover) {")
     after = source.index("function Set-SecretFromStdin")
     assert before < after

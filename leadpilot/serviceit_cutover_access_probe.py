@@ -4,9 +4,10 @@ Run only with an authorized SERVICEIT_BITRIX_WEBHOOK environment secret.
 Outputs fixed non-sensitive status codes, NEVER source/CRM text, API response,
 customer names, webhook URLs, token, or arbitrary exception strings.
 
-We probe the documented list operation using minimal parameters separately
-from known existing historical card IDs 3/7 (read-only ONLY), to determine
-whether the repeated nested empty responses are filter/visibility related.
+We probe the documented list operation using minimal parameters, a pre-existing
+historical card #3 only for access comparison, and optionally an exact ID of a
+CURRENT card supplied by the owner (read-only ONLY). Deleted card #7 is never
+used to infer that the webhook cannot read active cards.
 This code does not declare an upper-bound cutover and cannot activate cloud.
 """
 from __future__ import annotations
@@ -76,8 +77,11 @@ def _safe_type(rest):
         return "API_UNAVAILABLE"
 
 
-def probe(rest):
-    """Only five GET/read-only-equivalent REST calls in the specified scope."""
+def probe(rest, *, current_id=None):
+    """Only scoped read calls; never search IDs or infer cloud cutover."""
+    if current_id is not None and (type(current_id) is not int or
+                                   not 8 <= current_id <= 2_000_000_000):
+        raise ValueError("CURRENT_CARD_ID_INVALID")
     return {
         "TYPE": _safe_type(rest),
         "LIST_MINIMAL": _safe_list(rest, {
@@ -89,8 +93,9 @@ def probe(rest):
             "filter": {"categoryId": 21},
             "select": ["id", "categoryId"], "start": 0,
         }),
-        "GET_7": _safe_card(rest, 7),
         "GET_3": _safe_card(rest, 3),
+        "GET_CURRENT": (_safe_card(rest, current_id)
+                        if current_id is not None else "NOT_SPECIFIED"),
     }
 
 
@@ -99,15 +104,26 @@ def main():
     if not webhook:
         print("SERVICEIT_CUTOVER_PROBE_STATUS=NO_WEBHOOK")
         return 2
+    supplied = os.environ.pop("SERVICEIT_CUTOVER_CURRENT_CARD_ID", "").strip()
+    if supplied:
+        if not supplied.isascii() or not supplied.isdecimal():
+            print("SERVICEIT_CUTOVER_PROBE_STATUS=CURRENT_ID_INVALID")
+            return 2
+        current_id = int(supplied)
+        if not 8 <= current_id <= 2_000_000_000:
+            print("SERVICEIT_CUTOVER_PROBE_STATUS=CURRENT_ID_INVALID")
+            return 2
+    else:
+        current_id = None
     try:
         with httpx.Client(
             trust_env=False, follow_redirects=False, timeout=20,
         ) as client:
-            statuses = probe(Rest(webhook, client))
+            statuses = probe(Rest(webhook, client), current_id=current_id)
     except Exception:
         print("SERVICEIT_CUTOVER_PROBE_STATUS=BLOCKED")
         return 2
-    for label in ("TYPE", "LIST_MINIMAL", "LIST_CATEGORY_ONLY", "GET_7", "GET_3"):
+    for label in ("TYPE", "LIST_MINIMAL", "LIST_CATEGORY_ONLY", "GET_3", "GET_CURRENT"):
         print("SERVICEIT_CUTOVER_PROBE_" + label + "=" + statuses[label])
     print("SERVICEIT_CUTOVER_PROBE_CRM_WRITES=0")
     print("SERVICEIT_CUTOVER_PROBE_GIGACHAT_CALLS=0")

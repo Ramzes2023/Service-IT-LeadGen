@@ -8,6 +8,7 @@ scheduler nor this module forges verification or exports customer data.
 """
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,10 @@ from .serviceit_enrichment_worker import (
     schema_limits, validate_identity,
 )
 from .serviceit_bitrix_event_queue_readonly_worker import classify_item
+from .serviceit_preliminary_gigachat import (
+    PreliminaryAIBlocked, allowed_public_title, model_hypothesis_fields,
+    attempted_but_unverified_fields,
+)
 
 FIRST_ID = 8
 TERMINAL = {"HOLD", "VERIFIED", "UNCERTAIN", "NEEDS_REVIEW"}
@@ -110,8 +115,14 @@ def preliminary_fields(item):
     return fields
 
 
-def preliminary_once(store, rest, requested_id):
-    """One fenced CRM update; ambiguous result never retried."""
+def preliminary_once(store, rest, requested_id, *, model=None,
+                     public_ai_hosts=frozenset()):
+    """One fenced CRM update; optional GigaChat gets ONLY approved public title.
+
+    No public-title allowlist or model consent means NO model call.
+    An external model call is reserved before transmission. Its failure is
+    recorded honestly while the nine manager fields are still filled.
+    """
     if type(requested_id) is not int or requested_id < FIRST_ID:
         raise AutoFillBlocked("HISTORICAL_ITEMS_EXCLUDED")
     job = store.claim(requested_id)
@@ -129,6 +140,31 @@ def preliminary_once(store, rest, requested_id):
         _must(decision.get("source_kind") not in SKIP, "SYNTHETIC_OR_OUT_OF_SCOPE")
         empty_analysis(item)
         fields = preliminary_fields(item)
+        if model is not None and public_ai_hosts:
+            try:
+                public_title = allowed_public_title(item, public_ai_hosts)
+            except PreliminaryAIBlocked:
+                # The source is not publicly approved: don't send any CRM data.
+                pass
+            else:
+                source_key = sha256((
+                    item[PREFIX + "SIGNAL_URL"] + "\\0" + public_title
+                ).encode()).hexdigest()
+                model_reserved = False
+                try:
+                    store.reserve(item_id, owner, "model", source_key=source_key)
+                    model_reserved = True
+                    ai = model(public_title)
+                    store.model_output(
+                        item_id,
+                        sha256(json.dumps(ai, sort_keys=True,
+                                          ensure_ascii=False).encode()).hexdigest(),
+                    )
+                    fields = model_hypothesis_fields(fields, public_title, ai)
+                except Exception:
+                    if model_reserved:
+                        # The request could have reached the model: no blind retry.
+                        fields = attempted_but_unverified_fields(fields)
         limits = schema_limits(rest)
         _must(all(len(value) <= limits[name] for name, value in fields.items()),
               "FIELD_LENGTH_BLOCKED")

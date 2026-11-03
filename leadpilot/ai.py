@@ -52,7 +52,8 @@ def config_from_env(environ=None) -> AIConfig:
         scope = env.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
         if scope not in {"GIGACHAT_API_PERS", "GIGACHAT_API_B2B", "GIGACHAT_API_CORP"}:
             raise RuntimeError("Invalid GIGACHAT_SCOPE")
-        return AIConfig(provider="gigachat", model=env.get("GIGACHAT_MODEL", "GigaChat-2"),
+        return AIConfig(provider="gigachat",
+                        model=(env.get("GIGACHAT_MODEL") or "").strip() or "GigaChat-2",
                         credentials=cred, scope=scope,
                         ca_bundle=env.get("GIGACHAT_CA_BUNDLE_FILE", ""))
     if provider == "openai_compatible":

@@ -80,7 +80,10 @@ def main(argv=None):
     # an empty string (a common YAML env-vs-default trap).
     import os
     scope = os.environ.get("GIGACHAT_SCOPE")
-    model = os.environ.get("GIGACHAT_MODEL")
+    # Match ai.config_from_env's existing documented default. GitHub
+    # Actions interpolates an unset vars.GIGACHAT_MODEL as an empty string,
+    # which must NOT override the reviewed GigaChat-2 fallback.
+    model = (os.environ.get("GIGACHAT_MODEL") or "").strip() or "GigaChat-2"
     if scope not in {"GIGACHAT_API_PERS", "GIGACHAT_API_B2B", "GIGACHAT_API_CORP"}:
         output = {"status": "GIGACHAT_PREFLIGHT_BLOCKED",
                   "safe_reason_code": "GIGACHAT_SCOPE_UNSET_OR_INVALID",

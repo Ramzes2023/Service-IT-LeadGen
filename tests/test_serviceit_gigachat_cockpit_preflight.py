@@ -97,15 +97,35 @@ def test_missing_gigachat_scope_prevents_any_network_or_paid_model_call(monkeypa
     assert val["crm_writes"] == 0
 
 
-def test_missing_gigachat_model_prevents_any_network_or_paid_model_call(monkeypatch, capsys):
+def test_empty_model_github_var_uses_existing_reviewed_default(monkeypatch, capsys):
+    from leadpilot.ai import config_from_env
     monkeypatch.setenv("AI_ENABLE", "1")
     monkeypatch.setenv("AI_PROVIDER", "gigachat")
     monkeypatch.setenv("GIGACHAT_CREDENTIALS", "SYNTHETIC_KEY_DO_NOT_LOG")
     monkeypatch.setenv("GIGACHAT_SCOPE", "GIGACHAT_API_B2B")
     monkeypatch.setenv("GIGACHAT_MODEL", "")
-    monkeypatch.setattr(p, "run_preflight",
-                        lambda: (_ for _ in ()).throw(AssertionError("MUST NOT CALL MODEL")))
-    assert p.main(["--live-synthetic"]) == 2
-    val = json.loads(capsys.readouterr().out)
-    assert val["safe_reason_code"] == "GIGACHAT_MODEL_UNSET_OR_INVALID"
-    assert val["crm_writes"] == 0
+    called=[]
+    def mock_preflight():
+        called.append(config_from_env().model)
+        return {"status":"GIGACHAT_COCKPIT_PREFLIGHT_PASS",
+                "crm_writes":0,"ledger_reservations":0}
+    monkeypatch.setattr(p, "run_preflight", mock_preflight)
+    assert p.main(["--live-synthetic"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "GIGACHAT_COCKPIT_PREFLIGHT_PASS"
+    assert output["crm_writes"] == 0
+    assert called == ["GigaChat-2"]
+
+
+
+def test_gigachat_model_default_on_missing_empty_and_blank_env():
+    from leadpilot.ai import config_from_env
+    base={"AI_ENABLE":"1", "AI_PROVIDER":"gigachat",
+          "GIGACHAT_CREDENTIALS":"SYNTHETIC_KEY",
+          "GIGACHAT_SCOPE":"GIGACHAT_API_PERS"}
+    for value in (None,"","   "):
+        env=base.copy()
+        if value is not None:
+            env["GIGACHAT_MODEL"]=value
+        assert config_from_env(env).model == "GigaChat-2"
+    assert config_from_env({**base,"GIGACHAT_MODEL":"GigaChat-Max"}).model == "GigaChat-Max"

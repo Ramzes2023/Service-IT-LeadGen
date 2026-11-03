@@ -266,8 +266,9 @@ try {
                [string]$Item.categoryId -ne '21'){continue}
             $Present=0
             foreach($Code in $ExpectedFields){
-                $Value=$Item.PSObject.Properties[$Code].Value
-                if($Value -is [string] -and -not [string]::IsNullOrWhiteSpace($Value)){$Present++}
+                $FieldProperty=$Item.PSObject.Properties[$Code]
+                if($null -ne $FieldProperty -and $FieldProperty.Value -is [string] -and
+                   -not [string]::IsNullOrWhiteSpace($FieldProperty.Value)){$Present++}
             }
             if($Present -eq 9){$ExactReadback=$true;break}
         }catch{

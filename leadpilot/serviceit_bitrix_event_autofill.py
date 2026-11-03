@@ -40,6 +40,7 @@ def run_event_cycle(
     store: Store, rest, *,
     approvals_dir: Path,
     model=None,
+    public_ai_hosts: frozenset[str] = frozenset(),
     max_items: int = MAX_ITEMS_PER_CYCLE,
 ) -> dict:
     """Process only authenticated exact event IDs; never call crm.item.list.
@@ -66,7 +67,8 @@ def run_event_cycle(
             state = (
                 worker.once(item_id)
                 if approval is not None else
-                preliminary_once(store, rest, item_id)
+                preliminary_once(store, rest, item_id, model=model,
+                                 public_ai_hosts=public_ai_hosts)
             )
         except Exception:
             # Never retry an item with unknown prior side effects by guessing.

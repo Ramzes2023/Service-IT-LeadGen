@@ -61,6 +61,10 @@ $GitHubToken=(& $Gh auth token | Out-String).Trim()
 if($GitHubToken.Length -lt 20){throw 'GITHUB_TOKEN_MISSING'}
 $Full=(& $Gh api "repos/$Repository" --jq '.full_name' | Out-String).Trim()
 if($LASTEXITCODE -ne 0 -or $Full -cne $Repository){throw 'GITHUB_REPO_IDENTITY_FAILED'}
+$Private=(& $Gh api "repos/$Repository" --jq '.private' | Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or $Private -cne 'false'){throw 'PUBLIC_REPO_EXPECTED_FOR_FREE_ACTIONS'}
+$ShareConsent=Read-Host 'Confirm the existing Google Apps Script project is owner-only and is not shared with other editors. Type YES'
+if($ShareConsent -cne 'YES'){throw 'APPS_SCRIPT_OWNER_ONLY_CONFIRMATION_MISSING'}
 $Agree=Read-Host 'Enable free Gmail-to-Bitrix automation? Only tender title, organizer, public URL, tender ID and Gmail message ID go to GitHub; raw email and contacts stay in Gmail. Type YES'
 if($Agree -cne 'YES'){throw 'OWNER_INGEST_CONSENT_MISSING'}
 $GigaConsent=Read-Host 'Allow GigaChat to receive ONLY tender title text for an unverified HOLD hypothesis? Type YES or NO'

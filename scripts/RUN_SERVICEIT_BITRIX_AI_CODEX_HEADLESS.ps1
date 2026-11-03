@@ -104,8 +104,7 @@ for ($Attempt = 1; $Attempt -le 2; $Attempt++) {
     $ModifiedBeforeRetry = @(& git -C $Worktree status --porcelain)
     if ($LASTEXITCODE -ne 0) { throw 'CODEX_WORKTREE_RETRY_STATE_UNVERIFIED' }
     $TimedOut = (Test-Path -LiteralPath $CodexLog -PathType Leaf) -and
-        (Select-String -LiteralPath $CodexLog -SimpleMatch
-            -Pattern 'failed to refresh available models: request timed out' -Quiet)
+        (Select-String -LiteralPath $CodexLog -SimpleMatch -Pattern 'failed to refresh available models: request timed out' -Quiet)
     if ($Attempt -ge 2 -or $ModifiedBeforeRetry.Count -ne 0 -or -not $TimedOut) {
         Write-Host ('CODEX_LOG=' + $CodexLog)
         Write-Host ('CODEX_EXIT_CODE=' + $CodexExit)

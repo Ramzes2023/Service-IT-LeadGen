@@ -52,7 +52,8 @@ jobs:
               'scripts/INSTALL_SERVICEIT_FREE_B2B_AUTOMATION_V8.ps1',
               'scripts/RUN_SERVICEIT_BITRIX_AI_CODEX_HEADLESS.ps1',
               'scripts/INSTALL_SERVICEIT_BITRIX_EVENT_BRIDGE.ps1',
-              'scripts/ENSURE_SERVICEIT_NODE_LTS.ps1'
+              'scripts/ENSURE_SERVICEIT_NODE_LTS.ps1',
+              'scripts/RESUME_SERVICEIT_BITRIX_AI_CODEX_WORKTREE.ps1'
           )) {
               $tokens = $null
               $errors = $null

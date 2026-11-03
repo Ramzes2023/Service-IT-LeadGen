@@ -56,7 +56,8 @@ def test_owner_workflow_tls_probe_has_no_crm_or_model_completion():
     assert "github.event.issue.number == 74" in wf
     assert "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}" in wf
     assert "serviceit_gigachat_oauth_diag" in wf
-    assert "verify=True" in src and "verify=False" not in src
+    assert "httpx.Client(verify=True, trust_env=False" in src
+    assert "httpx.Client(verify=False" not in src
     for forbidden in ("crm.item.add","crm.item.update","GITHUB_TOKEN","SERVICEIT_BITRIX_WEBHOOK",
                       "chat/completions","AIProvider.classify","print(resp.text)","print(exc)",
                       "contents: write","GIGACHAT_CA_BUNDLE_FILE"):

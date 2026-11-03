@@ -118,9 +118,27 @@ foreach ($Needed in @('SERVICEIT_BITRIX_WEBHOOK',
 $Settings = @(SafeGh @('variable', 'list', '--repo', $RepositoryName,
                      '--json', 'name,value') 'SERVICEIT_GH_VARIABLE_NAMES_FAILED' | ConvertFrom-Json)
 $Privacy = @($Settings | Where-Object { $_.name -ceq 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' })
-Guard ($Privacy.Count -eq 1 -and $Privacy[0].value -in @('YES','NO')) 'SERVICEIT_GIGACHAT_PRIVACY_SETTING_MISSING'
-if ($Privacy[0].value -ceq 'YES') {
+$PrivacyNeedsDefault = $false
+if ($Privacy.Count -eq 0) {
+    # This separate worker variable is NOT created by the B2B Gmail
+    # installer. Missing consent must never be interpreted as YES.
+    # A NO default allows only the local evidence-based nine-field HOLD
+    # report. GigaChat and any CRM text transmission remain disabled.
+    $PrivacyValue = 'NO'
+    $PrivacyNeedsDefault = $true
+    Write-Host 'SERVICEIT_GIGACHAT_PRIVACY=UNSET_SAFE_NO_EXTERNAL_MODEL'
+} else {
+    Guard ($Privacy.Count -eq 1 -and $Privacy[0].value -in @('YES','NO')) 'SERVICEIT_GIGACHAT_PRIVACY_VALUE_INVALID'
+    $PrivacyValue = [string]$Privacy[0].value
+}
+if ($PrivacyValue -ceq 'YES') {
     Guard ($PresentSecrets -contains 'GIGACHAT_CREDENTIALS') 'SERVICEIT_GIGACHAT_CREDENTIALS_MISSING'
+} else {
+    # Never enable an event worker that would reserve each card and fail
+    # later because the preliminary-title AI gate expects privacy YES.
+    $PublicTitleAI = @($Settings | Where-Object { $_.name -ceq 'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED' })
+    Guard ($PublicTitleAI.Count -le 1 -and
+           ($PublicTitleAI.Count -eq 0 -or $PublicTitleAI[0].value -ne 'YES')) 'SERVICEIT_PUBLIC_TITLE_AI_PRIVACY_CONFLICT'
 }
 $OwnerAck = Read-Host 'After read-only N-mode check, authorize scheduling ONLY future 1062/21 card IDs to guarded AI worker (not existing cards)? Type YES'
 Guard ($OwnerAck -ceq 'YES') 'SERVICEIT_OWNER_POLL_ACTIVATION_NOT_CONFIRMED'
@@ -128,6 +146,12 @@ $StartUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 $Started = $false
 try {
     Set-GhVar 'SERVICEIT_BITRIX_POLL_ENABLED' 'NO'
+    if ($PrivacyNeedsDefault) {
+        # Only after the owner's explicit activation acknowledgement.
+        # Do not touch any existing YES/NO decision made for this worker.
+        Set-GhVar 'SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED' 'NO'
+        Write-Host 'SERVICEIT_GIGACHAT_PRIVACY=SAFE_NO_PERSISTED'
+    }
     Set-GhVar 'SERVICEIT_BITRIX_POLL_START_UTC' $StartUtc
     # The original signed event processor still has an independent gate.
     Set-GhVar 'SERVICEIT_BITRIX_EVENT_AI_ENABLED' 'YES_1062_21_CLOUD'
@@ -137,6 +161,7 @@ try {
     Write-Host 'POLL_INTERVAL=10_MINUTES_BEST_EFFORT'
     Write-Host 'GOOGLE_WEBAPP_AND_OUTGOING_TOKEN=NOT_REQUIRED'
     Write-Host 'CRM_OLD_RECORD_WRITES=FORBIDDEN'
+    Write-Host ('GIGACHAT_FOR_NEW_CARDS='+$(if($PrivacyValue -ceq 'YES'){'CONSENTED_CONFIG_PRESENT'}else{'OFF_HOLD_ONLY'}))
     Write-Host 'LIVE_CARD_END_TO_END=NOT_YET_VERIFIED'
 }
 catch {

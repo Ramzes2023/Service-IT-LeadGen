@@ -16,6 +16,8 @@ jobs:
           node-version: '22'
       - name: Offline Apps Script V8 Gmail parser, HMAC, dedup and trigger tests
         run: node integrations/apps_script/tests/test_apps_script.cjs
+      - name: Offline Bitrix event web-app relay HMAC and dedup tests
+        run: node integrations/bitrix_event_bridge/tests/test_bridge.cjs
   unit-tests:
     runs-on: ubuntu-latest
     steps:

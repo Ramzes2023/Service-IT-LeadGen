@@ -97,7 +97,14 @@ def test_no_source_specific_fields_and_no_ui_writes():
     assert manifest["kanban_fields"] == list(KANBAN_FIELDS)
     assert len(manifest["ai_fields"]) == 9
     assert set(manifest["ai_fields"]) == set(AI_FIELDS)
-    assert len(DETAIL_SECTIONS) == 4
+    assert len(DETAIL_SECTIONS) == 5
+    section_names = {title: fields for title, fields in DETAIL_SECTIONS}
+    assert "05 · Проверка менеджером" in section_names
+    assert set(section_names["05 · Проверка менеджером"]) == {
+        PREFIX + "MANAGER_NEXT_ACTION",
+        PREFIX + "REVIEW_DECISION",
+        PREFIX + "STOP_REASON",
+    }
     assert all("B2B-Center" not in field and "Bidzaar" not in field
                for section in manifest["detail_sections"]
                for field in section["fields"])

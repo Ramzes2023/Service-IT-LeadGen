@@ -126,15 +126,31 @@ try {
     if($probeExit -ne 0){throw 'SERVICEIT_B2B_EXACT_DUPLICATE_PROBE_BLOCKED_NO_AUTOMATION'}
     Write-Host 'SERVICEIT_B2B_DUPLICATE_SEARCH=READONLY_VERIFIED'
     $names=@(& $Gh secret list --repo $Repository --json name | ConvertFrom-Json | ForEach-Object {$_.name})
-    if(Test-Path -LiteralPath $LedgerFile){$Fernet=Read-Dpapi $LedgerFile}
-    elseif($names -contains 'SERVICEIT_GH_LEDGER_KEY'){throw 'REMOTE_FERNET_KEY_WITHOUT_LOCAL_COPY'}
-    else{$Fernet=New-Key -Pad $true;Write-Dpapi $LedgerFile $Fernet}
+    # This shared encrypted ledger key was already provisioned by the
+    # Bitrix event-bridge installer before Google deployment. GitHub Actions
+    # secrets are write-only: never require or rotate an existing remote key.
+    # Rotating it would make historical encrypted receipts unverifiable.
+    $UploadLedgerKey=$false
+    if($names -contains 'SERVICEIT_GH_LEDGER_KEY'){
+        Write-Host 'SERVICEIT_GH_LEDGER_KEY=EXISTING_REMOTE_REUSED_NO_ROTATION'
+    }
+    elseif(Test-Path -LiteralPath $LedgerFile -PathType Leaf){
+        $Fernet=Read-Dpapi $LedgerFile
+        $UploadLedgerKey=$true
+        Write-Host 'SERVICEIT_GH_LEDGER_KEY=LOCAL_BACKUP_RESTORED'
+    }
+    else{
+        $Fernet=New-Key -Pad $true
+        Write-Dpapi $LedgerFile $Fernet
+        $UploadLedgerKey=$true
+        Write-Host 'SERVICEIT_GH_LEDGER_KEY=NEW_LOCAL_KEY_CREATED'
+    }
     if(Test-Path -LiteralPath $HmacFile){$Hmac=Read-Dpapi $HmacFile}
     elseif($names -contains 'SERVICEIT_B2B_INGEST_HMAC_KEY'){throw 'REMOTE_HMAC_KEY_WITHOUT_LOCAL_COPY'}
     else{$Hmac=New-Key;Write-Dpapi $HmacFile $Hmac}
 
     Set-GhSecret 'SERVICEIT_BITRIX_WEBHOOK' $Bitrix
-    Set-GhSecret 'SERVICEIT_GH_LEDGER_KEY' $Fernet
+    if($UploadLedgerKey){Set-GhSecret 'SERVICEIT_GH_LEDGER_KEY' $Fernet}
     Set-GhSecret 'SERVICEIT_B2B_INGEST_HMAC_KEY' $Hmac
     if($UseGiga){Set-GhSecret 'GIGACHAT_CREDENTIALS' $Giga}
     Set-GhVar 'GIGACHAT_SCOPE' $Scope
@@ -217,7 +233,12 @@ try {
     Write-Host 'LOCAL_WINDOWS_TASK=UNCHANGED_UNTIL_CLOUD_TRIGGER_IS_CONFIRMED'
     Push-Location $stage;try{& npx.cmd --yes '@google/clasp@latest' open-script}finally{Pop-Location}
 } finally {
-    Remove-Item -LiteralPath (Join-Path $Temp 'stage\secrets.gs') -Force -ErrorAction SilentlyContinue
+    # Even after a failed push/readback, do not leave plaintext GitHub
+    # credentials or HMAC inside the retained diagnostic directory.
+    foreach($folder in @('stage','readback','backup','extract')){
+        $secretFile=Join-Path (Join-Path $Temp $folder) 'secrets.gs'
+        Remove-Item -LiteralPath $secretFile -Force -ErrorAction SilentlyContinue
+    }
     $Bitrix=$null;$Giga=$null;$Fernet=$null;$Hmac=$null;$GitHubToken=$null;$private=$null
     if($done){Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction SilentlyContinue}
     else{Write-Host ('SERVICEIT_BACKUP_AND_DIAGNOSTICS='+$Temp)}

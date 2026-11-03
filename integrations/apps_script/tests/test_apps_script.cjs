@@ -216,6 +216,7 @@ test('HTML-only B2B-Center bulletin parses a database-maintenance tender safely'
   const parsed=e.context.parseEmailMessage_(msg,MID);
   assert.strictEqual(parsed.observations.length,1);
   assert.strictEqual(parsed.observations[0].notice.tender_id,'1234568');
+  assert.strictEqual(parsed.observations[0].notice.organizer,'АО "СО ЕЭС"');
   assert.strictEqual(parsed.observations[0].notice.subject,
     'Право заключения договора оказания услуг по техническому обслуживанию базы данных');
   assert.deepStrictEqual(Array.from(parsed.observations[0].services),['IT_SUPPORT']);

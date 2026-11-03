@@ -363,7 +363,10 @@ def test_owner_activation_missing_or_invalid_privacy_is_safe_no_with_plain_cli()
     assert "'variable', 'get', $Name, '--repo', $RepositoryName" in source
     assert "'variable', 'list', '--repo', $RepositoryName" in source
     assert "'--json', 'name'" in source
-    assert "'--jq'" not in source
+    # A separate repository identity check can use --jq; the per-variable
+    # lookup must not depend on jq quoting in PowerShell 5.1.
+    privacy_lookup = source[source.index("function Get-GhVarValue"):source.index("$RawPrivacy = Get-GhVarValue")]
+    assert "'--jq'" not in privacy_lookup
     assert "SERVICEIT_GIGACHAT_PRIVACY=UNVERIFIED_SAFE_NO_EXTERNAL_MODEL" in source
     assert "SERVICEIT_GIGACHAT_PRIVACY=SAFE_NO_PERSISTED" in source
     assert "$PrivacyNeedsDefault = $true" in source

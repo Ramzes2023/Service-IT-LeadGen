@@ -119,18 +119,36 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'GITHUB_PUSH_FAILED' }
         & $Gh pr create --repo 'Ramzes2023/Service-IT-LeadGen' --base main --head $Branch --title 'fix(serviceit): complete Bitrix event AI and manager integration' --body 'Bitrix-only automatic event-to-GigaChat-to-manager workflow, with fenced writes, synthetic E2E tests and owner-approved installer. No production credentials or CRM writes in PR.'
         if ($LASTEXITCODE -ne 0) { throw 'GITHUB_PR_CREATE_FAILED' }
-        Write-Host 'GITHUB_PR=CREATED_REVIEW_REQUIRED'
+        Write-Host 'GITHUB_PR=CREATED_PENDING_CI'
+        if ($Deploy) {
+            & $Gh pr checks $Branch --repo 'Ramzes2023/Service-IT-LeadGen' --watch --fail-fast
+            if ($LASTEXITCODE -ne 0) {
+                throw 'GITHUB_PR_CI_NOT_GREEN_PRODUCTION_INSTALL_BLOCKED'
+            }
+            & $Gh pr merge $Branch --repo 'Ramzes2023/Service-IT-LeadGen' --squash
+            if ($LASTEXITCODE -ne 0) {
+                throw 'GITHUB_PR_MERGE_REQUIRES_REVIEW_PRODUCTION_INSTALL_BLOCKED'
+            }
+            Write-Host 'GITHUB_PR=MERGED_AFTER_CI'
+        }
     } else {
         Write-Host 'GITHUB_PR=NO_NEW_CHANGES'
     }
     if ($Deploy) {
-        $Installer = Join-Path $Worktree 'scripts\INSTALL_SERVICEIT_BITRIX_EVENT_BRIDGE.ps1'
-        if (-not (Test-Path $Installer -PathType Leaf)) {
-            throw 'BITRIX_EVENT_BRIDGE_INSTALLER_NOT_GENERATED'
+        if ($NoPullRequest -and $Modified.Count -gt 0) {
+            throw 'UNMERGED_LOCAL_CHANGE_PRODUCTION_INSTALL_BLOCKED'
         }
-        Write-Host 'INSTALLER_STATUS=GENERATED_BY_CODEX_NOT_YET_EXECUTED'
-        Write-Host 'INSTALLER_GATE=MERGED_GREEN_CI_AND_CORPORATE_OWNER_APPROVAL'
-        Write-Host ('REVIEWED_INSTALLER_PATH=' + $Installer)
+        & git -C $Repo pull --ff-only origin main
+        if ($LASTEXITCODE -ne 0) { throw 'GIT_MAIN_SYNC_FAILED_BEFORE_DEPLOY' }
+        $Installer = Join-Path $Repo 'scripts\INSTALL_SERVICEIT_BITRIX_EVENT_BRIDGE.ps1'
+        if (-not (Test-Path $Installer -PathType Leaf)) {
+            throw 'BITRIX_EVENT_BRIDGE_INSTALLER_NOT_FOUND_IN_MAIN'
+        }
+        Write-Host 'INSTALLER_STATUS=STARTING_OWNER_APPROVAL_AND_BITRIX_WEBHOOK_SETUP'
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer -Apply
+        if ($LASTEXITCODE -ne 0) {
+            throw 'BITRIX_CLOUD_SETUP_BLOCKED_SEE_EXACT_OPERATOR_GATE'
+        }
     }
 }
 finally { Pop-Location }

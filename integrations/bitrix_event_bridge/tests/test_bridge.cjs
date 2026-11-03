@@ -43,6 +43,7 @@ function fixture(opts={}) {
       requestLog.push(p);
       return {getResponseCode:()=>responses.shift()||204};
     }},
+    console:{log:()=>{},error:()=>{}},
     ContentService:{createTextOutput:s=>({body:s})}
   };
   vm.createContext(context);

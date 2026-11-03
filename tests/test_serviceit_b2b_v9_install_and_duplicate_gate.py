@@ -22,10 +22,13 @@ def _handler_factory(known_items, absent_items):
         params = json.loads(request.content)
         assert params["entityTypeId"] == 1062
         if request.url.path.endswith("/crm.item.get.json"):
-            calls.append("GET_EXACT")
             assert params["id"] == 41
             # Full GET includes entityTypeId; list.select does not.
-            return httpx.Response(200, json={"result": {"item": _known()}})
+            source_seen = calls[-1]
+            calls.append("GET_EXACT")
+            assert source_seen in (KNOWN_EXISTING, PROBE_NONEXISTENT)
+            item = {**_known(), "UF_CRM_13_SVCIT_SIGNAL_ID": source_seen}
+            return httpx.Response(200, json={"result": {"item": item}})
         assert request.url.path.endswith("/crm.item.list.json")
         assert params["filter"]["categoryId"] == 21
         assert params["select"] == ["id", "categoryId", "UF_CRM_13_SVCIT_SIGNAL_ID"]
@@ -77,7 +80,7 @@ def test_negative_probe_false_positive_also_blocks():
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(DuplicateSearchBlocked, match="NEGATIVE_DUPLICATE"):
             verified_duplicate_lookup(client, URL)
-    assert calls == [KNOWN_EXISTING, PROBE_NONEXISTENT]
+    assert calls == [KNOWN_EXISTING, "GET_EXACT", PROBE_NONEXISTENT, "GET_EXACT"]
 
 
 def test_v9_dedicated_project_and_approval_gates():

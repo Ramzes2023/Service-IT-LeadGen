@@ -39,7 +39,9 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
-      SERVICEIT_MANAGER_LAYOUT_APPLY: ${{ vars.SERVICEIT_MANAGER_LAYOUT_APPLY }}
+      # The exact owner-only Issue #74 APPLY marker is the owner opt-in;
+      # administrator approval remains a separate, non-bypassable gate.
+      SERVICEIT_MANAGER_LAYOUT_APPLY: ${{ github.event_name == 'issue_comment' && github.event.comment.body == 'SERVICEIT_MANAGER_LAYOUT_APPLY_V1' && 'YES_1062_21_SHARED_MANAGER_LAYOUT' || vars.SERVICEIT_MANAGER_LAYOUT_APPLY }}
       SERVICEIT_MANAGER_LAYOUT_ADMIN_APPROVED: ${{ vars.SERVICEIT_MANAGER_LAYOUT_ADMIN_APPROVED }}
     steps:
       - uses: actions/checkout@v4

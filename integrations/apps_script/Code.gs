@@ -340,6 +340,7 @@ function processMessage_(messageId) {
   }
   let sent = 0;
   let matched = 0;
+  let uncertain = 0;
   for (const observation of parsed.observations) {
     matched++;
     const notice = observation.notice;
@@ -356,15 +357,19 @@ function processMessage_(messageId) {
       sent++;
     } catch (_error) {
       props.setProperty(sourceKey, "DISPATCH_UNCERTAIN:" + dispatchId);
-      throw new Error("SERVICEIT_DISPATCH_UNCERTAIN_NO_RETRY");
+      uncertain++;
+      // Continue with other tender IDs in this same email. The uncertain
+      // source remains fenced and is never re-dispatched.
     }
   }
   if (matched === 0) {
     props.setProperty(emailKey, "NO_MATCH");
+  } else if (uncertain > 0) {
+    props.setProperty(emailKey, "PARTIAL_REVIEW");
   } else {
     props.setProperty(emailKey, "DONE");
   }
-  return {sent: sent, skipped: matched - sent};
+  return {sent: sent, skipped: matched - sent, uncertain: uncertain};
 }
 
 function pollAndDispatchB2B() {

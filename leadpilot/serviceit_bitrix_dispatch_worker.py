@@ -245,7 +245,9 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                 provider.close()
     finalized = remote.finalize(card, observed)
     return {
-        "status": "SERVICEIT_NEW_CARD_EVENT_PROCESSED",
+        "status": ("SERVICEIT_NEW_CARD_EVENT_PROCESSED"
+                   if observed == "HOLD_9_WRITTEN"
+                   else "SERVICEIT_NEW_CARD_NEEDS_REVIEW"),
         "result": observed,
         "remote_fence_finalized": finalized,
         "replay_allowed": False,

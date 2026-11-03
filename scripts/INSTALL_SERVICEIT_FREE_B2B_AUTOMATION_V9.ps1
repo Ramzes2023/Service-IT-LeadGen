@@ -57,17 +57,23 @@ if (-not $Apply) {
 }
 foreach($f in @($BitrixFile,$GigaFile,$ScopeFile)){if(-not(Test-Path -LiteralPath $f -PathType Leaf)){throw 'SERVICEIT_DPAPI_INPUT_MISSING'}}
 if(-not(Test-Path -LiteralPath (Join-Path $Repo '.git') -PathType Container)){throw 'SERVICEIT_GITHUB_CLONE_MISSING'}
-if(-not(Get-Command 'node.exe' -ErrorAction SilentlyContinue) -or
-   -not(Get-Command 'npm.cmd' -ErrorAction SilentlyContinue) -or
-   -not(Get-Command 'npx.cmd' -ErrorAction SilentlyContinue)){
-    $Winget=Get-Command winget -ErrorAction SilentlyContinue
-    if(-not $Winget){throw 'NODE_LTS_MISSING_AND_WINGET_UNAVAILABLE'}
-    & $Winget.Source install --id OpenJS.NodeJS.LTS --exact --source winget --accept-package-agreements --accept-source-agreements
-    if($LASTEXITCODE -ne 0){throw 'NODE_LTS_INSTALL_FAILED'}
-    $NodeDir=Join-Path $env:ProgramFiles 'nodejs'
-    if(Test-Path -LiteralPath $NodeDir){$env:Path=$NodeDir+';'+$env:Path}
+# Reuse the same SHA256-checked, no-admin Node bootstrap already validated
+# by the working Bitrix24 event-bridge installer on this Windows account.
+# Winget may report "already installed" while PATH is stale; this function
+# searches installed and cached node.exe/npm.cmd/npx.cmd before any download.
+$NodeBootstrap = Join-Path $PSScriptRoot 'ENSURE_SERVICEIT_NODE_LTS.ps1'
+if (-not (Test-Path -LiteralPath $NodeBootstrap -PathType Leaf)) {
+    throw 'SERVICEIT_SHARED_NODE_BOOTSTRAP_MISSING'
 }
-foreach($c in @('node.exe','npm.cmd','npx.cmd','git.exe')){if(-not(Get-Command $c -ErrorAction SilentlyContinue)){throw ('TOOL_MISSING_'+$c)}}
+. $NodeBootstrap
+$Node = Ensure-ServiceITNode
+if (-not $Node -or -not (Get-Command 'npm.cmd' -ErrorAction SilentlyContinue) -or
+    -not (Get-Command 'npx.cmd' -ErrorAction SilentlyContinue)) {
+    throw 'SERVICEIT_NODE_BOOTSTRAP_INCOMPLETE'
+}
+foreach($c in @('node.exe','npm.cmd','npx.cmd','git.exe')){
+    if(-not(Get-Command $c -ErrorAction SilentlyContinue)){throw ('TOOL_MISSING_'+$c)}
+}
 $Scope=(Get-Content -LiteralPath $ScopeFile -Raw -Encoding UTF8).Trim()
 if($Scope -notin @('GIGACHAT_API_PERS','GIGACHAT_API_B2B','GIGACHAT_API_CORP')){throw 'GIGACHAT_SCOPE_INVALID'}
 $gc=Get-Command gh -ErrorAction SilentlyContinue

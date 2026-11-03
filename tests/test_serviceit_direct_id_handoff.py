@@ -197,8 +197,11 @@ def test_b2b_direct_actions_all_fanout_is_off_by_default():
 def test_source_reservation_precedes_optional_gigachat_and_crm_add():
     import inspect
     code = inspect.getsource(bridge.run_once)
+    assert code.index(
+        'os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED")') < code.index(
+        "ledger.reserve(source_id)")
     assert code.index("ledger.reserve(source_id)") < code.index(
-        'os.environ.get("SERVICEIT_B2B_GIGACHAT_AUTO_ENABLED")')
+        "if use_gigachat:\\n        try:")
     assert code.index("ledger.reserve(source_id)") < code.index(
         '"crm.item.add"')
     assert code.index('"crm.item.add"') < code.index(

@@ -7,6 +7,15 @@ on:
 permissions:
   contents: read
 jobs:
+  apps-script-free-ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Offline Apps Script V8 Gmail parser, HMAC, dedup and trigger tests
+        run: node integrations/apps_script/tests/test_apps_script.cjs
   unit-tests:
     runs-on: ubuntu-latest
     steps:

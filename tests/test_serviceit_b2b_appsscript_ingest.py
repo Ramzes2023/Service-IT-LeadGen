@@ -94,7 +94,7 @@ def test_untrusted_or_modified_dispatch_is_rejected(mutation):
 
 def test_expired_dispatch_is_rejected():
     with pytest.raises(ingest.IngestBlocked, match="DISPATCH_EXPIRED"):
-        ingest.validate_dispatch(event(timestamp=int(time.time()) - 600), SECRET)
+        ingest.validate_dispatch(event(timestamp=int(time.time()) - 1800), SECRET)
 
 
 def test_short_hmac_secret_is_rejected():

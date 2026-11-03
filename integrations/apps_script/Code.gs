@@ -209,24 +209,24 @@ function classifyServices_(title) {
   const patterns = {
     "1C": new RegExp("(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:", "iu"),
     "IT_SUPPORT": new RegExp(
-      "(?<!" + WORD + ")(?:ит|it)[\\\\s-]*(?:аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
-      "|(?:технич" + suffix + "|сервисн" + suffix + ")\\\\s+(?:поддержк" + suffix + "|обслуживан" + suffix + ").{0,80}(?:сервер" + suffix + "|сетев" + suffix + "|компьютер" + suffix + "|информационн" + suffix + "\\\\s+систем" + suffix + "|(?:ит|it)[\\\\s-]*инфраструктур" + suffix + ")" +
-      "|(?:технич" + suffix + "|сервисн" + suffix + ")\\\\s+(?:обслуживан" + suffix + "|поддержк" + suffix + ")\\\\s+(?:баз" + suffix + "\\\\s+данн" + suffix + "|субд)",
+      "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
+      "|(?:технич" + suffix + "|сервисн" + suffix + ")\\s+(?:поддержк" + suffix + "|обслуживан" + suffix + ").{0,80}(?:сервер" + suffix + "|сетев" + suffix + "|компьютер" + suffix + "|информационн" + suffix + "\\s+систем" + suffix + "|(?:ит|it)[\\s-]*инфраструктур" + suffix + ")" +
+      "|(?:технич" + suffix + "|сервисн" + suffix + ")\\s+(?:обслуживан" + suffix + "|поддержк" + suffix + ")\\s+(?:баз" + suffix + "\\s+данн" + suffix + "|субд)",
       "iu"
     ),
-    "CRM": new RegExp("битрикс[\\\\s-]*24|(?<!" + WORD + ")(?:crm|срм)(?!" + WORD + ")|amocrm", "iu"),
+    "CRM": new RegExp("битрикс[\\s-]*24|(?<!" + WORD + ")(?:crm|срм)(?!" + WORD + ")|amocrm", "iu"),
     "KKT_EDO": new RegExp(
-      "(?<!" + WORD + ")(?:ккт|эдо)(?!" + WORD + ")|онлайн[\\\\s-]*касс" + suffix +
-      "|контрольно[\\\\s-]*кассов" + suffix + "|кассов" + suffix + "\\\\s+(?:оборудован" + suffix + "|аппарат" + suffix + "|техник" + suffix + "|систем" + suffix +
-      ")|криптопро|диадок|электронн" + suffix + "\\\\s+документооборот" + suffix +
-      "|маркировк" + suffix + "\\\\s+(?:товар" + suffix + "|продукц" + suffix + "|остатк" + suffix +
-      ")|торгов" + suffix + "\\\\s+оборудован" + suffix + "|тсд",
+      "(?<!" + WORD + ")(?:ккт|эдо)(?!" + WORD + ")|онлайн[\\s-]*касс" + suffix +
+      "|контрольно[\\s-]*кассов" + suffix + "|кассов" + suffix + "\\s+(?:оборудован" + suffix + "|аппарат" + suffix + "|техник" + suffix + "|систем" + suffix +
+      ")|криптопро|диадок|электронн" + suffix + "\\s+документооборот" + suffix +
+      "|маркировк" + suffix + "\\s+(?:товар" + suffix + "|продукц" + suffix + "|остатк" + suffix +
+      ")|торгов" + suffix + "\\s+оборудован" + suffix + "|тсд",
       "iu"
     ),
     "SERVERS": new RegExp(
-      "сервер" + suffix + "|сетев" + suffix + "\\\\s+оборудован" + suffix +
+      "сервер" + suffix + "|сетев" + suffix + "\\s+оборудован" + suffix +
       "|коммутатор" + suffix + "|маршрутизатор" + suffix + "|ноутбук" + suffix +
-      "|компьютер" + suffix + "|рабоч" + suffix + "\\\\s+станци" + suffix +
+      "|компьютер" + suffix + "|рабоч" + suffix + "\\s+станци" + suffix +
       "|монитор(?:ы|ов|ам|ами|е|а)?",
       "iu"
     )
@@ -236,19 +236,19 @@ function classifyServices_(title) {
     if (patterns[key].test(title)) result.push(key);
   });
   const context = new RegExp(
-    "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\\\s-]*24|" +
+    "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +
-    "программ" + suffix + "\\\\s+обеспечен" + suffix +
-    "|информационн" + suffix + "\\\\s+систем" + suffix +
-    "|баз" + suffix + "\\\\s+данн" + suffix +
-    "|сайт" + suffix + "|веб[\\\\s-]*приложен" + suffix +
-    "|интернет[\\\\s-]*магазин" + suffix +
-    "|сервер" + suffix + "|сетев" + suffix + "\\\\s+инфраструктур" + suffix,
+    "программ" + suffix + "\\s+обеспечен" + suffix +
+    "|информационн" + suffix + "\\s+систем" + suffix +
+    "|баз" + suffix + "\\s+данн" + suffix +
+    "|сайт" + suffix + "|веб[\\s-]*приложен" + suffix +
+    "|интернет[\\s-]*магазин" + suffix +
+    "|сервер" + suffix + "|сетев" + suffix + "\\s+инфраструктур" + suffix,
     "iu"
   );
   const integration = new RegExp(
     "внедрен" + suffix + "|интеграц" + suffix + "|доработк" + suffix +
-    "|обмен" + suffix + "\\\\s+данными|экстрактор" + suffix,
+    "|обмен" + suffix + "\\s+данными|экстрактор" + suffix,
     "iu"
   );
   if (context.test(title) && integration.test(title)) result.push("INTEGRATION");

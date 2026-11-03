@@ -20,13 +20,15 @@ jobs:
       github.actor == 'Ramzes2023' &&
       github.event.issue.number == 74 &&
       !github.event.issue.pull_request &&
-      github.event.comment.body == 'SERVICEIT_GIGACHAT_SYNTHETIC_ONCE_V1' &&
+      (github.event.comment.body == 'SERVICEIT_GIGACHAT_SYNTHETIC_ONCE_V1' ||
+       github.event.comment.body == 'SERVICEIT_GIGACHAT_OAUTH_DIAG_V1') &&
       vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED == 'YES'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
       AI_PROVIDER: gigachat
       AI_ENABLE: '1'
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
       GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
       GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
       GIGACHAT_MODEL: ${{ vars.GIGACHAT_MODEL }}
@@ -40,4 +42,8 @@ jobs:
       - name: Install reviewed project dependencies
         run: python -m pip install -r requirements.txt
       - name: Exactly one synthetic GigaChat classification and nine-field report validation
+        if: github.event.comment.body == 'SERVICEIT_GIGACHAT_SYNTHETIC_ONCE_V1'
         run: python -m leadpilot.serviceit_gigachat_cockpit_preflight --live-synthetic
+      - name: OAuth/TLS diagnostic only, no model completion or CRM
+        if: github.event.comment.body == 'SERVICEIT_GIGACHAT_OAUTH_DIAG_V1'
+        run: python -m leadpilot.serviceit_gigachat_oauth_diag

@@ -11,6 +11,7 @@ be explicitly set by the owner after a live READ-ONLY list API preflight.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import base64
 from hashlib import sha256
 import hmac
 import json
@@ -24,11 +25,12 @@ import httpx
 
 from .serviceit_bitrix_dispatch_worker import (
     EVENT, LIVE_FLAG, MAX_CARD, MIN_CARD, PORTAL, REPOSITORY,
+    BRANCH as LEDGER_BRANCH, FOLDER as LEDGER_FOLDER,
 )
 from .bitrix_metadata_audit import validate_webhook
 
 POLL_FLAG = "YES_1062_21_READONLY"
-WINDOW = timedelta(hours=2)
+WINDOW = timedelta(days=7)
 MAX_PAGES = 4
 MAX_ITEMS = 200
 MAX_FUTURE_DRIFT = timedelta(minutes=2)
@@ -191,6 +193,38 @@ def dispatch(client: httpx.Client, card: int, secret: str, github_token: str, no
     require(response.status_code == 204, "POLL_GITHUB_DISPATCH_UNCONFIRMED")
 
 
+def encrypted_receipt_exists(client: httpx.Client, card: int,
+                             github_token: str, ledger_key: str) -> bool:
+    """Observe the exact GitHub one-use reservation, never read card data.
+
+    A prior accepted event may have already processed this item. Without this
+    check, an overlapping seven-day schedule would flood Actions with
+    duplicate repository_dispatch events and discard pending jobs.
+    """
+    require(type(card) is int and MIN_CARD <= card <= MAX_CARD,
+            "POLL_LEDGER_CARD_ID_INVALID")
+    require(type(ledger_key) is str and len(ledger_key) == 44
+            and type(github_token) is str and len(github_token) >= 12,
+            "POLL_LEDGER_CREDENTIALS_INVALID")
+    try:
+        key = base64.urlsafe_b64decode(ledger_key.encode("ascii"))
+        require(len(key) == 32, "POLL_LEDGER_KEY_INVALID")
+    except (ValueError, TypeError, UnicodeError):
+        raise PollBlocked("POLL_LEDGER_KEY_INVALID") from None
+    path_key = hmac.new(
+        key, f"serviceit-v1:1062:21:{card}".encode(), sha256).hexdigest()
+    url = (f"https://api.github.com/repos/{REPOSITORY}/contents/"
+           f"{LEDGER_FOLDER}/{path_key}.enc")
+    response = client.get(
+        url, params={"ref": LEDGER_BRANCH},
+        headers={"Authorization": "Bearer " + github_token,
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"},
+        timeout=20, follow_redirects=False)
+    require(response.status_code in (200, 404), "POLL_LEDGER_READ_UNVERIFIED")
+    return response.status_code == 200
+
+
 def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
         probe_only: bool = False) -> dict:
     """Probe is GET/read-only only. Live requires BOTH explicit owner gates."""
@@ -250,13 +284,26 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
             "POLL_BRIDGE_HMAC_MISSING")
     require(type(env.get("GITHUB_TOKEN")) is str
             and len(env["GITHUB_TOKEN"]) >= 12, "POLL_GITHUB_TOKEN_MISSING")
+    require(type(env.get("SERVICEIT_GH_LEDGER_KEY")) is str,
+            "POLL_LEDGER_KEY_MISSING")
     attempted = 0
+    already_fenced = 0
+    # GitHub concurrency retains at most one running and one pending job.
+    # Send at most ONE new event per 10-min tick; the seven-day window and
+    # encrypted one-use ledger allow other unfenced cards to drain later.
+    # Never advance a local-only cursor or silently mark a card processed.
     for card in cards:
+        if encrypted_receipt_exists(client, card, env["GITHUB_TOKEN"],
+                                    env["SERVICEIT_GH_LEDGER_KEY"]):
+            already_fenced += 1
+            continue
         dispatch(client, card, env["SERVICEIT_BITRIX_EVENT_BRIDGE_KEY"],
                  env["GITHUB_TOKEN"], int(time.time()))
-        attempted += 1
+        attempted = 1
+        break
     return {"status": "POLL_DISPATCHED_ID_ONLY", "crm_writes": 0,
-            "dispatches": attempted}
+            "dispatches": attempted, "already_fenced": already_fenced,
+            "pending_capped": len(cards) > already_fenced + attempted}
 
 
 def main() -> int:

@@ -262,8 +262,29 @@ def run_once(event, *, client=None, github_token="", webhook="", live=False):
          and str(actual.get("categoryId")) == "21"
          and all(actual.get(k) == v for k, v in payload["fields"].items()),
          "CRM_READBACK_UNCERTAIN_NO_RETRY")
+    # Producer-owned direct handoff: this exact ID comes from crm.item.add +
+    # exact crm.item.get readback, NEVER from crm.item.list. The sidecar is
+    # optional and off by default; if its remote checkpoint is ambiguous,
+    # keep the proven CRM write and NEVER attempt to create the card again.
+    handoff_state = "OFF"
+    if os.environ.get("SERVICEIT_DIRECT_ID_HANDOFF_ENABLED") == "YES":
+        try:
+            from .serviceit_direct_id_handoff import (
+                receipt, post_encrypted_handoff, DirectHandoffBlocked,
+            )
+            key = os.environ.get("SERVICEIT_GH_LEDGER_KEY", "")
+            event = receipt(card_id, source_id,
+                            ai_status=payload["fields"][
+                                "UF_CRM_13_SVCIT_AI_STATUS"])
+            handoff_state = post_encrypted_handoff(
+                client, github_token, key, event)
+        except Exception:
+            # A failure AFTER confirmed crm.item.add is not a reason to retry
+            # the source: the GitHub bot source reservation remains immutable.
+            handoff_state = "UNCONFIRMED_DO_NOT_RETRY"
     return {"status": "ONE_TENDER_HOLD_VERIFIED", "tender_id": notice["tender_id"],
-            "card_id": card_id, "qualified_leads": 0, "crm_writes": 1}
+            "card_id": card_id, "qualified_leads": 0, "crm_writes": 1,
+            "handoff_state": handoff_state}
 
 
 def main(argv=None):

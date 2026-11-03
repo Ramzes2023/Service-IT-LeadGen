@@ -318,6 +318,19 @@ def classify_signal(data: Mapping, *, now: datetime,
     }
 
 
+def source_created_title(title: str, assessment: Mapping) -> str:
+    """Return an icon-prefixed NEW card title for a source creation adapter."""
+    title = _clean(title, 220)
+    _require(bool(title) and isinstance(assessment, Mapping)
+             and assessment.get("type") in BADGES, "SOURCE_TITLE_OR_TYPE_INVALID")
+    mark = BADGES[assessment["type"]]
+    if title.startswith(mark + " "):
+        return title
+    _require(not any(title.startswith(other + " ") for other in BADGES.values()),
+             "CONFLICTING_SOURCE_BADGE")
+    return mark + " " + title
+
+
 def task_draft(assessment: Mapping, card_id: int) -> dict:
     """Type-specific CRM task intent, not tasks.task.add or outreach permission."""
     _require(type(card_id) is int and card_id >= 8, "CARD_ID_HISTORIC_OR_INVALID")

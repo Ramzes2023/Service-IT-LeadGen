@@ -63,6 +63,13 @@ def preliminary_fields(item):
             return "не указано"
         return value
     given_title = card_text("title", 240)
+    # Bitrix may store a source-excerpt in the ordinary comments field.
+    # It remains UNVERIFIED CRM-supplied text, never external model input.
+    # Retain its negative signs (e.g. staff-only/no outsourcing) for triage;
+    # never treat arbitrary CRM comments as proof of a real buyer/expiry.
+    given_description = card_text("comments", 3500)
+    if given_description == "не указано":
+        given_description = card_text("description", 3500)
     given_company = card_text(PREFIX + "COMPANY_NAME", 150)
     given_source = card_text(PREFIX + "SIGNAL_SOURCE", 150)
     given_kind = card_text(PREFIX + "SIGNAL_KIND", 120)
@@ -116,7 +123,7 @@ def preliminary_fields(item):
     from datetime import datetime, timezone
     triage = classify_signal({
         "title": given_title if given_title != "не указано" else "",
-        "description": "",
+        "description": given_description if given_description != "не указано" else "",
         "signal_kind": given_kind if given_kind != "не указано" else "",
         "source": given_source if given_source != "не указано" else "",
         "region": card_text(PREFIX + "REGION", 130),

@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 from pathlib import Path
 import time
 
@@ -79,7 +80,7 @@ def test_fence_encrypts_once_and_never_replays_after_remote_200():
     def github(request):
         requests.append(request.method)
         assert request.url.host == "api.github.com"
-        assert "107" not in str(request.url)
+        # HMAC hex may coincidentally contain the digits 107; only a raw\n        # sequential item ID as a URL path segment would leak identity.\n        tail = request.url.path.rsplit("/", 1)[-1]\n        assert re.fullmatch(r"[0-9a-f]{64}\\.enc", tail) is not None\n        assert "/107/" not in request.url.path and not tail.startswith("107.")
         if request.method == "GET":
             if stored:
                 return httpx.Response(200, json={"type": "file",

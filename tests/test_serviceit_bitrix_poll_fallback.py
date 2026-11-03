@@ -103,8 +103,14 @@ def test_manual_probe_only_gets_metadata_no_github_dispatch_and_no_gate_needed()
     requested = []
 
     def handler(request):
-        requested.append((request.method, request.url.path, json.loads(request.content)))
+        params = json.loads(request.content)
+        requested.append((request.method, request.url.path, params))
         assert request.url.host == "serviseit.bitrix24.ru"
+        if params["filter"] == {"id": 3}:
+            return httpx.Response(200, json={"result": {"items": [
+                {"id": 3, "categoryId": 21,
+                 "createdTime": (NOW - timedelta(days=100)).isoformat()}]},
+                "total": 1})
         return httpx.Response(200, json={"result": {"items": []}, "total": 0})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
@@ -113,12 +119,14 @@ def test_manual_probe_only_gets_metadata_no_github_dispatch_and_no_gate_needed()
                               SERVICEIT_BITRIX_EVENT_AI_ENABLED="NO"),
                      client=client, now=NOW, probe_only=True)
     assert result == {"status": "POLL_READONLY_LIST_PASS", "crm_writes": 0,
-                      "dispatches": 0, "items_seen": 0}
-    assert len(requested) == 1
+                      "dispatches": 0, "calibration": "KNOWN_ID_3_NMODE_PASS",
+                      "items_seen": 0}
+    assert len(requested) == 2
     assert requested[0][0:2] == ("POST", "/rest/789/authorized_dummy_token_12345/crm.item.list.json")
     assert requested[0][2]["useOriginalUfNames"] == "N"
-    assert requested[0][2]["select"] == ["id", "categoryId", "createdTime"]
-    assert requested[0][2]["filter"]["categoryId"] == 21
+    assert requested[0][2]["filter"] == {"id": 3}
+    assert requested[1][2]["select"] == ["id", "categoryId", "createdTime"]
+    assert requested[1][2]["filter"]["categoryId"] == 21
 
 
 def test_scheduled_poll_posts_signed_id_only_and_never_calls_crm_update():
@@ -199,6 +207,11 @@ def test_conflicting_pagination_metadata_is_rejected_without_dispatch():
     env = fake_env(GITHUB_EVENT_NAME="workflow_dispatch")
     def handler(request):
         assert request.url.path.endswith("crm.item.list.json")
+        if json.loads(request.content)["filter"] == {"id": 3}:
+            return httpx.Response(200, json={"result": {"items": [
+                {"id": 3, "categoryId": 21,
+                 "createdTime": (NOW - timedelta(days=100)).isoformat()}]},
+                "total": 1})
         return httpx.Response(200, json={
             "result": {"items": [], "total": 2},
             "total": 0,
@@ -225,8 +238,46 @@ def test_empty_list_api_flat_shape_alone_does_not_prove_live_ai_activation():
     env = fake_env(GITHUB_EVENT_NAME="workflow_dispatch",
                    SERVICEIT_BITRIX_POLL_ENABLED="NO",
                    SERVICEIT_BITRIX_EVENT_AI_ENABLED="NO")
-    with httpx.Client(transport=httpx.MockTransport(
-            lambda req: httpx.Response(200, json={"result":{"items":[]}, "total":0}))) as client:
+    def safe_probe(request):
+        if json.loads(request.content)["filter"] == {"id": 3}:
+            return httpx.Response(200, json={"result":{"items":[{
+                "id": 3, "categoryId": 21,
+                "createdTime": (NOW - timedelta(days=100)).isoformat()
+            }]}, "total":1})
+        return httpx.Response(200, json={"result":{"items":[]}, "total":0})
+    with httpx.Client(transport=httpx.MockTransport(safe_probe)) as client:
         assert run(env, client=client, now=NOW, probe_only=True)["status"] == "POLL_READONLY_LIST_PASS"
     assert env["SERVICEIT_BITRIX_POLL_ENABLED"] == "NO"
     assert env["SERVICEIT_BITRIX_EVENT_AI_ENABLED"] == "NO"
+
+
+
+@pytest.mark.parametrize("bad_items", [
+    [], [[]], [{"id": 7, "categoryId": 21,
+                "createdTime": (NOW - timedelta(days=20)).isoformat()}],
+    [{"id": 3, "categoryId": 21}],
+    [{"id": 3, "categoryId": 999,
+      "createdTime": (NOW - timedelta(days=20)).isoformat()}],
+])
+def test_calibration_requires_real_exact_known_old_id_and_datetime(bad_items):
+    from leadpilot.serviceit_bitrix_poll_fallback import calibrate_known_card
+    def rest(method, params):
+        assert method == "crm.item.list"
+        assert params["useOriginalUfNames"] == "N"
+        assert params["filter"] == {"id":3}
+        return {"items": bad_items}
+    with pytest.raises((PollBlocked, ValueError)):
+        calibrate_known_card(rest)
+
+
+def test_readonly_github_workflow_owner_marker_and_disabled_activation_gate():
+    from pathlib import Path
+    wf = Path(".github/workflows/serviceit-bitrix-poll-fallback.yml").read_text("utf-8")
+    assert "SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1" in wf
+    assert "github.actor == 'Ramzes2023'" in wf
+    assert "github.event.issue.number == 74" in wf
+    assert "github.event.comment.body == 'SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1'" in wf
+    assert "github.event_name == 'schedule'" in wf
+    assert "vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY'" in wf
+    assert "vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'" in wf
+    assert "python -m leadpilot.serviceit_bitrix_poll_fallback --probe" in wf

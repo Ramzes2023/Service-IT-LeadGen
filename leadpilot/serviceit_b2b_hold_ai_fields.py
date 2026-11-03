@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 import math
+from datetime import datetime, timezone
 
+from .serviceit_three_signal_triage import classify_signal, task_draft
 from .b2b_email_opportunity_bridge import KINDS
 
 PREFIX="UF_CRM_13_SVCIT_"
@@ -57,6 +59,14 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
             or any(x not in set(KINDS)|{"INTEGRATION"} for x in services)):
         raise HoldAnalysisRejected("SERVICES_INVALID")
     service_text=", ".join(services)
+    # Classify at SOURCE CREATE time. The downstream Bitrix event worker
+    # correctly preserves already-populated nine AI HOLD fields and must
+    # never silently overwrite them. Source verification remains UNKNOWN.
+    triage = classify_signal({
+        "title": subject, "description": "", "signal_kind": "tender-opportunity",
+        "source": "B2B-Center", "region": "", "company": "",
+    }, now=datetime.now(timezone.utc))
+    badge = triage["badge"]
     model="NOT_RUN"
     if ai is not None:
         from .ai import ALLOWED
@@ -74,7 +84,8 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
             raise HoldAnalysisRejected("UNVERIFIED_MODEL_OUTPUT")
         model=_check(ai["model"],80)
     status="HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED" if ai else "NOT_RUN_SOURCE_UNVERIFIED"
-    summary=("Получено уведомление B2B-Center №"+tid+
+    summary=(badge+" · "+triage["kind_title"]+" — "
+             +"Получено уведомление B2B-Center №"+tid+
              (". Гипотеза GigaChat получена, но потребность и заказчик не подтверждены."
               if ai else ". Потребность и заказчик не подтверждены; AI-анализ не запускался."))
     quote="Тема письма поставщика: "+subject
@@ -88,15 +99,17 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
             "существующие клиенты, CRM-дубли, стоп-лист и право контакта. "
             "Тема письма не доказывает реальную потребность или согласие.")
     rec="Услуга для проверки по ключевым словам: "+service_text
-    next_action=("Сверить оригинальное извещение и заказчика, статус и сроки. "
+    next_action=(triage["manager_action"]+" "
+                 "Статус и крайний срок необходимо установить по первоисточнику. "
                  "Не звонить и не создавать коммерческий лид до независимой проверки.")
-    brief=("Статус: HOLD, не квалифицированный лид.\n"
-           "1. Открыть первоисточник, проверить статус и дату.\n"
+    brief=(badge+" | Статус: HOLD, не квалифицированный лид.\n"
+           "1. Открыть первоисточник, проверить статус и дату/дедлайн.\n"
            "2. Установить заказчика и его ИНН, сверить ФНС.\n"
            "3. Проверить клиентскую базу, дубли и стоп-лист.\n"
            "4. Проверить применимость услуг, договор и правовое основание связи.\n"
            "5. Только после проверок направить на реальный Score и GigaChat.")
     full=(
+        badge+" · "+triage["kind_title"]+"\n"+
         "Сервис ИТ | Автоматический предварительный разбор HOLD\n"+
         "Источник: уведомление B2B-Center, закупка №"+tid+"\n"+
         ("AI-провайдер: GigaChat / "+model+" (гипотеза, не доказательство)\n"

@@ -142,6 +142,7 @@ def main(argv=None) -> int:
         "crm_writes": "UNVERIFIED",
         "qualified_leads": 0,
         "gigachat_attempted": "UNVERIFIED",
+        "reason": "UNVERIFIED_OR_BLOCKED",
     }
     try:
         event_path = Path(os.environ.get("GITHUB_EVENT_PATH", ""))
@@ -159,6 +160,15 @@ def main(argv=None) -> int:
         args.result.write_text(json.dumps(safe, ensure_ascii=False), encoding="utf-8")
         print(json.dumps(safe, ensure_ascii=False), flush=True)
         return 0
+    except (IngestBlocked, BridgeBlocked) as exc:
+        reason = str(exc)
+        safe["reason"] = reason if re.fullmatch(r"[A-Z0-9_]{1,96}", reason) else "B2B_WRITER_BLOCKED"
+        try:
+            args.result.write_text(json.dumps(safe, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        print(json.dumps(safe, ensure_ascii=False), flush=True)
+        return 2
     except Exception:
         # If the CRM POST was attempted but readback failed, the result remains
         # explicitly UNVERIFIED; the upstream source lock forbids a blind retry.

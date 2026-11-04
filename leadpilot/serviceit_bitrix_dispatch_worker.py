@@ -288,6 +288,7 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                     retry_unauthorized=False)
                 def model(text):
                     return provider.classify(text)
+                model.provider = provider.config.provider
             if approval is not None:
                 observed = Worker(store, rest, lambda _: approval, model, enabled=True).once(card)
             else:

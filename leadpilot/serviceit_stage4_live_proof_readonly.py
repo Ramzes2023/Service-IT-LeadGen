@@ -17,7 +17,8 @@ from .bitrix_1062_mapping import FIELD_MAP
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_enrichment_worker import normalized, fingerprint, validate_identity, Blocked
 from .serviceit_qualification_proof_v2 import (
-    _validate_signed, qualify_signed, ProofBlocked, HOLD,
+    _validate_signed, qualify_signed, crm_inn_visibility_readonly,
+    ProofBlocked, HOLD,
 )
 
 _MAX_RESPONSE = 300_000
@@ -71,6 +72,13 @@ def review_signed_card_readonly(client, webhook, card_id, receipt, verifier_key,
         if item.get(FIELD_MAP["lead_score"]) not in (None, ""):
             return dict(HOLD)
         if item.get(FIELD_MAP["score_version"]) not in (None, ""):
+            return dict(HOLD)
+        # A valid corporate signature cannot override a positive exact-INN
+        # match visible in Bitrix requisite records. Missing permissions
+        # must fail closed. Zero matches does NOT prove full corporate dedup;
+        # the independent signed global-CRM evidence remains mandatory.
+        visible = crm_inn_visibility_readonly(client, webhook, company["inn"])
+        if visible.get("status") != "NO_MATCH_IN_VISIBLE_REQUISITES_ONLY":
             return dict(HOLD)
         before_hash = fingerprint(item)
         if not hmac.compare_digest(before_hash, snap["before_hash"]):

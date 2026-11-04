@@ -33,7 +33,7 @@ def verify(archive: Path, inn: str, url: str, trusted_digest: str, *, today: dat
         raise SnapshotBlocked("PUBLICATION_DATE_INVALID") from None
     need(structure <= publication <= today
          and today-publication <= timedelta(days=45), "MSP_SNAPSHOT_STALE")
-    need(type(archive) is Path and archive.is_file() and not archive.is_symlink()
+    need(isinstance(archive, Path) and archive.is_file() and not archive.is_symlink()
          and 0 < archive.stat().st_size <= 3*1024**3, "SNAPSHOT_FILE_INVALID")
     need(type(trusted_digest) is str and re.fullmatch("[0-9a-f]{64}", trusted_digest),
          "SNAPSHOT_DIGEST_INVALID")

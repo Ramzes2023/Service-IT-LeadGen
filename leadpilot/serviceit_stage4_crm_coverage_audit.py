@@ -19,6 +19,8 @@ PORTAL = "https://serviseit.bitrix24.ru/rest/"
 LISTS = {
     "companies": "crm.company.list",
     "contacts": "crm.contact.list",
+    "deals": "crm.deal.list",
+    "leads": "crm.lead.list",
 }
 EXPECTED = frozenset(LISTS.values()) | {"user.admin"}
 MAX_BODY = 200_000
@@ -122,6 +124,8 @@ def audit(client, webhook):
         "webhook_is_portal_admin": is_admin,
         "companies": seen["companies"],
         "contacts": seen["contacts"],
+        "deals": seen["deals"],
+        "leads": seen["leads"],
         "exact_requisite_filter_readable": req,
         "full_corporate_crm_coverage_verified": False,
         "global_dedup_approved": False,

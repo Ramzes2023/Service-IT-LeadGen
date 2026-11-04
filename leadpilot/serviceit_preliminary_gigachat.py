@@ -130,9 +130,9 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
 def attempted_but_unverified_fields(base_fields: dict, *, provider="gigachat") -> dict:
     if provider not in ("gigachat", "routerai"):
         raise PreliminaryAIBlocked("UNAPPROVED_MODEL_PROVIDER")
-    model_name = "RouterAI (DeepSeek)" if provider == "deepseek" else "GigaChat"
+    model_name = "RouterAI (DeepSeek)" if provider == "routerai" else "GigaChat"
     fields = dict(base_fields)
-    fields[PREFIX + "AI_STATUS"] = ("AI_ATTEMPT_UNVERIFIED" if provider == "deepseek" else "GIGACHAT_ATTEMPT_UNVERIFIED")
+    fields[PREFIX + "AI_STATUS"] = ("AI_ATTEMPT_UNVERIFIED" if provider == "routerai" else "GIGACHAT_ATTEMPT_UNVERIFIED")
     badge = fields.get(PREFIX + "AI_SUMMARY", "").splitlines()[0]
     badge = badge if badge.startswith(("📑 ТЕНДЕР", "👥 ВАКАНСИЯ",
                                       "🎯 ЗАПРОС УСЛУГ", "⚪ УТОЧНИТЬ ТИП")) else ""

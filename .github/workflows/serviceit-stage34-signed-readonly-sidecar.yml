@@ -23,6 +23,9 @@ jobs:
       GITHUB_EVENT_PATH: ${{ github.event_path }}
       SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      # Optional corporate verifier; never invent VERIFIED if unset.
+      SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON: ${{ secrets.SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON }}
+      SERVICEIT_STAGE4_VERIFIER_KEY: ${{ secrets.SERVICEIT_STAGE4_VERIFIER_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:

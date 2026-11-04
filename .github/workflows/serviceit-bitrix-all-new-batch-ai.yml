@@ -1,0 +1,62 @@
+name: ServiceIT all-new 1062/21 AI batch catch-up (real CRM, no demo)
+
+on:
+  schedule:
+    - cron: '8,18,28,38,48,58 * * * *'
+
+permissions:
+  contents: write
+
+# All exact-item AI writes and receipt updates share one concurrency group.
+# No cancellation after a possibly accepted external CRM update.
+concurrency:
+  group: serviceit-bitrix-new-card-free-event
+  cancel-in-progress: false
+
+jobs:
+  all-new-bounded-ai:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'schedule' &&
+      vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
+      vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_POLL_ENABLED: ${{ vars.SERVICEIT_BITRIX_POLL_ENABLED }}
+      SERVICEIT_BITRIX_EVENT_AI_ENABLED: ${{ vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
+      SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
+      SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
+      AI_PROVIDER: gigachat
+      AI_ENABLE: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED == 'YES' && '1' || '0' }}
+      GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
+      GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
+      GIGACHAT_MODEL: ${{ vars.GIGACHAT_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install reviewed Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Set pinned GigaChat CA trust without bypassing certificate checks
+        shell: bash
+        run: |
+          python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"
+          echo "GIGACHAT_CA_BUNDLE_FILE=$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem" >> "$GITHUB_ENV"
+      - name: Verify 1062/21 candidates, check encrypted receipts, process up to six NEW cards
+        run: python -m leadpilot.serviceit_bitrix_batch_worker

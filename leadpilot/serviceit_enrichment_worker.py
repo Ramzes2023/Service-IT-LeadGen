@@ -7,7 +7,7 @@ automated customer/source verification integrations remain deployment blockers.
 from __future__ import annotations
 
 import argparse
-from datetime import date
+from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
 import os
@@ -24,6 +24,8 @@ from .serviceit_bitrix_list_shape import strict_bitrix_items, ItemListShapeError
 from .serviceit_ai_lead_engine import assess_lead
 from .serviceit_ai_report import build_report, plain
 from .serviceit_manager_ai_card import format_verified_card
+from .serviceit_three_signal_triage import classify_signal
+from .serviceit_kanban_tile import tile_heading_for_signal
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, AI_SUFFIXES, PREFIX, hold_analysis_fields
 from .serviceit_bitrix_event_queue_readonly_worker import classify_item
 from .serviceit_enrichment_store import Store, ModelFence
@@ -178,7 +180,21 @@ def verified_fields(approval, item, store, item_id, owner, model):
             and ai['evidence_quote'] in text, 'MODEL_QUOTE_INVALID')
     report = build_report(assessment, source_text=text, evidence_quote=ai['evidence_quote'],
                           reference='evidence-sha256-'+sha256(text.encode()).hexdigest(), ai=ai)
-    return format_verified_card(report, assessment)
+    # Only a display label: type is a preliminary triage, NOT another gate.
+    signal_kind = item.get(PREFIX + "SIGNAL_KIND") or signal.get("signal_type") or ""
+    card_title = item.get("title") if type(item.get("title")) is str else ""
+    triage = classify_signal({
+        "title": card_title,
+        "description": "",
+        "signal_kind": signal_kind,
+        "source": item.get(PREFIX + "SIGNAL_SOURCE") or "",
+        "region": "",
+        "company": "",
+    }, now=datetime.now(timezone.utc))
+    return format_verified_card(
+        report, assessment,
+        tile_heading=tile_heading_for_signal(triage, card_title),
+    )
 
 
 class Worker:

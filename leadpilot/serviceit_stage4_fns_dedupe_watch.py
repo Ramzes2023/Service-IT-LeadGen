@@ -61,52 +61,73 @@ def read_item(client, base, card):
 
 
 def same_process_visible_duplicates(client, base, inn, card):
-    """Find an exact INN collision in 1062/21, NEVER infer global CRM clearance.
+    """Exhaust bounded visible 1062/21 exact-INN pages without changing cards.
 
-    Bad or ignored filters fail closed rather than returning a false 'clear'.
-    Paging over 50 rows is an unresolved scope that requires human review.
+    A found collision is a HOLD. No collision means only 'not seen by this
+    webhook': no global CRM clearance, including hidden employees' records.
     """
     need(type(inn) is str and _is_valid_inn(inn), "DUPLICATE_INN_INVALID")
-    params = {
-        "entityTypeId": 1062, "useOriginalUfNames": "Y",
-        "filter": {"categoryId": 21, COMPANY_FIELD: inn},
-        "select": ["id", "categoryId", COMPANY_FIELD], "start": 0,
-    }
-    response = client.post(base + "/crm.item.list.json", json=params,
-                           timeout=22, follow_redirects=False)
-    need(response.status_code == 200 and 0 < len(response.content) <= 350000,
-         "PROCESS_DUPLICATE_HTTP_UNKNOWN")
-    body = response.json()
-    need(type(body) is dict and "error" not in body
-         and type(body.get("result")) is dict,
-         "PROCESS_DUPLICATE_RESULT_INVALID")
-    result = body["result"]
-    rows = result.get("items")
-    pagination = body.get("next", result.get("next"))
-    total = body.get("total", result.get("total"))
-    need(type(rows) is list and len(rows) <= 50
-         and pagination is None
-         and (total is None or type(total) is int and total == len(rows)),
-         "PROCESS_DUPLICATE_PAGINATION_UNKNOWN")
-    seen = set()
-    for raw in rows:
-        need(type(raw) is dict, "PROCESS_DUPLICATE_ITEM_INVALID")
-        row = normalized(raw)
-        item_id = row.get("id")
-        need((type(item_id) is int or
-              type(item_id) is str and item_id.isascii() and item_id.isdecimal())
-             and str(row.get("categoryId")) == "21"
-             and row.get(COMPANY_FIELD) == inn,
-             "PROCESS_DUPLICATE_FILTER_NOT_ENFORCED")
-        identifier = int(item_id)
-        need(identifier not in seen and identifier > 0,
-             "PROCESS_DUPLICATE_DUPLICATED_ROW")
-        seen.add(identifier)
-    return {
-        "process_visible_duplicate": any(identifier != card for identifier in seen),
-        "process_visible_matches": len(seen),
-        "global_crm_clear": False,
-    }
+    seen, start, total_expected = set(), 0, None
+    for _ in range(20):
+        params = {
+            "entityTypeId": 1062, "useOriginalUfNames": "Y",
+            "filter": {"categoryId": 21, COMPANY_FIELD: inn},
+            "select": ["id", "categoryId", COMPANY_FIELD], "start": start,
+        }
+        response = client.post(base + "/crm.item.list.json", json=params,
+                               timeout=22, follow_redirects=False)
+        need(response.status_code == 200
+             and 0 < len(response.content) <= 350000,
+             "PROCESS_DUPLICATE_HTTP_UNKNOWN")
+        body = response.json()
+        need(type(body) is dict and "error" not in body
+             and type(body.get("result")) is dict,
+             "PROCESS_DUPLICATE_RESULT_INVALID")
+        result = body["result"]
+        rows = result.get("items")
+        need(type(rows) is list and len(rows) <= 50,
+             "PROCESS_DUPLICATE_PAGE_INVALID")
+        # Bitrix can return top-level or nested pagination. Contradictions
+        # are an access/integrity uncertainty, not an empty match set.
+        for key in ("next", "total"):
+            need(key not in body or key not in result
+                 or body[key] == result[key],
+                 "PROCESS_DUPLICATE_PAGINATION_CONFLICT")
+        following = body.get("next", result.get("next"))
+        total = body.get("total", result.get("total"))
+        need(total is None or type(total) is int and total >= 0,
+             "PROCESS_DUPLICATE_TOTAL_INVALID")
+        if total is not None:
+            if total_expected is None:
+                total_expected = total
+            need(total_expected == total, "PROCESS_DUPLICATE_TOTAL_CHANGED")
+        for raw in rows:
+            need(type(raw) is dict, "PROCESS_DUPLICATE_ITEM_INVALID")
+            row = normalized(raw)
+            item_id = row.get("id")
+            need((type(item_id) is int or type(item_id) is str
+                  and item_id.isascii() and item_id.isdecimal())
+                 and str(row.get("categoryId")) == "21"
+                 and row.get(COMPANY_FIELD) == inn,
+                 "PROCESS_DUPLICATE_FILTER_NOT_ENFORCED")
+            identifier = int(item_id)
+            need(identifier not in seen and identifier > 0,
+                 "PROCESS_DUPLICATE_DUPLICATED_ROW")
+            seen.add(identifier)
+        if following is None:
+            need(total_expected is None or total_expected == len(seen),
+                 "PROCESS_DUPLICATE_TOTAL_UNVERIFIED")
+            return {
+                "process_visible_duplicate": any(i != card for i in seen),
+                "process_visible_matches": len(seen),
+                "visible_pages_complete": True,
+                "global_crm_clear": False,
+            }
+        need(type(following) is int and following == start + 50
+             and len(rows) == 50,
+             "PROCESS_DUPLICATE_PAGINATION_UNKNOWN")
+        start = following
+    raise WatchBlocked("PROCESS_DUPLICATE_TOO_MANY_PAGES")
 
 
 def msp_archive_status(env, inn, *, today):

@@ -47,7 +47,9 @@ jobs:
       SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
       SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
       SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
-      AI_PROVIDER: gigachat
+      AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'deepseek' && 'deepseek' || 'gigachat' }}
+      SERVICEIT_DEEPSEEK_PRIVACY_APPROVED: ${{ vars.SERVICEIT_DEEPSEEK_PRIVACY_APPROVED }}
+      DEEPSEEK_API_KEY: ${{ secrets.SERVICEIT_DEEPSEEK_API_KEY }}
       AI_ENABLE: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED == 'YES' && '1' || '0' }}
       GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
       GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
@@ -63,6 +65,7 @@ jobs:
       - name: Install reviewed Python dependencies
         run: python -m pip install -r requirements.txt
       - name: Set pinned GigaChat CA trust without bypassing certificate checks
+        if: vars.SERVICEIT_AI_PROVIDER != 'deepseek'
         shell: bash
         run: |
           python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"

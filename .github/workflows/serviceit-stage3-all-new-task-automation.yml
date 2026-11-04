@@ -14,9 +14,6 @@ permissions:
 
 # Same concurrency key as the existing AI writer: no competing commits to
 # encrypted ledger branch while another new-card job is checkpointing.
-concurrency:
-  group: serviceit-bitrix-new-card-free-event
-  cancel-in-progress: false
 
 jobs:
   stage3-internal-manager-task:
@@ -31,6 +28,9 @@ jobs:
         github.event.issue.number == 148 &&
         !github.event.issue.pull_request &&
         github.event.comment.body == 'SERVICEIT_STAGE34_ALL_NEW_OWNER_ONCE_V1'))
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 9
     env:

@@ -127,18 +127,21 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
     return fields
 
 
-def attempted_but_unverified_fields(base_fields: dict) -> dict:
+def attempted_but_unverified_fields(base_fields: dict, *, provider="gigachat") -> dict:
+    if provider not in ("gigachat", "deepseek"):
+        raise PreliminaryAIBlocked("UNAPPROVED_MODEL_PROVIDER")
+    model_name = "DeepSeek" if provider == "deepseek" else "GigaChat"
     fields = dict(base_fields)
-    fields[PREFIX + "AI_STATUS"] = "GIGACHAT_ATTEMPT_UNVERIFIED"
+    fields[PREFIX + "AI_STATUS"] = ("AI_ATTEMPT_UNVERIFIED" if provider == "deepseek" else "GIGACHAT_ATTEMPT_UNVERIFIED")
     badge = fields.get(PREFIX + "AI_SUMMARY", "").splitlines()[0]
     badge = badge if badge.startswith(("📑 ТЕНДЕР", "👥 ВАКАНСИЯ",
                                       "🎯 ЗАПРОС УСЛУГ", "⚪ УТОЧНИТЬ ТИП")) else ""
     fields[PREFIX + "AI_SUMMARY"] = (
         (badge + "\n" if badge else "")
-        + "Анализ GigaChat был запрошен, но достоверный результат не получен. "
+        + "Анализ " + model_name + " был запрошен, но достоверный результат не получен. "
         "Потребность не подтверждена, Score не рассчитан."
     )
     fields[PREFIX + "AI_FULL_REPORT"] = fields[PREFIX + "AI_FULL_REPORT"].replace(
-        "GigaChat: NOT_RUN", "GigaChat: ATTEMPT_UNVERIFIED"
+        "GigaChat: NOT_RUN", model_name + ": ATTEMPT_UNVERIFIED"
     )
     return fields

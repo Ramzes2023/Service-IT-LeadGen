@@ -22,7 +22,7 @@ import re
 import httpx
 
 from .serviceit_stage3_all_new_task_automation import (
-    CUTOVER, TaskAutomationBlocked, rest, card_read, scan_cards,
+    CUTOVER, TaskAutomationBlocked, card_read,
 )
 from .serviceit_bitrix_dispatch_worker import (
     verify_event, EncryptedEventFence, REPOSITORY, PORTAL, BRANCH,
@@ -73,8 +73,45 @@ def proof_for_card(env, card):
                     for x in proofs),"CORPORATE_RECEIPTS_NOT_INDEXED_BY_CARD")
     return proofs.get(str(card)),key
 
+def score_rest(client, base, method, args):
+    require(method in ("crm.item.fields","crm.item.get","crm.item.update")
+            and type(args) is dict and args.get("entityTypeId")==1062,
+            "SCORE_REST_METHOD_FORBIDDEN")
+    if method=="crm.item.fields":
+        require(args=={"entityTypeId":1062,"useOriginalUfNames":"Y"},
+                "SCORE_FIELD_CATALOG_SCOPE_INVALID")
+    else:
+        require(type(args.get("id")) is int and 8<=args["id"]<=2_000_000_000
+                and args["id"] not in (3,7)
+                and args.get("useOriginalUfNames")=="Y",
+                "SCORE_REST_ITEM_SCOPE_INVALID")
+        if method=="crm.item.update":
+            fields=args.get("fields")
+            require(type(fields) is dict and set(fields)==FIELDS
+                    and type(fields.get(SCORE_FIELD)) is int
+                    and 0<=fields[SCORE_FIELD]<=100,
+                    "SCORE_REST_FIELD_ALLOWLIST")
+        else:
+            require(set(args)=={"entityTypeId","id","useOriginalUfNames"},
+                    "SCORE_READ_ONLY_ARGS_INVALID")
+    try:
+        response=client.post(base+"/"+method+".json",json=args,
+                             timeout=20,follow_redirects=False)
+        require(response.status_code==200 and 0<len(response.content)<=400000,
+                "SCORE_REST_HTTP_UNVERIFIED")
+        data=response.json()
+        require(type(data) is dict and "error" not in data
+                and type(data.get("result")) is dict,
+                "SCORE_REST_RESPONSE_UNVERIFIED")
+        return data["result"]
+    except ScoreBlocked:
+        raise
+    except (httpx.HTTPError,ValueError,TypeError):
+        raise ScoreBlocked("SCORE_REST_TRANSPORT_UNVERIFIED") from None
+
+
 def score_schema_ok(client, base):
-    data=rest(client,base,"crm.item.fields",{
+    data=score_rest(client,base,"crm.item.fields",{
         "entityTypeId":1062,"useOriginalUfNames":"Y",
     })
     require(type(data) is dict and type(data.get("fields")) is dict,
@@ -131,11 +168,11 @@ def evaluate_one(client, env, card, *, now=None):
     if reserved!="RESERVED":
         return "ALREADY_FENCED_SCORE_NO_RETRY"
     try:
-        rest(client,base,"crm.item.update",{
+        score_rest(client,base,"crm.item.update",{
             "entityTypeId":1062,"id":card,
             "useOriginalUfNames":"Y","fields":output,
         })
-        result=rest(client,base,"crm.item.get",{
+        result=score_rest(client,base,"crm.item.get",{
             "entityTypeId":1062,"id":card,"useOriginalUfNames":"Y",
         })
         require(type(result) is dict and type(result.get("item")) is dict,

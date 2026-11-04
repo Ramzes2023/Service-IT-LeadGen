@@ -191,7 +191,7 @@ def test_signed_event_end_to_end_and_readonly_recovery(monkeypatch, ambiguous, a
     model_calls = []
     if approved:
         class Provider:
-            config = SimpleNamespace(model="GigaChat")
+            config = SimpleNamespace(model="GigaChat", provider="gigachat")
             def __init__(self, *args, **kwargs):
                 pass
             def classify(self, text):

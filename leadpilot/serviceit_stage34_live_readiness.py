@@ -143,8 +143,13 @@ def inspect(client, webhook, env, *, now=None):
     cutoff = max(CUTOVER, after_activation(env, now))
     cards = discover(lambda method, args: read(client, base, method, args),
                      cutoff, now)
+    metadata_complete = bool(task_enabled and task_linked and task_fields_ok
+                             and all(score_contract.values()))
     return {
-        "status": "SERVICEIT_STAGE34_READONLY_READY",
+        "status": ("SERVICEIT_STAGE34_METADATA_CONTRACT_PASS"
+                   if metadata_complete
+                   else "SERVICEIT_STAGE34_METADATA_GAPS"),
+        "metadata_contract_complete": metadata_complete,
         "scope": "serviseit.bitrix24.ru:1062/21",
         "task_link_configured": task_enabled and task_linked,
         "task_fields_visible": task_fields_ok,

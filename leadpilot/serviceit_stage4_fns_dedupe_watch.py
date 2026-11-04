@@ -190,8 +190,12 @@ def run(client, env, *, now=None):
     calibrate_known_card(scoped_list)
     cards = discover(scoped_list, lower, now)
     need(len(cards) <= 200, "DISCOVERY_LIMIT_EXCEEDED")
+    # Fair rotation over all discovered cards; no permanent first-page starvation.
+    windows = max(1, (len(cards) + MAX_CARDS_PER_RUN - 1) // MAX_CARDS_PER_RUN)
+    slot = (int(now.timestamp()) // 1200) % windows
+    selected = cards[slot * MAX_CARDS_PER_RUN:(slot + 1) * MAX_CARDS_PER_RUN]
     outcomes = Counter()
-    for card in cards[:MAX_CARDS_PER_RUN]:
+    for card in selected:
         try:
             result = assess_card(client, base, card, env, now=now)
         except Exception:

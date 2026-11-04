@@ -1,0 +1,28 @@
+name: ServiceIT official FNS MSP public ZIP HEAD probe (READ ONLY)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+jobs:
+  public-fns-probe:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 148 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_FNS_OFFICIAL_PUBLIC_HEAD_ONCE_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Probe official FNS MSP ZIP headers only (no ZIP download; no CRM data)
+        run: python -m leadpilot.serviceit_fns_msp_public_probe

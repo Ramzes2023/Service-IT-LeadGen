@@ -11,23 +11,23 @@ from leadpilot.serviceit_preliminary_gigachat import model_hypothesis_fields
 
 
 def config(**kwargs):
-    return {"AI_ENABLE": "1", "AI_PROVIDER":"deepseek",
-            "SERVICEIT_DEEPSEEK_PRIVACY_APPROVED":"YES_1062_21",
-            "DEEPSEEK_API_KEY":"SYNTHETIC-TEST-KEY-ONLY", **kwargs}
+    return {"AI_ENABLE": "1", "AI_PROVIDER":"routerai",
+            "SERVICEIT_ROUTERAI_PRIVACY_APPROVED":"YES_1062_21",
+            "ROUTERAI_API_KEY":"SYNTHETIC-TEST-KEY-ONLY", **kwargs}
 
 
 def test_official_deepseek_identity_not_derived_from_user_url():
     cfg=config_from_env(config(AI_MODEL="any-unapproved-model",
           AI_API_URL="https://example.org/redirect"))
-    assert cfg.provider == "deepseek"
-    assert cfg.url == "https://api.deepseek.com/chat/completions"
-    assert cfg.model == "deepseek-flash"
+    assert cfg.provider == "routerai"
+    assert cfg.url == "https://routerai.ru/api/v1/chat/completions"
+    assert cfg.model == "deepseek/deepseek-v4.1-flash"
     assert cfg.key == "SYNTHETIC-TEST-KEY-ONLY"
 
 
 @pytest.mark.parametrize("overrides",[
-    {"SERVICEIT_DEEPSEEK_PRIVACY_APPROVED":""},
-    {"DEEPSEEK_API_KEY":""},
+    {"SERVICEIT_ROUTERAI_PRIVACY_APPROVED":""},
+    {"ROUTERAI_API_KEY":""},
     {"AI_ENABLE":"0"},
 ])
 def test_no_approval_no_key_no_model_run(overrides):
@@ -39,15 +39,15 @@ def test_deepseek_http_request_has_json_and_unchanged_evidence():
     source="Нужен подрядчик для сопровождения 1С"
     inspected=[]
     def transport(req):
-        assert req.url.host=="api.deepseek.com"
-        assert req.url.path=="/chat/completions"
+        assert req.url.host=="routerai.ru"
+        assert req.url.path=="/api/v1/chat/completions"
         assert req.headers["Authorization"]=="Bearer SYNTHETIC-TEST-KEY-ONLY"
         payload=json.loads(req.content)
         inspected.append(payload)
-        assert payload["model"] == "deepseek-flash"
-        assert payload["thinking"] == {"type":"disabled"}
+        assert payload["model"] == "deepseek/deepseek-v4.1-flash"
         assert payload["response_format"] == {"type":"json_object"}
         assert payload["max_tokens"] == 800
+        assert "thinking" not in payload
         assert payload["messages"][1]["content"] == source
         body={"service":"1С", "possible_need":"Возможна поддержка 1С",
               "confidence":.83, "evidence_quote":"сопровождения 1С"}
@@ -57,7 +57,7 @@ def test_deepseek_http_request_has_json_and_unchanged_evidence():
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         with AIProvider(cfg,client) as provider:
             ai=provider.classify(source)
-    assert ai["provider"]=="deepseek" and ai["model"]=="deepseek-flash"
+    assert ai["provider"]=="deepseek" and ai["model"]=="deepseek/deepseek-v4.1-flash"
     assert ai["quality_status"]=="complete"
     assert len(inspected)==1
 
@@ -81,15 +81,15 @@ def test_preliminary_report_uses_actual_provider_without_false_sale():
             "original_publication_verified":False,"qualified_lead":False,
             "contact_approved":False,"buyer_inn":None,"fns_msp":None}
     base=hold_analysis_fields(notice,["1C"])
-    ai={"provider":"deepseek","model":"deepseek-flash",
+    ai={"provider":"routerai","model":"deepseek/deepseek-v4.1-flash",
         "origin":"AI_hypothesis","quality_status":"complete",
         "service":"1С","possible_need":"Возможна поддержка 1С",
         "confidence":.8,"evidence_quote":"Сопровождение 1С"}
     fields=model_hypothesis_fields(base,"Сопровождение 1С по договору",ai)
     assert set(fields)==set(base)
-    assert "DeepSeek" in fields[PREFIX+"AI_SUMMARY"]
+    assert "RouterAI (DeepSeek)" in fields[PREFIX+"AI_SUMMARY"]
     assert "НЕ подтверждённый лид" in fields[PREFIX+"AI_SUMMARY"]
-    assert "ГИПОТЕЗА DeepSeek" in fields[PREFIX+"AI_FULL_REPORT"]
+    assert "ГИПОТЕЗА RouterAI (DeepSeek)" in fields[PREFIX+"AI_FULL_REPORT"]
 
 
 def test_workflow_switch_preserves_existing_gigachat_fallback():
@@ -99,7 +99,7 @@ def test_workflow_switch_preserves_existing_gigachat_fallback():
     ):
         text=Path(path).read_text("utf-8")
         assert "SERVICEIT_AI_PROVIDER" in text
-        assert "SERVICEIT_DEEPSEEK_PRIVACY_APPROVED" in text
-        assert "secrets.SERVICEIT_DEEPSEEK_API_KEY" in text
+        assert "SERVICEIT_ROUTERAI_PRIVACY_APPROVED" in text
+        assert "secrets.SERVICEIT_ROUTERAI_API_KEY" in text
         assert "|| 'gigachat'" in text
         assert "serviceit_gigachat_ca_setup" in text

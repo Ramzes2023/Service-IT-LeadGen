@@ -190,3 +190,43 @@ def test_workflow_readonly_with_no_writing_permissions():
     assert "tasks.task.add" not in workflow
     assert "crm.item.update" not in workflow
     assert "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY:" in workflow
+
+
+def test_stage4_all_future_cards_hold_without_external_receipt():
+    from leadpilot import serviceit_stage34_signed_readonly_sidecar as sidecar
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: pytest.fail("no unverified proof may cause extra REST"))) as client:
+        result=sidecar.stage4_signed_receipt_summary(client, {}, 120)
+    assert result["stage4_proof"]=="NO_INDEPENDENT_RECEIPT_HOLD"
+    assert result["stage4_formal_score_in_memory"] is False
+
+
+def test_stage4_receipt_is_per_card_never_reused(monkeypatch):
+    from leadpilot import serviceit_stage34_signed_readonly_sidecar as sidecar
+    called=[]
+    from leadpilot import serviceit_stage4_live_proof_readonly as live
+    def verified(client, webhook, item_id, receipt, key):
+        called.append((item_id,receipt,key))
+        return {"status":"MANAGER_REVIEW_REQUIRED","formal_lead_score":83}
+    monkeypatch.setattr(live,"review_signed_card_readonly",verified)
+    env={"SERVICEIT_BITRIX_WEBHOOK":"https://serviseit.bitrix24.ru/rest/123/FAKE",
+         "SERVICEIT_STAGE4_VERIFIER_KEY":"some-test-key",
+         "SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON":json.dumps({"120":{"receipt":"fake fixture"}})}
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:pytest.fail("mocked reviewer should not call network"))) as client:
+        for other in (121,122):
+            result=sidecar.stage4_signed_receipt_summary(client,env,other)
+            assert result["stage4_formal_score_in_memory"] is False
+        exact=sidecar.stage4_signed_receipt_summary(client,env,120)
+        assert exact["stage4_formal_score_in_memory"] is True
+    assert called==[(120,{"receipt":"fake fixture"},"some-test-key")]
+
+
+def test_stage4_only_one_secret_is_fail_closed_without_model_or_rest():
+    from leadpilot import serviceit_stage34_signed_readonly_sidecar as sidecar
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:pytest.fail("network must be blocked"))) as client:
+        with pytest.raises(sidecar.ObserverBlocked,match="STAGE4_INCOMPLETE_VERIFIER_CONFIG"):
+            sidecar.stage4_signed_receipt_summary(client,{
+                "SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON":'{"120":{}}',
+            },120)

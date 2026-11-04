@@ -16,6 +16,7 @@ import httpx
 from .bitrix_1062_mapping import FIELD_MAP
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_enrichment_worker import normalized, fingerprint, validate_identity, Blocked
+from .serviceit_preliminary_score_markers import is_score_empty_or_ours
 from .serviceit_qualification_proof_v2 import (
     _validate_signed, qualify_signed, crm_inn_visibility_readonly,
     ProofBlocked, HOLD,
@@ -69,9 +70,10 @@ def review_signed_card_readonly(client, webhook, card_id, receipt, verifier_key,
         # Existing corporate STOP or any prior assigned score must not be ignored.
         if item.get("UF_CRM_13_SVCIT_STOP_REASON") not in (None, ""):
             return dict(HOLD)
-        if item.get(FIELD_MAP["lead_score"]) not in (None, ""):
-            return dict(HOLD)
-        if item.get(FIELD_MAP["score_version"]) not in (None, ""):
+        # Existing manual/verified Score still blocks. Only the exact
+        # previously written provisional marker is eligible for upgrade,
+        # and ONLY after all nine independent signed gates pass.
+        if not is_score_empty_or_ours(item):
             return dict(HOLD)
         # A valid corporate signature cannot override a positive exact-INN
         # match visible in Bitrix requisite records. Missing permissions

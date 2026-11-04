@@ -15,6 +15,12 @@ def fake(*, companies=None, contacts=None, deny_contacts=False,
     def handler(req):
         method = req.url.path.rsplit("/",1)[-1]
         args = json.loads(req.content)
+        if method == "crm.item.list.json":
+            assert args in (
+                {"entityTypeId":1,"select":["id"],"filter":{},"start":0},
+                {"entityTypeId":2,"select":["id"],"filter":{},"start":0},
+            )
+            return httpx.Response(200,json={"result":{"items":[{"id":21}]}})
         if method == "user.admin.json":
             assert args == {}
             return httpx.Response(200, json={"result":admin})

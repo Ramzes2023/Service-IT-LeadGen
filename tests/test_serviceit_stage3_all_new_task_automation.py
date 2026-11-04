@@ -29,7 +29,7 @@ class Fence:
         if card in self.seen:
             return "ALREADY_FENCED_NO_RETRY"
         self.seen.add(card)
-        self.count+=1
+        type(self).count+=1
         return "RESERVED"
     def finalize(self,card,result):
         self.states.append(result)

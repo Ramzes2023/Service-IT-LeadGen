@@ -74,7 +74,8 @@ def test_readonly_metadata_all_fields_present_and_no_future_cards():
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = readiness.inspect(client, HOOK, ENV, now=NOW)
     assert len(calls) == 6
-    assert result["status"] == "SERVICEIT_STAGE34_READONLY_READY"
+    assert result["status"] == "SERVICEIT_STAGE34_METADATA_CONTRACT_PASS"
+    assert result["metadata_contract_complete"] is True
     assert result["task_link_configured"] is True
     assert result["task_fields_visible"] is True
     assert result["can_create_task_scope_confirmed"] is False
@@ -90,6 +91,8 @@ def test_missing_score_field_reported_without_any_crm_write():
             lambda req: fixture(req, missing_score=True))) as client:
         result = readiness.inspect(client, HOOK, ENV, now=NOW)
     assert result["score_fields_readonly_schema"]["score_valid"] is False
+    assert result["status"] == "SERVICEIT_STAGE34_METADATA_GAPS"
+    assert result["metadata_contract_complete"] is False
     assert result["can_create_task_scope_confirmed"] is False
 
 
@@ -98,6 +101,7 @@ def test_task_link_disabled_reported_not_fabricated():
             lambda req: fixture(req, no_task_link=True))) as client:
         result = readiness.inspect(client, HOOK, ENV, now=NOW)
     assert result["task_link_configured"] is False
+    assert result["status"] == "SERVICEIT_STAGE34_METADATA_GAPS"
 
 
 def test_wrong_category_blocks_before_querying_any_task_or_score_metadata():

@@ -55,12 +55,23 @@ def proof(item, *, forged=False):
         receipt["checks"]["stop_list"]["finding"]="CLEAR_BUT_NO_SOURCE"
     return receipt
 
-def response(req,item):
+def response(req,item,*,duplicate=False,denied=False):
     assert req.method=="POST"
-    assert req.url.path.endswith("/crm.item.get.json")
-    assert json.loads(req.content)=={
-        "entityTypeId":1062,"id":120,"useOriginalUfNames":"Y"}
-    return httpx.Response(200,json={"result":{"item":item}})
+    if req.url.path.endswith("/crm.item.get.json"):
+        assert json.loads(req.content)=={
+            "entityTypeId":1062,"id":120,"useOriginalUfNames":"Y"}
+        return httpx.Response(200,json={"result":{"item":item}})
+    if req.url.path.endswith("/crm.requisite.list.json"):
+        assert json.loads(req.content)=={
+            "filter":{"RQ_INN":"7700000009"},
+            "select":["ID","ENTITY_TYPE_ID","ENTITY_ID","RQ_INN"],
+            "start":0}
+        if denied:
+            return httpx.Response(403,json={"error":"ACCESS_DENIED"})
+        rows=[{"ID":"111","ENTITY_TYPE_ID":"4",
+               "ENTITY_ID":"555","RQ_INN":"7700000009"}] if duplicate else []
+        return httpx.Response(200,json={"result":rows,"total":len(rows)})
+    pytest.fail("Unexpected read-only Bitrix REST method")
 
 def test_all_nine_signed_with_matching_live_readback_has_in_memory_score_only():
     item=card()
@@ -109,3 +120,25 @@ def test_missing_receipt_never_returns_score_or_calls_rest():
         result=review_signed_card_readonly(client,WEBHOOK,120,None,KEY,now=NOW)
     assert result==HOLD
     assert result["formal_lead_score"] is None
+
+
+def test_even_signed_nine_gates_cannot_override_visible_existing_inn_duplicate():
+    item=card()
+    receipt=proof(item)
+    methods=[]
+    def mock(req):
+        methods.append(req.url.path.rsplit("/",1)[-1])
+        return response(req,item,duplicate=True)
+    with httpx.Client(transport=httpx.MockTransport(mock)) as client:
+        out=review_signed_card_readonly(client,WEBHOOK,120,receipt,KEY,now=NOW)
+    assert out==HOLD
+    assert methods==["crm.item.get.json","crm.requisite.list.json"]
+    assert out["formal_lead_score"] is None
+
+
+def test_signed_proof_with_crm_requisite_permission_denied_is_hold():
+    item=card()
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:response(req,item,denied=True))) as client:
+        assert review_signed_card_readonly(
+            client,WEBHOOK,120,proof(item),KEY,now=NOW)==HOLD

@@ -142,7 +142,8 @@ def process_card(client, env, card, *, now=None):
             "GITHUB_SCOPE_INVALID")
     base=validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK",""))
     require(base.startswith(f"https://{PORTAL}/rest/"),"PORTAL_INVALID")
-    card=positive(card)
+    require(type(card) is int and 8 <= card <= 2_000_000_000
+            and card not in (3, 7), "HISTORICAL_CARD_FORBIDDEN")
     item=card_read(client,base,card,now=now)
     check_task_binding(client,base)
     binding=owner_type(client,base)+"_"+str(card)

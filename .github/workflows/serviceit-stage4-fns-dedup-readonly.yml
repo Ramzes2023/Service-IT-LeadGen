@@ -1,0 +1,46 @@
+name: ServiceIT stage4 FNS MSP and CRM duplicate watcher (READ ONLY)
+on:
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: '9,29,49 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-stage4-fns-dedup-readonly
+  cancel-in-progress: false
+jobs:
+  verify-new-only:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_FNS_DUPLICATES_AUTO_READONLY_ONCE_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      # Official verified-digest FNS MSP archive can be mounted by a future
+      # approved corporate ingestion workflow; absent means HOLD.
+      SERVICEIT_FNS_MSP_PUBLIC_URL: ${{ vars.SERVICEIT_FNS_MSP_PUBLIC_URL }}
+      SERVICEIT_FNS_MSP_SHA256: ${{ secrets.SERVICEIT_FNS_MSP_SHA256 }}
+      SERVICEIT_FNS_MSP_ARCHIVE_PATH: ${{ vars.SERVICEIT_FNS_MSP_ARCHIVE_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed project dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Inspect new real CRM card INNs, visible duplicates and optional official FNS MSP
+        run: python -m leadpilot.serviceit_stage4_fns_dedupe_watch

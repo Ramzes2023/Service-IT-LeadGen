@@ -143,43 +143,68 @@ def qualify_signed(receipt, key, *, now=None, current_crm_before_hash=None):
 
 
 def crm_inn_visibility_readonly(client: httpx.Client, webhook: str, inn: str):
-    """Read exact visible requisite INN matches; absence is NEVER global dedup.
+    """Read ALL bounded visible exact-INN requisite pages, never infer global clear.
 
-    A limited Bitrix webhook cannot see all customers, contacts or STOP entries.
-    This intentionally never emits 'global customer verified' or CRM IDs.
+    The webhook can be restricted to a subset of the corporate CRM. Even if all
+    visible pages are exhausted, this remains only a visible-object check.
+    Missing or inconsistent pagination cannot imply 'no duplicate'.
     """
     _check(type(inn) is str and _is_valid_inn(inn), "INN_CHECKSUM_INVALID")
     base = validate_webhook(webhook)
     _check(base.startswith("https://serviseit.bitrix24.ru/rest/"),
            "PORTAL_MISMATCH")
-    args = {"filter": {"RQ_INN": inn},
-            "select": ["ID", "ENTITY_TYPE_ID", "ENTITY_ID", "RQ_INN"], "start": 0}
+    seen, start, total_expected = set(), 0, None
     try:
-        resp = client.post(base+"/crm.requisite.list.json", json=args,
-                           follow_redirects=False, timeout=20)
-        _check(resp.status_code == 200 and len(resp.content) <= 256000,
-               "CRM_REQUISITE_SCOPE_OR_HTTP")
-        payload = resp.json()
-        _check(type(payload) is dict and "error" not in payload
-               and type(payload.get("result")) is list
-               and len(payload["result"]) <= 50, "CRM_REQUISITE_SHAPE_INVALID")
-        rows = payload["result"]
-        _check(payload.get("next") is None
-               and (payload.get("total") is None
-                    or payload["total"] == len(rows)), "CRM_REQUISITE_PAGINATED")
-        for r in rows:
-            _check(type(r) is dict and str(r.get("RQ_INN")) == inn
-                   and str(r.get("ENTITY_TYPE_ID")) in ("3","4")
-                   and str(r.get("ENTITY_ID","")).isdigit(),
-                   "CRM_REQUISITE_IDENTITY_MISMATCH")
-        return {"status": ("POTENTIAL_EXISTING_RECORD_BLOCK" if rows
-                           else "NO_MATCH_IN_VISIBLE_REQUISITES_ONLY"),
-                "visible_matches": len(rows),
-                "global_crm_customer_clear": False,
-                "global_dedup_verified": False,
-                "stop_list_verified": False,
-                "crm_writes": 0}
+        for _ in range(20):
+            args = {"filter": {"RQ_INN": inn},
+                    "select": ["ID", "ENTITY_TYPE_ID", "ENTITY_ID", "RQ_INN"],
+                    "start": start}
+            resp = client.post(base + "/crm.requisite.list.json", json=args,
+                               follow_redirects=False, timeout=20)
+            _check(resp.status_code == 200 and 0 < len(resp.content) <= 256000,
+                   "CRM_REQUISITE_SCOPE_OR_HTTP")
+            payload = resp.json()
+            _check(type(payload) is dict and "error" not in payload
+                   and type(payload.get("result")) is list
+                   and len(payload["result"]) <= 50, "CRM_REQUISITE_SHAPE_INVALID")
+            rows = payload["result"]
+            total = payload.get("total")
+            _check(total is None or (type(total) is int and total >= 0),
+                   "CRM_REQUISITE_TOTAL_UNVERIFIED")
+            if total is not None:
+                if total_expected is None:
+                    total_expected = total
+                _check(total_expected == total, "CRM_REQUISITE_TOTAL_CHANGED")
+            for r in rows:
+                _check(type(r) is dict and str(r.get("RQ_INN")) == inn
+                       and str(r.get("ENTITY_TYPE_ID")) in ("3", "4")
+                       and str(r.get("ENTITY_ID", "")).isdigit()
+                       and str(r.get("ID", "")).isdigit(),
+                       "CRM_REQUISITE_IDENTITY_MISMATCH")
+                rid = str(r["ID"])
+                _check(rid not in seen, "CRM_REQUISITE_REPEATED_PAGE")
+                seen.add(rid)
+            following = payload.get("next")
+            if following is None:
+                _check(total_expected is None or total_expected == len(seen),
+                       "CRM_REQUISITE_INCOMPLETE_TOTAL")
+                return {
+                    "status": ("POTENTIAL_EXISTING_RECORD_BLOCK" if seen
+                               else "NO_MATCH_IN_VISIBLE_REQUISITES_ONLY"),
+                    "visible_matches": len(seen),
+                    "visible_pages_complete": True,
+                    "global_crm_customer_clear": False,
+                    "global_dedup_verified": False,
+                    "stop_list_verified": False,
+                    "crm_writes": 0,
+                }
+            _check(type(following) is int and following == start + 50
+                   and len(rows) == 50 and len(seen) <= 1000,
+                   "CRM_REQUISITE_PAGINATION_UNVERIFIED")
+            start = following
+        raise ProofBlocked("CRM_REQUISITE_TOO_MANY_PAGES")
     except ProofBlocked:
         raise
     except (httpx.HTTPError, ValueError, TypeError, KeyError):
         raise ProofBlocked("CRM_REQUISITE_RESPONSE_UNVERIFIED") from None
+

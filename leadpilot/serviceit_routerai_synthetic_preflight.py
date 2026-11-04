@@ -20,6 +20,45 @@ URL = "https://routerai.ru/api/v1/chat/completions"
 class PreflightBlocked(ValueError):
     pass
 
+def _credits_bucket(client, key):
+    """Read RouterAI credit metadata without logging account balance or key.
+
+    Return only qualitative hints. Unknown response schemas remain UNKNOWN.
+    """
+    try:
+        response = client.get(
+            "https://routerai.ru/api/v1/credits",
+            headers={"Authorization":"Bearer " + key,
+                     "Accept":"application/json"},
+            timeout=15, follow_redirects=False,
+        )
+    except httpx.HTTPError:
+        return "BALANCE_QUERY_NETWORK_UNVERIFIED"
+    if response.status_code != 200 or len(response.content) > 100_000:
+        return "BALANCE_QUERY_ACCESS_UNVERIFIED"
+    try:
+        body = response.json()
+    except ValueError:
+        return "BALANCE_SCHEMA_UNVERIFIED"
+    if not isinstance(body, dict):
+        return "BALANCE_SCHEMA_UNVERIFIED"
+    nodes = [body]
+    if isinstance(body.get("data"), dict):
+        nodes.insert(0, body["data"])
+    for node in nodes:
+        value = node.get("balance")
+        if value is None:
+            value = node.get("remaining")
+        if value is None:
+            total, spent = node.get("total_credits"), node.get("total_usage")
+            if (type(total) in (int, float)
+                    and type(spent) in (int, float)):
+                value = total - spent
+        if type(value) in (int, float) and -1_000_000 < value < 1_000_000_000:
+            return "BALANCE_EMPTY_OR_ZERO" if value <= 0 else "BALANCE_POSITIVE"
+    return "BALANCE_SCHEMA_UNVERIFIED"
+
+
 def inspect(client: httpx.Client, env: dict) -> dict:
     base = {"provider": "routerai", "crm_writes": 0, "real_customer_data_sent": False}
     if (env.get("GITHUB_REPOSITORY") != "Ramzes2023/Service-IT-LeadGen"
@@ -70,10 +109,26 @@ def inspect(client: httpx.Client, env: dict) -> dict:
         if auth_probe.status_code == 403:
             return {**base, "status": "ROUTERAI_ACCOUNT_OR_RUNNER_ACCESS_DENIED_403"}
         if auth_probe.status_code == 200:
+            try:
+                model_list = auth_probe.json()
+            except ValueError:
+                model_list = None
+            if (not isinstance(model_list, dict)
+                    or not isinstance(model_list.get("data"), list)):
+                return {**base, "status": "ROUTERAI_MODELS_RESPONSE_NOT_VERIFIED"}
+            credit_bucket = _credits_bucket(client, cfg.key)
+            if credit_bucket == "BALANCE_EMPTY_OR_ZERO":
+                return {**base, "status": "ROUTERAI_BILLING_BALANCE_EMPTY"}
+            if response.status_code == 403:
+                return {**base, "status": (
+                    "ROUTERAI_MODEL_FORBIDDEN_WITH_POSITIVE_BALANCE"
+                    if credit_bucket == "BALANCE_POSITIVE" else
+                    "ROUTERAI_MODEL_ACCESS_FORBIDDEN_CREDITS_UNVERIFIED"
+                )}
             return {**base, "status": (
-                "ROUTERAI_MODEL_OR_CHAT_ACCESS_DENIED_403"
-                if response.status_code == 403 else
-                "ROUTERAI_CHAT_AUTH_REJECTED_DESPITE_VALID_MODELS_KEY"
+                "ROUTERAI_CHAT_401_WITH_POSITIVE_BALANCE"
+                if credit_bucket == "BALANCE_POSITIVE" else
+                "ROUTERAI_CHAT_401_WITH_CREDITS_UNVERIFIED"
             )}
         return {**base, "status": "ROUTERAI_AUTH_MODELS_DIAGNOSTIC_UNVERIFIED"}
     if response.status_code == 402:

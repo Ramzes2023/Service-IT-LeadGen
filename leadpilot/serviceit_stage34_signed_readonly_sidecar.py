@@ -17,7 +17,7 @@ import httpx
 
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_bitrix_dispatch_worker import verify_event, EventCloudBlocked
-from .serviceit_enrichment_worker import normalized, validate_identity
+from .serviceit_enrichment_worker import normalized, validate_identity, Blocked
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 
 PORTAL = "serviseit.bitrix24.ru"
@@ -127,7 +127,7 @@ def assigned_employee(client, base, assigned):
     matches = [x for x in users if type(x) is dict
                and str(x.get("ID")) == str(uid)
                and x.get("ACTIVE") in (True, "Y")
-               and x.get("USER_TYPE", "employee") == "employee"]
+               and x.get("USER_TYPE") == "employee"]
     return ("ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED"
             if len(matches) == 1 else "ASSIGNEE_NOT_VERIFIED")
 
@@ -197,7 +197,7 @@ def main():
             result = run(event, env, client)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (ObserverBlocked, EventCloudBlocked, ValueError, TypeError, OSError,
+    except (ObserverBlocked, EventCloudBlocked, Blocked, ValueError, TypeError, OSError,
             KeyError, httpx.HTTPError):
         # Never report untrusted REST text, event contents, card ID or tokens.
         print(json.dumps({"status":"SERVICEIT_STAGE34_READONLY_BLOCKED",

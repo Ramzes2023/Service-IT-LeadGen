@@ -41,7 +41,7 @@ def resign(receipt):
     return receipt
 
 def test_all_nine_corporate_proofs_unlock_formal_score_not_contact_or_task():
-    result=qualify_signed(signed(),KEY,now=NOW)
+    result=qualify_signed(signed(),KEY,now=NOW,current_crm_before_hash='a'*64)
     assert result["status"]=="MANAGER_REVIEW_REQUIRED"
     assert isinstance(result["formal_lead_score"],int)
     assert 0 <= result["formal_lead_score"] <= 100
@@ -73,7 +73,7 @@ def test_wrong_card_or_bad_inn_blocks_even_with_valid_signature():
     assert qualify_signed(resign(x),KEY,now=NOW)==HOLD
 
 def test_vacancy_never_becomes_direct_buying_lead_even_with_all_proofs():
-    x=qualify_signed(signed(kind="1c_vacancy"),KEY,now=NOW)
+    x=qualify_signed(signed(kind="1c_vacancy"),KEY,now=NOW,current_crm_before_hash='a'*64)
     assert x["status"]=="VACANCY_ONLY_MANAGER_REVIEW"
     assert x["crm_handoff_eligible"] is False
     assert x["outreach_authorized"] is False
@@ -116,3 +116,12 @@ def test_crm_unauthorized_or_mismatched_inn_fails_closed():
             lambda r:fake_requisites(r,rows))) as c:
         with pytest.raises(ProofBlocked,match="CRM_REQUISITE_IDENTITY_MISMATCH"):
             crm_inn_visibility_readonly(c,BASE,INN)
+
+
+def test_valid_signed_receipt_without_fresh_independent_crm_readback_is_hold():
+    report=signed()
+    assert qualify_signed(report,KEY,now=NOW)==HOLD
+    assert qualify_signed(report,KEY,now=NOW,
+                          current_crm_before_hash="c"*64)==HOLD
+    assert qualify_signed(report,KEY,now=NOW,
+                          current_crm_before_hash="a"*64)["formal_lead_score"] is not None

@@ -105,7 +105,7 @@ def _validate_signed(receipt, key, now):
     return snap
 
 
-def qualify_signed(receipt, key, *, now=None):
+def qualify_signed(receipt, key, *, now=None, current_crm_before_hash=None):
     """Return formal score only after all 9 signed independent attestations.
 
     Even a successful result is MANAGER_REVIEW_REQUIRED, not contact approval.
@@ -116,6 +116,10 @@ def qualify_signed(receipt, key, *, now=None):
         _check(type(now) is datetime and now.tzinfo is not None, "CLOCK_INVALID")
         now = now.astimezone(timezone.utc)
         snap = _validate_signed(receipt, key, now)
+        _check(type(current_crm_before_hash) is str
+               and re.fullmatch(r"[0-9a-f]{64}", current_crm_before_hash)
+               and hmac.compare_digest(current_crm_before_hash, snap["before_hash"]),
+               "LIVE_CRM_SNAPSHOT_NOT_INDEPENDENTLY_RECHECKED")
         raw = assess_lead(snap["company"], snap["signals"],
                           checks={g:"VERIFIED" for g in GATE_ORIGINS},
                           today=now.date(), ai_hypothesis=None, demo=False)

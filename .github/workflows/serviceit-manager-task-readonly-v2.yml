@@ -1,0 +1,34 @@
+name: ServiceIT stage3 manager identity and task dedupe (READ ONLY)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-stage3-manager-only-readonly
+  cancel-in-progress: false
+jobs:
+  manager-preflight:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 74 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_STAGE3_MANAGER_TASK_READONLY_V2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed project dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Read-only identity candidate and exact DEMO task binding only
+        run: python -m leadpilot.serviceit_manager_task_readonly_v2

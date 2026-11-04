@@ -150,15 +150,23 @@ def process_card(client, env, card, *, now=None):
     n=visible_tasks(client,base,binding)
     if n:
         return "VISIBLE_TASK_EXISTS_NO_WRITE"
-    uid=positive(item.get("assignedById"))
+    assigned_on_card=item.get("assignedById")
+    if assigned_on_card in (None,"",0,"0"):
+        # The corporate owner must explicitly approve an exact backup
+        # manager for this ONE smart-process category; no name guessing.
+        require(env.get("SERVICEIT_STAGE3_FALLBACK_APPROVED")==
+                "YES_1062_21_INTERNAL_MANAGER", "FALLBACK_MANAGER_NOT_APPROVED")
+        uid=positive(env.get("SERVICEIT_STAGE3_FALLBACK_MANAGER_ID"))
+        require(uid>0, "FALLBACK_MANAGER_ID_MISSING")
+    else:
+        uid=positive(assigned_on_card)
     state=assigned_employee(client,base,uid)
     require(state=="ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED",
             "NO_ACTIVE_CARD_ASSIGNEE")
-    # The assignee was designated on THIS specific new card. This permits
-    # internal review routing, but is NOT authorization to call the customer.
-    # Prevent replacing a concurrently reassigned manager or changed category.
+    # Recheck exact card status to avoid routing while manager changes.
+    # Using a separately approved fallback does not modify assignedById.
     second=card_read(client,base,card,now=now)
-    require(str(second.get("assignedById"))==str(uid)
+    require(second.get("assignedById")==assigned_on_card
             and second.get("stageId")==item.get("stageId"),
             "MANAGER_OR_STAGE_CHANGED_DURING_CHECK")
     title=f"Сервис ИТ | Проверить новый сигнал | CRM #{card}"

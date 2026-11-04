@@ -6,9 +6,6 @@ on:
     - cron: '6,16,26,36,46,56 * * * *'
 permissions:
   contents: write
-concurrency:
-  group: serviceit-bitrix-new-card-free-event
-  cancel-in-progress: false
 jobs:
   score-after-corporate-proof:
     if: >-
@@ -18,6 +15,9 @@ jobs:
       (github.event_name == 'schedule' ||
        (github.event_name == 'repository_dispatch' &&
         github.event.action == 'serviceit_bitrix_item_add_v1'))
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 9
     env:

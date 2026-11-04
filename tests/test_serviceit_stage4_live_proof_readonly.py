@@ -8,6 +8,8 @@ import httpx
 import pytest
 
 from leadpilot.bitrix_1062_mapping import FIELD_MAP
+from leadpilot.serviceit_kanban_presentation import BADGE_FIELD
+from leadpilot.serviceit_preliminary_score_markers import provisional_payload
 from leadpilot.serviceit_enrichment_worker import fingerprint
 from leadpilot.serviceit_qualification_proof_v2 import GATE_ORIGINS, HOLD, VERSION, _canonical
 from leadpilot.serviceit_stage4_live_proof_readonly import review_signed_card_readonly
@@ -26,6 +28,7 @@ def card(*, different_inn=False, stopped=False, existing_score=False, wrong_cate
           FIELD_MAP["signal_date"]:"2026-11-03",
           FIELD_MAP["lead_score"]:55 if existing_score else "",
           FIELD_MAP["score_version"]:"",
+          BADGE_FIELD:"",
           "UF_CRM_13_SVCIT_STOP_REASON":"Не обращаться" if stopped else ""}
     return item
 
@@ -142,3 +145,25 @@ def test_signed_proof_with_crm_requisite_permission_denied_is_hold():
             lambda req:response(req,item,denied=True))) as client:
         assert review_signed_card_readonly(
             client,WEBHOOK,120,proof(item),KEY,now=NOW)==HOLD
+
+
+def test_exact_provisional_can_be_verified_only_with_nine_signed_gates():
+    item = card()
+    item.update(provisional_payload(71, "ТОЛЬКО ВИДИМЫЕ"))
+    receipt = proof(item)
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:response(req,item))) as client:
+        decision = review_signed_card_readonly(client,WEBHOOK,120,receipt,KEY,now=NOW)
+    assert decision["verified_evidence_gates"]==9
+    assert type(decision["formal_lead_score"]) is int
+    assert decision["outreach_authorized"] is False
+
+
+def test_manual_or_partial_fake_preliminary_score_is_not_promotable():
+    item = card()
+    item.update(provisional_payload(71, "НЕ ПРОВЕРЕНЫ"))
+    item[BADGE_FIELD] += " подделка"
+    receipt = proof(item)
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:response(req,item))) as client:
+        assert review_signed_card_readonly(client,WEBHOOK,120,receipt,KEY,now=NOW)==HOLD

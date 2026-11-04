@@ -7,6 +7,7 @@ import pytest
 
 from leadpilot import serviceit_stage4_all_new_signed_score_writer as w
 from leadpilot.serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD
+from leadpilot.serviceit_preliminary_score_markers import provisional_payload
 
 NOW=datetime(2026,11,4,12,0,tzinfo=timezone.utc)
 URL="https://serviseit.bitrix24.ru/rest/123/TEST_WEBHOOK"
@@ -40,6 +41,8 @@ def setup(monkeypatch, *, verified=True, existing=False, uncertain=False):
             "createdTime":NOW.isoformat(),"stageId":"DT1062_21:NEW",
             SCORE_FIELD:"" if not existing else 80,VERSION_FIELD:"",
             BADGE_FIELD:"","UF_CRM_13_SVCIT_STOP_REASON":""}
+    if existing == "provisional":
+        before.update(provisional_payload(71, "ТОЛЬКО ВИДИМЫЕ"))
     changed={**before}
     changed[SCORE_FIELD]=85
     changed[VERSION_FIELD]="mvp-2026-10-v1"
@@ -138,3 +141,16 @@ def test_stage4_live_corporate_verifier_is_explicitly_required_in_actions():
     assert "SERVICEIT_STAGE4_VERIFIER_KEY" in body
     assert "SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON" in body
     assert "SERVICEIT_STAGE4_SIGNED_SCORE_WRITE_ENABLED: YES_1062_21_SIGNED_ONLY" in body
+
+
+def test_verified_nine_gate_proof_can_upgrade_only_our_exact_preliminary_score(monkeypatch):
+    calls=setup(monkeypatch,existing="provisional")
+    with httpx.Client() as client:
+        result=w.evaluate_one(client,ENV,120,now=NOW)
+    assert result=="FORMAL_SCORE_EXACT_READBACK_VERIFIED"
+    written=[args["fields"] for method,args in calls if method=="crm.item.update"]
+    assert len(written)==1
+    assert written[0][SCORE_FIELD]==85
+    assert written[0][VERSION_FIELD]=="mvp-2026-10-v1"
+    assert "ПРЕДВАРИТЕЛЬНО" not in written[0][BADGE_FIELD]
+    assert Fence.calls==["reserve","VERIFIED"]

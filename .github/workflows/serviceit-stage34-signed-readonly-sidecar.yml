@@ -1,0 +1,36 @@
+name: ServiceIT stage 3/4 signed event read-only manager and qualification sidecar
+on:
+  repository_dispatch:
+    types: [serviceit_bitrix_item_add_v1]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-stage34-readonly-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  observe-new-only:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.action == 'serviceit_bitrix_item_add_v1' &&
+      vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify signed event and observe exact 1062/21 task and qualification status (NO WRITES)
+        run: python -m leadpilot.serviceit_stage34_signed_readonly_sidecar

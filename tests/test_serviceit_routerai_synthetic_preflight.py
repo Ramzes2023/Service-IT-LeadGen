@@ -63,7 +63,7 @@ def test_provider_auth_error_does_not_log_secret():
     with httpx.Client(transport=httpx.MockTransport(
             lambda req:httpx.Response(401,json={"message":"fake secret"}))) as client:
         answer=inspect(client,ENV)
-    assert answer["status"]=="ROUTERAI_AUTHORIZATION_REJECTED"
+    assert answer["status"]=="ROUTERAI_API_KEY_REJECTED_401"
     assert "fake secret" not in str(answer)
 
 
@@ -89,3 +89,31 @@ def test_invalid_quote_never_reported_as_valid():
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         assert inspect(client,ENV)["status"]==(
             "ROUTERAI_API_AUTH_OK_BUT_AI_REQUIRES_REVIEW")
+
+
+def test_valid_key_but_model_denied_is_distinct_from_bad_key():
+    def transport(req):
+        if req.method == "GET":
+            assert str(req.url) == "https://routerai.ru/api/v1/models"
+            return httpx.Response(200,json={"data":[]})
+        return httpx.Response(403,json={"error":"model not enabled"})
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        result=inspect(client,ENV)
+    assert result["status"]=="ROUTERAI_MODEL_OR_CHAT_ACCESS_DENIED_403"
+    assert "THIS-IS-A-FAKE-SECRET" not in str(result)
+
+
+def test_account_or_ip_forbidden_even_on_models_endpoint():
+    def transport(req):
+        return httpx.Response(403)
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        assert inspect(client,ENV)["status"]==(
+            "ROUTERAI_ACCOUNT_OR_RUNNER_ACCESS_DENIED_403")
+
+
+def test_chat_401_models_200_cannot_be_misreported_as_key_failure():
+    def transport(req):
+        return httpx.Response(200 if req.method=="GET" else 401)
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        assert inspect(client,ENV)["status"]==(
+            "ROUTERAI_CHAT_AUTH_REJECTED_DESPITE_VALID_MODELS_KEY")

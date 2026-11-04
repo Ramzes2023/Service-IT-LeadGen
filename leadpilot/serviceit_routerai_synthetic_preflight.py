@@ -54,7 +54,28 @@ def inspect(client: httpx.Client, env: dict) -> dict:
     except httpx.HTTPError:
         return {**base, "status": "ROUTERAI_NETWORK_TLS_OR_TIMEOUT"}
     if response.status_code in (401, 403):
-        return {**base, "status": "ROUTERAI_AUTHORIZATION_REJECTED"}
+        # Differentiate a rejected key from an account/model restriction.
+        # GET /models is read-only and incurs no LLM token spending.
+        try:
+            auth_probe = client.get(
+                "https://routerai.ru/api/v1/models",
+                headers={"Authorization": "Bearer " + cfg.key,
+                         "Accept": "application/json"},
+                timeout=20, follow_redirects=False,
+            )
+        except httpx.HTTPError:
+            return {**base, "status": "ROUTERAI_AUTH_DIAG_NETWORK_UNVERIFIED"}
+        if auth_probe.status_code == 401:
+            return {**base, "status": "ROUTERAI_API_KEY_REJECTED_401"}
+        if auth_probe.status_code == 403:
+            return {**base, "status": "ROUTERAI_ACCOUNT_OR_RUNNER_ACCESS_DENIED_403"}
+        if auth_probe.status_code == 200:
+            return {**base, "status": (
+                "ROUTERAI_MODEL_OR_CHAT_ACCESS_DENIED_403"
+                if response.status_code == 403 else
+                "ROUTERAI_CHAT_AUTH_REJECTED_DESPITE_VALID_MODELS_KEY"
+            )}
+        return {**base, "status": "ROUTERAI_AUTH_MODELS_DIAGNOSTIC_UNVERIFIED"}
     if response.status_code == 402:
         return {**base, "status": "ROUTERAI_BALANCE_OR_QUOTA_REQUIRED"}
     if response.status_code == 429:

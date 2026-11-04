@@ -449,15 +449,15 @@ def main(argv=None):
             model = None
             if os.environ.get('SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED') == 'YES':
                 model_env = dict(os.environ)
-                if model_env.get('AI_PROVIDER') == 'deepseek':
+                if model_env.get('AI_PROVIDER') == 'routerai':
                     # Separate secret and separate corporate data-transfer approval.
-                    key_path = Path('/run/secrets/serviceit_deepseek_api_key')
-                    model_env['DEEPSEEK_API_KEY'] = key_path.read_text().strip()
+                    key_path = Path('/run/secrets/serviceit_routerai_api_key')
+                    model_env['ROUTERAI_API_KEY'] = key_path.read_text().strip()
                 else:
                     model_env['AI_PROVIDER'] = 'gigachat'
                     model_env['GIGACHAT_CREDENTIALS'] = Path('/run/secrets/serviceit_gigachat_credentials').read_text().strip()
                 config = config_from_env(model_env)
-                require(config.provider in ('gigachat', 'deepseek'),
+                require(config.provider in ('gigachat', 'routerai'),
                         'APPROVED_PROVIDER_REQUIRED')
                 provider = AIProvider(config, retry_unauthorized=False)
                 def model(text):

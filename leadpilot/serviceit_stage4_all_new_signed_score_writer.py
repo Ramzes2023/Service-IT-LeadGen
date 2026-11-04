@@ -34,6 +34,7 @@ from .serviceit_kanban_presentation import (
     SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, score_label,
 )
 from .serviceit_stage4_live_proof_readonly import review_signed_card_readonly
+from .serviceit_preliminary_score_markers import is_score_empty_or_ours
 
 GATE = "YES_1062_21_SIGNED_ONLY"
 FOLDER = ".serviceit/verified-score-once"
@@ -139,7 +140,9 @@ def evaluate_one(client, env, card, *, now=None):
     base=validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK",""))
     require(base.startswith(f"https://{PORTAL}/rest/"),"SCORE_PORTAL_INVALID")
     before=card_read(client,base,card,now=now)
-    require(all(before.get(code) in (None,"") for code in FIELDS),
+    # Signed nine-gate proof may replace ONLY our own exact preliminary
+    # marker. A manual or foreign score remains protected from overwrite.
+    require(is_score_empty_or_ours(before),
             "SCORE_ALREADY_WRITTEN_OR_UNREADABLE")
     decision=review_signed_card_readonly(
         client,env["SERVICEIT_BITRIX_WEBHOOK"],card,receipt,key,now=now)

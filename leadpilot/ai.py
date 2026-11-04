@@ -178,7 +178,6 @@ class AIProvider:
         ], "temperature": 0}
         if cfg.provider == "routerai":
             body["response_format"] = {"type": "json_object"}
-            body["thinking"] = {"type": "disabled"}
             body["max_tokens"] = 800
         if cfg.provider == "gigachat":
             url = "https://api.giga.chat/v1/chat/completions"

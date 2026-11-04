@@ -210,7 +210,7 @@ def test_new_card_worker_writes_three_type_badges_into_existing_nine_fields_only
     base["title"]="Ищем подрядчика на услуги 1С"
     base[PREFIX+"SIGNAL_SOURCE"]="Входящая форма"
     base[PREFIX+"SIGNAL_KIND"]="direct_request"
-    assert preliminary_fields(base)[PREFIX+"AI_SUMMARY"].startswith("🎯 ЗАПРОС УСЛУГ")
+    assert preliminary_fields(base)[PREFIX+"AI_SUMMARY"].startswith("🎯 ПРЯМАЯ УСЛУГА")
 
 
 def test_no_unapproved_automatic_tasks_or_contact_network_code():

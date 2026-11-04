@@ -14,6 +14,7 @@ import math
 from datetime import datetime, timezone
 
 from .serviceit_three_signal_triage import classify_signal, task_draft
+from .serviceit_kanban_tile import tile_heading_for_signal
 from .b2b_email_opportunity_bridge import KINDS
 
 PREFIX="UF_CRM_13_SVCIT_"
@@ -84,8 +85,8 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
             raise HoldAnalysisRejected("UNVERIFIED_MODEL_OUTPUT")
         model=_check(ai["model"],80)
     status="HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED" if ai else "NOT_RUN_SOURCE_UNVERIFIED"
-    summary=(badge+" · "+triage["kind_title"]+" — "
-             +"Получено уведомление B2B-Center №"+tid+
+    summary=(tile_heading_for_signal(triage,subject)+"\n"
+             +"HOLD · Получено уведомление B2B-Center №"+tid+
              (". Гипотеза GigaChat получена, но потребность и заказчик не подтверждены."
               if ai else ". Потребность и заказчик не подтверждены; AI-анализ не запускался."))
     quote="Тема письма поставщика: "+subject

@@ -10,6 +10,7 @@ Markdown or UI-injected code: the long report is plain readable Russian text.
 from __future__ import annotations
 
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
+from .serviceit_kanban_tile import DISPLAY_BADGES
 from .serviceit_kanban_presentation import (
     BADGE_FIELD, SCORE_FIELD, VERSION_FIELD, fields_from_assessment,
 )
@@ -63,7 +64,7 @@ def _require(condition, code):
         raise CardPresentationBlocked(code)
 
 
-def format_verified_card(report, assessment: dict) -> dict:
+def format_verified_card(report, assessment: dict, *, tile_heading: str | None = None) -> dict:
     """Build the existing 9 AI + 3 scoring fields, no new Bitrix schema.
 
     This is for a separately verified source with a genuine, opt-in GigaChat
@@ -94,8 +95,14 @@ def format_verified_card(report, assessment: dict) -> dict:
              "MANAGER_CHECKLIST_INVALID")
 
     badge = score[BADGE_FIELD]
+    _require(tile_heading is None or (
+        type(tile_heading) is str and len(tile_heading) <= 150
+        and any(tile_heading.startswith(mark + " · ") for mark in DISPLAY_BADGES.values())
+        and all(ord(ch) >= 32 and ord(ch) != 127 for ch in tile_heading)
+        and not any(token in tile_heading for token in ("<", ">", "@", "{", "}", "://"))
+    ), "KANBAN_HEADING_INVALID")
     summary = (
-        badge + "\n"
+        (tile_heading + "\n" if tile_heading else "") + badge + "\n"
         + "AI: гипотеза GigaChat, НЕ доказательство покупки и НЕ разрешение на контакт.\n"
         + report.summary + "\n"
         + "Действие: " + report.next_action

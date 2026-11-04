@@ -24,6 +24,7 @@ from .serviceit_enrichment_worker import (
 )
 from .serviceit_bitrix_event_queue_readonly_worker import classify_item
 from .serviceit_three_signal_triage import classify_signal, task_draft
+from .serviceit_kanban_tile import tile_heading_for_signal
 from .serviceit_preliminary_gigachat import (
     PreliminaryAIBlocked, allowed_public_title, model_hypothesis_fields,
     attempted_but_unverified_fields,
@@ -132,7 +133,8 @@ def preliminary_fields(item):
     draft = task_draft(triage, int(item["id"])) if type(item.get("id")) is int and item["id"] >= FIRST_ID else None
     kind_header = triage["badge"] + " · " + triage["kind_title"]
     fields[PREFIX + "AI_SUMMARY"] = (
-        kind_header + " (предварительно, не квалифицированный лид)\n"
+        tile_heading_for_signal(triage, given_title)
+        + "\nHOLD · предварительно, не квалифицированный лид\n"
         + fields[PREFIX + "AI_SUMMARY"])
     fields[PREFIX + "AI_RECOMMENDATION"] = (
         "Подходящие направления для проверки: " + ", ".join(triage["services"]) + ". "

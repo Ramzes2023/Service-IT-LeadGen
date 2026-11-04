@@ -229,8 +229,25 @@ def main():
     summary={"status":"SERVICEIT_STAGE3_NOT_APPLIED","crm_writes":0,
              "external_contacts":0,"historical_records_changed":0}
     try:
-        require(env.get("GITHUB_EVENT_NAME") in ("repository_dispatch","schedule"),
+        require(env.get("GITHUB_EVENT_NAME") in
+                ("repository_dispatch","schedule","issue_comment"),
                 "EVENT_TYPE_NOT_APPROVED")
+        if env.get("GITHUB_EVENT_NAME")=="issue_comment":
+            file=Path(env.get("GITHUB_EVENT_PATH",""))
+            require(file.is_file() and 0<file.stat().st_size<16384,
+                    "OWNER_EVENT_FILE_INVALID")
+            owner=json.loads(file.read_text("utf-8"))
+            require(type(owner) is dict
+                    and owner.get("action")=="created"
+                    and type(owner.get("issue")) is dict
+                    and owner["issue"].get("number")==148
+                    and owner["issue"].get("pull_request") is None
+                    and type(owner.get("sender")) is dict
+                    and owner["sender"].get("login")=="Ramzes2023"
+                    and type(owner.get("comment")) is dict
+                    and owner["comment"].get("body")==
+                    "SERVICEIT_STAGE34_ALL_NEW_OWNER_ONCE_V1",
+                    "OWNER_ONCE_EVENT_NOT_AUTHORIZED")
         with httpx.Client(trust_env=False,follow_redirects=False) as client:
             if env["GITHUB_EVENT_NAME"]=="repository_dispatch":
                 file=Path(env.get("GITHUB_EVENT_PATH",""))
@@ -239,8 +256,11 @@ def main():
                 event=json.loads(file.read_text("utf-8"))
                 card=verify_event(event,env.get("SERVICEIT_BITRIX_EVENT_BRIDGE_KEY",""))
                 status=process_card(client,env,card)
-                summary={"status":status,"crm_writes":0,"task_created":
-                         status=="INTERNAL_REVIEW_TASK_READBACK_VERIFIED",
+                summary={"status":status,"crm_writes":0,
+                         "task_create_confirmed":
+                             status=="INTERNAL_REVIEW_TASK_READBACK_VERIFIED",
+                         "task_creation_uncertain":
+                             status=="TASK_WRITE_UNCERTAIN_NO_RETRY",
                          "external_contacts":0}
             else:
                 result=scan_cards(client,env)

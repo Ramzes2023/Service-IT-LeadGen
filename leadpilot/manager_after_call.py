@@ -25,7 +25,19 @@ def draft(record, *, now=None):
     action=record.get("next_action")
     if action not in actions[interest]:
         raise ValueError("POSTCALL_NEXT_ACTION_INVALID")
+    due=record.get("next_due_at")
+    if action=="DO_NOT_CONTACT":
+        if due not in (None,""):
+            raise ValueError("NO_CONTACT_CANNOT_SCHEDULE")
+        due=None
+    else:
+        try: date=datetime.fromisoformat(due.replace("Z","+00:00"))
+        except (AttributeError,ValueError):
+            raise ValueError("ACTION_DUE_REQUIRED") from None
+        if date.tzinfo is None or not now<=date.astimezone(timezone.utc)<=now+timedelta(days=90):
+            raise ValueError("ACTION_DATE_NOT_VALID")
+        due=date.astimezone(timezone.utc).isoformat()
     return {"status":"MANAGER_APPROVAL_DRAFT_ONLY", "item_id":card,
             "interest":interest,"summary":summary.strip(),
-            "action":action,
-            "task_due_at":None,"crm_writes":0,"tasks_created":0}
+            "action":action,"task_due_at":due,
+            "crm_writes":0,"tasks_created":0}

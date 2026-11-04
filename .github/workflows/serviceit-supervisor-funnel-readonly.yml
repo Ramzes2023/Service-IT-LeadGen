@@ -1,0 +1,37 @@
+name: ServiceIT supervisor evidence-backed funnel summary (READ ONLY)
+on:
+  schedule:
+    - cron: '37 7 * * *'
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+jobs:
+  report:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_SUPERVISOR_FUNNEL_READONLY_ONCE_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Compute evidence-only real funnel report (no CRM writes)
+        run: python -m leadpilot.serviceit_supervisor_funnel_readonly

@@ -44,6 +44,9 @@ jobs:
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
       SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
       SERVICEIT_STAGE3_TASK_WRITE_ENABLED: YES_1062_21_INTERNAL_REVIEW
+      # Optional; OFF until owner approves a specific active corporate employee.
+      SERVICEIT_STAGE3_FALLBACK_APPROVED: ${{ vars.SERVICEIT_STAGE3_FALLBACK_APPROVED }}
+      SERVICEIT_STAGE3_FALLBACK_MANAGER_ID: ${{ secrets.SERVICEIT_STAGE3_FALLBACK_MANAGER_ID }}
     steps:
       - uses: actions/checkout@v4
         with:

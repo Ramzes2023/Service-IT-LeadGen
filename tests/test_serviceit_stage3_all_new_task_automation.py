@@ -36,7 +36,8 @@ class Fence:
         return True
 
 def prepare(monkeypatch,*,visible=0,uid=42,model=None,task_add_fail=False,
-            assignee="ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED"):
+            assignee="ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED",
+            expected_task_uid=None):
     Fence.seen=set()
     Fence.count=0
     Fence.states=[]
@@ -57,7 +58,7 @@ def prepare(monkeypatch,*,visible=0,uid=42,model=None,task_add_fail=False,
         if method=="tasks.task.add":
             if task_add_fail:
                 raise httpx.ReadTimeout("ambiguous post")
-            assert args["fields"]["RESPONSIBLE_ID"]==uid
+            assert args["fields"]["RESPONSIBLE_ID"]==(uid if expected_task_uid is None else expected_task_uid)
             assert args["fields"]["UF_CRM_TASK"]==["T426_120"]
             assert "НЕ звонить" in args["fields"]["DESCRIPTION"]
             return {"task":{"id":"26234"}}
@@ -215,3 +216,39 @@ def test_scan_keeps_top_level_bitrix_total_and_rejects_bad_pagination():
     with httpx.Client(transport=httpx.MockTransport(mismatch)) as client:
         with pytest.raises(auto.TaskAutomationBlocked,match="SCAN_PAGINATION_CONFLICT"):
             auto.scan_cards(client,env,now=now)
+
+def test_no_assignee_and_no_approved_fallback_cannot_create_task(monkeypatch):
+    calls=prepare(monkeypatch,uid=None)
+    with httpx.Client() as client:
+        with pytest.raises(auto.TaskAutomationBlocked,match="FALLBACK_MANAGER_NOT_APPROVED"):
+            auto.process_card(client,ENV,120,now=NOW)
+    assert Fence.count==0
+    assert not any(isinstance(x,tuple) and x[0]=="tasks.task.add" for x in calls)
+
+
+def test_approved_fallback_manager_assigns_internal_task_without_editing_card(monkeypatch):
+    calls=prepare(monkeypatch,uid=None,expected_task_uid=44)
+    checked=[]
+    monkeypatch.setattr(auto,"assigned_employee",lambda client,base,uid: (
+        checked.append(uid) or "ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED"))
+    e={**ENV,"SERVICEIT_STAGE3_FALLBACK_APPROVED":"YES_1062_21_INTERNAL_MANAGER",
+       "SERVICEIT_STAGE3_FALLBACK_MANAGER_ID":"44"}
+    with httpx.Client() as client:
+        assert auto.process_card(client,e,120,now=NOW)=="INTERNAL_REVIEW_TASK_READBACK_VERIFIED"
+        assert auto.process_card(client,e,120,now=NOW)=="ALREADY_RESERVED_NO_RETRY"
+    assert checked==[44,44]
+    assert Fence.count==1
+    assert len([x for x in calls if isinstance(x,tuple) and x[0]=="tasks.task.add"])==1
+
+
+def test_card_assignee_takes_precedence_over_configured_fallback(monkeypatch):
+    calls=prepare(monkeypatch,uid=42)
+    ids=[]
+    monkeypatch.setattr(auto,"assigned_employee",lambda client,base,uid: (
+        ids.append(uid) or "ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED"))
+    e={**ENV,"SERVICEIT_STAGE3_FALLBACK_APPROVED":"YES_1062_21_INTERNAL_MANAGER",
+       "SERVICEIT_STAGE3_FALLBACK_MANAGER_ID":"44"}
+    with httpx.Client() as client:
+        assert auto.process_card(client,e,120,now=NOW)=="INTERNAL_REVIEW_TASK_READBACK_VERIFIED"
+    assert ids==[42]
+    assert Fence.count==1

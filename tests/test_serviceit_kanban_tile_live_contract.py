@@ -7,7 +7,31 @@ from leadpilot.serviceit_kanban_tile import tile_heading_for_signal
 from leadpilot.serviceit_three_signal_triage import classify_signal
 from leadpilot.serviceit_windows_autofill import preliminary_fields
 from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX, hold_analysis_fields
-from tests.test_serviceit_manager_ai_card import report, assessment
+from leadpilot.serviceit_ai_report import SignalReport
+
+
+def assessment():
+    return {"lead_score":90, "score_version":"svc-score-v1",
+        "mode":"RESEARCH_OR_REVIEW","human_decision_required":True,
+        "outreach_authorized_by_this_module":False}
+
+
+def report():
+    return SignalReport(
+        score=90, score_version="svc-score-v1",
+        summary="Оценка сигнала 90/100; услуга для проверки: 1С.",
+        service_recommendation="1С",
+        evidence_quote="Компания ищет специалиста по сопровождению 1С",
+        evidence_reference="evidence-sha256-test",
+        possible_need="Возможно сопровождение 1С.",
+        limitations="Покупка и бюджет неизвестны.",
+        verification_status="HYPOTHESIS_UNVERIFIED",
+        score_explanation="Данные независимой проверки",
+        manager_checklist=("Сверить источник.","Проверить дубли."),
+        next_action="Проверить источник и корпоративные допуски.",
+        full_report="Сервис ИТ | AI-анализ",
+        provider="gigachat",model="GigaChat-2",
+        timestamp="2026-11-04T12:00:00+00:00")
 from leadpilot.serviceit_manager_ai_card import format_verified_card, CardPresentationBlocked
 
 NOW = datetime(2026,11,4,12,0,tzinfo=timezone.utc)

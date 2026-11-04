@@ -37,6 +37,7 @@ def response(req, *, admin=False, category=21):
 def test_exact_scope_and_no_writes_even_when_api_owner_admin(monkeypatch,is_admin):
     monkeypatch.setattr(scope,"plan_shared_manager_layout",lambda current,fields:{
         "added_count":1,
+        "added_fields":[scope.MANAGER_REQUIRED[0]],
         "before":current,
         "after":current,
     })
@@ -54,6 +55,7 @@ def test_exact_scope_and_no_writes_even_when_api_owner_admin(monkeypatch,is_admi
     assert result["crm_writes"]==0
     assert result["category_id"]==21
     assert result["proposed_missing_fields"]==1
+    assert result["missing_field_codes"]==[scope.MANAGER_REQUIRED[0]]
 
 def test_other_category_rejected_before_any_layout_read(monkeypatch):
     monkeypatch.setattr(scope,"plan_shared_manager_layout",
@@ -82,3 +84,13 @@ def test_attempt_to_read_cross_category_or_set_rejected_before_network():
             with pytest.raises(scope.LayoutScopeBlocked,
                                match="METHOD_OR_SCOPE_NOT_ALLOWED"):
                 scope._read(client,URL,method,params)
+
+
+def test_report_must_never_include_unrelated_crm_field_codes(monkeypatch):
+    monkeypatch.setattr(scope,"plan_shared_manager_layout",lambda current,fields:{
+        "added_count":1, "added_fields":["OTHER_TEAM_SECRET_FIELD"]})
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req: response(req, admin=True))) as client:
+        with pytest.raises(scope.LayoutScopeBlocked,
+                           match="MISSING_FIELDS_NOT_ALLOWLISTED"):
+            scope.inspect(client,URL)

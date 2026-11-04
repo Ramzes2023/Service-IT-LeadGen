@@ -12,7 +12,9 @@ import os
 import httpx
 
 from .bitrix_metadata_audit import validate_webhook
-from .serviceit_manager_layout_safe import plan_shared_manager_layout, ManagerLayoutBlocked
+from .serviceit_manager_layout_safe import (
+    plan_shared_manager_layout, ManagerLayoutBlocked, AI_REQUIRED, MANAGER_REQUIRED,
+)
 
 _ALLOWED = {
     "user.admin": {},
@@ -87,6 +89,12 @@ def inspect(client, webhook):
         plan = plan_shared_manager_layout(current, available_result["fields"])
     except ManagerLayoutBlocked:
         raise LayoutScopeBlocked("LAYOUT_PLAN_NOT_SAFE") from None
+    missing = plan.get("added_fields")
+    _require(type(missing) is list
+             and len(missing) == plan["added_count"]
+             and len(set(missing)) == len(missing)
+             and set(missing).issubset(set(AI_REQUIRED) | set(MANAGER_REQUIRED)),
+             "MISSING_FIELDS_NOT_ALLOWLISTED")
     return {
         "status": "SERVICEIT_1062_21_SHARED_LAYOUT_SCOPE_READONLY_PASS",
         "portal_scoped": True,
@@ -96,6 +104,7 @@ def inspect(client, webhook):
         "only_one_funnel_targeted": True,
         "connected_webhook_user_is_portal_admin": owner_admin,
         "proposed_missing_fields": plan["added_count"],
+        "missing_field_codes": sorted(missing),
         "existing_layout_preserved_by_plan": True,
         "admin_approval_from_company_recorded": False,
         "shared_layout_write_performed": False,

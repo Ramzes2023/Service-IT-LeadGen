@@ -175,6 +175,43 @@ def inspect(client, webhook, card_id):
     }
 
 
+def stage4_signed_receipt_summary(client, env, card_id):
+    """Validate independently supplied corporate nine-gate proof for ANY new ID.
+
+    The credential holder does not magically prove data authenticity; only
+    a genuinely connected corporate verifier should populate these secrets.
+    No live scorer writes, and no public claim that a lead was qualified.
+    """
+    from .serviceit_stage4_live_proof_readonly import review_signed_card_readonly
+    raw = env.get("SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON", "")
+    key = env.get("SERVICEIT_STAGE4_VERIFIER_KEY", "")
+    if not raw and not key:
+        return {"stage4_proof": "NO_INDEPENDENT_RECEIPT_HOLD",
+                "stage4_formal_score_in_memory": False}
+    need(bool(raw) and bool(key) and 0 < len(raw) <= 256_000,
+         "STAGE4_INCOMPLETE_VERIFIER_CONFIG")
+    try:
+        approvals = json.loads(raw)
+    except (TypeError, ValueError):
+        raise ObserverBlocked("STAGE4_RECEIPTS_INVALID") from None
+    need(type(approvals) is dict and len(approvals) <= 250
+         and all(type(x) is str and re.fullmatch(r"[1-9][0-9]{0,9}",x)
+                 for x in approvals), "STAGE4_PROOFS_NOT_CARD_INDEXED")
+    selected = approvals.get(str(card_id))
+    if selected is None:
+        return {"stage4_proof": "NO_RECEIPT_FOR_THIS_CARD_HOLD",
+                "stage4_formal_score_in_memory": False}
+    result = review_signed_card_readonly(
+        client,env.get("SERVICEIT_BITRIX_WEBHOOK",""),card_id,selected,key)
+    ok = (result.get("status") in
+          ("MANAGER_REVIEW_REQUIRED", "VACANCY_ONLY_MANAGER_REVIEW")
+          and type(result.get("formal_lead_score")) is int
+          and 0 <= result["formal_lead_score"] <= 100)
+    return {"stage4_proof": ("SIGNED_CRM_READBACK_MATCH_NO_WRITE" if ok else
+                             "RECEIPT_OR_SOURCE_MISMATCH_HOLD"),
+            "stage4_formal_score_in_memory": ok}
+
+
 def run(event, env, client):
     need(env.get("GITHUB_REPOSITORY") == "Ramzes2023/Service-IT-LeadGen"
          and env.get("GITHUB_REF") == "refs/heads/main"
@@ -182,7 +219,8 @@ def run(event, env, client):
          "GITHUB_EVENT_SCOPE_NOT_ALLOWED")
     # Validate HMAC and timestamp BEFORE any corporate REST traffic.
     card_id = verify_event(event, env.get("SERVICEIT_BITRIX_EVENT_BRIDGE_KEY",""))
-    return inspect(client, env.get("SERVICEIT_BITRIX_WEBHOOK",""), card_id)
+    report = inspect(client, env.get("SERVICEIT_BITRIX_WEBHOOK",""), card_id)
+    return {**report, **stage4_signed_receipt_summary(client, env, card_id)}
 
 
 def main():

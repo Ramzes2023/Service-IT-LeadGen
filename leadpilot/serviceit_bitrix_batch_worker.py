@@ -31,7 +31,10 @@ from .serviceit_bitrix_dispatch_worker import (
 from .serviceit_bitrix_poll_fallback import (
     POLL_FLAG, PollBlocked, after_activation, calibrate_known_card,
     discover, encrypted_receipt_exists, signed_payload,
+    owner_once_event_verified,
 )
+
+BATCH_OWNER_MARKER = "SERVICEIT_BATCH_ALL_NEW_LIVE_ONCE_V1"
 
 MAX_NEW_CARDS_PER_RUN = 6
 
@@ -90,8 +93,9 @@ def run_batch(
             "BATCH_ARGUMENTS_INVALID")
     require(env.get("GITHUB_REPOSITORY") == REPOSITORY
             and env.get("GITHUB_REF") == "refs/heads/main"
-            and env.get("GITHUB_EVENT_NAME") == "schedule",
-            "BATCH_SCHEDULE_SCOPE_INVALID")
+            and (env.get("GITHUB_EVENT_NAME") == "schedule"
+                 or owner_once_event_verified(env, marker=BATCH_OWNER_MARKER)),
+            "BATCH_SCHEDULE_OR_OWNER_SCOPE_INVALID")
     if env.get("SERVICEIT_BITRIX_POLL_ENABLED") != POLL_FLAG:
         return {"status": "BATCH_DISABLED", "crm_writes": 0,
                 "attempted": 0, "candidates": 0}

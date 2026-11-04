@@ -231,8 +231,13 @@ def gate(env: dict):
     if decision not in ("YES", "NO"):
         return "PRIVACY_DECISION_REQUIRED"
     if decision == "YES":
-        if (env.get("AI_ENABLE") != "1" or env.get("AI_PROVIDER") != "gigachat"
-                or not env.get("GIGACHAT_CREDENTIALS")):
+        if env.get("AI_ENABLE") != "1":
+            return "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"
+        try:
+            cfg = config_from_env(env)
+        except (RuntimeError, ValueError):
+            return "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"
+        if cfg.provider not in ("gigachat", "routerai"):
             return "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"
     return "READY"
 
@@ -279,12 +284,11 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                     for x in names)), "PUBLIC_HOST_ALLOWLIST_INVALID")
                 public_hosts = frozenset(names)
                 provider = AIProvider(
-                    config_from_env({**env, "AI_ENABLE": "1",
-                                     "AI_PROVIDER": "gigachat"}),
+                    config_from_env({**env, "AI_ENABLE": "1"}),
                     retry_unauthorized=False)
                 def model(text):
-                    return {**provider.classify(text), "provider": "gigachat",
-                            "model": provider.config.model}
+                    return provider.classify(text)
+                model.provider = provider.config.provider
             if approval is not None:
                 observed = Worker(store, rest, lambda _: approval, model, enabled=True).once(card)
             else:

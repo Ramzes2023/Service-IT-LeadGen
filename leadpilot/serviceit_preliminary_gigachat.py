@@ -63,7 +63,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         raise PreliminaryAIBlocked("NINE_BASE_FIELDS_REQUIRED")
     try:
         title = plain(title, TITLE_MAX)
-        if (not isinstance(ai, dict) or ai.get("provider") != "gigachat"
+        if (not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "routerai")
                 or ai.get("origin") != "AI_hypothesis"
                 or ai.get("quality_status") != "complete"
                 or ai.get("service") not in ALLOWED
@@ -79,6 +79,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         possible_need = plain(ai["possible_need"], 400)
         service = plain(ai["service"], 80)
         model_name = plain(ai.get("model", "GigaChat"), 80)
+        provider_name = "RouterAI (DeepSeek)" if ai["provider"] == "routerai" else "GigaChat"
     except (ValueError, KeyError, TypeError):
         raise PreliminaryAIBlocked("GIGACHAT_UNVERIFIED_OUTPUT") from None
     fields = dict(base_fields)
@@ -88,7 +89,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         badge = ""
     status = "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED"
     hypothesis = (
-        "GigaChat (гипотеза, НЕ факт): " + possible_need
+        provider_name + " (гипотеза, НЕ факт): " + possible_need
         + " Сначала проверьте первоисточник и наличие действительной закупочной потребности."
     )
     fields[PREFIX + "AI_STATUS"] = status
@@ -100,7 +101,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
     )
     fields[PREFIX + "AI_SUMMARY"] = (
         (badge + "\n" if badge else "")
-        + "GigaChat выделил возможную потребность по общедоступной теме сигнала. "
+        + provider_name + " выделил возможную потребность по общедоступной теме сигнала. "
         "Это НЕ подтверждённый лид. Lead Score не рассчитан. "
         "Нужны независимые проверки источника, ИНН, дублей, STOP и права контакта."
     )
@@ -111,7 +112,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
     fields[PREFIX + "AI_FULL_REPORT"] = (
         (badge + "\n" if badge else "")
         + "СЕРВИС ИТ — ПРЕДВАРИТЕЛЬНЫЙ AI-ОТЧЁТ ДЛЯ МЕНЕДЖЕРА\n"
-        "Статус: ГИПОТЕЗА GigaChat / источник и покупатель НЕ подтверждены\n"
+        "Статус: ГИПОТЕЗА " + provider_name + " / источник и покупатель НЕ подтверждены\n"
         "Lead Score: НЕ РАССЧИТАН\n"
         "Контакт: НЕ РАЗРЕШЁН\n"
         "Модель: " + model_name + "\n\n"
@@ -126,18 +127,21 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
     return fields
 
 
-def attempted_but_unverified_fields(base_fields: dict) -> dict:
+def attempted_but_unverified_fields(base_fields: dict, *, provider="gigachat") -> dict:
+    if provider not in ("gigachat", "routerai"):
+        raise PreliminaryAIBlocked("UNAPPROVED_MODEL_PROVIDER")
+    model_name = "RouterAI (DeepSeek)" if provider == "routerai" else "GigaChat"
     fields = dict(base_fields)
-    fields[PREFIX + "AI_STATUS"] = "GIGACHAT_ATTEMPT_UNVERIFIED"
+    fields[PREFIX + "AI_STATUS"] = ("AI_ATTEMPT_UNVERIFIED" if provider == "routerai" else "GIGACHAT_ATTEMPT_UNVERIFIED")
     badge = fields.get(PREFIX + "AI_SUMMARY", "").splitlines()[0]
     badge = badge if badge.startswith(("📑 ТЕНДЕР", "👥 ВАКАНСИЯ",
                                       "🎯 ЗАПРОС УСЛУГ", "⚪ УТОЧНИТЬ ТИП")) else ""
     fields[PREFIX + "AI_SUMMARY"] = (
         (badge + "\n" if badge else "")
-        + "Анализ GigaChat был запрошен, но достоверный результат не получен. "
+        + "Анализ " + model_name + " был запрошен, но достоверный результат не получен. "
         "Потребность не подтверждена, Score не рассчитан."
     )
     fields[PREFIX + "AI_FULL_REPORT"] = fields[PREFIX + "AI_FULL_REPORT"].replace(
-        "GigaChat: NOT_RUN", "GigaChat: ATTEMPT_UNVERIFIED"
+        "GigaChat: NOT_RUN", model_name + ": ATTEMPT_UNVERIFIED"
     )
     return fields

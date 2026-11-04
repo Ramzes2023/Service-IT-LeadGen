@@ -63,7 +63,7 @@ def build_report(assessment, *, source_text, evidence_quote, reference, ai=None,
     need = "AI NOT_RUN: гипотеза модели отсутствует. Проверить применимость услуги по источнику."
     if ai is not None:
         from .ai import ALLOWED
-        if not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "deepseek"):
+        if not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "routerai"):
             raise ValueError("REPORT_APPROVED_PROVIDER_REQUIRED")
         confidence = ai.get("confidence")
         if (ai.get("origin") != "AI_hypothesis" or ai.get("quality_status") != "complete"

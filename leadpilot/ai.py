@@ -174,6 +174,9 @@ class AIProvider:
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": source_text}
         ], "temperature": 0}
+        if cfg.provider == "deepseek":
+            body["response_format"] = {"type": "json_object"}
+            body["max_tokens"] = 800
         if cfg.provider == "gigachat":
             url = "https://api.giga.chat/v1/chat/completions"
             token = self._get_token()

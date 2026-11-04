@@ -237,7 +237,7 @@ def gate(env: dict):
             cfg = config_from_env(env)
         except (RuntimeError, ValueError):
             return "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"
-        if cfg.provider not in ("gigachat", "deepseek"):
+        if cfg.provider not in ("gigachat", "routerai"):
             return "MODEL_PRIVACY_OR_CONFIG_INCOMPLETE"
     return "READY"
 

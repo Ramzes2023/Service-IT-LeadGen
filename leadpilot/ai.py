@@ -56,14 +56,16 @@ def config_from_env(environ=None) -> AIConfig:
                         model=(env.get("GIGACHAT_MODEL") or "").strip() or "GigaChat-2",
                         credentials=cred, scope=scope,
                         ca_bundle=env.get("GIGACHAT_CA_BUNDLE_FILE", ""))
-    if provider == "deepseek":
-        if env.get("SERVICEIT_DEEPSEEK_PRIVACY_APPROVED") != "YES_1062_21":
-            raise RuntimeError("DeepSeek provider not approved for corporate data")
-        key = env.get("DEEPSEEK_API_KEY", "").strip()
+    if provider == "routerai":
+        if env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") != "YES_1062_21":
+            raise RuntimeError("RouterAI corporate data transfer not approved")
+        key = env.get("ROUTERAI_API_KEY", "").strip()
         if not key:
-            raise RuntimeError("DeepSeek API credentials not configured")
-        return AIConfig(provider="deepseek", model="deepseek-flash",
-                        url="https://api.deepseek.com/chat/completions", key=key)
+            raise RuntimeError("RouterAI credential missing")
+        return AIConfig(provider="routerai",
+                        model="deepseek/deepseek-v4.1-flash",
+                        url="https://routerai.ru/api/v1/chat/completions",
+                        key=key)
     if provider == "openai_compatible":
         url = env.get("AI_API_URL", "").strip()
         key = env.get("AI_API_KEY", "").strip()
@@ -72,7 +74,7 @@ def config_from_env(environ=None) -> AIConfig:
             raise RuntimeError("AI_API_URL (HTTPS), AI_API_KEY and AI_MODEL are required")
         return AIConfig(provider=provider, model=model, url=url, key=key,
                         ca_bundle=env.get("AI_CA_BUNDLE_FILE", ""))
-    raise RuntimeError("Unsupported AI_PROVIDER. Choose gigachat or openai_compatible")
+    raise RuntimeError("Unsupported AI_PROVIDER. Choose gigachat, routerai or openai_compatible")
 
 
 def _validated_answer(response: dict, source_text: str) -> dict:
@@ -174,7 +176,7 @@ class AIProvider:
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": source_text}
         ], "temperature": 0}
-        if cfg.provider == "deepseek":
+        if cfg.provider == "routerai":
             body["response_format"] = {"type": "json_object"}
             body["thinking"] = {"type": "disabled"}
             body["max_tokens"] = 800

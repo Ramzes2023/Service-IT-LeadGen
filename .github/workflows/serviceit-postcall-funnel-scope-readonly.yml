@@ -1,0 +1,37 @@
+name: ServiceIT post-call and manager funnel scopes (READ ONLY)
+on:
+  schedule:
+    - cron: '22 7 * * *'
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_POSTCALL_FUNNEL_READONLY_ONCE_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check post-call and deal funnel permissions without business data
+        run: python -m leadpilot.serviceit_postcall_funnel_scope_readonly

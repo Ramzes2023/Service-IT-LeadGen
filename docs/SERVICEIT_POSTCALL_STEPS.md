@@ -1,0 +1,1 @@
+Post-call processing: manager confirms interest, summary, objections, next action and due date. Do not infer revenue.

@@ -1,0 +1,35 @@
+name: ServiceIT RouterAI paid API synthetic preflight (NO CRM)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+jobs:
+  routerai-safe-preflight:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 148 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_ROUTERAI_SYNTHETIC_PREFLIGHT_ONCE_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      SERVICEIT_AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER }}
+      SERVICEIT_ROUTERAI_PRIVACY_APPROVED: ${{ vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED }}
+      ROUTERAI_API_KEY: ${{ secrets.SERVICEIT_ROUTERAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify approved RouterAI key with synthetic public text ONLY
+        run: python -m leadpilot.serviceit_routerai_synthetic_preflight

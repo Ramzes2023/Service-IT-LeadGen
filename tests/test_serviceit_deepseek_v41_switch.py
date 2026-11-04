@@ -57,7 +57,7 @@ def test_deepseek_http_request_has_json_and_unchanged_evidence():
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         with AIProvider(cfg,client) as provider:
             ai=provider.classify(source)
-    assert ai["provider"]=="deepseek" and ai["model"]=="deepseek/deepseek-v4.1-flash"
+    assert ai["provider"]=="routerai" and ai["model"]=="deepseek/deepseek-v4.1-flash"
     assert ai["quality_status"]=="complete"
     assert len(inspected)==1
 

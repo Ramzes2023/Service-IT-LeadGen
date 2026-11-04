@@ -7,6 +7,7 @@ def test_missing_commercial_evidence_is_not_reported_as_zero(monkeypatch):
                         "https://serviseit.bitrix24.ru/rest/1615/fake")
     monkeypatch.setattr(m,"calibrate_known_card",lambda fn:None)
     monkeypatch.setattr(m,"discover",lambda fn,start,now:[10,11])
+    monkeypatch.setattr(m,"after_activation",lambda env,now:now)
     monkeypatch.setattr(m,"probe",lambda client,hook:{
         "separate_sales_funnel_visible":False,
         "manager_fields_ready":True})

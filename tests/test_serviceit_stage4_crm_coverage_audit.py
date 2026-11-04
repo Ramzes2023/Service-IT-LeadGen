@@ -18,7 +18,8 @@ def fake(*, companies=None, contacts=None, deny_contacts=False,
         if method == "user.admin.json":
             assert args == {}
             return httpx.Response(200, json={"result":admin})
-        if method in ("crm.company.list.json", "crm.contact.list.json"):
+        if method in ("crm.company.list.json", "crm.contact.list.json",
+                      "crm.deal.list.json", "crm.lead.list.json"):
             assert args == {"filter": {}, "select": ["ID"], "start": 0}
             if method.startswith("crm.contact.") and deny_contacts:
                 return httpx.Response(403,json={"error":"ACCESS_DENIED"})
@@ -46,6 +47,8 @@ def test_full_read_methods_still_do_not_prove_global_coverage():
     assert result["status"]=="SERVICEIT_CRM_READ_COVERAGE_AUDIT"
     assert result["companies"]["list_read_access"]=="AVAILABLE"
     assert result["contacts"]["list_read_access"]=="AVAILABLE"
+    assert result["deals"]["list_read_access"]=="AVAILABLE"
+    assert result["leads"]["list_read_access"]=="AVAILABLE"
     assert result["exact_requisite_filter_readable"] is True
     assert result["webhook_is_portal_admin"] is False
     assert result["full_corporate_crm_coverage_verified"] is False

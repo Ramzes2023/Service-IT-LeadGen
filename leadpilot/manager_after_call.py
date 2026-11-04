@@ -1,3 +1,10 @@
-from datetime import datetime
+"""Manager-approved summary proposal. No CRM writes."""
+POSTCALL_VERSION = "draft-v1"
 
-POST_CALL_PREVIEW_ONLY = True
+def summarize_input(summary, interest):
+    if not isinstance(summary, str) or len(summary) > 400:
+        raise ValueError("INVALID_NOTE")
+    if interest not in ("YES", "NO", "UNKNOWN"):
+        raise ValueError("INTEREST_UNVERIFIED")
+    return {"summary": summary, "interest": interest,
+            "review_required": True, "crm_writes": 0}

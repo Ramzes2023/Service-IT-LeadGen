@@ -20,9 +20,6 @@ permissions:
 
 # Prevent two exact-item updates using the same shared GitHub branch.
 # A hashed per-ID encrypted receipt also blocks repeat delivery.
-concurrency:
-  group: serviceit-bitrix-new-card-free-event
-  cancel-in-progress: false
 
 jobs:
   source-agnostic-ai-manager:
@@ -32,6 +29,9 @@ jobs:
       (github.event_name == 'workflow_dispatch' ||
        (github.event.action == 'serviceit_bitrix_item_add_v1' &&
         vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

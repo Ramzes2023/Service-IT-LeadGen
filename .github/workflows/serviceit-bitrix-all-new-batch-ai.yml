@@ -11,9 +11,6 @@ permissions:
 
 # All exact-item AI writes and receipt updates share one concurrency group.
 # No cancellation after a possibly accepted external CRM update.
-concurrency:
-  group: serviceit-bitrix-new-card-free-event
-  cancel-in-progress: false
 
 jobs:
   all-new-bounded-ai:
@@ -28,6 +25,9 @@ jobs:
         github.event.comment.body == 'SERVICEIT_BATCH_ALL_NEW_LIVE_ONCE_V1')) &&
       vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
       vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 18
     env:

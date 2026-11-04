@@ -63,7 +63,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         raise PreliminaryAIBlocked("NINE_BASE_FIELDS_REQUIRED")
     try:
         title = plain(title, TITLE_MAX)
-        if (not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "deepseek")
+        if (not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "routerai")
                 or ai.get("origin") != "AI_hypothesis"
                 or ai.get("quality_status") != "complete"
                 or ai.get("service") not in ALLOWED
@@ -79,7 +79,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         possible_need = plain(ai["possible_need"], 400)
         service = plain(ai["service"], 80)
         model_name = plain(ai.get("model", "GigaChat"), 80)
-        provider_name = "DeepSeek" if ai["provider"] == "deepseek" else "GigaChat"
+        provider_name = "RouterAI (DeepSeek)" if ai["provider"] == "routerai" else "GigaChat"
     except (ValueError, KeyError, TypeError):
         raise PreliminaryAIBlocked("GIGACHAT_UNVERIFIED_OUTPUT") from None
     fields = dict(base_fields)
@@ -128,9 +128,9 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
 
 
 def attempted_but_unverified_fields(base_fields: dict, *, provider="gigachat") -> dict:
-    if provider not in ("gigachat", "deepseek"):
+    if provider not in ("gigachat", "routerai"):
         raise PreliminaryAIBlocked("UNAPPROVED_MODEL_PROVIDER")
-    model_name = "DeepSeek" if provider == "deepseek" else "GigaChat"
+    model_name = "RouterAI (DeepSeek)" if provider == "deepseek" else "GigaChat"
     fields = dict(base_fields)
     fields[PREFIX + "AI_STATUS"] = ("AI_ATTEMPT_UNVERIFIED" if provider == "deepseek" else "GIGACHAT_ATTEMPT_UNVERIFIED")
     badge = fields.get(PREFIX + "AI_SUMMARY", "").splitlines()[0]

@@ -228,6 +228,8 @@ def scan_cards(client,env,*,now=None):
                             "SCAN_PAGINATION_CONFLICT")
                     result[name]=body[name]
             return result
+        except TaskAutomationBlocked:
+            raise
         except (httpx.HTTPError,ValueError,TypeError):
             raise TaskAutomationBlocked("SCAN_TRANSPORT_UNVERIFIED") from None
     cards=discover(list_rest,start,now)

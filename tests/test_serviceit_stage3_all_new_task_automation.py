@@ -167,3 +167,51 @@ def test_workflow_is_generic_event_plus_cron_and_only_our_scope():
     assert "serviceit-bitrix-new-card-free-event" in w
     assert "sourceit_b2b" not in w
     assert "contents: write" in w
+
+
+def test_owner_issue_event_larger_than_16kb_is_allowed_but_strictly_owner_scoped(monkeypatch,tmp_path,capsys):
+    payload={"action":"created","repository":{"full_name":"Ramzes2023/Service-IT-LeadGen"},
+             "sender":{"login":"Ramzes2023"},
+             "issue":{"number":148},
+             "comment":{"body":"SERVICEIT_STAGE34_ALL_NEW_OWNER_ONCE_V1",
+                        "user":{"login":"Ramzes2023"}},
+             "unused_repository_metadata":"X"*20000}
+    path=tmp_path/"event.json"
+    path.write_text(json.dumps(payload),encoding="utf8")
+    assert 16384<path.stat().st_size<256000
+    monkeypatch.setenv("GITHUB_EVENT_NAME","issue_comment")
+    monkeypatch.setenv("GITHUB_EVENT_PATH",str(path))
+    monkeypatch.setattr(auto,"scan_cards",lambda client,env:{
+         "candidates":0, "created_and_verified":0,"already_fenced":0,
+         "existing_visible":0,"not_ready":0,"uncertain":0})
+    assert auto.main()==0
+    report=json.loads(capsys.readouterr().out)
+    assert report["status"]=="SERVICEIT_STAGE3_SCHEDULED_SCAN"
+    assert report["crm_writes"]==0
+    payload["sender"]["login"]="not-owner"
+    path.write_text(json.dumps(payload),encoding="utf8")
+    assert auto.main()==2
+    report=json.loads(capsys.readouterr().out)
+    assert report["reason"]=="OWNER_ONCE_EVENT_NOT_AUTHORIZED"
+
+def test_scan_keeps_top_level_bitrix_total_and_rejects_bad_pagination():
+    import httpx
+    now=NOW
+    env={**ENV,"SERVICEIT_BITRIX_POLL_START_UTC":"2026-11-04T09:50:00Z"}
+    seen=[]
+    def reply(req):
+        assert req.url.path.endswith("/crm.item.list.json")
+        data=json.loads(req.content)
+        seen.append(data)
+        return httpx.Response(200,json={"result":{"items":[]},"total":0})
+    with httpx.Client(transport=httpx.MockTransport(reply)) as client:
+        result=auto.scan_cards(client,env,now=now)
+    assert result["candidates"]==0
+    assert seen[0]["filter"]["categoryId"]==21
+    assert seen[0]["entityTypeId"]==1062
+    def mismatch(req):
+        return httpx.Response(200,json={
+            "result":{"items":[],"total":1},"total":0})
+    with httpx.Client(transport=httpx.MockTransport(mismatch)) as client:
+        with pytest.raises(auto.TaskAutomationBlocked,match="SCAN_PAGINATION_CONFLICT"):
+            auto.scan_cards(client,env,now=now)

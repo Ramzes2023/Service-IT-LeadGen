@@ -93,27 +93,60 @@ def test_invalid_quote_never_reported_as_valid():
 
 def test_valid_key_but_model_denied_is_distinct_from_bad_key():
     def transport(req):
-        if req.method == "GET":
-            assert str(req.url) == "https://routerai.ru/api/v1/models"
+        if req.method == "GET" and req.url.path.endswith("/models"):
             return httpx.Response(200,json={"data":[]})
-        return httpx.Response(403,json={"error":"model not enabled"})
+        if req.method == "GET" and req.url.path.endswith("/credits"):
+            return httpx.Response(200,json={"balance":11.0})
+        return httpx.Response(403,json={"error":"private response not logged"})
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         result=inspect(client,ENV)
-    assert result["status"]=="ROUTERAI_MODEL_OR_CHAT_ACCESS_DENIED_403"
+    assert result["status"]=="ROUTERAI_MODEL_FORBIDDEN_WITH_POSITIVE_BALANCE"
     assert "THIS-IS-A-FAKE-SECRET" not in str(result)
 
 
 def test_account_or_ip_forbidden_even_on_models_endpoint():
-    def transport(req):
-        return httpx.Response(403)
-    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:httpx.Response(403))) as client:
         assert inspect(client,ENV)["status"]==(
             "ROUTERAI_ACCOUNT_OR_RUNNER_ACCESS_DENIED_403")
 
 
-def test_chat_401_models_200_cannot_be_misreported_as_key_failure():
+def test_chat_401_models_ok_with_zero_credits():
     def transport(req):
-        return httpx.Response(200 if req.method=="GET" else 401)
+        if req.method == "GET" and req.url.path.endswith("/models"):
+            return httpx.Response(200,json={"data":[]})
+        if req.method == "GET" and req.url.path.endswith("/credits"):
+            return httpx.Response(200,json={"data":{"total_credits":0.0,"total_usage":0.0}})
+        return httpx.Response(401)
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        assert inspect(client,ENV)["status"]=="ROUTERAI_BILLING_BALANCE_EMPTY"
+
+
+def test_chat_401_models_ok_and_positive_credits():
+    def transport(req):
+        if req.method == "GET" and req.url.path.endswith("/models"):
+            return httpx.Response(200,json={"data":[]})
+        if req.method == "GET" and req.url.path.endswith("/credits"):
+            return httpx.Response(200,json={"balance":1.0})
+        return httpx.Response(401)
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         assert inspect(client,ENV)["status"]==(
-            "ROUTERAI_CHAT_AUTH_REJECTED_DESPITE_VALID_MODELS_KEY")
+            "ROUTERAI_CHAT_401_WITH_POSITIVE_BALANCE")
+
+
+def test_html_models_page_is_not_auth_evidence():
+    def transport(req):
+        return httpx.Response(200,text="<html>captcha</html>") if req.method=="GET" else httpx.Response(401)
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        assert inspect(client,ENV)["status"]=="ROUTERAI_MODELS_RESPONSE_NOT_VERIFIED"
+
+
+def test_credit_access_denied_is_explicitly_unknown_not_zero():
+    def transport(req):
+        if req.method=="GET" and req.url.path.endswith("/models"):
+            return httpx.Response(200,json={"data":[]})
+        if req.method=="GET" and req.url.path.endswith("/credits"):
+            return httpx.Response(403)
+        return httpx.Response(401)
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        assert inspect(client,ENV)["status"]=="ROUTERAI_CHAT_401_WITH_CREDITS_UNVERIFIED"

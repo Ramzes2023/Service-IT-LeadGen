@@ -19,8 +19,6 @@ PORTAL = "https://serviseit.bitrix24.ru/rest/"
 LISTS = {
     "companies": "crm.company.list",
     "contacts": "crm.contact.list",
-    "deals": "crm.deal.list",
-    "leads": "crm.lead.list",
 }
 EXPECTED = frozenset(LISTS.values()) | {"user.admin"}
 MAX_BODY = 200_000
@@ -100,6 +98,62 @@ def inspect_list(client, base, method):
         }
 
 
+
+def inspect_universal(client, base, entity_type_id):
+    """Probe modern crm.item.list, not obsolete type-specific list endpoints.
+
+    IDs are observed in memory only; no business records leave the function.
+    This is still only the subset visible to the caller, NOT global clearance.
+    """
+    _require(entity_type_id in (1, 2), "AUDIT_OBJECT_OUT_OF_SCOPE")
+    try:
+        response = client.post(base + "/crm.item.list.json", json={
+            "entityTypeId": entity_type_id,
+            "select": ["id"], "filter": {}, "start": 0,
+        }, follow_redirects=False, timeout=20)
+        _require(response.status_code == 200
+                 and 0 < len(response.content) <= MAX_BODY,
+                 "UNIVERSAL_HTTP_NOT_VERIFIED")
+        data = response.json()
+        _require(type(data) is dict and "error" not in data
+                 and type(data.get("result")) is dict,
+                 "UNIVERSAL_RESULT_NOT_VERIFIED")
+        rows = data["result"].get("items")
+        _require(type(rows) is list and len(rows) <= 50,
+                 "UNIVERSAL_LIST_INVALID")
+        ids = set()
+        for row in rows:
+            _require(type(row) is dict
+                     and (type(row.get("id")) is int
+                          or type(row.get("id")) is str
+                          and row["id"].isascii() and row["id"].isdecimal()),
+                     "UNIVERSAL_ITEM_ID_UNVERIFIED")
+            rid = str(row["id"])
+            _require(rid not in ids, "UNIVERSAL_ID_DUPLICATED")
+            ids.add(rid)
+        next_page = data.get("next", data["result"].get("next"))
+        total = data.get("total", data["result"].get("total"))
+        _require((next_page is None or
+                  type(next_page) is int and next_page >= 50)
+                 and (total is None or
+                      type(total) is int and total >= len(rows)),
+                 "UNIVERSAL_PAGINATION_UNVERIFIED")
+        return {
+            "list_read_access": "AVAILABLE",
+            "visible_sample": "NONEMPTY" if rows else "EMPTY",
+            "list_scope": ("PAGINATED_VISIBLE_ONLY"
+                           if next_page is not None
+                           or total is not None and total > len(rows)
+                           else "FIRST_PAGE_ONLY"),
+        }
+    except (CoverageBlocked, ValueError, TypeError, httpx.HTTPError):
+        return {
+            "list_read_access": "UNAVAILABLE_OR_UNVERIFIED",
+            "visible_sample": "UNKNOWN",
+            "list_scope": "UNKNOWN",
+        }
+
+
 def audit(client, webhook):
     base = validate_webhook(webhook)
     _require(base.startswith(PORTAL), "AUDIT_PORTAL_OUTSIDE_COMPANY")
@@ -113,6 +167,9 @@ def audit(client, webhook):
         name: inspect_list(client, base, method)
         for name, method in LISTS.items()
     }
+    # System CRM type 1 = lead, 2 = deal. No legacy method assumptions.
+    seen["leads"] = inspect_universal(client, base, 1)
+    seen["deals"] = inspect_universal(client, base, 2)
     try:
         check = requisite_preflight(client, webhook)
         req = check["status"] == "STAGE4_REQUISITES_READONLY_SCOPE_PASS"

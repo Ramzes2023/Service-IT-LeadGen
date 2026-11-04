@@ -52,6 +52,8 @@ def test_preliminary_kanban_headline_and_hold_no_fake_score(title, kind, source,
     fields = preliminary_fields(item)
     assert set(fields) == AI_FIELDS
     assert fields[PREFIX+"AI_SUMMARY"].startswith(expected + "\nHOLD")
+    assert "🔎 Ориентир проверки: " in fields[PREFIX+"AI_SUMMARY"]
+    assert "/100 (НЕ Lead Score; ФНС, CRM-дубли и STOP ещё не подтверждены)" in fields[PREFIX+"AI_SUMMARY"]
     assert "Lead Score не рассчитывался" in fields[PREFIX+"AI_SUMMARY"]
     assert "Lead Score: НЕ РАССЧИТАН" in fields[PREFIX+"AI_FULL_REPORT"]
     assert "title" not in fields and PREFIX+"LEAD_SCORE" not in fields
@@ -65,6 +67,7 @@ def test_tender_source_handoff_uses_same_tile_header_and_preserves_full_nine_fie
     fields = hold_analysis_fields(notice, ["1C"])
     assert len(fields) == 9
     assert fields[PREFIX+"AI_SUMMARY"].startswith("📑 ТЕНДЕР · Сопровождение 1С по договору\nHOLD")
+    assert "/100 (НЕ Lead Score; ФНС, CRM-дубли и STOP ещё не подтверждены)" in fields[PREFIX+"AI_SUMMARY"]
     assert "Lead Score: НЕ РАССЧИТАН" in fields[PREFIX+"AI_FULL_REPORT"]
 
 

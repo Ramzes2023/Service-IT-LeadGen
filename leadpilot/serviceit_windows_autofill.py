@@ -234,7 +234,7 @@ def preliminary_once(store, rest, requested_id, *, model=None,
                 except Exception:
                     if model_reserved:
                         # The request could have reached the model: no blind retry.
-                        fields = attempted_but_unverified_fields(fields)
+                        fields = attempted_but_unverified_fields(fields, provider=getattr(model, "provider", "gigachat"))
         limits = schema_limits(rest)
         _must(all(len(value) <= limits[name] for name, value in fields.items()),
               "FIELD_LENGTH_BLOCKED")

@@ -19,6 +19,8 @@ from .bitrix_metadata_audit import validate_webhook
 from .serviceit_bitrix_dispatch_worker import verify_event, EventCloudBlocked
 from .serviceit_enrichment_worker import normalized, validate_identity, Blocked
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
+from .bitrix_1062_mapping import FIELD_MAP, _is_valid_inn
+from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly, ProofBlocked
 
 PORTAL = "serviseit.bitrix24.ru"
 _MAX_RESPONSE = 250_000
@@ -132,6 +134,43 @@ def assigned_employee(client, base, assigned):
             if len(matches) == 1 else "ASSIGNEE_NOT_VERIFIED")
 
 
+def visible_company_checks(client, webhook, item):
+    """Automatic Stage4 subset. A visible no-match is NEVER global clearance.
+
+    Never reveal the INN, CRM entity IDs, stop-list text or customer names.
+    This does not verify FNS, marketing consent or global customer inventory.
+    """
+    stop = item.get(PREFIX + "STOP_REASON")
+    if stop not in ("", None):
+        return {"visible_inn_status": "STOP_RESTRICTION_HOLD_NO_LOOKUP",
+                "local_stop_reason_present": True,
+                "crm_customer_globally_cleared": False,
+                "contact_authorized": False}
+    inn = item.get(FIELD_MAP["company_inn"])
+    if not _is_valid_inn(inn):
+        return {"visible_inn_status": "MISSING_OR_INVALID_INN_HOLD",
+                "local_stop_reason_present": False,
+                "crm_customer_globally_cleared": False,
+                "contact_authorized": False}
+    try:
+        proof = crm_inn_visibility_readonly(client, webhook, inn)
+        status = proof["status"]
+        need(status in ("POTENTIAL_EXISTING_RECORD_BLOCK",
+                        "NO_MATCH_IN_VISIBLE_REQUISITES_ONLY")
+             and proof["global_crm_customer_clear"] is False
+             and proof["global_dedup_verified"] is False,
+             "INN_REQUISITES_UNTRUSTED_RESPONSE")
+        return {"visible_inn_status": status,
+                "local_stop_reason_present": False,
+                "crm_customer_globally_cleared": False,
+                "contact_authorized": False}
+    except (ProofBlocked, ValueError, httpx.HTTPError):
+        return {"visible_inn_status": "INN_READ_SCOPE_UNVERIFIED_HOLD",
+                "local_stop_reason_present": False,
+                "crm_customer_globally_cleared": False,
+                "contact_authorized": False}
+
+
 def inspect(client, webhook, card_id):
     card_id = positive(card_id)
     need(8 <= card_id <= 2_000_000_000 and card_id not in (3, 7),
@@ -153,6 +192,7 @@ def inspect(client, webhook, card_id):
     present_ai = sum(1 for code in AI_FIELDS
                      if type(item.get(code)) is str and bool(item[code].strip()))
     status = item.get(PREFIX + "AI_STATUS")
+    company_status = visible_company_checks(client, webhook, item)
     # No inference from AI_STATUS, Score, source content or task list to
     # independently verified corporate customer/STOP/legal/marketing clearance.
     return {
@@ -168,6 +208,7 @@ def inspect(client, webhook, card_id):
         "ai_status_present": type(status) is str and bool(status.strip()),
         "formal_score": None,
         "qualification": "HOLD_UNTIL_SIGNED_9_GATE_VERIFICATION",
+        **company_status,
         "stage3_task_created": False,
         "stage4_score_written": False,
         "crm_writes": 0,

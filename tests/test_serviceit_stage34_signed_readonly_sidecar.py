@@ -230,3 +230,81 @@ def test_stage4_only_one_secret_is_fail_closed_without_model_or_rest():
             sidecar.stage4_signed_receipt_summary(client,{
                 "SERVICEIT_STAGE4_CORPORATE_RECEIPTS_JSON":'{"120":{}}',
             },120)
+
+
+def test_stage4_visible_inn_positive_match_is_hold_not_customer_clearance():
+    from leadpilot.bitrix_1062_mapping import FIELD_MAP
+    inn="7700000009"
+    def handler(req):
+        assert req.url.path.endswith("/crm.requisite.list.json")
+        params=json.loads(req.content)
+        assert params["filter"]=={"RQ_INN":inn}
+        return httpx.Response(200,json={"result":[{
+            "ID":"34","ENTITY_TYPE_ID":"4","ENTITY_ID":"55","RQ_INN":inn
+        }],"total":1})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result=sidecar.visible_company_checks(
+            client,WEBHOOK,{FIELD_MAP["company_inn"]:inn})
+    assert result["visible_inn_status"]=="POTENTIAL_EXISTING_RECORD_BLOCK"
+    assert result["crm_customer_globally_cleared"] is False
+    assert result["contact_authorized"] is False
+    assert inn not in json.dumps(result)
+    assert "55" not in json.dumps(result)
+
+
+def test_stage4_no_visible_requisite_never_proves_no_customer():
+    from leadpilot.bitrix_1062_mapping import FIELD_MAP
+    inn="7700000009"
+    def handler(req):
+        assert req.url.path.endswith("/crm.requisite.list.json")
+        return httpx.Response(200,json={"result":[],"total":0})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result=sidecar.visible_company_checks(
+            client,WEBHOOK,{FIELD_MAP["company_inn"]:inn})
+    assert result["visible_inn_status"]=="NO_MATCH_IN_VISIBLE_REQUISITES_ONLY"
+    assert result["crm_customer_globally_cleared"] is False
+    assert result["contact_authorized"] is False
+
+
+def test_stage4_stop_flag_or_bad_inn_prevents_any_more_customer_rest():
+    from leadpilot.bitrix_1062_mapping import FIELD_MAP
+    def reject(req):
+        pytest.fail("No CRM lookup allowed after local STOP or invalid INN")
+    with httpx.Client(transport=httpx.MockTransport(reject)) as client:
+        blocked=sidecar.visible_company_checks(client,WEBHOOK,{
+            FIELD_MAP["company_inn"]:"7700000009",
+            sidecar.PREFIX+"STOP_REASON":"Проверить ограничение"})
+        assert blocked["visible_inn_status"]=="STOP_RESTRICTION_HOLD_NO_LOOKUP"
+        assert blocked["local_stop_reason_present"] is True
+        bad=sidecar.visible_company_checks(client,WEBHOOK,{
+            FIELD_MAP["company_inn"]:"7700000000"})
+        assert bad["visible_inn_status"]=="MISSING_OR_INVALID_INN_HOLD"
+
+
+def test_stage4_missing_requisite_permission_fails_as_hold_not_global_clear():
+    from leadpilot.bitrix_1062_mapping import FIELD_MAP
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:httpx.Response(403,json={"error":"ACCESS_DENIED"}))) as client:
+        out=sidecar.visible_company_checks(client,WEBHOOK,{
+            FIELD_MAP["company_inn"]:"7700000009"})
+    assert out["visible_inn_status"]=="INN_READ_SCOPE_UNVERIFIED_HOLD"
+    assert out["crm_customer_globally_cleared"] is False
+    assert out["contact_authorized"] is False
+
+
+def test_stage4_visible_company_checks_wired_to_every_signed_new_card(monkeypatch):
+    observed=[]
+    def check(client,webhook,item):
+        observed.append(item["id"])
+        return {"visible_inn_status":"SYNTHETIC_HOLD",
+                "local_stop_reason_present":False,
+                "crm_customer_globally_cleared":False,
+                "contact_authorized":False}
+    monkeypatch.setattr(sidecar,"visible_company_checks",check)
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda req:adapter(req))) as client:
+        out=sidecar.run(event(),env(),client)
+    assert observed==[120]
+    assert out["visible_inn_status"]=="SYNTHETIC_HOLD"
+    assert out["crm_customer_globally_cleared"] is False
+    assert out["outreach"] is False

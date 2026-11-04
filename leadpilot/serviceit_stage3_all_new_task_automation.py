@@ -202,9 +202,34 @@ def scan_cards(client,env,*,now=None):
     require(base.startswith(f"https://{PORTAL}/rest/"),"PORTAL_INVALID")
     start=max(CUTOVER,after_activation(env,now))
     def list_rest(method,args):
-        require(method=="crm.item.list","SCAN_METHOD_FORBIDDEN")
-        out=rest(client,base,method,args)
-        return out
+        # Preserve Bitrix TOP-LEVEL pagination metadata exactly as the already
+        # verified serviceit_bitrix_poll_fallback does. A generic Rest strips
+        # next/total, which can silently skip some new cards.
+        require(method=="crm.item.list" and type(args) is dict
+                and args.get("entityTypeId")==1062
+                and args.get("useOriginalUfNames")=="N"
+                and args.get("select")==["id","categoryId","createdTime"]
+                and args.get("filter",{}).get("categoryId")==21
+                and args.get("start") in (0,50,100,150),
+                "SCAN_QUERY_SCOPE_INVALID")
+        try:
+            response=client.post(base+"/crm.item.list.json",json=args,
+                                 timeout=25,follow_redirects=False)
+            require(response.status_code==200 and len(response.content)<=512000,
+                    "SCAN_REST_HTTP_UNVERIFIED")
+            body=response.json()
+            require(type(body) is dict and "error" not in body
+                    and type(body.get("result")) is dict,
+                    "SCAN_REST_RESPONSE_INVALID")
+            result=body["result"]
+            for name in ("next","total"):
+                if name in body:
+                    require(name not in result or result[name]==body[name],
+                            "SCAN_PAGINATION_CONFLICT")
+                    result[name]=body[name]
+            return result
+        except (httpx.HTTPError,ValueError,TypeError):
+            raise TaskAutomationBlocked("SCAN_TRANSPORT_UNVERIFIED") from None
     cards=discover(list_rest,start,now)
     require(len(cards)<=MAX_SCAN_BATCH,"SCAN_BATCH_OVERSIZED")
     totals={"candidates":len(cards),"created_and_verified":0,
@@ -235,7 +260,7 @@ def main():
                 "EVENT_TYPE_NOT_APPROVED")
         if env.get("GITHUB_EVENT_NAME")=="issue_comment":
             file=Path(env.get("GITHUB_EVENT_PATH",""))
-            require(file.is_file() and 0<file.stat().st_size<16384,
+            require(file.is_file() and 0<file.stat().st_size<256000,
                     "OWNER_EVENT_FILE_INVALID")
             owner=json.loads(file.read_text("utf-8"))
             require(type(owner) is dict
@@ -243,11 +268,15 @@ def main():
                     and type(owner.get("issue")) is dict
                     and owner["issue"].get("number")==148
                     and owner["issue"].get("pull_request") is None
+                    and type(owner.get("repository")) is dict
+                    and owner["repository"].get("full_name")==REPOSITORY
                     and type(owner.get("sender")) is dict
                     and owner["sender"].get("login")=="Ramzes2023"
                     and type(owner.get("comment")) is dict
                     and owner["comment"].get("body")==
-                    "SERVICEIT_STAGE34_ALL_NEW_OWNER_ONCE_V1",
+                    "SERVICEIT_STAGE34_ALL_NEW_OWNER_ONCE_V1"
+                    and type(owner["comment"].get("user")) is dict
+                    and owner["comment"]["user"].get("login")=="Ramzes2023",
                     "OWNER_ONCE_EVENT_NOT_AUTHORIZED")
         with httpx.Client(trust_env=False,follow_redirects=False) as client:
             if env["GITHUB_EVENT_NAME"]=="repository_dispatch":
@@ -267,6 +296,11 @@ def main():
                 result=scan_cards(client,env)
                 summary={"status":"SERVICEIT_STAGE3_SCHEDULED_SCAN",
                          **result,"crm_writes":0,"external_contacts":0}
+    except (TaskAutomationBlocked,PollBlocked,ObserverBlocked) as exc:
+        # These exception messages are fixed developer-authored gate codes,
+        # never raw REST bodies, webhook URLs or customer data.
+        summary={"status":"SERVICEIT_STAGE3_SAFE_HOLD",
+                 "reason":str(exc),"crm_writes":0,"external_contacts":0}
     except Exception:
         summary={"status":"SERVICEIT_STAGE3_SAFE_HOLD",
                  "reason":"CORPORATE_RIGHTS_OR_EVIDENCE_UNVERIFIED",

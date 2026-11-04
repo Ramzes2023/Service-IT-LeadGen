@@ -449,12 +449,19 @@ def main(argv=None):
             model = None
             if os.environ.get('SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED') == 'YES':
                 model_env = dict(os.environ)
-                model_env['GIGACHAT_CREDENTIALS'] = Path('/run/secrets/serviceit_gigachat_credentials').read_text().strip()
+                if model_env.get('AI_PROVIDER') == 'deepseek':
+                    # Separate secret and separate corporate data-transfer approval.
+                    key_path = Path('/run/secrets/serviceit_deepseek_api_key')
+                    model_env['DEEPSEEK_API_KEY'] = key_path.read_text().strip()
+                else:
+                    model_env['AI_PROVIDER'] = 'gigachat'
+                    model_env['GIGACHAT_CREDENTIALS'] = Path('/run/secrets/serviceit_gigachat_credentials').read_text().strip()
                 config = config_from_env(model_env)
-                require(config.provider == 'gigachat', 'GIGACHAT_REQUIRED')
+                require(config.provider in ('gigachat', 'deepseek'),
+                        'APPROVED_PROVIDER_REQUIRED')
                 provider = AIProvider(config, retry_unauthorized=False)
                 def model(text):
-                    return {**provider.classify(text), 'provider':'gigachat','model':config.model}
+                    return provider.classify(text)
             worker = Worker(store, rest, lambda i:load_approval(approvals,i), model, enabled=True)
             try:
                 if args.canary_id:

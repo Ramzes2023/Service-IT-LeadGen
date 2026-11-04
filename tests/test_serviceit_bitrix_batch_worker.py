@@ -168,3 +168,46 @@ def test_workflow_is_guarded_and_never_creates_demo_cards():
     assert "python -m leadpilot.serviceit_bitrix_batch_worker" in content
     assert "crm.item.add" not in content
     assert "SERVICEIT_CORPORATE_APPROVALS_JSON" in content
+
+
+def test_exact_owner_action_runs_real_filtered_batch_without_creating_cards(monkeypatch, tmp_path):
+    """Owner comment is only authorization to process already-existing new IDs."""
+    event_file = tmp_path / "event.json"
+    event_file.write_text(json.dumps({
+        "action": "created",
+        "repository": {"full_name": REPOSITORY},
+        "sender": {"login": "Ramzes2023"},
+        "issue": {"number": 74},
+        "comment": {
+            "body": batch.BATCH_OWNER_MARKER,
+            "user": {"login": "Ramzes2023"},
+        },
+    }), encoding="utf-8")
+    processed = []
+    monkeypatch.setattr(batch, "encrypted_receipt_exists", lambda *a: False)
+    def process_existing(event, env, *, client):
+        processed.append(event["client_payload"]["item_id"])
+        return {"status": "SERVICEIT_NEW_CARD_EVENT_PROCESSED", "crm_writes": 1}
+    monkeypatch.setattr(batch, "run_exact_event", process_existing)
+    env = environment(GITHUB_EVENT_NAME="issue_comment",
+                      GITHUB_ACTOR="Ramzes2023",
+                      GITHUB_EVENT_PATH=str(event_file))
+    client, calls = service((201, 202))
+    with client:
+        outcome = batch.run_batch(env, client=client, now=NOW)
+    assert outcome["processed"] == 2
+    assert processed == [201, 202]
+    assert len(calls) == 2  # historical positive control + real future-only list
+
+
+@pytest.mark.parametrize("change", [
+    lambda e: e.update(GITHUB_ACTOR="attacker"),
+    lambda e: e.update(GITHUB_EVENT_PATH=""),
+])
+def test_owner_command_requires_exact_identity_and_event_file(change):
+    env = environment(GITHUB_EVENT_NAME="issue_comment")
+    change(env)
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda r: pytest.fail("unauthorized network call"))) as client:
+        with pytest.raises(batch.BatchBlocked, match="SCOPE_INVALID"):
+            batch.run_batch(env, client=client, now=NOW)

@@ -86,7 +86,10 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
         model=_check(ai["model"],80)
     status="HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED" if ai else "NOT_RUN_SOURCE_UNVERIFIED"
     summary=(tile_heading_for_signal(triage,subject)+"\n"
-             +"HOLD · Получено уведомление B2B-Center №"+tid+
+             +"HOLD · 🔎 Ориентир проверки: "
+             +str(triage["indicative_priority"])
+             +"/100 (НЕ Lead Score; ФНС, CRM-дубли и STOP ещё не подтверждены)\n"
+             +"Получено уведомление B2B-Center №"+tid+
              (". Гипотеза GigaChat получена, но потребность и заказчик не подтверждены."
               if ai else ". Потребность и заказчик не подтверждены; AI-анализ не запускался."))
     quote="Тема письма поставщика: "+subject

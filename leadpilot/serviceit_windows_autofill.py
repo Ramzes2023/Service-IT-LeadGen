@@ -135,6 +135,8 @@ def preliminary_fields(item):
     fields[PREFIX + "AI_SUMMARY"] = (
         tile_heading_for_signal(triage, given_title)
         + "\nHOLD · предварительно, не квалифицированный лид\n"
+        + "🔎 Ориентир проверки: " + str(triage["indicative_priority"])
+        + "/100 (НЕ Lead Score; ФНС, CRM-дубли и STOP ещё не подтверждены)\n"
         + fields[PREFIX + "AI_SUMMARY"])
     fields[PREFIX + "AI_RECOMMENDATION"] = (
         "Подходящие направления для проверки: " + ", ".join(triage["services"]) + ". "

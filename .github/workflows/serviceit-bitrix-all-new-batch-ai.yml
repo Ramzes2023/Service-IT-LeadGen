@@ -3,6 +3,8 @@ name: ServiceIT all-new 1062/21 AI batch catch-up (real CRM, no demo)
 on:
   schedule:
     - cron: '8,18,28,38,48,58 * * * *'
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -18,7 +20,12 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
-      github.event_name == 'schedule' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 74 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_BATCH_ALL_NEW_LIVE_ONCE_V1')) &&
       vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
       vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'
     runs-on: ubuntu-latest
@@ -27,6 +34,8 @@ jobs:
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_REF: ${{ github.ref }}
       GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      GITHUB_ACTOR: ${{ github.actor }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SERVICEIT_BITRIX_POLL_ENABLED: ${{ vars.SERVICEIT_BITRIX_POLL_ENABLED }}
       SERVICEIT_BITRIX_EVENT_AI_ENABLED: ${{ vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED }}

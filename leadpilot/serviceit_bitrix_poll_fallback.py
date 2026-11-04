@@ -250,7 +250,7 @@ OWNER_ONCE_ISSUE = 74
 OWNER_LOGIN = "Ramzes2023"
 
 
-def owner_once_event_verified(env: dict) -> bool:
+def owner_once_event_verified(env: dict, *, marker: str = OWNER_ONCE_MARKER) -> bool:
     """Validate one exact owner comment, never ingest untrusted comment text.
 
     This authorizes an immediate production-equivalent scan of future-only
@@ -285,7 +285,7 @@ def owner_once_event_verified(env: dict) -> bool:
             and issue.get("number") == OWNER_ONCE_ISSUE
             and not issue.get("pull_request")
             and isinstance(comment, dict)
-            and comment.get("body") == OWNER_ONCE_MARKER
+            and comment.get("body") == marker
             and isinstance(comment.get("user"), dict)
             and comment["user"].get("login") == OWNER_LOGIN)
 

@@ -99,6 +99,7 @@ def format_verified_card(report, assessment: dict, *, tile_heading: str | None =
         type(tile_heading) is str and len(tile_heading) <= 150
         and any(tile_heading.startswith(mark + " · ") for mark in DISPLAY_BADGES.values())
         and all(ord(ch) >= 32 and ord(ch) != 127 for ch in tile_heading)
+        and not any(token in tile_heading for token in ("<", ">", "@", "{", "}", "://"))
     ), "KANBAN_HEADING_INVALID")
     summary = (
         (tile_heading + "\n" if tile_heading else "") + badge + "\n"

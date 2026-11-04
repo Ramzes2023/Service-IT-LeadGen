@@ -66,7 +66,7 @@ def test_wrong_match_or_incomplete_result_blocks(case):
 def test_wrong_portal_blocks_before_network():
     with httpx.Client(transport=httpx.MockTransport(
             lambda req:pytest.fail("No external portal reads allowed"))) as client:
-        with pytest.raises(RequisitesPreflightBlocked,
-                           match="PORTAL_OUTSIDE_SERVICEIT"):
+        with pytest.raises(ValueError,
+                           match="BITRIX24_WEBHOOK_MUST_BE_OFFICIAL_PORTAL"):
             preflight(client,
                 "https://other-bitrix24.bitrix24.ru/rest/123/FAKE_TEST_TOKEN")

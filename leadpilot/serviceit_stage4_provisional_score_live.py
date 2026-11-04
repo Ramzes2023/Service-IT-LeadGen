@@ -42,9 +42,9 @@ from .serviceit_stage4_all_new_signed_score_writer import (
 from .serviceit_stage4_fns_dedupe_watch import same_process_visible_duplicates
 from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
 from .serviceit_three_signal_triage import classify_signal, REVIEW
+from .serviceit_preliminary_score_markers import VERSION, provisional_payload, is_exact_own_provisional
 
 GATE = "YES_1062_21_PROVISIONAL_ONLY"
-VERSION = "svc-prelim-v1-FNS-UNVERIFIED"
 FOLDER = ".serviceit/provisional-score-once"
 SCORE_KEYS = frozenset((SCORE_FIELD, VERSION_FIELD, BADGE_FIELD))
 MAX_WRITES = 6
@@ -77,11 +77,7 @@ def existing_score_state(item):
     current = [item[k] for k in SCORE_KEYS]
     if all(x in (None, "") for x in current):
         return "EMPTY"
-    if (type(item[SCORE_FIELD]) is int
-            and item[VERSION_FIELD] == VERSION
-            and type(item[BADGE_FIELD]) is str
-            and "ПРЕДВАРИТЕЛЬНО" in item[BADGE_FIELD]
-            and "ФНС: НЕ ПРОВЕРЕНА" in item[BADGE_FIELD]):
+    if is_exact_own_provisional(item):
         return "ALREADY_PROVISIONAL"
     return "OTHER_SCORE_PRESENT"
 
@@ -126,22 +122,6 @@ def visible_duplicate_status(client, webhook, base, item, card):
         return "ТОЛЬКО ВИДИМЫЕ"
     except Exception:
         return "НЕ ПРОВЕРЕНЫ"
-
-
-def provisional_payload(score, duplicate_status):
-    """Visible 0-100 but NOT a qualified Lead Score or a green approval."""
-    require(type(score) is int and 0 <= score <= 100,
-            "PROVISIONAL_NUMBER_INVALID")
-    require(duplicate_status in (
-        "ИНН НЕТ", "ТОЛЬКО ВИДИМЫЕ", "НЕ ПРОВЕРЕНЫ",
-    ), "PROVISIONAL_DUPLICATE_STATUS_INVALID")
-    text = (
-        f"🔎 {score}/100 · ПРЕДВАРИТЕЛЬНО · "
-        f"ФНС: НЕ ПРОВЕРЕНА · Дубли: {duplicate_status} · "
-        "STOP: НЕ НАСТРОЕН · Контакт: НЕ РАЗРЕШЁН"
-    )
-    require(len(text) <= 200, "PROVISIONAL_BADGE_TOO_LONG")
-    return {SCORE_FIELD: score, VERSION_FIELD: VERSION, BADGE_FIELD: text}
 
 
 def evaluate_one(client, env, card, *, now=None):

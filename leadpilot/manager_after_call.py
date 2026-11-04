@@ -20,7 +20,12 @@ def draft(record, *, now=None):
     if (type(summary) is not str or not 5 <= len(summary.strip()) <= 500
             or any(ord(ch) < 32 for ch in summary)):
         raise ValueError("POSTCALL_NOTES_UNSAFE")
+    actions={"YES":("SEND_PROPOSAL","ASK_DETAILS"),
+             "NO":("DO_NOT_CONTACT",), "UNKNOWN":("MANAGER_REVIEW",)}
+    action=record.get("next_action")
+    if action not in actions[interest]:
+        raise ValueError("POSTCALL_NEXT_ACTION_INVALID")
     return {"status":"MANAGER_APPROVAL_DRAFT_ONLY", "item_id":card,
             "interest":interest,"summary":summary.strip(),
-            "action":"MANAGER_REVIEW_REQUIRED",
+            "action":action,
             "task_due_at":None,"crm_writes":0,"tasks_created":0}

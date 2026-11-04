@@ -6,9 +6,6 @@ on:
     types: [created]
 permissions:
   contents: write
-concurrency:
-  group: serviceit-bitrix-new-card-free-event
-  cancel-in-progress: false
 jobs:
   new-provisional-score:
     if: >-
@@ -22,6 +19,9 @@ jobs:
         github.event.issue.number == 148 &&
         !github.event.issue.pull_request &&
         github.event.comment.body == 'SERVICEIT_STAGE4_PRELIM_SCORE_LIVE_ONCE_V1'))
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

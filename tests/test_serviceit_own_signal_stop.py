@@ -107,3 +107,25 @@ def test_historical_card_rule_forbidden(tmp_path):
         read_rules(config(tmp_path, [
             {"kind": "card_id", "value": "3", "reason": "NOT_RELEVANT"}
         ]))
+
+def test_own_stop_prevents_new_automatic_review_task(monkeypatch):
+    from leadpilot import serviceit_stage3_all_new_task_automation as m
+    monkeypatch.setattr(m, "validate_webhook",
+                        lambda _: "https://serviseit.bitrix24.ru/rest/1615/hidden")
+    monkeypatch.setattr(m, "card_read",
+                        lambda *_a, **_k: {
+                            "UF_CRM_13_SVCIT_COMPANY_INN": "7707083893",
+                        })
+    monkeypatch.setattr(m, "own_signal_stop_rules", lambda: [
+        {"kind": "inn", "value": "7707083893",
+         "reason": "DO_NOT_REPROCESS"},
+    ])
+    monkeypatch.setattr(m, "check_task_binding",
+                        lambda *_: pytest.fail("task check after STOP"))
+    env = {
+        "SERVICEIT_STAGE3_TASK_WRITE_ENABLED": m.WRITE_GATE,
+        "GITHUB_REPOSITORY": "Ramzes2023/Service-IT-LeadGen",
+        "GITHUB_REF": "refs/heads/main",
+        "SERVICEIT_BITRIX_WEBHOOK": "hidden",
+    }
+    assert m.process_card(Mock(), env, 108) == "OWN_SIGNAL_STOP_HOLD_NO_TASK"

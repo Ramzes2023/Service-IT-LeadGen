@@ -43,12 +43,16 @@ jobs:
       SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
       SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
       SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      # User approved primary RouterAI after successful live API attestation #42034007218.
+      # GigaChat is always prepared as per-card fallback; never transfer unapproved content.
       # Trusted, short-lived independent evidence adapter; never event/CRM prose.
+      # RouterAI primary is explicitly owner-approved, but remains privacy and key gated.
       SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
-      AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_LIVE_READY == 'YES_API_CHECK_PASSED' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && 'routerai' || 'gigachat' }}
+      AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}
       SERVICEIT_ROUTERAI_PRIVACY_APPROVED: ${{ vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED }}
       ROUTERAI_API_KEY: ${{ secrets.SERVICEIT_ROUTERAI_API_KEY }}
       AI_ENABLE: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED == 'YES' && '1' || '0' }}
+      SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: 'YES'
       GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
       GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
       GIGACHAT_MODEL: ${{ vars.GIGACHAT_MODEL }}
@@ -62,8 +66,7 @@ jobs:
           cache: pip
       - name: Install locked ServiceIT dependencies
         run: python -m pip install -r requirements.txt
-      - name: Verify pinned Ministry root and create GigaChat-only TLS trust
-        if: vars.SERVICEIT_AI_PROVIDER != 'routerai' || vars.SERVICEIT_ROUTERAI_LIVE_READY != 'YES_API_CHECK_PASSED' || vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED != 'YES_1062_21'
+      - name: Prepare pinned GigaChat TLS CA for emergency fallback
         shell: bash
         run: |
           python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"

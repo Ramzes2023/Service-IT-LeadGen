@@ -1,0 +1,38 @@
+name: ServiceIT corporate STOP private config preflight (READ ONLY)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-stop-config-preflight-readonly
+  cancel-in-progress: false
+jobs:
+  verify-stop-manifest:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 200 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_CORPORATE_STOP_PREFLIGHT_ONCE_V1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      SERVICEIT_CORPORATE_STOP_INN_ENABLED: ${{ vars.SERVICEIT_CORPORATE_STOP_INN_ENABLED }}
+      SERVICEIT_CORPORATE_STOP_INN_MANIFEST: ${{ secrets.SERVICEIT_CORPORATE_STOP_INN_MANIFEST }}
+      SERVICEIT_CORPORATE_STOP_INN_KEY: ${{ secrets.SERVICEIT_CORPORATE_STOP_INN_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check STOP manifest activation without revealing private data
+        run: python -m leadpilot.serviceit_corporate_stop_preflight

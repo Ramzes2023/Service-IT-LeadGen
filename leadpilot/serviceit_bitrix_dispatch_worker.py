@@ -259,6 +259,7 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
         store = Store(Path(temp) / "new-card-events.sqlite3")
         store.enqueue(card)
         provider = None
+        standby = None
         try:
             raw_rest = Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)
             def rest(method, params):
@@ -286,8 +287,29 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                 provider = AIProvider(
                     config_from_env({**env, "AI_ENABLE": "1"}),
                     retry_unauthorized=False)
+                # RouterAI primary is selected only by approved workflow settings.
+                # A secondary GigaChat call is made only for the identical
+                # already privacy-approved title/prose, before any CRM AI write.
+                # Neither provider receives the full Bitrix item or private data
+                # unless an independent corporate approval permits it.
+                if (provider.config.provider == "routerai"
+                        and env.get("SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT") == "YES"
+                        and env.get("GIGACHAT_CREDENTIALS")):
+                    standby = AIProvider(
+                        config_from_env({**env, "AI_ENABLE": "1",
+                                         "AI_PROVIDER": "gigachat"}),
+                        retry_unauthorized=False)
                 def model(text):
-                    return provider.classify(text)
+                    try:
+                        first = provider.classify(text)
+                    except (RuntimeError, ValueError):
+                        if standby is None:
+                            raise
+                        return standby.classify(text)
+                    if (standby is not None and isinstance(first, dict)
+                            and first.get("quality_status") != "complete"):
+                        return standby.classify(text)
+                    return first
                 model.provider = provider.config.provider
             if approval is not None:
                 observed = Worker(store, rest, lambda _: approval, model, enabled=True).once(card)
@@ -297,6 +319,8 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
         except Exception:
             observed = "NEEDS_REVIEW"
         finally:
+            if standby is not None:
+                standby.close()
             if provider is not None:
                 provider.close()
     finalized = remote.finalize(card, observed)

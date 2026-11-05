@@ -27,6 +27,9 @@ jobs:
       GITHUB_REF: ${{ github.ref }}
       GITHUB_EVENT_NAME: ${{ github.event_name }}
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      # Read only exact encrypted HOLD receipts saved by the official FNS MSP worker.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
       SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
       # Official verified-digest FNS MSP archive can be mounted by a future
       # approved corporate ingestion workflow; absent means HOLD.

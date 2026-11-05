@@ -352,28 +352,36 @@ def run(client, env, *, now=None):
     out = {"status": "FNS_NO_NEW_CARDS", "new_cards_visible": len(cards),
            "pending_checked": 0, "cached": 0, "invalid_inn": 0,
            "official_archive_downloaded": False,
-           "verified_local_snapshot_digest": False,
+           "snapshot_sha256_computed": False,
            "msp_matches": 0, "msp_absent_from_snapshot": 0,
            "encrypted_holding_receipts_saved": 0, **NO_SIDE_EFFECTS}
     if not cards:
         return out
-    url, publication = discover_official_url(client, today=now.date())
-    fence = OfficialMspFence(
-        client, env.get("GITHUB_TOKEN", ""),
-        env.get("SERVICEIT_GH_LEDGER_KEY", ""), publication)
-    pending = []
+    valid_cards = []
     for card in cards:
-        if len(pending) >= MAX_CARD_BATCH:
-            break
         row = read_item(client, base, card)
         inn = row.get(PREFIX + "COMPANY_INN")
         if type(inn) is not str or not _is_valid_inn(inn):
             out["invalid_inn"] += 1
             continue
+        valid_cards.append((card, inn))
+    if not valid_cards:
+        out["status"] = "FNS_NO_VALID_NEW_INNS"
+        return out
+
+    # The official site is not contacted at all until a real recent card
+    # with a checksum-valid INN is confirmed in the existing CRM.
+    url, publication = discover_official_url(client, today=now.date())
+    fence = OfficialMspFence(
+        client, env.get("GITHUB_TOKEN", ""),
+        env.get("SERVICEIT_GH_LEDGER_KEY", ""), publication)
+    pending = []
+    for card, inn in valid_cards:
         if fence.already_checked(card, inn):
             out["cached"] += 1
             continue
-        pending.append((card, inn))
+        if len(pending) < MAX_CARD_BATCH:
+            pending.append((card, inn))
     if not pending:
         out["status"] = "FNS_NO_PENDING_VALID_INNS"
         return out
@@ -383,7 +391,7 @@ def run(client, env, *, now=None):
         matches, examined = scan_zip_for_inns(
             target, {inn for _, inn in pending})
         out["official_archive_downloaded"] = True
-        out["verified_local_snapshot_digest"] = True
+        out["snapshot_sha256_computed"] = True
         # Delete the full dataset before any GitHub receipt writes.
     require(examined > 0, "FNS_OFFICIAL_SNAPSHOT_UNVERIFIED")
     out["pending_checked"] = len(pending)

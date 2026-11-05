@@ -151,14 +151,16 @@ def evaluate_one(client, env, card, *, now=None):
                 else "OTHER_SCORE_PRESENT_NO_REWRITE")
     # The original nine-field worker must complete first: scoring an empty
     # card earlier would violate its no-existing-qualification contract.
+    # The prior check only required three populated fields; a partially
+    # written nine-field report could still have received a provisional Score.
+    # Distinguish a complete honest HOLD report from a half-written card.
     require(all(k in item for k in AI_FIELDS), "AI_FIELDS_NOT_READABLE")
     if (item.get(PREFIX + "AI_STATUS") not in (
             "NOT_RUN_SOURCE_UNVERIFIED", "HOLD", "NOT_RUN",
-            "HYPOTHESIS_UNVERIFIED")
-            or not isinstance(item.get(PREFIX + "AI_SUMMARY"), str)
-            or not item[PREFIX + "AI_SUMMARY"].strip()
-            or not isinstance(item.get(PREFIX + "AI_FULL_REPORT"), str)
-            or not item[PREFIX + "AI_FULL_REPORT"].strip()):
+            "HYPOTHESIS_UNVERIFIED",
+            "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED")
+            or any(type(item[k]) is not str or not item[k].strip()
+                   for k in AI_FIELDS)):
         return "WAIT_FOR_AI_MANAGER_FIELDS"
     # Do not create a marketing score on a synthetic fixture or explicit STOP.
     signal_id = item.get(PREFIX + "SIGNAL_ID") or ""

@@ -1,0 +1,46 @@
+name: ServiceIT FNS-MSP verified receipt to NEW Bitrix 1062/21 card
+on:
+  schedule:
+    # Official snapshot collector runs at 03:36 UTC; leave time for its ZIP.
+    - cron: '15 8 * * *'
+  repository_dispatch:
+    types: [serviceit_bitrix_item_add_v1]
+
+permissions:
+  contents: write
+
+concurrency:
+  # Separate schedule avoids interfering with the source collector.
+  group: serviceit-fns-msp-crm-result-one-at-a-time
+  cancel-in-progress: false
+
+jobs:
+  official-msp-result:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED == 'YES_1062_21_FNS_MSP_RESULT_WRITE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      # All item-add events must be verified by HMAC in the Python worker.
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED: ${{ vars.SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Verify FNS receipt and update only approved MSP result field
+        run: python -m leadpilot.serviceit_fns_msp_crm_result_writer

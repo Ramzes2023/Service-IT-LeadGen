@@ -60,3 +60,48 @@ def test_verified_mode_requires_company_approved_scheme():
             "subscription_percent":"0","team_shares":{"developer":"100"}}
     with pytest.raises(FinanceBlocked, match="SCHEME_DIRECTOR_APPROVAL_REQUIRED"):
         company_approved_split_draft(scheme, {"sales_manager_employee_id":42})
+
+
+def test_corporate_proof_gated_example_still_does_not_authorize_payroll():
+    def proof(ref, payment=False):
+        return {"document_ref":ref,
+                "confirmed_by_role":"finance","recorded_by_role":"finance",
+                "confirmed_at":"2026-11-05",
+                **({"settlement_state":"SETTLED_IN_BANK"} if payment else {})}
+    scheme={
+        "version":"APPROVED_V1","approved_by_role":"director",
+        "launch_date":"2026-11-01","effective_from":"2026-11-01",
+        "new_leads_months":12,"tail_days":60,"first_sale_days":30,
+        "subscription_paid_periods":0,
+        "team_percent":"15","manager_percent":"10",
+        "subscription_percent":"0","team_shares":{"developer":"100"},
+    }
+    deal={
+        "deal_id":52,"signal_card_id":120,"category_verified":True,
+        "customer_scope_verified":True,"customer_new_verified":True,
+        "global_dedup_clear":True,"stop_clear":True,
+        "scheme_version":"APPROVED_V1",
+        "manager_responsible_confirmed":True,
+        "sales_manager_employee_id":41,
+        "financial_approver_role":"finance","finance_approved":True,
+        "supervisor_approved":True,
+        "lead_registered_at":"2026-11-02",
+        "first_confirmed_payment_at":"2026-11-05",
+        "primary_payments":[{
+            "paid_at":"2026-11-05",
+            "revenue_ex_vat":"5000.00",
+            "finance_proof":proof("bank:payment:051",True),
+            "direct_costs":[{
+                "kind":"direct_labor","amount":"1000.00",
+                "finance_proof":proof("act:cost:051")
+            }],
+        }],
+        "paid_subscription_periods":[],
+    }
+    result=company_approved_split_draft(scheme,deal)
+    assert result["developer_amount"]=="600.00"
+    assert result["sales_manager_amount"]=="400.00"
+    assert result["company_remainder"]=="3000.00"
+    assert result["payout_authorized"] is False
+    assert result["scheme_version"]=="APPROVED_V1"
+    assert result["sales_manager_employee_id"]==41

@@ -8,7 +8,7 @@ Never log company names, CRM IDs, INNs, webhook, full source URLs or raw records
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -130,7 +130,47 @@ def same_process_visible_duplicates(client, base, inn, card):
     raise WatchBlocked("PROCESS_DUPLICATE_TOO_MANY_PAGES")
 
 
-def msp_archive_status(env, inn, *, today):
+def _msp_from_encrypted_official_receipt(client, env, inn, card, *, today):
+    """Use own separately captured FNS membership; never promote formal gates.
+
+    Only exact per-card, per-INN encrypted HOLD receipts can be read.
+    The official monthly dataset normally publishes on the 10th. If that
+    date has no locally checked receipt, do NOT infer an absent company.
+    """
+    if (client is None or type(card) is not int
+            or not env.get("SERVICEIT_GH_LEDGER_KEY")
+            or not env.get("GITHUB_TOKEN")):
+        return None
+    from .serviceit_fns_msp_official_live import (
+        OfficialMspFence, OfficialMspBlocked,
+    )
+    first = today.replace(day=1)
+    prev_month = (first - timedelta(days=1)).replace(day=10)
+    candidates = [first.replace(day=10), prev_month]
+    try:
+        for published in candidates:
+            if not (timedelta(0) <= today-published <= timedelta(days=45)):
+                continue
+            fence = OfficialMspFence(
+                client, env["GITHUB_TOKEN"],
+                env["SERVICEIT_GH_LEDGER_KEY"], published)
+            checked = fence.read_checked_receipt(card, inn)
+            if checked is None:
+                continue
+            need(checked.get("fns_egrul_verified") is False
+                 and checked.get("formal_score_authorized") is False,
+                 "FNS_EGRUL_OR_SCORE_FROM_MSP_RECEIPT_FORBIDDEN")
+            category = checked.get("msp_category")
+            need(category in ("MICRO", "SMALL", "MEDIUM", None),
+                 "FNS_CATEGORY_FROM_RECEIPT_UNTRUSTED")
+            return ("MATCH_IN_SUPPLIED_MSP_SNAPSHOT" if category is not None
+                    else "NO_MATCH_IN_SUPPLIED_SNAPSHOT")
+    except OfficialMspBlocked:
+        raise WatchBlocked("FNS_ENCRYPTED_RECEIPT_UNVERIFIED") from None
+    return None
+
+
+def msp_archive_status(env, inn, *, today, client=None, card=None):
     """Optional verified-digest FNS open-data snapshot, NEVER EGRUL status.
 
     The downloaded archive and its independently verified digest must be made
@@ -141,6 +181,10 @@ def msp_archive_status(env, inn, *, today):
             "SERVICEIT_FNS_MSP_PUBLIC_URL",
             "SERVICEIT_FNS_MSP_SHA256")
     values = [env.get(k) for k in keys]
+    cached = _msp_from_encrypted_official_receipt(
+        client, env, inn, card, today=today)
+    if cached is not None:
+        return cached
     if not any(values):
         return "MSP_OFFICIAL_SNAPSHOT_NOT_CONNECTED"
     need(all(type(v) is str and v for v in values),
@@ -186,7 +230,8 @@ def assess_card(client, base, card, env, *, now):
          and triage.get("formal_lead_score") is None,
          "PRELIMINARY_SCORE_SAFETY_INVALID")
 
-    fns = msp_archive_status(env, inn, today=now.date())
+    fns = msp_archive_status(env, inn, today=now.date(),
+                             client=client, card=card)
     if fns == "MSP_OFFICIAL_SNAPSHOT_NOT_CONNECTED":
         return "HOLD_FNS_SNAPSHOT_NOT_CONNECTED"
     if fns == "NO_MATCH_IN_SUPPLIED_SNAPSHOT":

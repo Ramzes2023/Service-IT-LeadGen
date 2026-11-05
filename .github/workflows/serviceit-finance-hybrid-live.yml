@@ -1,0 +1,46 @@
+name: ServiceIT hybrid finance auto / manager fallback for NEW won LeadGen deals
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  hybrid-finance-manager:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_FINANCE_HYBRID_LIVE_ONCE_V1'))
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_FINANCE_MANAGER_TASK_ENABLED: YES_LEADGEN_SALES_INTERNAL_FINANCE
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Only real new won separate LeadGen deals, safe Bitrix manager finance tasks
+        run: python -m leadpilot.serviceit_finance_hybrid_live_worker

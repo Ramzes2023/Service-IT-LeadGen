@@ -162,3 +162,83 @@ def test_readonly_schema_no_payout_claim(monkeypatch):
     assert r["bank_settlement_source_available"] is False
     assert r["task_fields_ready"] is True
     assert r["finance_field_configuration_needed"] is True
+
+
+def test_missing_docs_after_manager_fills_amounts_updates_existing_request(monkeypatch):
+    # Manager has already entered numeric values; only finance document refs
+    # still require manual completion. Existing request gets updated, no
+    # repeated creation, and the calculated result appears as a second task.
+    install_fake_sales(monkeypatch,{"COMMENTS":"\n".join([
+        BEGIN,"PAID_EX_VAT_RUB=5000","DIRECT_COSTS_RUB=1000",END])})
+    old={"id":"777","title":m.titles(123)["request"]}
+    monkeypatch.setattr(m,"linked_tasks",lambda *args:[old])
+    monkeypatch.setattr(m,"our_task",lambda *args:"previous text")
+    revisions,created=[],[]
+    monkeypatch.setattr(m,"update_request",
+                        lambda client,base,env,deal,id,manager,creator,description:
+                        (revisions.append((id,description))
+                         or "REQUEST_UPDATED_VERIFIED"))
+    monkeypatch.setattr(m,"create_task",
+                        lambda client,base,env,deal,manager,creator,kind,description:
+                        (created.append(kind)
+                         or "TASK_CREATED_AND_VERIFIED"))
+    with httpx.Client() as c:
+        out=m.run(c,ENV,now=NOW)
+    assert out["manager_requests_updated_and_verified"]==1
+    assert revisions[0][0]==777
+    assert "PAYMENT_DOCUMENT=" in revisions[0][1]
+    assert "COST_DOCUMENT=" in revisions[0][1]
+    assert "PAID_EX_VAT_RUB=" not in revisions[0][1]
+    assert created==["report"]
+
+
+def test_report_with_old_amounts_is_replaced_by_hold_on_incomplete_data(monkeypatch):
+    install_fake_sales(monkeypatch,{"COMMENTS":""})
+    prior={"id":"888","title":m.titles(123)["report"]}
+    monkeypatch.setattr(m,"linked_tasks",lambda *args:[prior])
+    changed=[]
+    monkeypatch.setattr(m,"create_task",
+                        lambda *args:"TASK_CREATED_AND_VERIFIED")
+    monkeypatch.setattr(m,"our_task",lambda *args:"prior")
+    monkeypatch.setattr(m,"update_report",
+                        lambda client,base,env,deal,id,manager,creator,description:
+                        (changed.append(description) or "REPORT_UPDATED_VERIFIED"))
+    with httpx.Client() as c:
+        out=m.run(c,ENV,now=NOW)
+    assert out["reports_updated_and_verified"]==1
+    assert "СТОП:" in changed[0]
+    assert "600.00" not in changed[0]
+    assert "Выплаты не разрешены" in changed[0]
+
+
+def test_encrypted_one_use_fence_prevents_ambiguous_replay(monkeypatch):
+    state={"reserved":False,"writes":0}
+    class FakeFence:
+        def __init__(self,*args): pass
+        def reserve(self,deal):
+            if state["reserved"]:return "ALREADY_FENCED_NO_RETRY"
+            state["reserved"]=True
+            return "RESERVED"
+        def finalize(self,deal,status):return True
+    monkeypatch.setattr(m,"FinanceFence",FakeFence)
+    monkeypatch.setattr(m,"call",lambda *args:{"result":{"task":{"id":789}}})
+    monkeypatch.setattr(m,"our_task",lambda *args:m.TASK_MARKER+"\n"+m.manager_template(
+        123,["PAID_EX_VAT_RUB"]))
+    description=m.TASK_MARKER+"\n"+m.manager_template(123,["PAID_EX_VAT_RUB"])
+    with httpx.Client() as c:
+        first=m.create_task(c,m.PORTAL,ENV,123,41,1615,
+                            "request",description)
+        second=m.create_task(c,m.PORTAL,ENV,123,41,1615,
+                             "request",description)
+    assert first=="TASK_CREATED_AND_VERIFIED"
+    assert second=="ALREADY_FENCED_NO_RETRY"
+
+
+def test_task_report_never_claims_manager_comment_as_bank_verified():
+    from leadpilot.serviceit_finance_hybrid import reconcile
+    out=reconcile({},fake_comment())
+    text=m.report_text(out)
+    assert "ПРЕДВАРИТЕЛЬНЫЙ" in text
+    assert "не являются банковским подтверждением" in text
+    assert "ВЫПЛАТЫ НЕ РАЗРЕШЕНЫ" in text
+    assert "600.00 ₽" in text

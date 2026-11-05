@@ -25,6 +25,7 @@ from .serviceit_enrichment_worker import normalized, validate_identity, PREFIX
 from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
 from .serviceit_stage4_fns_msp_snapshot import verify as verify_msp_snapshot
 from .serviceit_three_signal_triage import classify_signal
+from .serviceit_corporate_stop_inn import precheck as stop_precheck, CorporateStopBlocked
 
 PORTAL = "https://serviseit.bitrix24.ru/rest/"
 MAX_CARDS_PER_RUN = 6
@@ -214,6 +215,15 @@ def assess_card(client, base, card, env, *, now):
     if process["process_visible_duplicate"] or requisites["visible_matches"] > 0:
         return "HOLD_POTENTIAL_VISIBLE_CRM_DUPLICATE"
 
+    # Corporate positive-only STOP precheck: one listed INN is sufficient to
+    # HOLD. A non-match is NOT evidence of all-channel STOP clearance.
+    try:
+        stop_status = stop_precheck(inn, env)
+    except CorporateStopBlocked:
+        return "HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED"
+    if stop_status == "HIT":
+        return "HOLD_CORPORATE_STOP_MATCH"
+
     # This provisional classification never implies the tender is current.
     kind = row.get(PREFIX + "SIGNAL_KIND") or ""
     source = row.get(PREFIX + "SIGNAL_SOURCE") or ""
@@ -270,6 +280,8 @@ def run(client, env, *, now=None):
         need(result in {
             "HOLD_MISSING_VALID_COMPANY_INN",
             "HOLD_POTENTIAL_VISIBLE_CRM_DUPLICATE",
+            "HOLD_CORPORATE_STOP_MATCH",
+            "HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED",
             "HOLD_FNS_SNAPSHOT_NOT_CONNECTED",
             "HOLD_FNS_MSP_NOT_MATCHED",
             "DRAFT_ONLY_FNS_MSP_MATCH_GLOBAL_CHECKS_PENDING",

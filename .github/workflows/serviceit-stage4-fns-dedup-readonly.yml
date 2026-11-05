@@ -30,6 +30,10 @@ jobs:
       # Read only exact encrypted HOLD receipts saved by the official FNS MSP worker.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      # Optional approved corporate INN exclusions; no contact/score clearance.
+      SERVICEIT_CORPORATE_STOP_INN_ENABLED: ${{ vars.SERVICEIT_CORPORATE_STOP_INN_ENABLED }}
+      SERVICEIT_CORPORATE_STOP_INN_MANIFEST: ${{ secrets.SERVICEIT_CORPORATE_STOP_INN_MANIFEST }}
+      SERVICEIT_CORPORATE_STOP_INN_KEY: ${{ secrets.SERVICEIT_CORPORATE_STOP_INN_KEY }}
       SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
       # Official verified-digest FNS MSP archive can be mounted by a future
       # approved corporate ingestion workflow; absent means HOLD.

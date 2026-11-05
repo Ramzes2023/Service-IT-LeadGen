@@ -121,3 +121,35 @@ def test_no_crm_or_source_side_effects_in_code():
     assert "crm.item.add.json" not in code
     assert "tasks.task.add.json" not in code
     assert "form_score_authorized=True" not in code
+
+
+def test_corporate_stop_hit_blocks_before_fns_or_score(monkeypatch):
+    monkeypatch.setattr(m, "stop_precheck", lambda inn,env: "HIT")
+    monkeypatch.setattr(m, "msp_archive_status",
+                        lambda *args,**kwargs:pytest.fail("FNS not needed for STOP hit"))
+    with httpx.Client(transport=reqs_transport()) as client:
+        out=m.run(client,env(),now=NOW)
+    assert out["outcomes"]=={"HOLD_CORPORATE_STOP_MATCH":1}
+    assert out["score_writes"]==0 and out["crm_writes"]==0
+    assert out["formal_score_authorized"] is False
+
+
+def test_malformed_approved_corporate_stop_stays_hold(monkeypatch):
+    from leadpilot.serviceit_corporate_stop_inn import CorporateStopBlocked
+    monkeypatch.setattr(m, "stop_precheck",
+                        lambda inn,env:(_ for _ in ()).throw(
+                            CorporateStopBlocked("STOP_CONFIG_INVALID")))
+    with httpx.Client(transport=reqs_transport()) as client:
+        out=m.run(client,env(),now=NOW)
+    assert out["outcomes"]=={"HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED":1}
+    assert out["stop_list_status"]=="DEFERRED_NOT_CONFIGURED"
+
+
+def test_no_match_in_partial_stop_scope_is_not_global_stop_clear(monkeypatch):
+    monkeypatch.setattr(m, "stop_precheck",
+                        lambda inn,env:"NO_MATCH_IN_INN_SCOPE_ONLY")
+    with httpx.Client(transport=reqs_transport()) as client:
+        out=m.run(client,env(),now=NOW)
+    assert out["outcomes"]=={"HOLD_FNS_SNAPSHOT_NOT_CONNECTED":1}
+    assert out["stop_list_status"]=="DEFERRED_NOT_CONFIGURED"
+    assert out["formal_score_authorized"] is False

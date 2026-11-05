@@ -1,5 +1,8 @@
 name: ServiceIT official FNS MSP public ZIP HEAD probe (READ ONLY)
 on:
+  schedule:
+    # Daily public passport health; no CRM calls, no 2.25 GB download.
+    - cron: '18 3 * * *'
   issue_comment:
     types: [created]
 permissions:
@@ -9,10 +12,12 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
-      github.actor == 'Ramzes2023' &&
-      github.event.issue.number == 148 &&
-      !github.event.issue.pull_request &&
-      github.event.comment.body == 'SERVICEIT_FNS_OFFICIAL_PUBLIC_HEAD_ONCE_V1'
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_FNS_OFFICIAL_PUBLIC_HEAD_ONCE_V1'))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

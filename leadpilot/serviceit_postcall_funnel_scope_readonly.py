@@ -7,6 +7,7 @@ Never create a task, contact anyone, change a stage or touch support pipeline.
 from __future__ import annotations
 import json
 import os
+import re
 import httpx
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import PREFIX
@@ -14,7 +15,7 @@ from .serviceit_b2b_hold_ai_fields import PREFIX
 PORTAL="https://serviseit.bitrix24.ru/rest/"
 EXPECTED={
     "crm.item.fields", "crm.category.list", "crm.activity.fields",
-    "crm.activity.list",
+    "crm.activity.list", "crm.status.list",
 }
 NEEDED={
     "postcall_next_action": PREFIX+"MANAGER_NEXT_ACTION",
@@ -30,6 +31,14 @@ class PortalReadBlocked(ValueError): pass
 def safe_request(client,base,method,args):
     if method not in EXPECTED:
         raise PortalReadBlocked("METHOD_NOT_READONLY_ALLOWLISTED")
+    if method=="crm.status.list":
+        target=(args.get("filter") or {}).get("ENTITY_ID") if type(args) is dict else None
+        if not (type(args) is dict and set(args)=={"filter"}
+                and type(args.get("filter")) is dict
+                and set(args["filter"])=={"ENTITY_ID"}
+                and type(target) is str
+                and re.fullmatch(r"DEAL_STAGE_[1-9][0-9]{0,8}",target)):
+            raise PortalReadBlocked("ONLY_ISOLATED_DEAL_STAGES_ALLOWED")
     response=client.post(base+"/"+method+".json",
                          json=args,timeout=20,follow_redirects=False)
     if response.status_code!=200 or len(response.content)>300000:
@@ -39,6 +48,56 @@ def safe_request(client,base,method,args):
     if type(body) is not dict or "error" in body or "result" not in body:
         raise PortalReadBlocked("API_RESULT_NOT_VALID")
     return body["result"]
+
+def sales_stage_readback(client,base,category_id):
+    """Only stages of the exactly located nondefault LeadGen DEAL category.
+
+    The customer-facing stage names/IDs stay in memory; public logs expose
+    booleans only. The result is visibility, not permission to change stages.
+    """
+    if type(category_id) is not int or not 0<category_id<=999_999_999:
+        raise PortalReadBlocked("ISOLATED_DEAL_CATEGORY_ID_INVALID")
+    scope="DEAL_STAGE_"+str(category_id)
+    rows=safe_request(client,base,"crm.status.list",
+                      {"filter":{"ENTITY_ID":scope}})
+    if type(rows) is not list or not 1<=len(rows)<=50:
+        raise PortalReadBlocked("DEAL_STAGES_EMPTY_OR_UNVERIFIED")
+    ids=set()
+    names=[]
+    success=failure=False
+    for row in rows:
+        if (type(row) is not dict or row.get("ENTITY_ID")!=scope
+            or type(row.get("STATUS_ID")) is not str
+            or not row["STATUS_ID"] or row["STATUS_ID"] in ids
+            or type(row.get("NAME")) is not str or not row["NAME"].strip()):
+            raise PortalReadBlocked("DEAL_STAGES_NOT_SCOPED_OR_UNIQUE")
+        ids.add(row["STATUS_ID"])
+        names.append(row["NAME"].strip().casefold())
+        extra=row.get("EXTRA")
+        if extra is not None and type(extra) is not dict:
+            raise PortalReadBlocked("DEAL_STAGE_EXTRA_NOT_OBJECT")
+        semantic=(extra or {}).get("SEMANTICS",row.get("SEMANTICS"))
+        if type(semantic) is str:
+            semantic=semantic.strip().casefold()
+        success|=semantic in ("s","success")
+        failure|=semantic in ("f","failure")
+    labels={
+        "interest":any("интерес" in n for n in names),
+        "quotation":any("кп" in n or "предложен" in n or "расч" in n
+                        for n in names),
+        "negotiation":any("переговор" in n for n in names),
+        "agreement":any("согласован" in n for n in names),
+        "closed_won":success,
+        "closed_lost":failure,
+    }
+    return {
+        "status":"SALES_STAGES_READBACK_VERIFIED",
+        "visible_stage_count":len(rows),
+        "sales_flow_requirements":labels,
+        "recommended_sales_flow_visible":all(labels.values()),
+        "sales_stage_semantics_ready":success and failure,
+    }
+
 
 def probe(client,webhook):
     base=validate_webhook(webhook)
@@ -106,10 +165,23 @@ def probe(client,webhook):
         out["commercial_funnel_found_or_absent"]=(
             "FOUND" if len(matches)==1
             else "NOT_VISIBLE_OR_NOT_CONFIGURED")
+        if len(matches)==1:
+            try:
+                category_id=int(matches[0]["id"])
+                if category_id==0:
+                    raise PortalReadBlocked("DEFAULT_CATEGORY_CANNOT_BE_LEADGEN")
+                out["sales_stage_audit"]=sales_stage_readback(
+                    client,base,category_id)
+            except Exception:
+                out["sales_stage_audit"]={"status":"STAGE_READBACK_UNVERIFIED",
+                                          "sales_stage_semantics_ready":False}
     except Exception:
         out["separate_sales_funnel_visible"]=False
         out["sales_funnel_unique"]=False
         out["commercial_funnel_found_or_absent"]="READ_UNVERIFIED"
+    out.setdefault("sales_stage_audit",
+                   {"status":"FUNNEL_NOT_VISIBLE_STAGE_CHECK_SKIPPED",
+                    "sales_stage_semantics_ready":False})
     # Do not disclose internal names, IDs, customer names or amounts in logs.
     return out
 

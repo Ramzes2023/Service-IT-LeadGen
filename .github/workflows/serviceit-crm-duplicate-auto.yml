@@ -1,0 +1,47 @@
+name: ServiceIT automatic CRM duplicate review for NEW 1062/21 cards
+on:
+  repository_dispatch:
+    types: [serviceit_bitrix_item_add_v1]
+  schedule:
+    - cron: '11,31,51 * * * *'
+  issue_comment:
+    types: [created]
+permissions:
+  contents: write
+  issues: read
+concurrency:
+  group: serviceit-crm-duplicate-auto-one-at-time
+  cancel-in-progress: false
+jobs:
+  visible-crm-dedup:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'issue_comment' ||
+       (github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 200 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_CRM_DEDUP_AUTO_LIVE_ONCE_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_CRM_DUPLICATE_AUTO_ENABLED: YES_1062_21_VISIBLE_DUPLICATE_REVIEW
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Exact INN visible CRM dedup and protected manager-only card note
+        run: python -m leadpilot.serviceit_crm_duplicate_auto

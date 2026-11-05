@@ -83,7 +83,7 @@ def test_ignored_exact_inn_filter_cannot_claim_clean():
 
 
 def test_valid_msp_snapshot_is_still_not_formal_egrul_score(monkeypatch):
-    monkeypatch.setattr(m,"msp_archive_status",lambda env,inn,*,today:
+    monkeypatch.setattr(m,"msp_archive_status",lambda env,inn,*,today,client=None,card=None:
                         "MATCH_IN_SUPPLIED_MSP_SNAPSHOT")
     with httpx.Client(transport=reqs_transport()) as client:
         out=m.run(client,env(),now=NOW)

@@ -29,6 +29,21 @@ _SYSTEM = (
     "имён, контактов и итогового Lead Score."
 )
 
+def routerai_api_key_format_valid(value) -> bool:
+    """Offline non-leaking check for documented RouterAI inference token.
+
+    RouterAI's published integration guides use sk- API tokens. This is a
+    format check, NOT proof of authorization, funds or model availability.
+    Strictly reject whitespace, clipboard wrapping quotes and 'Bearer '.
+    Do not echo a candidate token in exceptions or logs.
+    """
+    return (type(value) is str
+            and 16 <= len(value) <= 4096
+            and value.startswith("sk-")
+            and value[-1] not in ("'", '"')
+            and all(33 <= ord(ch) <= 126 for ch in value))
+
+
 @dataclass(frozen=True)
 class AIConfig:
     provider: str
@@ -59,9 +74,11 @@ def config_from_env(environ=None) -> AIConfig:
     if provider == "routerai":
         if env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") != "YES_1062_21":
             raise RuntimeError("RouterAI corporate data transfer not approved")
-        key = env.get("ROUTERAI_API_KEY", "").strip()
+        key = env.get("ROUTERAI_API_KEY", "")
         if not key:
             raise RuntimeError("RouterAI credential missing")
+        if not routerai_api_key_format_valid(key):
+            raise RuntimeError("RouterAI API credential format unverified")
         return AIConfig(provider="routerai",
                         model="deepseek/deepseek-v4.1-flash",
                         url="https://routerai.ru/api/v1/chat/completions",

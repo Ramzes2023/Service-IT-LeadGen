@@ -120,7 +120,7 @@ def result_field_verified(client, base):
     return True
 
 
-def write_one(client, env, base, fence, official_fence, card):
+def write_one(client, env, base, fence, official_fence, card, *, destination="FIELD"):
     before = read_item(client, base, card)
     inn = before.get(PREFIX + "COMPANY_INN")
     if type(inn) is not str or not _is_valid_inn(inn):
@@ -129,6 +129,10 @@ def write_one(client, env, base, fence, official_fence, card):
     if receipt is None:
         return "HOLD_AWAITING_OFFICIAL_SNAPSHOT"
     value = receipt_label(receipt)
+    if destination == "TIMELINE":
+        from .serviceit_fns_msp_timeline import add_once
+        return add_once(client, base, fence, card, receipt)
+    need(destination == "FIELD", "MSP_DESTINATION_NOT_APPROVED")
     need(FIELD in before, "MSP_FIELD_NOT_IN_CRM_SNAPSHOT")
     if before[FIELD] == value:
         return "ALREADY_EXACT_RESULT"
@@ -194,24 +198,42 @@ def run(client, env, *, now=None):
         cards = [card for card in cards if card == event_card]
     if not cards:
         return {"status": "NO_ELIGIBLE_NEW_CARD", "new_cards": 0, "verified_writes": 0}
-    result_field_verified(client, base)
+    fields = rest(client, base, "crm.item.fields", {
+        "entityTypeId": 1062, "useOriginalUfNames": "Y",
+    }).get("fields")
+    need(type(fields) is dict, "MSP_FIELDS_NOT_READABLE")
+    if FIELD not in fields:
+        destination = "TIMELINE"
+    else:
+        result_field_verified(client, base)
+        destination = "FIELD"
     _, publication = discover_official_url(client, today=now.date())
     official_fence = OfficialMspFence(client, env.get("GITHUB_TOKEN", ""),
                                      env.get("SERVICEIT_GH_LEDGER_KEY", ""),
                                      publication)
-    fence = ResultFence(client, env.get("GITHUB_TOKEN", ""),
-                        env.get("SERVICEIT_GH_LEDGER_KEY", ""))
-    report = {"status": "MSP_CRM_RESULT_RUN", "new_cards": len(cards),
+    if destination == "FIELD":
+        fence = ResultFence(client, env.get("GITHUB_TOKEN", ""),
+                            env.get("SERVICEIT_GH_LEDGER_KEY", ""))
+    else:
+        from .serviceit_fns_msp_timeline import TimelineFence
+        fence = TimelineFence(client, env.get("GITHUB_TOKEN", ""),
+                              env.get("SERVICEIT_GH_LEDGER_KEY", ""))
+    report = {"status": "MSP_CRM_RESULT_RUN", "destination": destination, "new_cards": len(cards),
               "verified_writes": 0, "hold": 0, "uncertain": 0}
     for card in cards[:MAX_PER_RUN]:
         try:
-            outcome = write_one(client, env, base, fence, official_fence, card)
+            outcome = write_one(client, env, base, fence, official_fence, card, destination=destination)
         except Exception:
             outcome = "HOLD_ERROR_OR_INCOMPLETE_EVIDENCE"
-        report["verified_writes"] += outcome == "MSP_CRM_RESULT_EXACT_READBACK"
-        report["uncertain"] += outcome in ("UNCERTAIN_DO_NOT_RETRY", "MSP_READBACK_OK_LEDGER_UNCERTAIN")
-        report["hold"] += outcome not in ("MSP_CRM_RESULT_EXACT_READBACK",
-                                          "ALREADY_EXACT_RESULT")
+        report["verified_writes"] += outcome in (
+            "MSP_CRM_RESULT_EXACT_READBACK", "TIMELINE_RESULT_EXACT_READBACK")
+        report["uncertain"] += outcome in (
+            "UNCERTAIN_DO_NOT_RETRY", "MSP_READBACK_OK_LEDGER_UNCERTAIN",
+            "TIMELINE_WRITE_UNCERTAIN_NO_RETRY",
+            "TIMELINE_READBACK_OK_LEDGER_UNCERTAIN")
+        report["hold"] += outcome not in (
+            "MSP_CRM_RESULT_EXACT_READBACK", "ALREADY_EXACT_RESULT",
+            "TIMELINE_RESULT_EXACT_READBACK", "TIMELINE_ALREADY_EXACT")
         if report["uncertain"]:
             break
     return report

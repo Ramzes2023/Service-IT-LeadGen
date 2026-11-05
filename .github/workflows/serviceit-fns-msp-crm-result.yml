@@ -3,7 +3,8 @@ on:
   schedule:
     # Official snapshot collector runs at 03:36 UTC; leave time for its ZIP.
     - cron: '15 8 * * *'
-  workflow_dispatch:
+  repository_dispatch:
+    types: [serviceit_bitrix_item_add_v1]
 
 permissions:
   contents: write
@@ -24,8 +25,10 @@ jobs:
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_REF: ${{ github.ref }}
-      # Do not allow a manual action to bypass the schedule-only write gate.
+      # All item-add events must be verified by HMAC in the Python worker.
       GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}

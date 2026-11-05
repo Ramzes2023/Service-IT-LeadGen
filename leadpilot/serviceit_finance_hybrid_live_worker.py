@@ -100,7 +100,7 @@ def call(client,base,method,args):
     if method=="tasks.task.add":
         need(set(args)=={"fields"} and
              set(args["fields"])==
-             {"TITLE","DESCRIPTION","RESPONSIBLE_ID","UF_CRM_TASK"},
+             {"TITLE","DESCRIPTION","CREATED_BY","RESPONSIBLE_ID","UF_CRM_TASK"},
              "FINANCE_TASK_ADD_OUTSIDE_SCOPE")
     if method=="tasks.task.update":
         need(set(args)=={"taskId","fields"} and
@@ -325,6 +325,7 @@ def create_task(client,base,env,deal,manager,creator,kind,description):
     try:
         added=call(client,base,"tasks.task.add",{
             "fields":{"TITLE":name,"DESCRIPTION":description,
+                      "CREATED_BY":creator,
                       "RESPONSIBLE_ID":manager,"UF_CRM_TASK":[link]},
         })["result"]
         need(type(added) is dict and type(added.get("task")) is dict,

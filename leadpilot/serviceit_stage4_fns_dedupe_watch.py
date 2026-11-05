@@ -210,7 +210,7 @@ def assess_card(client, base, card, env, *, now):
         return "HOLD_MISSING_VALID_COMPANY_INN"
     # Separate ServiceIT-only signal exclusions: this is NOT corporate STOP.
     try:
-        own_status, _own_reason = own_stop_check(inn, own_stop_rules())
+        own_status, _own_reason = own_stop_check(inn, own_stop_rules(), card_id=card)
     except SignalStopBlocked:
         return "HOLD_OWN_SIGNAL_STOP_CONFIG_INVALID"
     if own_status == "HOLD_OWN_SIGNAL_STOP":

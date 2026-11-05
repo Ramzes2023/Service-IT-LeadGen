@@ -47,29 +47,46 @@ def read_rules(path=PATH):
     for rule in payload["rules"]:
         require(type(rule) is dict
                 and set(rule) == {"kind", "value", "reason"}
-                and rule["kind"] == "inn"
+                and rule["kind"] in ("inn", "card_id")
                 and type(rule["value"]) is str
-                and _is_valid_inn(rule["value"])
+                and (rule["kind"] == "inn" and _is_valid_inn(rule["value"])
+                     or rule["kind"] == "card_id"
+                     and rule["value"].isascii()
+                     and rule["value"].isdecimal()
+                     and 8 <= int(rule["value"]) <= 2_000_000_000)
                 and rule["reason"] in ALLOWED_REASONS,
                 "OWN_STOP_RULE_INVALID")
-        require(rule["value"] not in unique,
-                "OWN_STOP_DUPLICATE_INN_RULE")
-        unique.add(rule["value"])
+        key = (rule["kind"], rule["value"])
+        require(key not in unique, "OWN_STOP_DUPLICATE_RULE")
+        unique.add(key)
     return payload["rules"]
 
 
-def check(inn, rules):
+def check(inn, rules, *, card_id=None):
     require(type(rules) is list, "OWN_STOP_UNVERIFIED_RULES")
-    if type(inn) is not str or not _is_valid_inn(inn):
-        return "HOLD_MISSING_VALID_INN", None
+    if card_id is not None:
+        require(type(card_id) is int
+                and 8 <= card_id <= 2_000_000_000
+                and card_id not in (3, 7), "OWN_STOP_CARD_ID_UNTRUSTED")
     for rule in rules:
         require(type(rule) is dict
-                and rule.get("kind") == "inn"
+                and rule.get("kind") in ("inn", "card_id")
                 and rule.get("reason") in ALLOWED_REASONS
-                and type(rule.get("value")) is str
-                and _is_valid_inn(rule["value"]),
+                and type(rule.get("value")) is str,
                 "OWN_STOP_UNTRUSTED_RULE")
-        if inn == rule["value"]:
-            return "HOLD_OWN_SIGNAL_STOP", rule["reason"]
+        if rule["kind"] == "card_id":
+            require(rule["value"].isascii()
+                    and rule["value"].isdecimal()
+                    and 8 <= int(rule["value"]) <= 2_000_000_000,
+                    "OWN_STOP_CARD_RULE_INVALID")
+            if card_id is not None and int(rule["value"]) == card_id:
+                return "HOLD_OWN_SIGNAL_STOP", rule["reason"]
+        else:
+            require(_is_valid_inn(rule["value"]),
+                    "OWN_STOP_INN_RULE_INVALID")
+            if type(inn) is str and inn == rule["value"] and _is_valid_inn(inn):
+                return "HOLD_OWN_SIGNAL_STOP", rule["reason"]
+    if type(inn) is not str or not _is_valid_inn(inn):
+        return "HOLD_MISSING_VALID_INN", None
     return ("OWN_SIGNAL_STOP_EMPTY" if not rules
             else "NOT_IN_OWN_SIGNAL_STOP"), None

@@ -293,7 +293,7 @@ def our_task(client,base,id,kind,deal,manager,creator):
 class FinanceFence(EncryptedEventFence):
     def __init__(self, client, token, key, kind, version="v1"):
         super().__init__(client,token,key)
-        need(kind in ("request-add","report-add","report-update"),
+        need(kind in ("request-add","report-add","report-update","request-update"),
              "FINANCE_FENCE_KIND_INVALID")
         need(type(version) is str and
              re.fullmatch(r"[a-f0-9]{64}|v1",version),
@@ -368,6 +368,32 @@ def update_report(client,base,env,deal,report_task,manager,creator,description):
     return "REPORT_UPDATED_VERIFIED"
 
 
+def update_request(client,base,env,deal,request_task,manager,creator,description):
+    need(type(description) is str and TASK_MARKER in description
+         and len(description)<=2500,"FINANCE_REQUEST_DESCRIPTION_INVALID")
+    before=our_task(client,base,request_task,"request",deal,manager,creator)
+    if before==description:
+        return "REQUEST_ALREADY_CURRENT"
+    version=sha256(description.encode("utf-8")).hexdigest()
+    fence=FinanceFence(client,env.get("GITHUB_TOKEN",""),
+                       env.get("SERVICEIT_GH_LEDGER_KEY",""),
+                       "request-update",version)
+    if fence.reserve(deal)!="RESERVED":
+        return "REQUEST_REVISION_PREVIOUSLY_FENCED"
+    try:
+        need(our_task(client,base,request_task,"request",deal,manager,creator)==before,
+             "FINANCE_REQUEST_CONCURRENT_EDIT")
+        call(client,base,"tasks.task.update",{
+            "taskId":request_task,"fields":{"DESCRIPTION":description}})
+        actual=our_task(client,base,request_task,"request",deal,manager,creator)
+        need(actual==description,"FINANCE_REQUEST_UPDATE_READBACK_MISMATCH")
+    except Exception:
+        fence.finalize(deal,"UNCERTAIN")
+        return "REQUEST_UPDATE_UNCERTAIN_NO_RETRY"
+    fence.finalize(deal,"VERIFIED")
+    return "REQUEST_UPDATED_VERIFIED"
+
+
 def report_text(result):
     need(type(result) is dict,"FINANCE_REPORT_INVALID")
     status=result.get("status")
@@ -421,13 +447,27 @@ def process_deal(client,base,env,cat,deal_id,creator,now):
                      positive(items[0].get("id",items[0].get("ID"))),
                      mode,deal_id,manager,creator)
     needed=result["status"] in (STATUS_MISSING,STATUS_CONFLICT,STATUS_DOCS)
-    if needed and not req:
-        description=TASK_MARKER+"\n"+manager_template(
-            deal_id,result.get("missing",[]))
+    if needed:
+        to_fill=sorted(set(result.get("missing",[])+result.get("conflicting",[])))
+        need(bool(to_fill),"FINANCE_UNKNOWN_DATA_GAP")
+        description=TASK_MARKER+"\n"+manager_template(deal_id,to_fill)
+    else:
+        description=(
+            TASK_MARKER+"\n"
+            "Финансовые суммы и реквизиты, ранее запрошенные для сделки, "
+            "заполнены. Проверьте отдельный предварительный расчёт РВП; "
+            "отсутствие дополнительного запроса не подтверждает банковские "
+            "поступления и не разрешает выплату.\n"
+        )
+    if req:
+        request_id=positive(req[0].get("id",req[0].get("ID")))
+        request=update_request(client,base,env,deal_id,request_id,
+                               manager,creator,description)
+    elif needed:
         request=create_task(client,base,env,deal_id,manager,
                             creator,"request",description)
     else:
-        request="REQUEST_ALREADY_PRESENT_OR_NOT_REQUIRED"
+        request="INPUT_REQUEST_NOT_NEEDED"
     # If a report exists, keep it up to date or hide stale figures on missing
     # data; if no report exists, create one only when both values are present.
     if rep:
@@ -459,6 +499,7 @@ def run(client,env,*,now=None):
         "processed":0,"input_missing_or_conflict":0,
         "draft_calculated":0,"tasks_created_and_verified":0,
         "reports_updated_and_verified":0,
+        "manager_requests_updated_and_verified":0,
         "blocked":0,
         "source_ingestion":0,"crm_item_writes":0,
         "support_deal_mutations":0,"outbound_customer_contacts":0,
@@ -491,6 +532,8 @@ def run(client,env,*,now=None):
                 item["request_action"],item["report_action"]))
         totals["reports_updated_and_verified"]+=int(
             item["report_action"]=="REPORT_UPDATED_VERIFIED")
+        totals["manager_requests_updated_and_verified"]+=int(
+            item["request_action"]=="REQUEST_UPDATED_VERIFIED")
         if "UNCERTAIN" in item["request_action"] or "UNCERTAIN" in item["report_action"]:
             totals["blocked"]+=1
     return totals

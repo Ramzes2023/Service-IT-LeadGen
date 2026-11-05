@@ -201,3 +201,35 @@ def test_explicit_model_hypothesis_source_unverified_is_preliminary_only(monkeyp
     assert "НЕ ПРОВЕРЕНА" in updates[0][BADGE_FIELD]
     assert "НЕ РАЗРЕШЁН" in updates[0][BADGE_FIELD]
     assert updates[0][VERSION_FIELD] == w.VERSION
+
+
+def test_approved_stop_inn_blocks_preliminary_score_no_crm_write(monkeypatch):
+    item=real_shape(inn="7700000009")
+    _, updates=wire(monkeypatch,item)
+    monkeypatch.setattr(w,"stop_precheck",lambda inn,env:"HIT")
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "CORPORATE_STOP_MATCH_HOLD_NO_SCORE"
+    assert updates == []
+    assert Fence.commits == []
+
+
+def test_broken_enabled_stop_config_blocks_preliminary_score(monkeypatch):
+    from leadpilot.serviceit_corporate_stop_inn import CorporateStopBlocked
+    _, updates=wire(monkeypatch,real_shape(inn="7700000009"))
+    monkeypatch.setattr(w,"stop_precheck",
+        lambda inn,env: (_ for _ in ()).throw(
+            CorporateStopBlocked("SYNTHETIC_BAD_STOP_CONFIG")))
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "CORPORATE_STOP_CONFIG_HOLD_NO_SCORE"
+    assert updates == []
+
+
+def test_missing_paid_egrul_api_does_not_block_provisional_score(monkeypatch):
+    _, updates=wire(monkeypatch,real_shape(inn="7700000009"))
+    monkeypatch.setattr(w,"stop_precheck",lambda inn,env:"NOT_CONFIGURED")
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "PROVISIONAL_SCORE_EXACT_READBACK"
+    assert len(updates) == 1
+    assert updates[0][VERSION_FIELD] == w.VERSION
+    assert "ФНС: НЕ ПРОВЕРЕНА" in updates[0][BADGE_FIELD]
+    assert "Контакт: НЕ РАЗРЕШЁН" in updates[0][BADGE_FIELD]

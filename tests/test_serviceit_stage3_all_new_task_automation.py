@@ -61,6 +61,8 @@ def prepare(monkeypatch,*,visible=0,uid=42,model=None,task_add_fail=False,
             assert args["fields"]["RESPONSIBLE_ID"]==(uid if expected_task_uid is None else expected_task_uid)
             assert args["fields"]["UF_CRM_TASK"]==["T426_120"]
             assert "НЕ звонить" in args["fields"]["DESCRIPTION"]
+            assert "egrul.nalog.ru" in args["fields"]["DESCRIPTION"]
+            assert "платная промышленная подписка" in args["fields"]["DESCRIPTION"]
             assert "RouterAI/DeepSeek" in args["fields"]["DESCRIPTION"]
             assert "резервного GigaChat" in args["fields"]["DESCRIPTION"]
             return {"task":{"id":"26234"}}

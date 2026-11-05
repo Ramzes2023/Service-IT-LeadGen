@@ -174,7 +174,12 @@ def run(client, env, *, now=None):
         return result
     fence = OwnSignalFence(client, env.get("GITHUB_TOKEN", ""),
                            env.get("SERVICEIT_GH_LEDGER_KEY", ""))
-    for card in cards[:MAX_CARDS]:
+    # Rotate batches to avoid starving newer cards when the current window
+    # holds more than one batch; no implicit processing of historic cards.
+    windows = max(1, (len(cards) + MAX_CARDS - 1) // MAX_CARDS)
+    slot = (int(now.timestamp()) // 1200) % windows
+    selected = cards[slot * MAX_CARDS:(slot + 1) * MAX_CARDS]
+    for card in selected:
         try:
             status = process_one(client, env, base, card, fence, rules, now=now)
         except Exception:

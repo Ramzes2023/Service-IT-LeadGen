@@ -262,14 +262,18 @@ class OfficialMspFence(EncryptedEventFence):
                         ("fns-msp-card-inn-v1:" + inn).encode(),
                         sha256).hexdigest()
 
-    def already_checked(self, card, inn):
-        """Only complete matching encrypted receipts qualify as cached."""
+    def read_checked_receipt(self, card, inn):
+        """Return verified encrypted HOLD record, not formal registry clearance.
+
+        Missing receipt -> None. Malformed/ambiguous receipt -> fail closed.
+        The report may assert *snapshot membership only*, not legal status.
+        """
         try:
             response = self.client.get(
                 self.url(card), params={"ref": BRANCH}, headers=self.headers,
                 timeout=20, follow_redirects=False)
             if response.status_code == 404:
-                return False
+                return None
             require(response.status_code == 200,
                     "FNS_EXISTING_RECEIPT_NOT_READABLE")
             body = response.json()
@@ -286,13 +290,27 @@ class OfficialMspFence(EncryptedEventFence):
             # A previously reserved/unverified operation is not silently retried.
             require(record.get("status") == "HOLD"
                     and expected.get("fns_egrul_verified") is False
-                    and expected.get("formal_score_authorized") is False,
+                    and expected.get("formal_score_authorized") is False
+                    and expected.get("independent_signature_verified") is False
+                    and expected.get("corporate_stop_verified") is False
+                    and expected.get("msp_category")
+                    in ("MICRO", "SMALL", "MEDIUM", None)
+                    and type(expected.get("archive_sha256")) is str
+                    and re.fullmatch("[a-f0-9]{64}", expected["archive_sha256"]),
                     "FNS_RECEIPT_NOT_COMPLETELY_COMMITTED")
-            return True
+            return {
+                "msp_category": expected["msp_category"],
+                "published": self.publication.isoformat(),
+                "fns_egrul_verified": False,
+                "formal_score_authorized": False,
+            }
         except OfficialMspBlocked:
             raise
         except Exception:
             raise OfficialMspBlocked("FNS_RECEIPT_UNVERIFIED") from None
+
+    def already_checked(self, card, inn):
+        return self.read_checked_receipt(card, inn) is not None
 
     def save_holding_result(self, card, inn, category, publication, checksum):
         require(category in ("1", "2", "3", None)

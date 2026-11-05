@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+from pathlib import Path
 
 import httpx
 
@@ -18,7 +19,7 @@ from .bitrix_1062_mapping import _is_valid_inn
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_bitrix_batch_worker import list_only
 from .serviceit_bitrix_poll_fallback import after_activation, calibrate_known_card, discover
-from .serviceit_bitrix_dispatch_worker import EncryptedEventFence, REPOSITORY, PORTAL
+from .serviceit_bitrix_dispatch_worker import (EncryptedEventFence, REPOSITORY, PORTAL, verify_event)
 from .serviceit_enrichment_worker import PREFIX, fingerprint, normalized, validate_identity
 from .serviceit_stage4_fns_dedupe_watch import read_item
 from .serviceit_fns_msp_official_live import (
@@ -162,16 +163,16 @@ def write_one(client, env, base, fence, official_fence, card):
                  if k not in ignored), "MSP_OTHER_CARD_DATA_CHANGED")
     except Exception:
         return "UNCERTAIN_DO_NOT_RETRY"
-    # Ledger was finalized UNCERTAIN before mutation; do not overwrite it
-    # through a stale file SHA. CRM readback is the success evidence.
-    return "MSP_CRM_RESULT_EXACT_READBACK"
+    return ("MSP_CRM_RESULT_EXACT_READBACK"
+            if fence.finalize(card, "VERIFIED")
+            else "MSP_READBACK_OK_LEDGER_UNCERTAIN")
 
 
 def run(client, env, *, now=None):
     now = now or datetime.now(timezone.utc)
     need(env.get("GITHUB_REPOSITORY") == REPOSITORY
          and env.get("GITHUB_REF") == "refs/heads/main"
-         and env.get("GITHUB_EVENT_NAME") == "schedule"
+         and env.get("GITHUB_EVENT_NAME") in ("schedule", "repository_dispatch")
          and env.get("SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED") == ENABLED,
          "MSP_WRITE_OWNER_GATE_MISSING")
     base = validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK", ""))
@@ -181,8 +182,18 @@ def run(client, env, *, now=None):
     calibrate_known_card(source)
     cards = discover(source, after_activation(env, now), now)
     need(len(cards) <= 200, "MSP_DISCOVERY_OVER_BUDGET")
+    if env["GITHUB_EVENT_NAME"] == "repository_dispatch":
+        path = Path(env.get("GITHUB_EVENT_PATH", ""))
+        need(path.is_file() and 0 < path.stat().st_size <= 256000,
+             "MSP_SIGNED_EVENT_FILE_MISSING")
+        event_card = verify_event(
+            json.loads(path.read_text("utf-8")),
+            env.get("SERVICEIT_BITRIX_EVENT_BRIDGE_KEY", ""))
+        # The signed event must name a genuinely NEW card discovered in our
+        # strict 1062/21 post-cutover window.
+        cards = [card for card in cards if card == event_card]
     if not cards:
-        return {"status": "NO_NEW_CARDS", "new_cards": 0, "verified_writes": 0}
+        return {"status": "NO_ELIGIBLE_NEW_CARD", "new_cards": 0, "verified_writes": 0}
     result_field_verified(client, base)
     _, publication = discover_official_url(client, today=now.date())
     official_fence = OfficialMspFence(client, env.get("GITHUB_TOKEN", ""),
@@ -198,7 +209,7 @@ def run(client, env, *, now=None):
         except Exception:
             outcome = "HOLD_ERROR_OR_INCOMPLETE_EVIDENCE"
         report["verified_writes"] += outcome == "MSP_CRM_RESULT_EXACT_READBACK"
-        report["uncertain"] += outcome == "UNCERTAIN_DO_NOT_RETRY"
+        report["uncertain"] += outcome in ("UNCERTAIN_DO_NOT_RETRY", "MSP_READBACK_OK_LEDGER_UNCERTAIN")
         report["hold"] += outcome not in ("MSP_CRM_RESULT_EXACT_READBACK",
                                           "ALREADY_EXACT_RESULT")
         if report["uncertain"]:

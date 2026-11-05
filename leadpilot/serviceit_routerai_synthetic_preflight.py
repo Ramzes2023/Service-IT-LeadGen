@@ -11,7 +11,7 @@ import os
 
 import httpx
 
-from .ai import _SYSTEM, _validated_answer, config_from_env
+from .ai import _SYSTEM, _validated_answer, config_from_env, routerai_api_key_format_valid
 
 SYNTHETIC_TEXT = "Публичная учебная закупка: требуется сопровождение 1С для магазина."
 MODEL = "deepseek/deepseek-v4.1-flash"
@@ -69,8 +69,10 @@ def inspect(client: httpx.Client, env: dict) -> dict:
         return {**base, "status": "ROUTERAI_PROVIDER_VARIABLE_NOT_ENABLED"}
     if env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") != "YES_1062_21":
         return {**base, "status": "ROUTERAI_PRIVACY_APPROVAL_NOT_SET"}
-    if not env.get("ROUTERAI_API_KEY", "").strip():
+    if not env.get("ROUTERAI_API_KEY", ""):
         return {**base, "status": "ROUTERAI_API_KEY_SECRET_NOT_FOUND"}
+    if not routerai_api_key_format_valid(env.get("ROUTERAI_API_KEY")):
+        return {**base, "status": "ROUTERAI_API_KEY_FORMAT_INVALID_NO_NETWORK"}
     try:
         cfg = config_from_env({**env, "AI_ENABLE": "1", "AI_PROVIDER": "routerai"})
     except (RuntimeError, ValueError):

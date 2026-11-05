@@ -153,3 +153,18 @@ def test_no_match_in_partial_stop_scope_is_not_global_stop_clear(monkeypatch):
     assert out["outcomes"]=={"HOLD_FNS_SNAPSHOT_NOT_CONNECTED":1}
     assert out["stop_list_status"]=="DEFERRED_NOT_CONFIGURED"
     assert out["formal_score_authorized"] is False
+
+
+def test_cloud_watcher_keeps_github_read_token_for_free_msp_receipts(monkeypatch,capsys):
+    # The encrypted official FNS-MSP receipt is read through GitHub REST.
+    # Do not discard GitHub token from the in-memory environment.
+    secret="SYNTHETIC_GITHUB_TOKEN_NOT_REAL_0123456"
+    monkeypatch.setenv("GITHUB_TOKEN",secret)
+    captured={}
+    def stub_run(client, env):
+        captured["token"]=env.get("GITHUB_TOKEN")
+        return {"status":"FNS_READONLY_NO_NEW_CARDS","crm_writes":0}
+    monkeypatch.setattr(m,"run",stub_run)
+    assert m.main() == 0
+    assert captured["token"] == secret
+    assert secret not in capsys.readouterr().out

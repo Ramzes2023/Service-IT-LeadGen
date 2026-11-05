@@ -5,6 +5,8 @@ on:
     - cron: '15 8 * * *'
   repository_dispatch:
     types: [serviceit_bitrix_item_add_v1]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -19,7 +21,11 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
-      vars.SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED == 'YES_1062_21_FNS_MSP_RESULT_WRITE'
+      (github.event_name != 'issue_comment' ||
+       (github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 200 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_FNS_MSP_CRM_NEW_LIVE_ONCE_V1'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -33,7 +39,7 @@ jobs:
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
       SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
-      SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED: ${{ vars.SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED }}
+      SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED: YES_1062_21_FNS_MSP_RESULT_WRITE
     steps:
       - uses: actions/checkout@v4
         with:

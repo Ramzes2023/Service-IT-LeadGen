@@ -154,7 +154,7 @@ def test_credit_access_denied_is_explicitly_unknown_not_zero():
 
 def test_malformed_routerai_token_refused_without_paid_network_call():
     for key in ("THIS-IS-NOT-ROUTERAI-API", "Bearer sk-fake-secret-value",
-                '"sk-fake-secret-value"', "sk-fake-secret-value\\n",
+                '"sk-fake-secret-value"', "sk-fake-secret-value" + chr(10),
                 "sk-bad token", "sk-short"):
         with httpx.Client(transport=httpx.MockTransport(
             lambda req: (_ for _ in ()).throw(

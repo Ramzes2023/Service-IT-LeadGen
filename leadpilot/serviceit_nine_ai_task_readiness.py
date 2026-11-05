@@ -132,7 +132,7 @@ def runtime_gates(env):
     host_configured = bool(
         0 < len(parts) <= 20
         and all(bool(re.fullmatch(
-            r"(?:[a-z0-9-]{1,63}\\.)+[a-z]{2,20}", h))
+            r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", h))
             and not h.endswith((".test", ".invalid", ".local", ".localhost"))
             for h in parts)
     )

@@ -35,6 +35,7 @@ from .serviceit_stage34_signed_readonly_sidecar import (
     ObserverBlocked, request as readonly_request,
 )
 from .serviceit_enrichment_worker import normalized, validate_identity, Blocked
+from .serviceit_own_signal_stop import read_rules as own_signal_stop_rules, check as own_signal_stop_check
 
 CUTOVER = datetime(2026, 11, 4, 9, 50, tzinfo=timezone.utc)
 WRITE_GATE = "YES_1062_21_INTERNAL_REVIEW"
@@ -145,6 +146,14 @@ def process_card(client, env, card, *, now=None):
     require(type(card) is int and 8 <= card <= 2_000_000_000
             and card not in (3, 7), "HISTORICAL_CARD_FORBIDDEN")
     item=card_read(client,base,card,now=now)
+    # A user-owned LeadGen STOP record suppresses a NEW auto review task.
+    # This is separate from corporate STOP; no company data are required.
+    from .serviceit_enrichment_worker import PREFIX
+    own_status, _own_reason = own_signal_stop_check(
+        item.get(PREFIX + "COMPANY_INN"), own_signal_stop_rules(),
+        card_id=card)
+    if own_status == "HOLD_OWN_SIGNAL_STOP":
+        return "OWN_SIGNAL_STOP_HOLD_NO_TASK"
     check_task_binding(client,base)
     binding=owner_type(client,base)+"_"+str(card)
     n=visible_tasks(client,base,binding)

@@ -176,9 +176,24 @@ def run(client, env, *, now=None):
     now = now or datetime.now(timezone.utc)
     need(env.get("GITHUB_REPOSITORY") == REPOSITORY
          and env.get("GITHUB_REF") == "refs/heads/main"
-         and env.get("GITHUB_EVENT_NAME") in ("schedule", "repository_dispatch")
+         and env.get("GITHUB_EVENT_NAME") in ("schedule", "repository_dispatch", "issue_comment")
          and env.get("SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED") == ENABLED,
          "MSP_WRITE_OWNER_GATE_MISSING")
+    if env["GITHUB_EVENT_NAME"] == "issue_comment":
+        path = Path(env.get("GITHUB_EVENT_PATH", ""))
+        need(path.is_file() and 0 < path.stat().st_size <= 256000,
+             "MSP_OWNER_EVENT_FILE_INVALID")
+        event = json.loads(path.read_text("utf-8"))
+        need(type(event) is dict
+             and event.get("action") == "created"
+             and (event.get("repository") or {}).get("full_name") == REPOSITORY
+             and (event.get("issue") or {}).get("number") == 200
+             and not (event.get("issue") or {}).get("pull_request")
+             and (event.get("sender") or {}).get("login") == "Ramzes2023"
+             and (event.get("comment") or {}).get("body")
+                 == "SERVICEIT_FNS_MSP_CRM_NEW_LIVE_ONCE_V1"
+             and ((event.get("comment") or {}).get("user") or {}).get("login")
+                 == "Ramzes2023", "MSP_OWNER_COMMENT_UNAUTHORIZED")
     base = validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK", ""))
     need(base.startswith(f"https://{PORTAL}/rest/"),
          "MSP_WRONG_PORTAL")

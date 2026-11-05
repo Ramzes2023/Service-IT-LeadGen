@@ -12,7 +12,6 @@ No original public dataset or raw INNs are ever committed to GitHub.
 from __future__ import annotations
 
 import base64
-from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import hmac
@@ -327,6 +326,22 @@ def run(client, env, *, now=None):
             and env.get("GITHUB_EVENT_NAME") in ("schedule", "issue_comment")
             and env.get("SERVICEIT_FNS_MSP_AUTO_ENABLED") == ENABLED,
             "FNS_OWNER_AND_CLOUD_GATE_MISSING")
+    if env.get("GITHUB_EVENT_NAME") == "issue_comment":
+        try:
+            path = Path(env.get("GITHUB_EVENT_PATH", ""))
+            require(path.is_file() and 0 < path.stat().st_size < 250000,
+                    "FNS_OWNER_EVENT_MISSING")
+            event = json.loads(path.read_text("utf-8"))
+            require(type(event) is dict and event.get("action") == "created"
+                    and (event.get("repository") or {}).get("full_name") == REPOSITORY
+                    and (event.get("issue") or {}).get("number") == 148
+                    and (event.get("issue") or {}).get("pull_request") is None
+                    and (event.get("sender") or {}).get("login") == "Ramzes2023"
+                    and (event.get("comment") or {}).get("body") == OWNER_MARKER
+                    and ((event.get("comment") or {}).get("user") or {}).get("login")
+                    == "Ramzes2023", "FNS_OWNER_EVENT_INVALID")
+        except (OSError, ValueError, TypeError, AttributeError):
+            raise OfficialMspBlocked("FNS_OWNER_EVENT_UNVERIFIED") from None
     base = validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK", ""))
     require(base.startswith(f"https://{PORTAL}/rest/"),
             "FNS_CORPORATE_PORTAL_INVALID")

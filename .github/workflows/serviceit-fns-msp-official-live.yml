@@ -1,0 +1,51 @@
+name: ServiceIT official FNS MSP monthly snapshot for new 1062/21 cards (NO CRM WRITE)
+on:
+  schedule:
+    # Once daily at most. Skip 2+ GB archive if no genuine new INNs.
+    - cron: '36 3 * * *'
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: read
+
+concurrency:
+  group: serviceit-official-fns-msp-snapshot-readonly
+  cancel-in-progress: false
+
+jobs:
+  exact-official-fns-msp:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_FNS_MSP_OFFICIAL_LIVE_ONCE_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_FNS_MSP_AUTO_ENABLED: YES_1062_21_OFFICIAL_MSP_READONLY
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install existing checked dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check real new card INNs; official FNS ZIP only if missing current snapshot evidence
+        run: python -m leadpilot.serviceit_fns_msp_official_live

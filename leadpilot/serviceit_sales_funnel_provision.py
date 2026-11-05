@@ -156,7 +156,10 @@ def event_allowed(env,*,apply):
 
 def ensure_funnel(client,env,*,apply=False):
     """Never add unless portal-wide admin verified; only exact sales funnel."""
-    webhook=env.get("SERVICEIT_BITRIX_WEBHOOK","")
+    # Separate short-lived admin credential is used ONLY by this isolated job.
+    # The everyday 1062/21 worker must keep its non-admin webhook unchanged.
+    webhook=(env.get("SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK")
+             or env.get("SERVICEIT_BITRIX_WEBHOOK",""))
     base=validate_webhook(webhook)
     need(base.startswith(PORTAL), "WRONG_CORPORATE_PORTAL")
     is_admin=rest(client,base,"user.admin",{})

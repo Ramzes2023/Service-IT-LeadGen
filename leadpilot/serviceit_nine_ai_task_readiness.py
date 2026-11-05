@@ -121,12 +121,44 @@ def inspect(client, webhook):
     }
 
 
+def runtime_gates(env):
+    """Read deployment gates only; never print URLs, secret keys or customer data."""
+    need(type(env) is dict, "AI_RUNTIME_ENV_INVALID")
+    enabled = env.get("SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED") == "YES"
+    privacy = env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
+    hosts = env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", "")
+    import re
+    parts = hosts.split(",") if hosts else []
+    host_configured = bool(
+        0 < len(parts) <= 20
+        and all(bool(re.fullmatch(
+            r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", h))
+            and not h.endswith((".test", ".invalid", ".local", ".localhost"))
+            for h in parts)
+    )
+    poll = env.get("SERVICEIT_BITRIX_POLL_ENABLED") == "YES_1062_21_READONLY"
+    worker = env.get("SERVICEIT_BITRIX_EVENT_AI_ENABLED") == "YES_1062_21_CLOUD"
+    return {
+        "scheduled_new_card_poll_enabled": poll,
+        "nine_field_event_worker_enabled": worker,
+        "model_privacy_approved": privacy,
+        "public_title_model_enabled": enabled,
+        "approved_public_title_hostlist_valid": host_configured,
+        "public_title_model_call_eligible_by_config":
+            poll and worker and privacy and enabled and host_configured,
+        "model_called_in_this_check": False,
+        "source_prepopulated_nine_hold_fields_may_skip_model": True,
+        "all_new_cards_receive_llm_analysis_proven": False,
+    }
+
+
 def main():
     try:
         env = dict(os.environ)
         gate(env)
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
             output = inspect(client, env.get("SERVICEIT_BITRIX_WEBHOOK", ""))
+        output["runtime"] = runtime_gates(env)
         print(json.dumps(output, ensure_ascii=False, sort_keys=True))
         return 0 if output["status"] == "NINE_AI_TASK_METADATA_READY" else 2
     except Exception:

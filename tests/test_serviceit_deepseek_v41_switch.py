@@ -13,7 +13,7 @@ from leadpilot.serviceit_preliminary_gigachat import model_hypothesis_fields
 def config(**kwargs):
     return {"AI_ENABLE": "1", "AI_PROVIDER":"routerai",
             "SERVICEIT_ROUTERAI_PRIVACY_APPROVED":"YES_1062_21",
-            "ROUTERAI_API_KEY":"SYNTHETIC-TEST-KEY-ONLY", **kwargs}
+            "ROUTERAI_API_KEY":"sk-SYNTHETIC-TEST-KEY-ONLY", **kwargs}
 
 
 def test_official_deepseek_identity_not_derived_from_user_url():
@@ -22,7 +22,7 @@ def test_official_deepseek_identity_not_derived_from_user_url():
     assert cfg.provider == "routerai"
     assert cfg.url == "https://routerai.ru/api/v1/chat/completions"
     assert cfg.model == "deepseek/deepseek-v4.1-flash"
-    assert cfg.key == "SYNTHETIC-TEST-KEY-ONLY"
+    assert cfg.key == "sk-SYNTHETIC-TEST-KEY-ONLY"
 
 
 @pytest.mark.parametrize("overrides",[
@@ -41,7 +41,7 @@ def test_deepseek_http_request_has_json_and_unchanged_evidence():
     def transport(req):
         assert req.url.host=="routerai.ru"
         assert req.url.path=="/api/v1/chat/completions"
-        assert req.headers["Authorization"]=="Bearer SYNTHETIC-TEST-KEY-ONLY"
+        assert req.headers["Authorization"]=="Bearer sk-SYNTHETIC-TEST-KEY-ONLY"
         payload=json.loads(req.content)
         inspected.append(payload)
         assert payload["model"] == "deepseek/deepseek-v4.1-flash"

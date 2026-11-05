@@ -68,3 +68,38 @@ def test_readonly_field_is_reported():
     result, _ = run_audit(readonly="AI_FULL_REPORT")
     assert result["per_field_metadata"]["AI_FULL_REPORT"] is False
     assert result["status"] == "NINE_AI_TASK_METADATA_GAPS"
+
+
+def test_runtime_gate_reports_disabled_title_model_without_claiming_llm():
+    from leadpilot.serviceit_nine_ai_task_readiness import runtime_gates
+    output = runtime_gates({})
+    assert output["public_title_model_call_eligible_by_config"] is False
+    assert output["model_called_in_this_check"] is False
+    assert output["all_new_cards_receive_llm_analysis_proven"] is False
+
+
+def test_all_explicit_title_model_gates_configured_but_no_llm_proof():
+    from leadpilot.serviceit_nine_ai_task_readiness import runtime_gates
+    output = runtime_gates({
+        "SERVICEIT_BITRIX_POLL_ENABLED": "YES_1062_21_READONLY",
+        "SERVICEIT_BITRIX_EVENT_AI_ENABLED": "YES_1062_21_CLOUD",
+        "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "YES",
+        "SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED": "YES",
+        "SERVICEIT_PRELIMINARY_PUBLIC_HOSTS": "example.com,service.ru",
+    })
+    assert output["public_title_model_call_eligible_by_config"] is True
+    assert output["all_new_cards_receive_llm_analysis_proven"] is False
+
+
+def test_invalid_hostlist_is_not_enough_for_model_call():
+    from leadpilot.serviceit_nine_ai_task_readiness import runtime_gates
+    env = {
+        "SERVICEIT_BITRIX_POLL_ENABLED": "YES_1062_21_READONLY",
+        "SERVICEIT_BITRIX_EVENT_AI_ENABLED": "YES_1062_21_CLOUD",
+        "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "YES",
+        "SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED": "YES",
+        "SERVICEIT_PRELIMINARY_PUBLIC_HOSTS": "internal.local",
+    }
+    result = runtime_gates(env)
+    assert result["approved_public_title_hostlist_valid"] is False
+    assert result["public_title_model_call_eligible_by_config"] is False

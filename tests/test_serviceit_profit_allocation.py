@@ -47,7 +47,7 @@ def test_bad_allocation_refused(revenue,cost,d_rate,s_rate):
 
 def test_proposed_rates_are_not_falsely_called_corporate_approved():
     r = proposed_settings()
-    assert r["status"] == "PENDING_COMPANY_APPROVAL"
+    assert r["status"] == "RATES_AGREED_AS_REPORTED_BY_OWNER_NO_PAYROLL_RELEASE"
     assert (r["developer_percent"],r["sales_manager_percent"],r["company_percent"]) == ("15","10","75")
 
 

@@ -1,6 +1,7 @@
 """ServiceIT: profit-based developer / sales-manager / company allocation.
 
-The owner-requested 15/10/75 split is a configurable POLICY PROPOSAL.
+The owner reports company agreement on the 15/10/75 distribution (2026-11-05).
+Rates do not themselves authorize salary payments or prove bank settlement.
 This module has no CRM, accounting, payroll or network writes. A real accrual
 must first pass serviceit_financial_motivation.calculate_approved_draft with
 independently attested bank settlements, invoices, direct expenses, eligible
@@ -17,7 +18,7 @@ from .serviceit_financial_motivation import (
 DEFAULT_DEVELOPER_PERCENT = "15"
 DEFAULT_SALES_MANAGER_PERCENT = "10"
 DEFAULT_COMPANY_PERCENT = "75"
-PENDING = "PROPOSED_PROFIT_SPLIT_NOT_PAYABLE"
+PENDING = "OWNER_REPORTED_AGREED_RATES_CALCULATION_NOT_PAYABLE"
 
 
 def _round(value: Decimal) -> Decimal:
@@ -114,9 +115,9 @@ def company_approved_split_draft(scheme, deal):
 
 
 def proposed_settings():
-    """User-proposed scheme only; company must approve before finance imports."""
+    """Owner reports rates agreed; independent payment evidence still required."""
     return {
-        "status": "PENDING_COMPANY_APPROVAL",
+        "status": "RATES_AGREED_AS_REPORTED_BY_OWNER_NO_PAYROLL_RELEASE",
         "currency": "RUB",
         "basis": "CONFIRMED_PAID_REVENUE_EX_VAT_MINUS_DOCUMENTED_DIRECT_COSTS",
         "developer_percent": DEFAULT_DEVELOPER_PERCENT,

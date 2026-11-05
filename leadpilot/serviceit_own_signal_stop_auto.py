@@ -91,7 +91,7 @@ def process_one(client, env, base, card, fence, rules, *, now):
     require(date_value(before.get("createdTime")) >= after_activation(env, now),
             "OWN_STOP_HISTORICAL_CARD_FORBIDDEN")
     inn = before.get(PREFIX + "COMPANY_INN")
-    status, reason = own_check(inn, rules)
+    status, reason = own_check(inn, rules, card_id=card)
     if status != "HOLD_OWN_SIGNAL_STOP":
         return status
     value = message(reason)

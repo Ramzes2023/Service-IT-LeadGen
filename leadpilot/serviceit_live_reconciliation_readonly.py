@@ -180,7 +180,11 @@ def check(client, env, *, now=None):
     except Exception:
         pass
 
-    for card in cards[:MAX_INSPECT]:
+    # Rotate the bounded observation window on each hourly scheduled run.
+    # Otherwise a busy CRM would starve all cards after the first 12 forever.
+    offset = (now.hour * MAX_INSPECT) % len(cards) if cards else 0
+    window = (cards[offset:] + cards[:offset])[:MAX_INSPECT]
+    for card in window:
         try:
             item = detail(client,base,card)
         except Exception:

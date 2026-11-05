@@ -30,6 +30,7 @@ jobs:
       GITHUB_EVENT_PATH: ${{ github.event_path }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
       FUNNEL_CREATE_MODE: ${{ github.event.comment.body == 'SERVICEIT_SALES_FUNNEL_CREATE_ONCE_V1' && 'apply' || 'readonly' }}
     steps:

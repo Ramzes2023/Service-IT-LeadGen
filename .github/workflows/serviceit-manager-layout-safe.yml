@@ -37,7 +37,9 @@ jobs:
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_REF: ${{ github.ref }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      # Apply uses a separate short-lived corporate admin credential;
+      # read-only preview retains the existing non-admin automation webhook.
+      SERVICEIT_BITRIX_WEBHOOK: ${{ ((github.event_name == 'workflow_dispatch' && inputs.apply) || (github.event_name == 'issue_comment' && github.event.comment.body == 'SERVICEIT_MANAGER_LAYOUT_APPLY_V1')) && secrets.SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK || secrets.SERVICEIT_BITRIX_WEBHOOK }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
       # The exact owner-only Issue #74 APPLY marker is the owner opt-in;
       # administrator approval remains a separate, non-bypassable gate.

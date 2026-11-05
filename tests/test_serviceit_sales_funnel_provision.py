@@ -119,3 +119,19 @@ def test_duplicate_visible_named_funnel_blocks(monkeypatch):
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(m.SalesFunnelBlocked,match="DUPLICATE_NAMED_FUNNEL"):
             m.ensure_funnel(client,{"SERVICEIT_BITRIX_WEBHOOK":"x"},apply=True)
+
+
+def test_separate_short_lived_admin_secret_preferred_over_everyday_automation(monkeypatch):
+    client,state=client_state(monkeypatch,admin=False)
+    seen=[]
+    def capture(value):
+        seen.append(value)
+        return "https://serviseit.bitrix24.ru/rest/1615/redacted"
+    monkeypatch.setattr(m,"validate_webhook",capture)
+    with client:
+        m.ensure_funnel(client,{
+            "SERVICEIT_BITRIX_WEBHOOK":"ordinary-limited",
+            "SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK":"separate-admin-secret",
+        },apply=True)
+    assert seen==["separate-admin-secret"]
+    assert state["add_calls"]==0

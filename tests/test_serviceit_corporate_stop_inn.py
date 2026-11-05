@@ -17,7 +17,7 @@ def test_approved_list_blocks_positive_inn_without_disclosing_raw_data():
     assert s.precheck(INN,env)=="HIT"
     assert INN not in env["SERVICEIT_CORPORATE_STOP_INN_MANIFEST"]
     assert KEY not in env["SERVICEIT_CORPORATE_STOP_INN_MANIFEST"]
-    assert s.precheck("500100732259",env)=="NO_MATCH_IN_INN_SCOPE_ONLY"
+    assert s.precheck("7700000016",env)=="NO_MATCH_IN_INN_SCOPE_ONLY"
 
 def test_empty_list_is_not_clearance_and_missing_approval_is_unknown():
     assert s.precheck(INN,{})=="NOT_CONFIGURED"

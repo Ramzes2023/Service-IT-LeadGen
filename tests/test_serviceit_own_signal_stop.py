@@ -89,3 +89,21 @@ def test_no_match_never_reserves_or_comments(monkeypatch):
                                         tzinfo=m.timezone.utc))
     assert status == "NOT_IN_OWN_SIGNAL_STOP"
     fence.reserve.assert_not_called()
+
+def test_exact_card_only_does_not_block_another_tender(tmp_path):
+    rules = read_rules(config(tmp_path, [
+        {"kind": "card_id", "value": "108", "reason": "NOT_RELEVANT"}
+    ]))
+    assert check("7707083893", rules, card_id=108) == (
+        "HOLD_OWN_SIGNAL_STOP", "NOT_RELEVANT")
+    assert check("7707083893", rules, card_id=109) == (
+        "NOT_IN_OWN_SIGNAL_STOP", None)
+    assert check(None, rules, card_id=108) == (
+        "HOLD_OWN_SIGNAL_STOP", "NOT_RELEVANT")
+
+
+def test_historical_card_rule_forbidden(tmp_path):
+    with pytest.raises(SignalStopBlocked):
+        read_rules(config(tmp_path, [
+            {"kind": "card_id", "value": "3", "reason": "NOT_RELEVANT"}
+        ]))

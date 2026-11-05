@@ -58,7 +58,7 @@ def test_cannot_run_under_other_repo_branch(tmp_path):
 
 def test_two_production_workflows_use_same_policy_and_ca():
     base=Path(__file__).resolve().parents[1]/".github/workflows"
-    expected="AI_PROVIDER: \${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}"
+    expected="AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}"
     for file in ["serviceit-bitrix-new-card-ai.yml",
                  "serviceit-bitrix-all-new-batch-ai.yml",
                  "serviceit-routerai-primary-readiness.yml"]:

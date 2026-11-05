@@ -186,7 +186,9 @@ def reconcile(automatic, comments, *, bank_evidence=None, expense_evidence=None)
 
 def manager_template(deal_id, missing):
     need(type(deal_id) is int and deal_id>0,"FINANCE_DEAL_ID_INVALID")
-    need(type(missing) is list and set(missing)<=set(MANUAL_KEYS),
+    need(type(missing) is list and len(missing)>0
+         and len(missing)==len(set(missing))
+         and set(missing)<=set(MANUAL_KEYS),
          "FINANCE_MISSING_LIST_INVALID")
     lines=["Пожалуйста, внесите данные только если они отсутствуют в учёте.",
            "Откройте СДЕЛКУ «Лидогенерация» (не воронку техподдержки),",
@@ -197,7 +199,8 @@ def manager_template(deal_id, missing):
            "",
            BEGIN]
     for key in MANUAL_KEYS:
-        lines.append(key+"=")
+        if key in missing:
+            lines.append(key+"=")
     lines.extend((END,"",
                   "PAID_EX_VAT_RUB — реально поступившая выручка без НДС.",
                   "DIRECT_COSTS_RUB — ВСЕ прямые расходы (включая 0, если их нет).",

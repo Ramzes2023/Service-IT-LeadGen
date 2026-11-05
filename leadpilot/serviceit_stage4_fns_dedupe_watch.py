@@ -26,6 +26,7 @@ from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
 from .serviceit_stage4_fns_msp_snapshot import verify as verify_msp_snapshot
 from .serviceit_three_signal_triage import classify_signal
 from .serviceit_corporate_stop_inn import precheck as stop_precheck, CorporateStopBlocked
+from .serviceit_own_signal_stop import read_rules as own_stop_rules, check as own_stop_check, SignalStopBlocked
 
 PORTAL = "https://serviseit.bitrix24.ru/rest/"
 MAX_CARDS_PER_RUN = 6
@@ -207,6 +208,15 @@ def assess_card(client, base, card, env, *, now):
     inn = row.get(COMPANY_FIELD)
     if type(inn) is not str or not _is_valid_inn(inn):
         return "HOLD_MISSING_VALID_COMPANY_INN"
+    # Separate ServiceIT-only signal exclusions: this is NOT corporate STOP.
+    try:
+        own_status, _own_reason = own_stop_check(inn, own_stop_rules())
+    except SignalStopBlocked:
+        return "HOLD_OWN_SIGNAL_STOP_CONFIG_INVALID"
+    if own_status == "HOLD_OWN_SIGNAL_STOP":
+        return "HOLD_OWN_SIGNAL_STOP_MATCH"
+    need(own_status in ("OWN_SIGNAL_STOP_EMPTY", "NOT_IN_OWN_SIGNAL_STOP"),
+         "OWN_SIGNAL_STOP_STATUS_INVALID")
     process = same_process_visible_duplicates(client, base, inn, card)
     requisites = crm_inn_visibility_readonly(client, env["SERVICEIT_BITRIX_WEBHOOK"], inn)
     need(requisites.get("global_crm_customer_clear") is False
@@ -280,6 +290,8 @@ def run(client, env, *, now=None):
         need(result in {
             "HOLD_MISSING_VALID_COMPANY_INN",
             "HOLD_POTENTIAL_VISIBLE_CRM_DUPLICATE",
+            "HOLD_OWN_SIGNAL_STOP_MATCH",
+            "HOLD_OWN_SIGNAL_STOP_CONFIG_INVALID",
             "HOLD_CORPORATE_STOP_MATCH",
             "HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED",
             "HOLD_FNS_SNAPSHOT_NOT_CONNECTED",

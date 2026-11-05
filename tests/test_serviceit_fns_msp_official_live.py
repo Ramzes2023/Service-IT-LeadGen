@@ -194,3 +194,53 @@ def test_card_and_inn_ledger_paths_are_keyed_not_enumerable():
         assert INN not in url
         assert INN not in receipt.inn_digest(INN)
         assert receipt.url(12345) != receipt.url(12346)
+
+
+
+def test_existing_fns_watcher_consumes_monthly_encrypted_hold_receipt(monkeypatch):
+    from leadpilot import serviceit_stage4_fns_dedupe_watch as watch
+    seen=[]
+    class FNSReceipt:
+        def __init__(self, client, token, key, publication):
+            seen.append(publication)
+        def read_checked_receipt(self, card, inn):
+            assert card==123 and inn==INN
+            return {"msp_category":"SMALL", "fns_egrul_verified":False,
+                    "formal_score_authorized":False}
+    monkeypatch.setattr(m, "OfficialMspFence", FNSReceipt)
+    env={"GITHUB_TOKEN":"github-token-synthetic-only",
+         "SERVICEIT_GH_LEDGER_KEY":"fake-envelope-key-no-network"}
+    with httpx.Client() as client:
+        found=watch.msp_archive_status(
+            env, INN, today=TODAY, client=client, card=123)
+    assert found == "MATCH_IN_SUPPLIED_MSP_SNAPSHOT"
+    assert seen == [date(2026,10,10)]
+
+
+def test_no_official_receipt_never_proves_company_not_in_msp(monkeypatch):
+    from leadpilot import serviceit_stage4_fns_dedupe_watch as watch
+    class EmptyReceipt:
+        def __init__(self,*args):pass
+        def read_checked_receipt(self,card,inn):return None
+    monkeypatch.setattr(m, "OfficialMspFence", EmptyReceipt)
+    env={"GITHUB_TOKEN":"synthetic-token-for-test",
+         "SERVICEIT_GH_LEDGER_KEY":"synthetic-key-for-test"}
+    with httpx.Client() as client:
+        found=watch.msp_archive_status(
+            env, INN, today=TODAY, client=client, card=123)
+    assert found == "MSP_OFFICIAL_SNAPSHOT_NOT_CONNECTED"
+
+
+def test_corrupt_official_receipt_does_not_fall_back_to_clear(monkeypatch):
+    from leadpilot import serviceit_stage4_fns_dedupe_watch as watch
+    class CorruptReceipt:
+        def __init__(self,*args):pass
+        def read_checked_receipt(self,card,inn):
+            raise m.OfficialMspBlocked("SYNTHETIC_DECRYPT_FAILURE")
+    monkeypatch.setattr(m, "OfficialMspFence", CorruptReceipt)
+    env={"GITHUB_TOKEN":"synthetic-token-for-test",
+         "SERVICEIT_GH_LEDGER_KEY":"synthetic-key-for-test"}
+    with httpx.Client() as client:
+        with pytest.raises(watch.WatchBlocked,match="FNS_ENCRYPTED_RECEIPT_UNVERIFIED"):
+            watch.msp_archive_status(
+                env, INN, today=TODAY, client=client, card=123)

@@ -1,0 +1,51 @@
+name: ServiceIT native Kanban three-signal title AUTO (future only)
+on:
+  repository_dispatch:
+    types: [serviceit_bitrix_item_add_v1]
+  schedule:
+    - cron: '14,34,54 * * * *'
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: read
+
+concurrency:
+  group: serviceit-kanban-native-title-auto
+  cancel-in-progress: false
+
+jobs:
+  three-signal-native-title:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'issue_comment' ||
+       (github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 200 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_KANBAN_3_SIGNAL_TITLES_ONCE_V1'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_KANBAN_3_SIGNAL_TITLE_ENABLED: YES_1062_21_THREE_SIGNAL_TITLE
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Format new Kanban native title with signal icon and exact CRM readback
+        run: python -m leadpilot.serviceit_kanban_live_title_auto

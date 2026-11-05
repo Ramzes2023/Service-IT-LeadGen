@@ -302,8 +302,10 @@ def run(client, env, *, now=None):
 
 
 def main():
+    # GITHUB_TOKEN is needed to READ only the per-card encrypted MSP
+    # receipts written by the official free FNS worker. Never log env,
+    # webhook, raw INNs, tokens, names or receipt contents.
     env = dict(os.environ)
-    env.pop("GITHUB_TOKEN", None)
     try:
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
             outcome = run(client, env)

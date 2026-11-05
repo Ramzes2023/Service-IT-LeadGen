@@ -11,7 +11,7 @@ ENV = {
     "GITHUB_EVENT_NAME":"issue_comment",
     "SERVICEIT_AI_PROVIDER":"routerai",
     "SERVICEIT_ROUTERAI_PRIVACY_APPROVED":"YES_1062_21",
-    "ROUTERAI_API_KEY":"THIS-IS-A-FAKE-SECRET",
+    "ROUTERAI_API_KEY":"sk-THIS-IS-A-PUBLIC-FAKE-FIXTURE",
 }
 
 
@@ -20,7 +20,7 @@ def test_no_real_data_synthetic_request_and_output_redacted():
         import json
         assert req.method == "POST"
         assert str(req.url) == URL
-        assert req.headers["Authorization"] == "Bearer THIS-IS-A-FAKE-SECRET"
+        assert req.headers["Authorization"] == "Bearer sk-THIS-IS-A-PUBLIC-FAKE-FIXTURE"
         payload = json.loads(req.content)
         assert payload["model"] == MODEL
         assert payload["messages"][1]["content"] == SYNTHETIC_TEXT
@@ -35,7 +35,7 @@ def test_no_real_data_synthetic_request_and_output_redacted():
     assert result == {"provider":"routerai", "crm_writes":0,
         "real_customer_data_sent":False,
         "status":"ROUTERAI_API_AND_AI_VALIDATION_PASS"}
-    assert "THIS-IS-A-FAKE-SECRET" not in str(result)
+    assert "sk-THIS-IS-A-PUBLIC-FAKE-FIXTURE" not in str(result)
 
 
 def test_missing_provider_flag_no_external_call():
@@ -101,7 +101,7 @@ def test_valid_key_but_model_denied_is_distinct_from_bad_key():
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         result=inspect(client,ENV)
     assert result["status"]=="ROUTERAI_MODEL_FORBIDDEN_WITH_POSITIVE_BALANCE"
-    assert "THIS-IS-A-FAKE-SECRET" not in str(result)
+    assert "sk-THIS-IS-A-PUBLIC-FAKE-FIXTURE" not in str(result)
 
 
 def test_account_or_ip_forbidden_even_on_models_endpoint():
@@ -150,3 +150,26 @@ def test_credit_access_denied_is_explicitly_unknown_not_zero():
         return httpx.Response(401)
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         assert inspect(client,ENV)["status"]=="ROUTERAI_CHAT_401_WITH_CREDITS_UNVERIFIED"
+
+
+def test_malformed_routerai_token_refused_without_paid_network_call():
+    for key in ("THIS-IS-NOT-ROUTERAI-API", "Bearer sk-fake-secret-value",
+                '"sk-fake-secret-value"', "sk-fake-secret-value\\n",
+                "sk-bad token", "sk-short"):
+        with httpx.Client(transport=httpx.MockTransport(
+            lambda req: (_ for _ in ()).throw(
+                AssertionError("No API calls allowed for invalid format")))) as client:
+            out=inspect(client,{**ENV,"ROUTERAI_API_KEY":key})
+        assert out["status"]=="ROUTERAI_API_KEY_FORMAT_INVALID_NO_NETWORK"
+        assert out["crm_writes"]==0
+
+
+def test_runtime_routerai_config_refuses_wrong_key_and_accepts_synthetic_format():
+    import pytest
+    from leadpilot.ai import config_from_env, routerai_api_key_format_valid
+    assert routerai_api_key_format_valid(ENV["ROUTERAI_API_KEY"])
+    with pytest.raises(RuntimeError,match="format unverified"):
+        config_from_env({**ENV,"AI_ENABLE":"1","ROUTERAI_API_KEY":"other-service-credential"})
+    config=config_from_env({**ENV,"AI_ENABLE":"1"})
+    assert config.provider=="routerai"
+    assert config.model==MODEL

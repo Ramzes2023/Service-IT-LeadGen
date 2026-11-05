@@ -36,6 +36,7 @@ from .serviceit_stage34_signed_readonly_sidecar import (
 )
 from .serviceit_enrichment_worker import normalized, validate_identity, Blocked
 from .serviceit_own_signal_stop import read_rules as own_signal_stop_rules, check as own_signal_stop_check
+from .serviceit_three_signal_triage import classify_signal, task_draft
 
 CUTOVER = datetime(2026, 11, 4, 9, 50, tzinfo=timezone.utc)
 WRITE_GATE = "YES_1062_21_INTERNAL_REVIEW"
@@ -126,6 +127,59 @@ def task_get_confirmed(client,base,task_id,binding,uid,title):
             and task.get("title",task.get("TITLE")) == title,
             "TASK_READBACK_MISMATCH")
 
+def manager_task_fields(item, card, uid, binding, *, now):
+    """Prepare a contextual INTERNAL verification task, never a sales call.
+
+    Classification uses local, unverified CRM metadata only.  No external AI
+    request is necessary; facts/deadlines are explicitly marked unverified.
+    """
+    from .serviceit_enrichment_worker import PREFIX
+    require(type(item) is dict and type(card) is int and 8 <= card
+            and type(uid) is int and uid > 0
+            and type(binding) is str, "TASK_DRAFT_INPUT_INVALID")
+    classification = classify_signal({
+        "title": item.get("title") or "",
+        "description": "",
+        "signal_kind": item.get(PREFIX + "SIGNAL_KIND") or "",
+        "source": item.get(PREFIX + "SIGNAL_SOURCE") or "",
+        "region": item.get(PREFIX + "REGION") or "",
+        "company": "",
+    }, now=now)
+    plan = task_draft(classification, card)
+    label = classification["kind_title"]
+    suggestions = ", ".join(classification["services"][:4])
+    require(type(label) is str and type(suggestions) is str,
+            "TASK_DRAFT_TRIAGE_INVALID")
+    # A vacancy does not imply consent to sell outsourced services; a tender
+    # deadline cannot be asserted without independent source verification.
+    description = (
+        "ВНУТРЕННЯЯ ПРОВЕРКА, НЕ ГОТОВЫЙ ПРОДАЖНЫЙ ЛИД.\n"
+        "Направление: " + label + ".\n"
+        "Гипотеза о подходящих услугах: " + suggestions + ".\n"
+        "Что проверить: " + plan["description"] + "\n"
+        "Исходный URL, дата, срок и контакт: открыть CRM-карточку, "
+        "перепроверить по первоисточнику; достоверность НЕ подтверждена.\n"
+        "Проверить первоисточник, актуальность, ИНН и бесплатный "
+        "реестр ФНС-МСП; отсутствие в МСП не означает ликвидацию. "
+        "Для перспективной компании проверить юридический статус по "
+        "бесплатной официальной выписке ЕГРЮЛ/ЕГРИП (egrul.nalog.ru); "
+        "платная промышленная подписка для MVP НЕ требуется. "
+        "Проверить клиентскую базу и дубли CRM, корпоративный STOP-лист "
+        "и правовое основание. "
+        "Уточнить потребность; выводы RouterAI/DeepSeek и резервного "
+        "GigaChat считать только гипотезами, Lead Score не считать "
+        "подтверждённым без девяти независимых проверок. "
+        "НЕ звонить, НЕ писать и НЕ рассылать КП "
+        "без решения уполномоченного менеджера."
+    )
+    title = plan["title"]
+    require(type(title) is str and 10 <= len(title) <= 230
+            and type(description) is str and len(description) <= 4000,
+            "TASK_DRAFT_OVERSIZED")
+    return {"TITLE": title, "DESCRIPTION": description,
+            "RESPONSIBLE_ID": uid, "UF_CRM_TASK": [binding]}
+
+
 def process_card(client, env, card, *, now=None):
     """One card. Every refusal before reserve is non-destructive.
 
@@ -154,6 +208,9 @@ def process_card(client, env, card, *, now=None):
         card_id=card)
     if own_status == "HOLD_OWN_SIGNAL_STOP":
         return "OWN_SIGNAL_STOP_HOLD_NO_TASK"
+    # A CRM-recorded STOP reason must not generate fresh outreach work.
+    if item.get(PREFIX + "STOP_REASON") not in (None, ""):
+        return "CARD_STOP_REASON_HOLD_NO_TASK"
     check_task_binding(client,base)
     binding=owner_type(client,base)+"_"+str(card)
     n=visible_tasks(client,base,binding)
@@ -178,23 +235,8 @@ def process_card(client, env, card, *, now=None):
     require(second.get("assignedById")==assigned_on_card
             and second.get("stageId")==item.get("stageId"),
             "MANAGER_OR_STAGE_CHANGED_DURING_CHECK")
-    title=f"Сервис ИТ | Проверить новый сигнал | CRM #{card}"
-    description=(
-        "Внутренняя проверка нового AI-сигнала в смарт-процессе "
-        "«Сервис ИТ — AI-сигналы». Это не квалифицированный клиент.\n"
-        "Проверить первоисточник, актуальность, ИНН и бесплатный "
-        "реестр ФНС-МСП; отсутствие в МСП не означает ликвидацию. "
-        "Для перспективной компании проверить юридический статус по "
-        "бесплатной официальной выписке ЕГРЮЛ/ЕГРИП (egrul.nalog.ru); "
-        "платная промышленная подписка для MVP НЕ требуется. "
-        "Проверить клиентскую базу и дубли CRM, корпоративный STOP-лист "
-        "и правовое основание. "
-        "Уточнить потребность; выводы RouterAI/DeepSeek и резервного "
-        "GigaChat считать только гипотезами, Lead Score не считать "
-        "подтверждённым без девяти "
-        "независимых проверок. НЕ звонить, НЕ писать и НЕ рассылать КП "
-        "без решения уполномоченного менеджера."
-    )
+    task_fields = manager_task_fields(item, card, uid, binding, now=now)
+    title = task_fields["TITLE"]
     fence=TaskFence(client,env.get("GITHUB_TOKEN",""),
                     env.get("SERVICEIT_GH_LEDGER_KEY",""))
     state=fence.reserve(card)
@@ -203,8 +245,7 @@ def process_card(client, env, card, *, now=None):
     # From this point ANY ambiguous network result leaves the durable fence.
     try:
         result=rest(client,base,"tasks.task.add",{
-            "fields":{"TITLE":title,"DESCRIPTION":description,
-                      "RESPONSIBLE_ID":uid,"UF_CRM_TASK":[binding]}})
+            "fields": task_fields})
         require(type(result) is dict and type(result.get("task")) is dict,
                 "TASK_ADD_RESPONSE_UNVERIFIED")
         task_id=positive(result["task"].get("id"))

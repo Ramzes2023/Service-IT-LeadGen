@@ -164,3 +164,40 @@ def test_no_source_records_tasks_or_outreach_modified():
     assert "serviceit-bitrix-new-card-free-event" in doc
     assert "SERVICEIT_STAGE4_PRELIM_SCORE_LIVE_ONCE_V1" in doc
     assert "YES_1062_21_PROVISIONAL_ONLY" in doc
+
+
+@pytest.mark.parametrize("field", sorted(AI_FIELDS))
+@pytest.mark.parametrize("incomplete", [None, "", "   ", 1])
+def test_provisional_score_waits_for_each_of_all_nine_ai_fields(
+        monkeypatch, field, incomplete):
+    # A status+summary+full report alone must not unlock Score when one of
+    # the other six AI fields is blank or not a meaningful string.
+    item = real_shape()
+    item[field] = incomplete
+    _, updates = wire(monkeypatch, item)
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "WAIT_FOR_AI_MANAGER_FIELDS"
+    assert updates == []
+    assert Fence.commits == []
+
+
+def test_missing_one_of_nine_fields_refuses_to_score(monkeypatch):
+    item = real_shape()
+    item.pop(PREFIX + "AI_QUOTE")
+    _, updates = wire(monkeypatch, item)
+    with httpx.Client() as client:
+        with pytest.raises(w.ProvisionalBlocked, match="AI_FIELDS_NOT_READABLE"):
+            w.evaluate_one(client, ENV, 123, now=NOW)
+    assert updates == []
+
+
+def test_explicit_model_hypothesis_source_unverified_is_preliminary_only(monkeypatch):
+    item = real_shape()
+    item[PREFIX + "AI_STATUS"] = "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED"
+    _, updates = wire(monkeypatch, item)
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "PROVISIONAL_SCORE_EXACT_READBACK"
+    assert len(updates) == 1
+    assert "НЕ ПРОВЕРЕНА" in updates[0][BADGE_FIELD]
+    assert "НЕ РАЗРЕШЁН" in updates[0][BADGE_FIELD]
+    assert updates[0][VERSION_FIELD] == w.VERSION

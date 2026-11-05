@@ -183,8 +183,11 @@ def calculate_approved_draft(scheme, deal):
     window_end = first_paid + timedelta(days=s["window_days"])
     revenues = costs = rvp = Decimal("0")
     references = set()
+    primary_dates = []
     for entry in deal["primary_payments"]:
+        require(type(entry) is dict, "PRIMARY_PAYMENT_SHAPE_INVALID")
         paid = iso_day(entry.get("paid_at"))
+        primary_dates.append(paid)
         require(first_paid <= paid <= window_end, "PAYMENT_OUTSIDE_PRIMARY_WINDOW")
         ref = proof(entry.get("finance_proof"), "finance", payment=True)
         require(ref not in references, "DUPLICATED_PRIMARY_PAYMENT_PROOF")
@@ -193,6 +196,8 @@ def calculate_approved_draft(scheme, deal):
         revenues += part_revenue
         costs += part_cost
         rvp += part_rvp
+    require(min(primary_dates) == first_paid,
+            "FIRST_CONFIRMED_PAYMENT_DATE_MISMATCH")
     team_eligible = (
         lead_date < s["cutoff"]
         and first_paid <= s["cutoff"] + timedelta(days=s["tail_days"])
@@ -207,13 +212,19 @@ def calculate_approved_draft(scheme, deal):
     subs = deal.get("paid_subscription_periods", [])
     require(type(subs) is list, "SUBSCRIPTION_PERIODS_INVALID")
     selected, subscriptions, seen = [], Decimal("0"), set()
+    require(all(type(p) is dict for p in subs),
+            "SUBSCRIPTION_PERIOD_SHAPE_INVALID")
     for p in sorted(subs, key=lambda e:(str(e.get("paid_at")),str(e.get("period_id")))):
-        require(type(p) is dict and type(p.get("period_id")) is str
+        require(type(p.get("period_id")) is str
                 and re.fullmatch(r"[A-Za-z0-9_-]{2,60}",p["period_id"]),
                 "SUBSCRIPTION_PERIOD_ID_INVALID")
         require(p["period_id"] not in seen, "SUBSCRIPTION_DUPLICATE_PERIOD")
         seen.add(p["period_id"])
-        iso_day(p.get("paid_at"))
+        period_paid = iso_day(p.get("paid_at"))
+        require(period_paid >= first_paid, "SUBSCRIPTION_BEFORE_FIRST_PAYMENT")
+        receipt = proof(p.get("finance_proof"), "finance", payment=True)
+        require(receipt not in references, "DUPLICATED_PAYMENT_PROOF")
+        references.add(receipt)
         _, _, period_rvp = _rvp_one(p, payment=True)
         if len(selected) < s["subscription_limit"]:
             selected.append(p["period_id"])

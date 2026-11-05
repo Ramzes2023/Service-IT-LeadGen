@@ -116,6 +116,7 @@ def test_ineligible_lead_does_not_receive_team_fund_but_manager_is_evaluated():
     d["lead_registered_at"] = "2027-01-02"
     d["first_confirmed_payment_at"] = "2027-01-03"
     d["primary_payments"][0]["paid_at"] = "2027-01-03"
+    d["paid_subscription_periods"] = []
     v = calculate_approved_draft(s, d)
     assert v["project_bonus_eligible"] is False
     assert v["team_fund"] == "0.00"
@@ -127,6 +128,7 @@ def test_cutoff_tail_expires_team_bonus():
     d["lead_registered_at"] = "2026-12-20"
     d["first_confirmed_payment_at"] = "2027-02-02"
     d["primary_payments"][0]["paid_at"] = "2027-02-02"
+    d["paid_subscription_periods"] = []
     v = calculate_approved_draft(s, d)
     assert v["project_bonus_eligible"] is False
 
@@ -173,3 +175,26 @@ def test_purchase_window_and_proof_replay_blocked():
 
 def test_month_end_calendar_boundaries():
     assert add_months(date(2026, 12, 31), 2).isoformat() == "2027-02-28"
+
+
+def test_first_payment_date_must_match_actual_settled_record():
+    s, d = fixture()
+    d["first_confirmed_payment_at"] = "2026-11-04"
+    with pytest.raises(FinanceBlocked, match="FIRST_CONFIRMED_PAYMENT_DATE_MISMATCH"):
+        calculate_approved_draft(s, d)
+
+
+def test_subscription_cannot_reuse_bank_confirmation():
+    s, d = fixture()
+    d["paid_subscription_periods"][0]["finance_proof"]["document_ref"] = (
+        "bank:payment:001"
+    )
+    with pytest.raises(FinanceBlocked, match="DUPLICATED_PAYMENT_PROOF"):
+        calculate_approved_draft(s, d)
+
+
+def test_subscription_before_first_settled_payment_is_blocked():
+    s, d = fixture()
+    d["paid_subscription_periods"][0]["paid_at"] = "2026-11-01"
+    with pytest.raises(FinanceBlocked, match="SUBSCRIPTION_BEFORE_FIRST_PAYMENT"):
+        calculate_approved_draft(s, d)

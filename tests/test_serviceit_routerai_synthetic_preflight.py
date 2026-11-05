@@ -169,7 +169,7 @@ def test_runtime_routerai_config_refuses_wrong_key_and_accepts_synthetic_format(
     from leadpilot.ai import config_from_env, routerai_api_key_format_valid
     assert routerai_api_key_format_valid(ENV["ROUTERAI_API_KEY"])
     with pytest.raises(RuntimeError,match="format unverified"):
-        config_from_env({**ENV,"AI_ENABLE":"1","ROUTERAI_API_KEY":"other-service-credential"})
-    config=config_from_env({**ENV,"AI_ENABLE":"1"})
+        config_from_env({**ENV,"AI_ENABLE":"1","AI_PROVIDER":"routerai","ROUTERAI_API_KEY":"other-service-credential"})
+    config=config_from_env({**ENV,"AI_ENABLE":"1","AI_PROVIDER":"routerai"})
     assert config.provider=="routerai"
     assert config.model==MODEL

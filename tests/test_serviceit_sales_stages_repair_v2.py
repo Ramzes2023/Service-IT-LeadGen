@@ -193,3 +193,21 @@ def test_readonly_does_not_reserve_fence_or_write(monkeypatch):
         "strategy": "MOVE_QUOTE_SORT_ONLY",
     }
     assert calls == []
+
+
+def test_owner_preflight_exception_logs_only_allowlisted_code(monkeypatch, capsys):
+    import json
+    def blocked(env, *, apply):
+        raise repair.RepairBlocked("EXISTING_STAGE_RELATIVE_ORDER_CHANGED")
+    monkeypatch.setattr(repair, "_allow_owner_marker", blocked)
+    assert repair.main() == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "REPAIR_V2_BLOCKED_NO_WRITE",
+        "reason_code": "EXISTING_STAGE_RELATIVE_ORDER_CHANGED",
+        "crm_writes": 0,
+    }
+    def private(env, *, apply):
+        raise repair.RepairBlocked("secret/path/test")
+    monkeypatch.setattr(repair, "_allow_owner_marker", private)
+    assert repair.main() == 2
+    assert json.loads(capsys.readouterr().out)["reason_code"] == "UNCLASSIFIED"

@@ -203,30 +203,41 @@ def test_explicit_model_hypothesis_source_unverified_is_preliminary_only(monkeyp
     assert updates[0][VERSION_FIELD] == w.VERSION
 
 
-def test_approved_stop_inn_blocks_preliminary_score_no_crm_write(monkeypatch):
-    item=real_shape(inn="7700000009")
-    _, updates=wire(monkeypatch,item)
-    monkeypatch.setattr(w,"stop_precheck",lambda inn,env:"HIT")
+
+def test_own_stop_exact_inn_blocks_provisional_score(monkeypatch):
+    _, updates = wire(monkeypatch, real_shape(inn="7700000009"))
+    monkeypatch.setattr(w, "own_stop_rules", lambda: [
+        {"kind": "inn", "value": "7700000009",
+         "reason": "REJECTED_BY_SERVICEIT"},
+    ])
     with httpx.Client() as client:
-        assert w.evaluate_one(client, ENV, 123, now=NOW) == "CORPORATE_STOP_MATCH_HOLD_NO_SCORE"
-    assert updates == []
-    assert Fence.commits == []
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "OWN_SIGNAL_STOP_MATCH_HOLD_NO_SCORE"
+    assert updates == [] and Fence.commits == []
 
 
-def test_broken_enabled_stop_config_blocks_preliminary_score(monkeypatch):
-    from leadpilot.serviceit_corporate_stop_inn import CorporateStopBlocked
-    _, updates=wire(monkeypatch,real_shape(inn="7700000009"))
-    monkeypatch.setattr(w,"stop_precheck",
-        lambda inn,env: (_ for _ in ()).throw(
-            CorporateStopBlocked("SYNTHETIC_BAD_STOP_CONFIG")))
+def test_own_stop_card_id_blocks_without_valid_inn(monkeypatch):
+    _, updates = wire(monkeypatch, real_shape(inn=None))
+    monkeypatch.setattr(w, "own_stop_rules", lambda: [
+        {"kind": "card_id", "value": "123", "reason": "NOT_RELEVANT"},
+    ])
     with httpx.Client() as client:
-        assert w.evaluate_one(client, ENV, 123, now=NOW) == "CORPORATE_STOP_CONFIG_HOLD_NO_SCORE"
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "OWN_SIGNAL_STOP_MATCH_HOLD_NO_SCORE"
+    assert updates == [] and Fence.commits == []
+
+
+def test_invalid_own_stop_config_fails_closed(monkeypatch):
+    from leadpilot.serviceit_own_signal_stop import SignalStopBlocked
+    _, updates = wire(monkeypatch, real_shape(inn="7700000009"))
+    monkeypatch.setattr(
+        w, "own_stop_rules",
+        lambda: (_ for _ in ()).throw(SignalStopBlocked("BROKEN_CONFIG")))
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "OWN_SIGNAL_STOP_CONFIG_HOLD_NO_SCORE"
     assert updates == []
 
 
-def test_missing_paid_egrul_api_does_not_block_provisional_score(monkeypatch):
-    _, updates=wire(monkeypatch,real_shape(inn="7700000009"))
-    monkeypatch.setattr(w,"stop_precheck",lambda inn,env:"NOT_CONFIGURED")
+def test_missing_egrul_api_does_not_authorize_contact_or_formal_score(monkeypatch):
+    _, updates = wire(monkeypatch, real_shape(inn="7700000009"))
     with httpx.Client() as client:
         assert w.evaluate_one(client, ENV, 123, now=NOW) == "PROVISIONAL_SCORE_EXACT_READBACK"
     assert len(updates) == 1

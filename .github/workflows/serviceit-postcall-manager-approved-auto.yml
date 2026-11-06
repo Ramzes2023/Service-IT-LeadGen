@@ -1,0 +1,52 @@
+name: ServiceIT manager-confirmed call outcome and next action (CRM only)
+
+on:
+  schedule:
+    # No laptop required; GitHub scheduling is best effort and may be delayed.
+    - cron: '7,27,47 * * * *'
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  manager-approved-postcall:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 148 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_POSTCALL_MANUAL_READONLY_V1'))
+    concurrency:
+      group: serviceit-bitrix-new-card-free-event
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      # Keep GITHUB_EVENT_PATH supplied by GitHub Actions; never shadow it.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      # Human CRM approval is independently required on EACH card.
+      # No sales calls, emails, stage moves, company/lead creation or outreach.
+      SERVICEIT_POSTCALL_AUTO_ENABLED: SERVICEIT_POSTCALL_MANAGER_APPROVED_AUTO
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify manager approval, call receipt and link safe next action
+        run: python -m leadpilot.serviceit_postcall_live_worker

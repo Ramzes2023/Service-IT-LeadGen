@@ -61,7 +61,9 @@ def _read_stages(client, base, category_id):
         meaning = str(meaning or "process").strip().casefold()
         if meaning in ("s", "success"):
             sem = "success"
-        elif meaning in ("f", "failure"):
+        elif meaning in ("f", "failure", "apology"):
+            # Bitrix24 EXTRA.SEMANTICS="apology" is also a lost/closed stage.
+            # Treat it as terminal failure; never add process stages after it.
             sem = "failure"
         elif meaning in ("process", "none", ""):
             sem = "process"

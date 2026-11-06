@@ -31,6 +31,16 @@ def mock(bad_key=False, missing_field=False):
             assert req.url.params["q"] == "Python official documentation"
             if bad_key:
                 return httpx.Response(401, json={"error": "unauthorized"})
+            if req.url.path == "/res/v1/llm/context":
+                assert req.url.params["maximum_number_of_tokens"] == "1024"
+                return httpx.Response(200, json={
+                    "grounding": {"generic": [
+                        {"url": "https://docs.python.org",
+                         "title": "Python Documentation",
+                         "snippets": ["Official Python 3 documentation"]}]},
+                    "sources": {"https://docs.python.org": {"hostname": "docs.python.org"}},
+                })
+            assert req.url.path == "/res/v1/web/search"
             return httpx.Response(200, json={"web": {"results": [
                 {"title": "Documentation", "url": "https://docs.python.org"}]}})
         assert req.url.host == "serviseit.bitrix24.ru" and req.method == "POST"
@@ -70,3 +80,14 @@ def test_missing_fields_or_privacy_block_readiness():
                                   SERVICEIT_PRELIMINARY_PUBLIC_HOSTS=""), client)
     assert status["readiness"] != STATUS_OK
     assert status["public_source_allowlist"] == "MISSING_OR_INVALID"
+
+
+def test_llm_context_readonly_smoke_uses_one_index_call():
+    with mock() as client:
+        report = readiness(config(SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED="YES"),
+                           client)
+    assert report["readiness"] == STATUS_OK
+    assert report["brave_search_mode"] == "LLM_CONTEXT_ONE_REQUEST"
+    assert report["brave"] == "BRAVE_CONTEXT_API_200_VALID_GROUNDING"
+    assert report["brave_search_requests"] == 1
+    assert report["crm_writes"] == report["ai_inferences"] == 0

@@ -28,7 +28,7 @@ def mock(bad_key=False, missing_field=False):
         if req.url.host == "api.search.brave.com":
             assert req.method == "GET"
             assert req.headers["X-Subscription-Token"] == config()["SERVICEIT_BRAVE_SEARCH_API_KEY"]
-            assert "Python official documentation" in str(req.url)
+            assert req.url.params["q"] == "Python official documentation"
             if bad_key:
                 return httpx.Response(401, json={"error": "unauthorized"})
             return httpx.Response(200, json={"web": {"results": [

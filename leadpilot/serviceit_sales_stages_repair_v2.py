@@ -84,7 +84,11 @@ def build_plan(rows, category):
     remaining = [r for r in processes if r["code"] != quote["code"]]
     other_max = max(r["sort"] for r in remaining)
     if (not interest["sort"] < quote["sort"]
-            or not other_max <= win["sort"] < quote["sort"]
+            # Bitrix may store success and the later process stage with
+            # EQUAL SORT while returning success before quote. The explicit
+            # anonymous sequence guard above proves their observed order.
+            # Once repaired, _verify_final requires STRICT inequalities.
+            or not other_max <= win["sort"] <= quote["sort"]
             or not quote["sort"] < min(r["sort"] for r in fails)):
         raise RepairBlocked("EXISTING_STAGE_RELATIVE_ORDER_CHANGED")
     # Minimal route: place the mis-sorted quotation before success, if three

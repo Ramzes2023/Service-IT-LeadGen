@@ -23,7 +23,9 @@ def test_public_job_page_resolves_only_allowlisted_corporate_contacts(monkeypatc
             return httpx.Response(200, text="User-agent: *\nAllow: /\n",
                                   headers={"content-type": "text/plain"})
         if url == "https://hh.ru/vacancy/123456":
-            return httpx.Response(200, text="""<html><body>
+            return httpx.Response(200, text="""<html><script type="application/ld+json">
+                {"@type":"JobPosting","hiringOrganization":{"name":"ООО Тестовые Системы","sameAs":"https://example-company.ru/"}}
+                </script><body>
                 <h1>Вакансия системного администратора</h1>
                 <p>Работа с серверами и сетями, требуется в штат.</p>
                 <a href="mailto:fake-employer@hh.ru">Написать</a>
@@ -49,6 +51,7 @@ def test_public_job_page_resolves_only_allowlisted_corporate_contacts(monkeypatc
     assert result["status"] == "PUBLIC_PAGES_INSPECTED"
     assert len(result["pages"]) == 3
     assert result["company_site_candidate"] == "example-company.ru"
+    assert result["employer_named_in_source"] == "ООО Тестовые Системы"
     assert any(x["value"] == "hr@example-company.ru"
                and x["role"] == "отдел подбора персонала"
                for x in result["contacts"])
@@ -136,3 +139,10 @@ def test_model_quote_must_match_public_excerpt_or_title_not_fabricated():
         model_hypothesis_fields(
             fields, "Вакансия", {**base, "evidence_quote": "Утверждён бюджет"},
             public_excerpt="Требуется сопровождение 1С.")
+
+
+def test_untrusted_jobposting_jsonld_is_ignored():
+    html = """<script type="application/ld+json">
+    {"@type":"JobPosting","hiringOrganization":{"name":"<img onerror='x'>","sameAs":"http://127.0.0.1/"}}
+    </script>"""
+    assert research._structured_employer(html) == {}

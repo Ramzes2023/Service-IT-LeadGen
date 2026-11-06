@@ -285,8 +285,34 @@ def main():
         _allow_owner_marker(env, apply=apply)
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
             result = run(client, env, apply=apply)
+    except (RepairBlocked, funnel.SalesFunnelBlocked,
+            stages.StageGateBlocked) as exc:
+        # Log ONLY a reviewed constant; no URLs, tokens, stage names or IDs.
+        code = str(exc)
+        allowlist = {
+            "PREEXISTING_STAGE_SHAPE_CHANGED",
+            "EXISTING_STATUS_IDENTITIES_NOT_VERIFIED",
+            "STATUS_ROLES_AMBIGUOUS",
+            "EXISTING_STAGE_RELATIVE_ORDER_CHANGED",
+            "SORT_RANGE_EXHAUSTED",
+            "WRONG_CORPORATE_PORTAL",
+            "FUNNEL_IDENTITY_NOT_UNIQUE",
+            "FUNNEL_API_HTTP_OR_SCOPE_DENIED",
+            "FUNNEL_REST_RESULT_UNVERIFIED",
+            "FUNNEL_REST_TRANSPORT_OR_SHAPE_UNVERIFIED",
+            "FUNNEL_LIST_NOT_COMPLETE",
+            "FUNNEL_LIST_IDENTITY_UNVERIFIED",
+            "DEFAULT_DEAL_FUNNEL_NOT_VISIBLE",
+            "CATEGORY_READBACK_SHAPE_INVALID",
+            "CATEGORY_READBACK_IDENTITY_NOT_VERIFIED",
+            "STAGES_UNAVAILABLE", "STAGE_SCOPE_OR_SHAPE_INVALID",
+        }
+        result = {"status": "REPAIR_V2_BLOCKED_NO_WRITE",
+                  "reason_code": code if code in allowlist else "UNCLASSIFIED",
+                  "crm_writes": 0}
     except Exception:
         result = {"status": "REPAIR_V2_BLOCKED_NO_WRITE",
+                  "reason_code": "INTERNAL_UNCLASSIFIED",
                   "crm_writes": 0}
     print(json.dumps(result, ensure_ascii=False, sort_keys=True), flush=True)
     return 0 if result["status"] in (

@@ -10,6 +10,7 @@ on:
       - "ServiceIT manager-confirmed call outcome and next action (CRM only)"
       - "ServiceIT hourly real new-card AI / task / Score readback (READ ONLY)"
       - "ServiceIT hybrid finance auto / manager fallback for NEW won LeadGen deals"
+      - "ServiceIT new Bitrix card to AI manager (free event)"
     types: [completed]
   # Scheduled jobs can be dropped; add workflow-run-completion trigger as backup.
   schedule:

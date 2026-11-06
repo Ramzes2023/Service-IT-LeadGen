@@ -166,3 +166,51 @@ def test_no_retry_for_github_write_methods(monkeypatch):
     with pytest.raises(w.WatchdogBlocked):
         w.github("x" * 20, "GET", w.API + "/issues/221")
     assert attempts == ["GET", "GET", "GET"]
+
+
+def test_failed_repository_dispatch_alert_even_when_latest_schedule_is_green():
+    # The old watchdog only read schedule metadata and could miss this.
+    recent_green = [entry(i * 10 + 1, run_id=i + 1) for i in range(36)]
+    row = w.assess(TARGET, recent_green, now=NOW)
+    row["file"] = "serviceit-stage3-all-new-task-automation.yml"
+    row["label"] = "Задачи менеджера"
+    assert row["status"] == "OK"
+    event = {"workflow_run": {
+        "name": "ServiceIT stage3 auto internal review task for ALL future 1062/21 cards",
+        "conclusion": "failure", "event": "repository_dispatch",
+        "id": 999, "created_at": NOW.isoformat(),
+    }}
+    result = w.include_failed_event([row], event)
+    assert result[0]["status"] == "EVENT_FAILED"
+    assert result[0]["run_id"] == 999
+    assert result[0]["run_source"] == "event"
+    assert w.signature(result) != w.signature([row])
+    assert row["status"] == "OK"  # original snapshot unmodified
+    assert "EVENT_FAILED" in w.report(result, w.signature(result), now=NOW)
+    assert "@Ramzes2023" in w.notice(result)
+
+
+def test_event_only_ai_worker_failure_alert_has_no_fake_cron_sla():
+    event = {"workflow_run": {
+        "name": "ServiceIT new Bitrix card to AI manager (free event)",
+        "conclusion": "timed_out", "event": "repository_dispatch",
+        "id": 1001, "created_at": NOW.isoformat(),
+    }}
+    state = w.include_failed_event([], event)
+    assert len(state) == 1
+    assert state[0]["status"] == "EVENT_FAILED"
+    assert state[0]["expected_6h"] == 0
+    assert state[0]["run_id"] == 1001
+    assert w.include_failed_event([], {"workflow_run": dict(
+        event["workflow_run"], conclusion="success"
+    )}) == []
+
+
+def test_unknown_failure_workflow_rejected_and_no_private_event_data_logged():
+    event = {"workflow_run": {
+        "name": "untrusted attacker", "conclusion": "failure",
+        "id": 44, "created_at": NOW.isoformat(),
+        "private_note": "never show this",
+    }}
+    with pytest.raises(w.WatchdogBlocked, match="ALLOWLISTED"):
+        w.include_failed_event([], event)

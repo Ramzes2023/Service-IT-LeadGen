@@ -41,10 +41,15 @@ def index_response(urls):
 @pytest.fixture
 def mocked_web(monkeypatch):
     monkeypatch.setattr(public, "_public_dns", lambda host: True)
+    monkeypatch.setattr(deep, "_GDELT_MIN_INTERVAL", 0)
     calls = []
     def respond(request):
         u = str(request.url)
         calls.append(u)
+        if request.url.host == "api.gdeltproject.org":
+            assert request.url.path == "/api/v2/doc/doc"
+            assert NAME.split()[1] in request.url.params["query"]
+            return httpx.Response(200, json={"articles": []})
         if request.url.host == "api.search.brave.com":
             assert request.url.path == "/res/v1/web/search"
             assert request.headers["X-Subscription-Token"] == KEY
@@ -120,11 +125,13 @@ def test_missing_api_key_explains_no_independent_search(mocked_web):
     client, calls = mocked_web
     r = public.research_public(item(), client, frozenset({"hh.ru"}),
                                deep_search_enabled=True, deep_search_key="")
-    assert r["independent_company_research"]["status"] == "INDEX_API_KEY_NOT_CONFIGURED"
+    assert r["independent_company_research"]["status"] == "FREE_NEWS_NO_MATCH_FULL_WEB_KEY_MISSING"
     assert not any("api.search.brave.com" in c for c in calls)
+    assert any("api.gdeltproject.org" in c for c in calls)
     fields = public.enrich_manager_fields(
         {name: "HOLD" for name in AI_FIELDS}, r, signal_kind="it_vacancy")
-    assert "INDEX_API_KEY_NOT_CONFIGURED" in fields[PREFIX + "AI_FULL_REPORT"]
+    assert "FREE_NEWS_NO_MATCH_FULL_WEB_KEY_MISSING" in fields[PREFIX + "AI_FULL_REPORT"]
+    assert "GDELT Project" in fields[PREFIX + "AI_FULL_REPORT"]
 
 
 def test_unpublished_crm_company_name_is_never_sent_to_index(mocked_web):
@@ -236,3 +243,38 @@ def test_multi_source_model_context_uses_only_safe_visible_excerpts():
     assert "Автоматизация" in sample
     assert "info@example.ru" not in sample
     assert sample.count(" | ") == 1
+
+
+def test_free_news_official_api_discovers_company_expansion_without_search_key(monkeypatch):
+    monkeypatch.setattr(public, "_public_dns", lambda host: True)
+    monkeypatch.setattr(deep, "_GDELT_MIN_INTERVAL", 0)
+    reqs = []
+    def respond(request):
+        reqs.append(str(request.url))
+        if request.url.host == "api.gdeltproject.org":
+            assert request.url.params["mode"] == "ArtList"
+            return httpx.Response(200, json={"articles": [{
+                "url": "https://news-example.ru/company-update",
+                "title": "Планы нового магазина и оборудование",
+                "seendate": "20261105T170000Z",
+            }]})
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n",
+                                  headers={"content-type": "text/plain"})
+        if str(request.url) == "https://news-example.ru/company-update":
+            return httpx.Response(200, text=(
+                "<html><body>ООО Тестовые Системы открыло новый магазин, "
+                "для него приобретено серверное оборудование.</body></html>"),
+                headers={"content-type": "text/html"})
+        pytest.fail("Unexpected URL " + str(request.url))
+    with httpx.Client(transport=httpx.MockTransport(respond),
+                      trust_env=False) as client:
+        result = deep.independent_company_research(
+            client, company_name=NAME, signal_kind="it_vacancy",
+            source_host="hh.ru", search_token="")
+    assert result["status"] == "FREE_NEWS_SEARCH_DONE_FULL_WEB_KEY_MISSING"
+    assert result["search_backend"] == "FREE_GDELT_NEWS_ONLY"
+    assert len(result["pages"]) == 1
+    assert "news-example.ru" in result["pages"][0]["url"]
+    assert any(s["kind"] == "OPENING_OR_EXPANSION" for s in result["hypotheses"])
+    assert not any("api.search.brave.com" in x for x in reqs)

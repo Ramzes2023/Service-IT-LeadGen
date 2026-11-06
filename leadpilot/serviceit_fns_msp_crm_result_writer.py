@@ -30,6 +30,7 @@ from .serviceit_own_signal_stop import read_rules as own_stop_rules, check as ow
 FIELD = "UF_CRM_13_SVCIT_FNS_MSP_RESULT"
 ENABLED = "YES_1062_21_FNS_MSP_RESULT_WRITE"
 MAX_PER_RUN = 20
+OFFICIAL_WORKFLOW = "ServiceIT official FNS MSP monthly snapshot for new 1062/21 cards (NO CRM WRITE)"
 
 
 class MspWriteBlocked(ValueError):
@@ -183,13 +184,39 @@ def write_one(client, env, base, fence, official_fence, card, *, destination="FI
             else "MSP_READBACK_OK_LEDGER_UNCERTAIN")
 
 
+
+def verified_official_workflow_run(event):
+    """Only a completed successful official-collector main run is trusted."""
+    need(type(event) is dict and event.get("action") == "completed"
+         and type(event.get("workflow_run")) is dict,
+         "FNS_WORKFLOW_EVENT_SHAPE_INVALID")
+    completed = event["workflow_run"]
+    need(completed.get("name") == OFFICIAL_WORKFLOW
+         and completed.get("conclusion") == "success"
+         and completed.get("head_branch") == "main"
+         and (completed.get("head_repository") or {}).get("full_name") == REPOSITORY
+         and completed.get("event") in ("schedule", "issue_comment"),
+         "FNS_WORKFLOW_COMPLETION_NOT_AUTHORIZED")
+    return True
+
+
 def run(client, env, *, now=None):
     now = now or datetime.now(timezone.utc)
     need(env.get("GITHUB_REPOSITORY") == REPOSITORY
          and env.get("GITHUB_REF") == "refs/heads/main"
-         and env.get("GITHUB_EVENT_NAME") in ("schedule", "repository_dispatch", "issue_comment")
+         and env.get("GITHUB_EVENT_NAME") in
+             ("schedule", "repository_dispatch", "issue_comment", "workflow_run")
          and env.get("SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED") == ENABLED,
          "MSP_WRITE_OWNER_GATE_MISSING")
+    if env["GITHUB_EVENT_NAME"] == "workflow_run":
+        path = Path(env.get("GITHUB_EVENT_PATH", ""))
+        need(path.is_file() and 0 < path.stat().st_size <= 256_000,
+             "FNS_WORKFLOW_EVENT_FILE_MISSING")
+        try:
+            event = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError, UnicodeError):
+            raise MspWriteBlocked("FNS_WORKFLOW_EVENT_UNREADABLE") from None
+        verified_official_workflow_run(event)
     if env["GITHUB_EVENT_NAME"] == "issue_comment":
         path = Path(env.get("GITHUB_EVENT_PATH", ""))
         need(path.is_file() and 0 < path.stat().st_size <= 256000,

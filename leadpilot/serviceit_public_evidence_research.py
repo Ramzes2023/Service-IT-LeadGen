@@ -357,7 +357,7 @@ def research_public(item, client, allow_hosts, *, now=None,
         # search result snippets; only a sanitized small public-page excerpt.
         additional = model_safe_context(independent)
         if additional:
-            excerpt = (excerpt[:210] + "\nВнешний контекст: " + additional)[:440]
+            excerpt = (excerpt[:210] + "\nВнешний контекст: " + additional)[:850]
     return {"status": "PUBLIC_PAGES_INSPECTED", "pages": [
                 {"url": p["url"], "excerpt": " ".join(p["text"].split())[:500]}
                 for p in pages],

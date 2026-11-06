@@ -290,6 +290,8 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                         deep_search_enabled=(
                             env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") == "YES"),
                         deep_search_key=env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", ""),
+                        deep_llm_context_enabled=(
+                            env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES"),
                     )
             approvals = json.loads(env.get("SERVICEIT_CORPORATE_APPROVALS_JSON") or "{}")
             require(type(approvals) is dict, "APPROVAL_ADAPTER_INVALID")

@@ -16,8 +16,11 @@ authorize cold outreach, or calculate formal Lead Score.
    (structured JobPosting hiringOrganization or an exact matching name in
    visible notice text). An uncorroborated CRM-only company name is never
    sent to a public search engine.
-3. With an optional licensed Brave Search API key, run up to THREE independent
-   queries per card:
+3. Independently research company news via the free GDELT DOC API when
+   no paid/credentialed index is configured (one request per company card,
+   bounded to recent public news, no separate API key).
+   With an optional licensed Brave Search API key, run up to THREE broader
+   independent web queries per card:
    - company official website / public business contacts;
    - expansion/new branches/stores or IT systems, depending on signal type;
    - public projects, procurement, job openings and news.
@@ -50,9 +53,13 @@ not unauthorized scraping of Bing / Google / job boards.
 Configure GitHub Actions secret SERVICEIT_BRAVE_SEARCH_API_KEY and verify
 the Brave API plan independently in the user's own account. Both existing
 new-card workflows set SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED=YES. When the key
-is missing, independent web search makes **ZERO requests** and records
-INDEX_API_KEY_NOT_CONFIGURED in the manager report instead of pretending to
-have searched the internet. Source-linked company research continues to work.
+is missing, the system does **not** call a full-web search API; instead it
+attempts a separate **free GDELT news index request**, and records
+FREE_NEWS_SEARCH_DONE_FULL_WEB_KEY_MISSING (results found),
+FREE_NEWS_NO_MATCH_FULL_WEB_KEY_MISSING (no news found), or
+FREE_NEWS_UNAVAILABLE_FULL_WEB_KEY_MISSING (unavailable/rate-limited).
+These are deliberately NOT full-web results. Source-linked website research
+continues to work with or without either index.
 
 As of November 2026, the published Brave Search plan advertises **$5 free
 monthly credits**, with Search API $5 / 1000 queries and billing requiring
@@ -61,7 +68,11 @@ index calls / approximately $4.50 **if all cards contain usable public company
 names**; retries, other uses, paid usage and further usage are outside this
 estimate. No charges are initiated by these code changes.
 
-Search endpoint: https://api.search.brave.com/res/v1/web/search
+Free news endpoint: https://api.gdeltproject.org/api/v2/doc/doc
+GDELT attribution: https://www.gdeltproject.org/
+GDELT DOC documentation: https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/
+
+Broader web search endpoint: https://api.search.brave.com/res/v1/web/search
 Docs: https://api-dashboard.search.brave.com/app/documentation/web-search
 
 ## Limitations / acceptance checklist
@@ -71,6 +82,10 @@ Docs: https://api-dashboard.search.brave.com/app/documentation/web-search
 - "All information about a company" is not an attainable guarantee;
   discoverability, robots/permissions, rate limits, naming collisions,
   paywalls and source reliability may prevent a full profile.
+- Free GDELT news has a rolling ~3-month news corpus and a restrictive
+  request budget; there is no guarantee any company will have matching news.
+  GDELT is not an official business registry, cannot verify a legal entity,
+  and cannot replace full-web discovery of corporate contact sites.
 - Search vendor may return unavailable, 429, insufficient results; such states
   are explicitly shown, not hidden. No automatic retry after ambiguous CRM
   writes. GitHub scheduled runs have no strict 10-minute SLA.

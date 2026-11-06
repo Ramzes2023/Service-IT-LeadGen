@@ -25,12 +25,13 @@ MARKETPLACES = frozenset({
     "hh.ru", "b2b-center.ru", "zakupki.gov.ru", "trudvsem.ru",
     "superjob.ru", "avito.ru", "rabota.ru", "bidzaar.com",
 })
-CONTACT_WORDS = ("контакт", "contacts", "contact", "связаться", "about", "о компании")
+CONTACT_WORDS = ("контакт", "contacts", "contact", "связаться", "about", "о компании",
+                 "реквизит", "rekvizit", "рекрут", "career", "hr")
 OFFICIAL_WORDS = ("сайт компании", "официальный сайт", "website", "сайт работодателя")
 EMAIL = re.compile(r"[A-Za-z0-9_.+\-]{1,64}@[A-Za-z0-9.-]{3,150}\.[A-Za-z]{2,18}")
 SAFE_HOST = re.compile(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}\Z")
 MAX_HTML = 160000
-MAX_PAGES = 3
+MAX_PAGES = 5
 
 
 class ResearchBlocked(ValueError):
@@ -181,7 +182,17 @@ def _contacts(page, official_host, stamp):
                "checked_at": stamp}
         if row not in got:
             got.append(row)
-    for value in page["phones"]:
+    # Capture public numbers printed on corporate contact pages, even when
+    # the website omits a tel: link. A CRM phone is never used as input.
+    text_numbers = []
+    if ("contact" in urlsplit(page["url"]).path.casefold()
+            or "контакт" in page["text"].casefold()
+            or "телефон" in page["text"].casefold()):
+        text_numbers = re.findall(
+            r"(?<!\d)(?:\+7|8)[\s-]*\(?\d{3}\)?[\s-]*"
+            r"\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)",
+            page["text"])[:12]
+    for value in page["phones"] + text_numbers:
         phone = _phone(value)
         if phone:
             row = {"type": "phone", "value": phone,
@@ -213,8 +224,10 @@ def research_public(item, client, allow_hosts, *, now=None):
             or any(type(h) is not str or not SAFE_HOST.fullmatch(h) for h in allow_hosts)):
         raise ResearchBlocked("RESEARCH_CONFIGURATION_INVALID")
     kind = item.get(PREFIX + "SIGNAL_KIND")
-    if kind not in ("tender-opportunity", "1c_vacancy", "it_vacancy",
-                    "vacancy-opportunity", "direct-service", "service-request"):
+    if kind not in ("tender-opportunity", "procurement", "tender",
+                    "1c_vacancy", "it_vacancy", "vacancy-opportunity",
+                    "direct-service", "service-request", "direct-request",
+                    "crm_need", "new_store", "service-demand"):
         raise ResearchBlocked("RESEARCH_NOT_PUBLIC_SIGNAL")
     url = item.get(PREFIX + "SIGNAL_URL")
     source_host = _host(url, allow_hosts)
@@ -294,7 +307,7 @@ def enrich_manager_fields(fields, findings, *, signal_kind):
     lines = ["ДОПОЛНИТЕЛЬНЫЙ ПОИСК ПО ОТКРЫТЫМ СТРАНИЦАМ",
              "Проверено: " + str(findings.get("checked_at", "дата неизвестна")),
              "Найденные сведения требуют сверки с организацией."]
-    for page in pages[:3]:
+    for page in pages[:MAX_PAGES]:
         lines.append("Страница: " + page["url"])
         lines.append("Извлечённый текст (НЕ доказательство намерения купить): "
                      + page["excerpt"][:350])
@@ -309,11 +322,23 @@ def enrich_manager_fields(fields, findings, *, signal_kind):
         lines.append("Не придумывать телефон или email, проверить сайт компании вручную.")
     if signal_kind in ("1c_vacancy", "it_vacancy", "vacancy-opportunity"):
         audience = "HR / ИТ-руководитель; сначала выяснить, допустим ли внешний подрядчик"
-    elif signal_kind == "tender-opportunity":
+        approach = ("Черновик менеджеру ПОСЛЕ разрешения контакта: "
+                    "«Увидели опубликованную ИТ-вакансию. Рассматриваете ли "
+                    "сопровождение части задач по договору с подрядчиком?» "
+                    "Если указан только штатный найм или запрет предложений — не отправлять.")
+    elif signal_kind in ("tender-opportunity", "procurement", "tender"):
         audience = "отдел закупок; проверить дедлайн, статус и правила участия"
+        approach = ("Черновик менеджеру ПОСЛЕ разрешения контакта: "
+                    "«Просим уточнить требования к участию и технический объём "
+                    "закупки по опубликованному извещению». Не выдавать уведомление "
+                    "за прямой запрос услуг.")
     else:
         audience = "ИТ-руководитель / закупки; подтвердить прямую потребность в услуге"
+        approach = ("Черновик менеджеру ПОСЛЕ разрешения контакта: "
+                    "«Уточните, пожалуйста, актуальны ли обозначенные ИТ-задачи, "
+                    "какой объём работ и срок рассмотрения предложения?»")
     lines.append("Кому предложить рассмотрение: " + audience + ".")
+    lines.append(approach)
     lines.append("Сначала проверить корпоративный STOP, CRM-дубли, законность обращения.")
     appendix = "\n".join(lines)
     updated = dict(fields)

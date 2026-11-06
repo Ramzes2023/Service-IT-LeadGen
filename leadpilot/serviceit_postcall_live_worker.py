@@ -42,6 +42,7 @@ REVIEW = PREFIX + "REVIEW_DECISION"
 NEXT_ACTION = PREFIX + "MANAGER_NEXT_ACTION"
 MAX_CARDS = 150
 READ_MARKER = "SERVICEIT_POSTCALL_MANUAL_READONLY_V1"
+APPLY_MARKER = "SERVICEIT_POSTCALL_MANAGER_APPROVED_APPLY_NOW_V1"
 MODE_WRITE = "SERVICEIT_POSTCALL_MANAGER_APPROVED_AUTO"
 BASE_PORTAL = "https://" + PORTAL + "/rest/"
 
@@ -235,10 +236,16 @@ def _completed_call(client, base, cid, manager, approved_at, *, now):
             and parse_date(act.get("LAST_UPDATED")) == matches[0][0],
             "COMPLETED_CALL_READBACK_NOT_VERIFIED")
     summary = act.get("DESCRIPTION")
-    require(type(summary) is str and 5 <= len(summary.strip()) <= 500
-            and not any(ord(c) < 32 and c not in "\n\t" for c in summary),
+    require(type(summary) is str and len(summary) <= 2000
+            and not any(ord(c) < 32 and c not in "\n\t" or ord(c) == 127
+                        for c in summary),
             "MANAGER_CALL_SUMMARY_MISSING_OR_INVALID")
-    return act, summary.strip()
+    # CRM notes may contain line breaks. Normalize without changing facts;
+    # the original manager text stays in the call activity.
+    normalized = " ".join(summary.split())
+    require(5 <= len(normalized) <= 500,
+            "MANAGER_CALL_SUMMARY_MISSING_OR_INVALID")
+    return act, normalized
 
 
 def _binding(client, base):
@@ -381,6 +388,10 @@ def _write_one(client, base, env, cid, *, now):
                     == str(manager)
                     and item.get("ufCrmTask", item.get("UF_CRM_TASK"))
                     == [bind], "POSTCALL_NEW_TASK_READBACK_FAILED")
+            # Confirm that the approved follow-up deadline was retained.
+            observed_deadline = item.get("deadline", item.get("DEADLINE"))
+            require(parse_date(observed_deadline) == due,
+                    "POSTCALL_TASK_DEADLINE_NOT_VERIFIED")
             task_created = True
         response = api(client, base, "crm.item.update", {
             "entityTypeId": 1062, "id": cid, "useOriginalUfNames": "Y",
@@ -445,8 +456,10 @@ def run(client, env, *, write=False, now=None):
 def main():
     env = dict(os.environ)
     kind = env.get("GITHUB_EVENT_NAME")
+    manual_apply = False
     if kind == "issue_comment":
-        # Manual comments are ALWAYS READ-ONLY, no matter which flags exist.
+        # Owner may explicitly run NOW; each CRM record still requires
+        # independent completed-call and human manager signoff proof.
         try:
             with open(env["GITHUB_EVENT_PATH"], encoding="utf8") as fh:
                 event = json.load(fh)
@@ -454,10 +467,12 @@ def main():
                     and event.get("action") == "created"
                     and (event.get("issue") or {}).get("number") == 148
                     and not (event.get("issue") or {}).get("pull_request")
-                    and (event.get("comment") or {}).get("body") == READ_MARKER
+                    and (event.get("comment") or {}).get("body")
+                    in (READ_MARKER, APPLY_MARKER)
                     and ((event.get("comment") or {}).get("user") or {}).get(
                         "login") == "Ramzes2023",
-                    "OWNER_READONLY_MARKER_INVALID")
+                    "OWNER_MARKER_INVALID")
+            manual_apply = event["comment"]["body"] == APPLY_MARKER
         except Exception:
             print(json.dumps({"status": "POSTCALL_OWNER_EVENT_BLOCKED",
                               "crm_writes": 0}), flush=True)
@@ -469,7 +484,7 @@ def main():
     try:
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
             result = run(
-                client, env, write=(kind == "schedule"),
+                client, env, write=(kind == "schedule" or manual_apply),
             )
     except Exception:
         result = {"status": "POSTCALL_SCAN_BLOCKED",

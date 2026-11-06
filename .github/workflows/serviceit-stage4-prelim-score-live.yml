@@ -33,10 +33,7 @@ jobs:
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
       SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
       SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
-      # Same approved positive-only corporate STOP scope as FNS watcher.
-      SERVICEIT_CORPORATE_STOP_INN_ENABLED: ${{ vars.SERVICEIT_CORPORATE_STOP_INN_ENABLED }}
-      SERVICEIT_CORPORATE_STOP_INN_MANIFEST: ${{ secrets.SERVICEIT_CORPORATE_STOP_INN_MANIFEST }}
-      SERVICEIT_CORPORATE_STOP_INN_KEY: ${{ secrets.SERVICEIT_CORPORATE_STOP_INN_KEY }}
+      # Independent LeadGen STOP lives in config/serviceit_own_signal_stop.json.
     steps:
       - uses: actions/checkout@v4
         with:

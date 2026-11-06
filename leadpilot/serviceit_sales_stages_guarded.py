@@ -144,15 +144,16 @@ def _verify_append_only(before, after, added):
     current = {(x["code"], x["name"], x["sort"], x["semantic"]) for x in after}
     if len(after) != len(before) + added or not prior.issubset(current):
         raise StageGateBlocked("EXISTING_STAGE_MUTATED_OR_READBACK_UNCERTAIN")
-    for code, name in zip(CODES[:added], NAMES[:added]):
-        matches = [r for r in after if r["code"].split(":")[-1] == code
-                   and r["name"] == name and r["semantic"] == "process"]
-        if len(matches) != 1:
+    new = current - prior
+    if len(new) != added:
+        raise StageGateBlocked("UNEXPECTED_ADDED_STAGE_COUNT")
+    for code, name, _, semantic in new:
+        suffix = code.split(":")[-1]
+        if suffix not in CODES or name != NAMES[CODES.index(suffix)] or semantic != "process":
             raise StageGateBlocked("NEW_STAGE_READBACK_UNCERTAIN")
 
 
 def run(client, env, *, apply=False):
-    funnel.event_allowed_marker = None  # no effect on existing function
     webhook = (env.get("SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK")
                or env.get("SERVICEIT_BITRIX_WEBHOOK", ""))
     base = funnel.validate_webhook(webhook)

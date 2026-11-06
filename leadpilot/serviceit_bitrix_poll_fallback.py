@@ -30,6 +30,7 @@ from .serviceit_bitrix_dispatch_worker import (
     BRANCH as LEDGER_BRANCH, FOLDER as LEDGER_FOLDER,
 )
 from .bitrix_metadata_audit import validate_webhook
+from .serviceit_safe_crm_read_retry import post_read
 
 POLL_FLAG = "YES_1062_21_READONLY"
 WINDOW = timedelta(days=7)
@@ -324,8 +325,9 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
                      or (probe_only and params.get("filter") == {"id": 3}))
                 and params.get("start") in (0, 50, 100, 150),
                 "POLL_READONLY_METHOD_REQUIRED")
-        response = client.post(base + "/crm.item.list.json", json=params,
-                               follow_redirects=False, timeout=25)
+        # Only read-only item.list can retry on temporary 5xx/network errors.
+        # Signed GitHub dispatch and every CRM mutation remain at-most-once.
+        response = post_read(client, base, method, params, timeout=25)
         require(response.status_code == 200 and len(response.content) <= 512000,
                 "POLL_REST_HTTP_UNVERIFIED")
         body = response.json()

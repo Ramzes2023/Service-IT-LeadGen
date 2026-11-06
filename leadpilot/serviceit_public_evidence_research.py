@@ -258,7 +258,8 @@ def _safe_model_excerpt(text):
 
 
 def research_public(item, client, allow_hosts, *, now=None,
-                    deep_search_enabled=False, deep_search_key=""):
+                    deep_search_enabled=False, deep_search_key="",
+                    deep_llm_context_enabled=False):
     """At most five source/company pages plus optional independent web search.
 
     Caller must explicitly opt in; source host and prospective company host must
@@ -351,7 +352,8 @@ def research_public(item, client, allow_hosts, *, now=None,
         independent = independent_company_research(
             client, company_name=published_name,
             signal_kind=kind, source_host=source_host,
-            search_token=deep_search_key, now=now)
+            search_token=deep_search_key, now=now,
+            llm_context_enabled=deep_llm_context_enabled)
         independent["company_name_provenance"] = public_name_status
         # The model still gets no addresses, phones, customer CRM details or
         # search result snippets; only a sanitized small public-page excerpt.

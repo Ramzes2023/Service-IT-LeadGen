@@ -123,3 +123,46 @@ def test_readonly_diagnostic_is_allowlisted_never_leaks_portal_data(monkeypatch,
     monkeypatch.setattr(stage, "_allowed_event", private)
     assert stage.main() == 2
     assert json.loads(capsys.readouterr().out)["reason_code"] == "UNCLASSIFIED"
+
+
+def test_bitrix_apology_semantic_is_closed_lost_stage_not_unknown(monkeypatch):
+    from leadpilot import serviceit_sales_funnel_provision as funnel
+    def rest(client, base, method, args):
+        assert method == "crm.status.list"
+        assert args == {"filter": {"ENTITY_ID": "DEAL_STAGE_4"}}
+        return [
+            {"ENTITY_ID": "DEAL_STAGE_4", "STATUS_ID": "C4:NEW",
+             "NAME": "Есть интерес", "SORT": "10",
+             "EXTRA": {"SEMANTICS": "process"}},
+            {"ENTITY_ID": "DEAL_STAGE_4", "STATUS_ID": "C4:WON",
+             "NAME": "Успешно реализовано", "SORT": "100",
+             "EXTRA": {"SEMANTICS": "success"}},
+            {"ENTITY_ID": "DEAL_STAGE_4", "STATUS_ID": "C4:LOSE",
+             "NAME": "Закрыто без продажи", "SORT": "110",
+             "EXTRA": {"SEMANTICS": "apology"}},
+        ]
+    monkeypatch.setattr(funnel, "rest", rest)
+    got = s._read_stages(None, "https://serviseit.bitrix24.ru/rest/1/x", 4)
+    assert [entry["semantic"] for entry in got] == [
+        "process", "success", "failure",
+    ]
+
+
+def test_unknown_status_semantics_still_fail_closed(monkeypatch):
+    from pytest import raises
+    from leadpilot import serviceit_sales_funnel_provision as funnel
+    def rest(client, base, method, args):
+        return [
+            {"ENTITY_ID": "DEAL_STAGE_4", "STATUS_ID": "C4:NEW",
+             "NAME": "Есть интерес", "SORT": "10",
+             "EXTRA": {"SEMANTICS": "external_unverified"}},
+            {"ENTITY_ID": "DEAL_STAGE_4", "STATUS_ID": "C4:WON",
+             "NAME": "Успешно реализовано", "SORT": "20",
+             "EXTRA": {"SEMANTICS": "success"}},
+            {"ENTITY_ID": "DEAL_STAGE_4", "STATUS_ID": "C4:LOSE",
+             "NAME": "Закрыто без продажи", "SORT": "30",
+             "EXTRA": {"SEMANTICS": "failure"}},
+        ]
+    monkeypatch.setattr(funnel, "rest", rest)
+    with raises(s.StageGateBlocked, match="UNKNOWN_STAGE_SEMANTICS"):
+        s._read_stages(None, "https://serviseit.bitrix24.ru/rest/1/x", 4)

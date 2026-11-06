@@ -50,6 +50,8 @@ jobs:
       # Independent index search uses only publicly attributed company names.
       # No key => explain INDEX_API_KEY_NOT_CONFIGURED; never fabricate findings.
       SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED: 'YES'
+      # Same three-request-per-card Search budget: 2 Web + 1 LLM Context.
+      SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED: 'YES'
       SERVICEIT_BRAVE_SEARCH_API_KEY: ${{ secrets.SERVICEIT_BRAVE_SEARCH_API_KEY }}
       # User approved primary RouterAI after successful live API attestation #42034007218.
       # GigaChat is always prepared as per-card fallback; never transfer unapproved content.

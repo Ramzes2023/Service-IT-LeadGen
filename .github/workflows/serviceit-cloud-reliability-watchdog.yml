@@ -1,0 +1,68 @@
+name: ServiceIT Cloud Reliability Watchdog (alerts, no CRM writes)
+
+on:
+  workflow_run:
+    workflows:
+      - "ServiceIT Bitrix24 new-card polling fallback (no outgoing webhook)"
+      - "ServiceIT all-new 1062/21 AI batch catch-up (real CRM, no demo)"
+      - "ServiceIT stage3 auto internal review task for ALL future 1062/21 cards"
+      - "ServiceIT provisional Lead Score for every NEW 1062/21 card"
+      - "ServiceIT manager-confirmed call outcome and next action (CRM only)"
+      - "ServiceIT hourly real new-card AI / task / Score readback (READ ONLY)"
+      - "ServiceIT hybrid finance auto / manager fallback for NEW won LeadGen deals"
+    types: [completed]
+  # Scheduled jobs can be dropped; add workflow-run-completion trigger as backup.
+  schedule:
+    - cron: '23,53 * * * *'
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: serviceit-cloud-watchdog-status-issue-221
+  cancel-in-progress: false
+
+jobs:
+  cloud-reliability:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.actor == 'Ramzes2023') ||
+       (github.event_name == 'issue_comment' &&
+        github.actor == 'Ramzes2023' &&
+        github.event.issue.number == 221 &&
+        !github.event.issue.pull_request &&
+        github.event.comment.body == 'SERVICEIT_CLOUD_WATCHDOG_RUN_READONLY_V1') ||
+       (github.event_name == 'workflow_run' &&
+        github.event.action == 'completed' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == 'Ramzes2023/Service-IT-LeadGen' &&
+        (github.event.workflow_run.event == 'schedule' ||
+         github.event.workflow_run.event == 'repository_dispatch' ||
+         github.event.workflow_run.event == 'workflow_dispatch')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      GH_WATCHDOG_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Keep runner-provided GITHUB_EVENT_PATH unchanged.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Measure scheduled freshness and alert on failures without CRM access
+        # No project dependencies needed; only Python standard library.
+        run: python -m leadpilot.serviceit_cloud_reliability_watchdog

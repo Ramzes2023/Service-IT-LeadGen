@@ -257,8 +257,9 @@ def _safe_model_excerpt(text):
     return clean
 
 
-def research_public(item, client, allow_hosts, *, now=None):
-    """At most 3 public pages. Source provenance is never proof of customer identity.
+def research_public(item, client, allow_hosts, *, now=None,
+                    deep_search_enabled=False, deep_search_key=""):
+    """At most five source/company pages plus optional independent web search.
 
     Caller must explicitly opt in; source host and prospective company host must
     be independently configured in the approved domain allowlist.
@@ -340,13 +341,31 @@ def research_public(item, client, allow_hosts, *, now=None):
     # A public page can mention a job title, but cannot establish a contract,
     # current deadline, decision maker or permission to contact.
     excerpt = _safe_model_excerpt(first["text"])
+    independent = None
+    if deep_search_enabled:
+        from .serviceit_independent_company_research import (
+            published_company_name, independent_company_research,
+            model_safe_context,
+        )
+        published_name, public_name_status = published_company_name(item, first)
+        independent = independent_company_research(
+            client, company_name=published_name,
+            signal_kind=kind, source_host=source_host,
+            search_token=deep_search_key, now=now)
+        independent["company_name_provenance"] = public_name_status
+        # The model still gets no addresses, phones, customer CRM details or
+        # search result snippets; only a sanitized small public-page excerpt.
+        additional = model_safe_context(independent)
+        if additional:
+            excerpt = (excerpt[:210] + "\nВнешний контекст: " + additional)[:440]
     return {"status": "PUBLIC_PAGES_INSPECTED", "pages": [
                 {"url": p["url"], "excerpt": " ".join(p["text"].split())[:500]}
                 for p in pages],
             "contacts": list(dedup.values())[:6],
             "model_excerpt": excerpt, "checked_at": stamp,
             "company_site_candidate": corporate or "",
-            "employer_named_in_source": first["employer"].get("name", "")}
+            "employer_named_in_source": first["employer"].get("name", ""),
+            "independent_company_research": independent}
 
 
 def enrich_manager_fields(fields, findings, *, signal_kind):
@@ -411,4 +430,8 @@ def enrich_manager_fields(fields, findings, *, signal_kind):
         key = PREFIX + "AI_RECOMMENDATION"
         updated[key] = (updated[key] +
                         " Найдены дополнительные публичные контакты с URL в полном отчёте.")[:12000]
+    independent = findings.get("independent_company_research")
+    if isinstance(independent, dict):
+        from .serviceit_independent_company_research import append_independent_intelligence
+        updated = append_independent_intelligence(updated, independent)
     return updated

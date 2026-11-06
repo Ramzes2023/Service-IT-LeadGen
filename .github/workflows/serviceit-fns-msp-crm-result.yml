@@ -5,6 +5,13 @@ on:
     - cron: '15 8 * * *'
   repository_dispatch:
     types: [serviceit_bitrix_item_add_v1]
+  # As soon as the official FNS collector finishes successfully, push its
+  # verified membership receipts to eligible NEW Bitrix cards. No need to
+  # wait for tomorrow's scheduled result writer.
+  workflow_run:
+    workflows:
+      - "ServiceIT official FNS MSP monthly snapshot for new 1062/21 cards (NO CRM WRITE)"
+    types: [completed]
   issue_comment:
     types: [created]
 
@@ -21,6 +28,10 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == 'Ramzes2023/Service-IT-LeadGen')) &&
       (github.event_name != 'issue_comment' ||
        (github.actor == 'Ramzes2023' &&
         github.event.issue.number == 200 &&

@@ -25,14 +25,13 @@ from .serviceit_enrichment_worker import normalized, validate_identity, PREFIX
 from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
 from .serviceit_stage4_fns_msp_snapshot import verify as verify_msp_snapshot
 from .serviceit_three_signal_triage import classify_signal
-from .serviceit_corporate_stop_inn import precheck as stop_precheck, CorporateStopBlocked
 from .serviceit_own_signal_stop import read_rules as own_stop_rules, check as own_stop_check, SignalStopBlocked
 
 PORTAL = "https://serviseit.bitrix24.ru/rest/"
 MAX_CARDS_PER_RUN = 6
 COMPANY_FIELD = PREFIX + "COMPANY_INN"
 NO_WRITES = {"crm_writes": 0, "score_writes": 0, "tasks_created": 0,
-             "global_crm_clear": False, "stop_list_status": "DEFERRED_NOT_CONFIGURED"}
+             "global_crm_clear": False, "stop_list_status": "OWN_LEADGEN_ONLY"}
 
 
 class WatchBlocked(ValueError):
@@ -206,15 +205,15 @@ def assess_card(client, base, card, env, *, now):
     need(created <= now and created >= after_activation(env, now),
          "CARD_NOT_NEW_ENOUGH")
     inn = row.get(COMPANY_FIELD)
-    if type(inn) is not str or not _is_valid_inn(inn):
-        return "HOLD_MISSING_VALID_COMPANY_INN"
-    # Separate ServiceIT-only signal exclusions: this is NOT corporate STOP.
+    # Own per-card STOP must apply even if INN is missing/invalid.
     try:
         own_status, _own_reason = own_stop_check(inn, own_stop_rules(), card_id=card)
     except SignalStopBlocked:
         return "HOLD_OWN_SIGNAL_STOP_CONFIG_INVALID"
     if own_status == "HOLD_OWN_SIGNAL_STOP":
         return "HOLD_OWN_SIGNAL_STOP_MATCH"
+    if type(inn) is not str or not _is_valid_inn(inn):
+        return "HOLD_MISSING_VALID_COMPANY_INN"
     need(own_status in ("OWN_SIGNAL_STOP_EMPTY", "NOT_IN_OWN_SIGNAL_STOP"),
          "OWN_SIGNAL_STOP_STATUS_INVALID")
     process = same_process_visible_duplicates(client, base, inn, card)
@@ -225,14 +224,9 @@ def assess_card(client, base, card, env, *, now):
     if process["process_visible_duplicate"] or requisites["visible_matches"] > 0:
         return "HOLD_POTENTIAL_VISIBLE_CRM_DUPLICATE"
 
-    # Corporate positive-only STOP precheck: one listed INN is sufficient to
-    # HOLD. A non-match is NOT evidence of all-channel STOP clearance.
-    try:
-        stop_status = stop_precheck(inn, env)
-    except CorporateStopBlocked:
-        return "HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED"
-    if stop_status == "HIT":
-        return "HOLD_CORPORATE_STOP_MATCH"
+    # LeadGen has its OWN manager-curated STOP above. The separate
+    # corporate STOP-list is not required or consulted by this independent
+    # FNS/duplicate read-only worker. No-contact and formal Score HOLD remain.
 
     # This provisional classification never implies the tender is current.
     kind = row.get(PREFIX + "SIGNAL_KIND") or ""
@@ -292,8 +286,6 @@ def run(client, env, *, now=None):
             "HOLD_POTENTIAL_VISIBLE_CRM_DUPLICATE",
             "HOLD_OWN_SIGNAL_STOP_MATCH",
             "HOLD_OWN_SIGNAL_STOP_CONFIG_INVALID",
-            "HOLD_CORPORATE_STOP_MATCH",
-            "HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED",
             "HOLD_FNS_SNAPSHOT_NOT_CONNECTED",
             "HOLD_FNS_MSP_NOT_MATCHED",
             "DRAFT_ONLY_FNS_MSP_MATCH_GLOBAL_CHECKS_PENDING",

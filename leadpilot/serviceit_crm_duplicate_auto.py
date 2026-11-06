@@ -34,6 +34,7 @@ from .serviceit_stage4_fns_dedupe_watch import (
 )
 from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
 from .serviceit_fns_msp_timeline import read_comments, ENTITY_TYPE
+from .serviceit_own_signal_stop import read_rules as own_stop_rules, check as own_stop_check, SignalStopBlocked
 
 MARK = "[SERVICEIT_CRM_DUPLICATE_SCOPE_V1]"
 FLAG = "YES_1062_21_VISIBLE_DUPLICATE_REVIEW"
@@ -124,8 +125,18 @@ def inspect_one(client, env, base, card, fence, *, now):
     need(date_value(before.get("createdTime")) >= after_activation(env, now),
          "DUPLICATE_HISTORICAL_CARD_FORBIDDEN")
     inn = before.get(PREFIX + "COMPANY_INN")
+    # A ServiceIT-only STOP overrides duplicate review and suppresses an
+    # additional manager comment. Exact card_id rules work without an INN.
+    try:
+        own_status, _ = own_stop_check(inn, own_stop_rules(), card_id=card)
+    except SignalStopBlocked:
+        return "HOLD_OWN_STOP_CONFIG_INVALID"
+    if own_status == "HOLD_OWN_SIGNAL_STOP":
+        return "HOLD_OWN_STOP_NO_DUPLICATE_NOTE"
     if type(inn) is not str or not _is_valid_inn(inn):
         return "HOLD_NO_VALID_INN"
+    need(own_status in ("OWN_SIGNAL_STOP_EMPTY", "NOT_IN_OWN_SIGNAL_STOP"),
+         "OWN_STOP_STATUS_UNVERIFIED")
     found = verify_visible_scope(
         client, base, env["SERVICEIT_BITRIX_WEBHOOK"], card, inn)
     comment = review_message(found)

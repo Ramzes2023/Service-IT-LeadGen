@@ -57,7 +57,7 @@ def test_full_live_scanner_no_fns_returns_hold_not_score(monkeypatch):
     assert out["outcomes"]=={"HOLD_FNS_SNAPSHOT_NOT_CONNECTED":1}
     assert out["formal_score_authorized"] is False
     assert out["crm_writes"] == out["score_writes"] == out["tasks_created"] == 0
-    assert out["stop_list_status"]=="DEFERRED_NOT_CONFIGURED"
+    assert out["stop_list_status"]=="OWN_LEADGEN_ONLY"
     assert "7700000009" not in json.dumps(out)
 
 
@@ -123,35 +123,49 @@ def test_no_crm_or_source_side_effects_in_code():
     assert "form_score_authorized=True" not in code
 
 
-def test_corporate_stop_hit_blocks_before_fns_or_score(monkeypatch):
-    monkeypatch.setattr(m, "stop_precheck", lambda inn,env: "HIT")
+
+def test_own_stop_by_inn_blocks_before_fns_and_score(monkeypatch):
+    monkeypatch.setattr(m, "own_stop_rules", lambda: [
+        {"kind": "inn", "value": INN, "reason": "NOT_RELEVANT"}
+    ])
     monkeypatch.setattr(m, "msp_archive_status",
-                        lambda *args,**kwargs:pytest.fail("FNS not needed for STOP hit"))
+                        lambda *_a, **_k: pytest.fail("Do not fetch FNS after own STOP"))
     with httpx.Client(transport=reqs_transport()) as client:
-        out=m.run(client,env(),now=NOW)
-    assert out["outcomes"]=={"HOLD_CORPORATE_STOP_MATCH":1}
-    assert out["score_writes"]==0 and out["crm_writes"]==0
+        out = m.run(client, env(), now=NOW)
+    assert out["outcomes"] == {"HOLD_OWN_SIGNAL_STOP_MATCH": 1}
+    assert out["stop_list_status"] == "OWN_LEADGEN_ONLY"
     assert out["formal_score_authorized"] is False
 
 
-def test_malformed_approved_corporate_stop_stays_hold(monkeypatch):
-    from leadpilot.serviceit_corporate_stop_inn import CorporateStopBlocked
-    monkeypatch.setattr(m, "stop_precheck",
-                        lambda inn,env:(_ for _ in ()).throw(
-                            CorporateStopBlocked("STOP_CONFIG_INVALID")))
-    with httpx.Client(transport=reqs_transport()) as client:
-        out=m.run(client,env(),now=NOW)
-    assert out["outcomes"]=={"HOLD_CORPORATE_STOP_CONFIG_UNVERIFIED":1}
-    assert out["stop_list_status"]=="DEFERRED_NOT_CONFIGURED"
+def test_own_stop_by_card_applies_before_missing_inn(monkeypatch):
+    monkeypatch.setattr(m, "own_stop_rules", lambda: [
+        {"kind": "card_id", "value": "33", "reason": "DO_NOT_REPROCESS"},
+    ])
+    monkeypatch.setattr(m, "same_process_visible_duplicates",
+                        lambda *_: pytest.fail("Do not dedupe stopped item"))
+    with httpx.Client(transport=reqs_transport(inn="bad")) as client:
+        out = m.run(client, env(), now=NOW)
+    assert out["outcomes"] == {"HOLD_OWN_SIGNAL_STOP_MATCH": 1}
 
 
-def test_no_match_in_partial_stop_scope_is_not_global_stop_clear(monkeypatch):
-    monkeypatch.setattr(m, "stop_precheck",
-                        lambda inn,env:"NO_MATCH_IN_INN_SCOPE_ONLY")
+def test_malformed_own_stop_config_stays_hold(monkeypatch):
+    from leadpilot.serviceit_own_signal_stop import SignalStopBlocked
+    monkeypatch.setattr(m, "own_stop_rules",
+                        lambda: (_ for _ in ()).throw(
+                            SignalStopBlocked("OWN_STOP_CONFIG_INVALID")))
     with httpx.Client(transport=reqs_transport()) as client:
-        out=m.run(client,env(),now=NOW)
-    assert out["outcomes"]=={"HOLD_FNS_SNAPSHOT_NOT_CONNECTED":1}
-    assert out["stop_list_status"]=="DEFERRED_NOT_CONFIGURED"
+        out = m.run(client, env(), now=NOW)
+    assert out["outcomes"] == {"HOLD_OWN_SIGNAL_STOP_CONFIG_INVALID": 1}
+    assert out["formal_score_authorized"] is False
+
+
+def test_no_corporate_stop_required_for_own_leadgen(monkeypatch):
+    monkeypatch.setattr(m, "msp_archive_status",
+                        lambda *_a, **_k: "MSP_OFFICIAL_SNAPSHOT_NOT_CONNECTED")
+    with httpx.Client(transport=reqs_transport()) as client:
+        out = m.run(client, env(), now=NOW)
+    assert out["outcomes"] == {"HOLD_FNS_SNAPSHOT_NOT_CONNECTED": 1}
+    assert out["stop_list_status"] == "OWN_LEADGEN_ONLY"
     assert out["formal_score_authorized"] is False
 
 

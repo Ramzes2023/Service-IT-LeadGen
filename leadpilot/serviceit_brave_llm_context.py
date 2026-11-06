@@ -85,7 +85,7 @@ def context_candidates(client: httpx.Client, *, query: str,
         safe_chunks = [s for s in chunks[:8] if isinstance(s, str) and len(s) <= 4000]
         # A name hit in extracted content can discover an article whose headline
         # does not mention the employer; the fetched page is independently checked.
-        if name not in _norm(title + " ".join(safe_chunks)):
+        if name not in _norm(title + " " + " ".join(safe_chunks)):
             continue
         candidates.append(url)
     return list(dict.fromkeys(candidates))[:8]

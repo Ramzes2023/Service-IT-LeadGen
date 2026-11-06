@@ -24,7 +24,8 @@ jobs:
       GITHUB_REF: ${{ github.ref }}
       GITHUB_ACTOR: ${{ github.actor }}
       GITHUB_EVENT_NAME: ${{ github.event_name }}
-      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      # GitHub Actions supplies GITHUB_EVENT_PATH in the runner environment.
+      # Do not override it with a blank unsupported github.event_path expression.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
       SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK }}

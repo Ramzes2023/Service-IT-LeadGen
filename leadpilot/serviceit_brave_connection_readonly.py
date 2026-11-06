@@ -17,22 +17,29 @@ import httpx
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS
 from .serviceit_enrichment_worker import Rest
 from .serviceit_independent_company_research import SEARCH_URL
+from .serviceit_brave_llm_context import CONTEXT_URL
 
 STATUS_OK = "ALL_COMPONENTS_READY_READONLY"
 KNOWN_GOOD = re.compile(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}\Z")
 
 
-def _brave(client: httpx.Client, key: str):
+def _brave(client: httpx.Client, key: str, *, context_mode=False):
     if not isinstance(key, str) or not 12 <= len(key) <= 200 or not key.isascii():
         return "BRAVE_KEY_MISSING_OR_INVALID"
     try:
         # A generic published informational query. NO CRM company, customer,
         # title, email, private field or Bitrix URL goes to the search vendor.
         response = client.get(
-            SEARCH_URL,
-            params={"q": "Python official documentation",
-                    "count": 2, "country": "RU",
-                    "search_lang": "ru", "safesearch": "strict"},
+            CONTEXT_URL if context_mode else SEARCH_URL,
+            params=({"q": "Python official documentation",
+                     "country": "RU", "search_lang": "ru",
+                     "count": 2, "maximum_number_of_tokens": 1024,
+                     "maximum_number_of_urls": 2,
+                     "context_threshold_mode": "balanced"}
+                    if context_mode else
+                    {"q": "Python official documentation",
+                     "count": 2, "country": "RU",
+                     "search_lang": "ru", "safesearch": "strict"}),
             headers={"X-Subscription-Token": key,
                      "Accept": "application/json"},
             follow_redirects=False, timeout=15.0)
@@ -51,11 +58,17 @@ def _brave(client: httpx.Client, key: str):
         if "application/json" not in response.headers.get("content-type", ""):
             return "BRAVE_NOT_JSON"
         payload = response.json()
+        if context_mode:
+            if not (isinstance(payload, dict)
+                    and isinstance(payload.get("grounding"), dict)
+                    and isinstance(payload["grounding"].get("generic"), list)
+                    and isinstance(payload.get("sources"), dict)):
+                return "BRAVE_CONTEXT_SCHEMA_UNVERIFIED"
+            return "BRAVE_CONTEXT_API_200_VALID_GROUNDING"
         if not (isinstance(payload, dict) and isinstance(payload.get("web"), dict)
                 and isinstance(payload["web"].get("results"), list)):
             return "BRAVE_RESULT_SCHEMA_UNVERIFIED"
-        # We never log the search results and we do not infer company
-        # identity / business readiness from this noncompany smoke query.
+        # We never log returned content or private data.
         return "BRAVE_API_200_VALID_WEB_RESULTS"
     except (httpx.HTTPError, TypeError, ValueError):
         return "BRAVE_TRANSPORT_OR_RESPONSE_UNVERIFIED"
@@ -113,9 +126,13 @@ def readiness(env: dict, client: httpx.Client):
         and (env.get("ROUTERAI_API_KEY") if provider == "routerai"
              else env.get("GIGACHAT_CREDENTIALS"))
     )
+    context_mode = env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES"
     r = {
         "check_mode": "REAL_EXTERNAL_API_AND_BITRIX_METADATA_ONLY",
-        "brave": _brave(client, env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", "")),
+        "brave_search_mode": ("LLM_CONTEXT_ONE_REQUEST" if context_mode else
+                              "WEB_SEARCH_ONE_REQUEST"),
+        "brave": _brave(client, env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", ""),
+                        context_mode=context_mode),
         "bitrix": _crm_metadata(client, env.get("SERVICEIT_BITRIX_WEBHOOK", "")),
         "new_card_exact_worker": (
             "ENABLED" if env.get("SERVICEIT_BITRIX_EVENT_AI_ENABLED")
@@ -140,7 +157,9 @@ def readiness(env: dict, client: httpx.Client):
     }
     r["readiness"] = (
         STATUS_OK if (
-            r["brave"] == "BRAVE_API_200_VALID_WEB_RESULTS"
+            r["brave"] == ("BRAVE_CONTEXT_API_200_VALID_GROUNDING"
+                               if context_mode else
+                               "BRAVE_API_200_VALID_WEB_RESULTS")
             and r["bitrix"] == "BITRIX_NINE_AI_FIELDS_VISIBLE_READONLY_VERIFIED"
             and r["new_card_exact_worker"] == "ENABLED"
             and r["batch_new_card_worker"] == "ENABLED"

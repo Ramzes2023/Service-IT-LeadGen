@@ -1,0 +1,47 @@
+name: ServiceIT free FNS-MSP internal LeadGen Score for NEW 1062/21 cards
+on:
+  schedule:
+    - cron: '3,23,43 * * * *'
+  repository_dispatch:
+    types: [serviceit_bitrix_item_add_v1]
+  workflow_run:
+    workflows:
+      - "ServiceIT official FNS MSP monthly snapshot for new 1062/21 cards (NO CRM WRITE)"
+    types: [completed]
+permissions:
+  contents: write
+concurrency:
+  group: serviceit-bitrix-new-card-free-event
+  cancel-in-progress: false
+jobs:
+  free-msp-leadgen-score:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == 'Ramzes2023/Service-IT-LeadGen'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 17
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_EVENT_PATH: ${{ github.event_path }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_EVENT_BRIDGE_KEY: ${{ secrets.SERVICEIT_BITRIX_EVENT_BRIDGE_KEY }}
+      SERVICEIT_GH_LEDGER_KEY: ${{ secrets.SERVICEIT_GH_LEDGER_KEY }}
+      SERVICEIT_BITRIX_POLL_START_UTC: ${{ vars.SERVICEIT_BITRIX_POLL_START_UTC }}
+      SERVICEIT_LEADGEN_FREE_SCORE_ENABLED: YES_1062_21_FREE_MSP_INTERNAL
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Free FNS-MSP receipt plus LeadGen STOP and duplicates; write only three Score fields
+        run: python -m leadpilot.serviceit_leadgen_free_msp_score

@@ -66,7 +66,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict, *, public_e
         if public_excerpt:
             # This excerpt comes only from the source-host-restricted public
             # research adapter; it must never contain contact information.
-            public_excerpt = plain(public_excerpt, 500)
+            public_excerpt = plain(public_excerpt, 900)
         if (not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "routerai")
                 or ai.get("origin") != "AI_hypothesis"
                 or ai.get("quality_status") != "complete"

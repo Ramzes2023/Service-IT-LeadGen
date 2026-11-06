@@ -212,7 +212,11 @@ def preliminary_once(store, rest, requested_id, *, model=None,
                 evidence = researcher(item)
             except Exception:
                 evidence = None
-        if len(existing) == 9 and not (
+        model_allowed_on_initial_hold = (
+            len(existing) == 9
+            and item.get(PREFIX + "AI_STATUS") == "NOT_RUN_SOURCE_UNVERIFIED"
+            and model is not None and bool(public_ai_hosts))
+        if len(existing) == 9 and not model_allowed_on_initial_hold and not (
                 isinstance(evidence, dict)
                 and evidence.get("status") == "PUBLIC_PAGES_INSPECTED"
                 and evidence.get("pages")):
@@ -220,7 +224,8 @@ def preliminary_once(store, rest, requested_id, *, model=None,
             return "HOLD_9_PRESENT"
         fields = preliminary_fields(item)
         fields.update(existing)
-        if model is not None and public_ai_hosts and not existing:
+        if model is not None and public_ai_hosts and (
+                not existing or model_allowed_on_initial_hold):
             try:
                 public_title = allowed_public_title(item, public_ai_hosts)
             except PreliminaryAIBlocked:

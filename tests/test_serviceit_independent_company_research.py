@@ -160,3 +160,79 @@ def test_no_published_company_even_with_no_key_stays_unverified():
         company_name="", signal_kind="direct-service",
         source_host="example.ru", search_token="")
     assert r["status"] == "NO_PUBLIC_COMPANY_IDENTITY"
+
+
+def test_complete_source_hold_can_receive_first_real_ai_hypothesis(tmp_path, monkeypatch):
+    """A source-created 9-field HOLD is not permanently frozen as NOT_RUN."""
+    from copy import deepcopy
+    from leadpilot.serviceit_enrichment_store import Store
+    from leadpilot.serviceit_windows_autofill import (
+        preliminary_fields, preliminary_once, FIELDS,
+    )
+    import leadpilot.serviceit_windows_autofill as autofill
+    monkeypatch.setattr(autofill, "schema_limits",
+                        lambda rest: {k: 12000 for k in FIELDS})
+    source_item = {code: None for code in FIELDS}
+    source_item.update({
+        "id": 1001, "entityTypeId": 1062, "categoryId": 21,
+        "title": "Поставка серверов и IT-аутсорсинг",
+        PREFIX + "SIGNAL_KIND": "tender-opportunity",
+        PREFIX + "SIGNAL_URL": "https://www.b2b-center.ru/tender-1234567/",
+        PREFIX + "SIGNAL_SOURCE": "public-procurement",
+    })
+    source_item.update(preliminary_fields(source_item))
+    assert source_item[PREFIX + "AI_STATUS"] == "NOT_RUN_SOURCE_UNVERIFIED"
+
+    class CRM:
+        def __init__(self):
+            self.item = source_item
+            self.writes = 0
+
+        def __call__(self, method, params):
+            if method == "crm.item.get":
+                return {"item": deepcopy(self.item)}
+            if method == "crm.item.update":
+                assert set(params["fields"]) == AI_FIELDS
+                self.item.update(params["fields"])
+                self.writes += 1
+                return {"item": deepcopy(self.item)}
+            pytest.fail("OUTSIDE_TARGET_CRM_SCOPE")
+
+    crm = CRM()
+    store = Store(tmp_path / "new-card-events.sqlite3")
+    store.enqueue(1001)
+    seen = []
+    def model(text):
+        seen.append(text)
+        return {"origin": "AI_hypothesis", "provider": "gigachat",
+                "model": "GigaChat-2", "quality_status": "complete",
+                "service": "IT-аутсорсинг",
+                "possible_need": "Возможно требуется техническое сопровождение.",
+                "evidence_quote": "Поставка серверов",
+                "confidence": 0.8}
+
+    result = preliminary_once(
+        store, crm, 1001, model=model,
+        public_ai_hosts=frozenset({"b2b-center.ru"}))
+    assert result == "HOLD_9_WRITTEN"
+    assert seen == ["Поставка серверов и IT-аутсорсинг"]
+    assert crm.writes == 1
+    assert crm.item[PREFIX+"AI_STATUS"] == "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED"
+    assert crm.item[PREFIX+"LEAD_SCORE"] is None
+    assert preliminary_once(
+        store, crm, 1001, model=model,
+        public_ai_hosts=frozenset({"b2b-center.ru"})) == "IDLE"
+
+
+def test_multi_source_model_context_uses_only_safe_visible_excerpts():
+    pages = {"pages": [
+        {"excerpt": "Открытие филиала. Поставки новых касс и оборудования."},
+        {"excerpt": "Автоматизация процессов учёта и интеграция 1С."},
+        {"excerpt": "Контакт info@example.ru"},
+        {"excerpt": "Расширение торговой сети: кассовые системы."},
+    ]}
+    sample = deep.model_safe_context(pages)
+    assert "Открытие филиала" in sample
+    assert "Автоматизация" in sample
+    assert "info@example.ru" not in sample
+    assert sample.count(" | ") == 1

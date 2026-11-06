@@ -74,7 +74,10 @@ def build_plan(rows, category):
     processes = [r for r in rows if r["semantic"] == "process"]
     if (len(interests) != 1 or len(quotes) != 1 or len(wins) != 1
             or len(fails) != 2 or len(processes) != 6
-            or any(r["code"].split(":")[-1] in stages.CODES for r in rows)):
+            or any(r["code"].split(":")[-1] in stages.CODES for r in rows)
+            or any("переговор" in r["name"].casefold()
+                   or "согласован" in r["name"].casefold() for r in rows)):
+        # Never create duplicate requested stages even when codes differ.
         raise RepairBlocked("STATUS_ROLES_AMBIGUOUS")
     interest, quote, win = interests[0], quotes[0], wins[0]
     fails.sort(key=lambda r: (r["sort"], r["id"]))

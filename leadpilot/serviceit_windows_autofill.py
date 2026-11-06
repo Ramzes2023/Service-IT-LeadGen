@@ -172,7 +172,7 @@ def preliminary_fields(item):
 
 
 def preliminary_once(store, rest, requested_id, *, model=None,
-                     public_ai_hosts=frozenset()):
+                     public_ai_hosts=frozenset(), researcher=None):
     """One fenced CRM update; optional GigaChat gets ONLY approved public title.
 
     No public-title allowlist or model consent means NO model call.
@@ -205,7 +205,17 @@ def preliminary_once(store, rest, requested_id, *, model=None,
               "EXISTING_ANALYSIS_REQUIRES_REVIEW")
         _must(all(type(v) is str and len(v) <= 12000 for v in existing.values()),
               "EXISTING_ANALYSIS_INVALID")
-        if len(existing) == 9:
+        evidence = None
+        if researcher is not None:
+            # Blocked public research must never prevent the manager HOLD.
+            try:
+                evidence = researcher(item)
+            except Exception:
+                evidence = None
+        if len(existing) == 9 and not (
+                isinstance(evidence, dict)
+                and evidence.get("status") == "PUBLIC_PAGES_INSPECTED"
+                and evidence.get("pages")):
             store.finish(item_id, owner, "HOLD", "EXISTING_NINE_FIELDS_PRESERVED")
             return "HOLD_9_PRESENT"
         fields = preliminary_fields(item)
@@ -224,17 +234,35 @@ def preliminary_once(store, rest, requested_id, *, model=None,
                 try:
                     store.reserve(item_id, owner, "model", source_key=source_key)
                     model_reserved = True
-                    ai = model(public_title)
+                    excerpt = (
+                        evidence.get("model_excerpt", "")
+                        if isinstance(evidence, dict)
+                        and evidence.get("status") == "PUBLIC_PAGES_INSPECTED" else ""
+                    )
+                    model_text = public_title + ("\n" + excerpt if excerpt else "")
+                    ai = model(model_text)
                     store.model_output(
                         item_id,
                         sha256(json.dumps(ai, sort_keys=True,
                                           ensure_ascii=False).encode()).hexdigest(),
                     )
-                    fields = model_hypothesis_fields(fields, public_title, ai)
+                    fields = model_hypothesis_fields(
+                        fields, public_title, ai, public_excerpt=excerpt)
                 except Exception:
                     if model_reserved:
                         # The request could have reached the model: no blind retry.
                         fields = attempted_but_unverified_fields(fields, provider=getattr(model, "provider", "gigachat"))
+        if isinstance(evidence, dict) and evidence.get("status") == "PUBLIC_PAGES_INSPECTED":
+            try:
+                from .serviceit_public_evidence_research import enrich_manager_fields
+                fields = enrich_manager_fields(
+                    fields, evidence, signal_kind=item.get(PREFIX + "SIGNAL_KIND", ""))
+            except Exception:
+                # Never claim that external research succeeded on partial evidence.
+                pass
+        if len(existing) == 9 and all(fields.get(k) == v for k, v in existing.items()):
+            store.finish(item_id, owner, "HOLD", "EXISTING_NINE_FIELDS_PRESERVED")
+            return "HOLD_9_PRESENT"
         limits = schema_limits(rest)
         _must(all(len(value) <= limits[name] for name, value in fields.items()),
               "FIELD_LENGTH_BLOCKED")

@@ -69,6 +69,10 @@ CRM поля `UF_CRM_13_SVCIT_REVIEW_DECISION` и
 - Облако: `.github/workflows/serviceit-postcall-manager-approved-auto.yml`.
 - Только чтение (комментарий от владельца в Issue #148):
   `SERVICEIT_POSTCALL_MANUAL_READONLY_V1`.
+- Однократный немедленный проход по **уже явно подтверждённым** менеджером
+  звонкам (тот же безопасный контроль, что в расписании):
+  `SERVICEIT_POSTCALL_MANAGER_APPROVED_APPLY_NOW_V1`.
+  Это не подменяет личное подтверждение менеджера в самой CRM.
 - Scheduled `SERVICEIT_POSTCALL_AUTO_ENABLED=SERVICEIT_POSTCALL_MANAGER_APPROVED_AUTO`
   разрешает **только внутреннюю обработку человечески подтверждённого
   звонка**. Нет внешних писем, телемаркетинга или новых сделок.

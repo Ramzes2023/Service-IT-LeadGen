@@ -152,6 +152,7 @@ def prepare_fake_worker(monkeypatch, *, interest="YES", mutation=False):
                          "Уточнить потребность клиента",
                 "responsibleId": 42,
                 "ufCrmTask": ["Tb3_123"],
+                "deadline": "2026-11-07T14:00:00+03:00",
             }}}
         if method == "crm.item.update":
             assert params["entityTypeId"] == 1062 and params["id"] == 123
@@ -220,3 +221,38 @@ def test_readonly_uses_no_task_or_item_mutation(monkeypatch):
     assert out["status"] == "POSTCALL_READONLY_PRECHECK_PASS"
     assert out["approved_candidates"] == 1
     assert out["crm_writes"] == out["tasks_created"] == 0
+
+
+def test_multiline_notes_normalized_without_leaking_or_inventing(monkeypatch):
+    def fake_api(client, base, method, args):
+        a = activity()
+        a["DESCRIPTION"] = "Клиент спросил 1С.\nВозражение: срок внедрения."
+        if method == "crm.activity.list":
+            return {"result": [a]}
+        if method == "crm.activity.get":
+            return {"result": a}
+        raise AssertionError(method)
+    monkeypatch.setattr(m, "api", fake_api)
+    with httpx.Client() as client:
+        got, notes = m._completed_call(client, "https://example.invalid",
+                                      123, 42, m.parse_date(
+                                          "2026-11-06T11:00:00Z"), now=NOW)
+    assert notes == "Клиент спросил 1С. Возражение: срок внедрения."
+
+
+def test_deadline_mismatch_halts_pending_write(monkeypatch):
+    calls, state = prepare_fake_worker(monkeypatch)
+    original = m.api
+    def incorrect_deadline(client, base, method, args):
+        response = original(client, base, method, args)
+        if method == "tasks.task.get":
+            response["result"]["task"]["deadline"] = "2026-11-08T11:00:00Z"
+        return response
+    monkeypatch.setattr(m, "api", incorrect_deadline)
+    with httpx.Client() as client:
+        status = m._write_one(client, "https://portal.invalid/rest", {
+            "GITHUB_TOKEN": "redacted", "SERVICEIT_GH_LEDGER_KEY": "redacted"
+        }, 123, now=NOW)
+    assert status == "POSTCALL_PARTIAL_OR_UNCERTAIN_NO_RETRY"
+    assert "crm.item.update" not in calls
+    assert calls[-1] == "final-UNCERTAIN"

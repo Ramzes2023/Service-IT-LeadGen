@@ -21,7 +21,8 @@ jobs:
         github.actor == 'Ramzes2023' &&
         github.event.issue.number == 148 &&
         !github.event.issue.pull_request &&
-        github.event.comment.body == 'SERVICEIT_POSTCALL_MANUAL_READONLY_V1'))
+        (github.event.comment.body == 'SERVICEIT_POSTCALL_MANUAL_READONLY_V1' ||
+         github.event.comment.body == 'SERVICEIT_POSTCALL_MANAGER_APPROVED_APPLY_NOW_V1')))
     concurrency:
       group: serviceit-bitrix-new-card-free-event
       cancel-in-progress: false

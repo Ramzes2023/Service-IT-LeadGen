@@ -346,8 +346,9 @@ def model_safe_context(independent):
     """Optional short public excerpt, never contact, PII or URLs to a model."""
     if not isinstance(independent, dict):
         return ""
-    for page in (independent.get("pages") or [])[:2]:
+    parts = []
+    for page in (independent.get("pages") or [])[:3]:
         safe = _safe_model_excerpt(page.get("excerpt", ""))
         if safe:
-            return safe[:170]
-    return ""
+            parts.append(safe[:170])
+    return " | ".join(parts)[:550]

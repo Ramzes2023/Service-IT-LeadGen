@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 import ipaddress
+import json
 import re
 import socket
 from urllib.parse import urljoin, urlsplit
@@ -139,6 +140,46 @@ def _robots(client, url, allowed):
         raise ResearchBlocked("RESEARCH_ROBOTS_DISALLOWED")
 
 
+def _structured_employer(raw):
+    """Extract a JobPosting publisher claim, never verified legal identity."""
+    matches = re.findall(
+        r'<script[^>]*type=["\x27]application/ld\+json["\x27][^>]*>(.*?)</script>',
+        raw[:MAX_HTML], re.I | re.S)
+    for chunk in matches[:5]:
+        if len(chunk) > 30000:
+            continue
+        try:
+            obj = json.loads(chunk)
+        except (ValueError, TypeError):
+            continue
+        nodes = obj if isinstance(obj, list) else [obj]
+        expanded = []
+        for node in nodes:
+            if isinstance(node, dict):
+                expanded.append(node)
+                if isinstance(node.get("@graph"), list):
+                    expanded.extend(node["@graph"][:30])
+        for node in expanded[:40]:
+            if not isinstance(node, dict):
+                continue
+            types = node.get("@type", "")
+            if isinstance(types, str):
+                types = [types]
+            if not isinstance(types, list) or "JobPosting" not in types:
+                continue
+            org = node.get("hiringOrganization")
+            if not isinstance(org, dict):
+                continue
+            name = org.get("name")
+            if (not isinstance(name, str) or not 2 <= len(name) <= 140
+                    or re.search(r"[<>\x00-\x1f\x7f]", name)):
+                continue
+            site = org.get("sameAs") or org.get("url") or ""
+            return {"name": name.strip(),
+                    "site_candidate": site if isinstance(site, str) else ""}
+    return {}
+
+
 def _page(client, url, allowed):
     _robots(client, url, allowed)
     raw = _get(client, url, allowed)
@@ -147,7 +188,8 @@ def _page(client, url, allowed):
     text = " ".join(parser.parts)
     return {"url": url, "text": text[:7000],
             "links": parser.links[:150], "emails": parser.mail[:30],
-            "phones": parser.tel[:30]}
+            "phones": parser.tel[:30],
+            "employer": _structured_employer(raw)}
 
 
 def _contact_role(email):
@@ -241,6 +283,15 @@ def research_public(item, client, allow_hosts, *, now=None):
                 "contacts": [], "model_excerpt": "", "checked_at": stamp}
     pages = [first]
     candidates = []
+    structured_site = first["employer"].get("site_candidate", "")
+    if structured_site:
+        try:
+            candidate_host = _host(structured_site, allow_hosts)
+            if not any(candidate_host == m or candidate_host.endswith("." + m)
+                       for m in MARKETPLACES):
+                candidates.append((structured_site, candidate_host))
+        except ResearchBlocked:
+            pass
     # A marketplace posting can link the employer's official website. The
     # link is a CANDIDATE, not verified ownership. Never follow an unknown host.
     for href, label in first["links"]:
@@ -294,7 +345,8 @@ def research_public(item, client, allow_hosts, *, now=None):
                 for p in pages],
             "contacts": list(dedup.values())[:6],
             "model_excerpt": excerpt, "checked_at": stamp,
-            "company_site_candidate": corporate or ""}
+            "company_site_candidate": corporate or "",
+            "employer_named_in_source": first["employer"].get("name", "")}
 
 
 def enrich_manager_fields(fields, findings, *, signal_kind):
@@ -313,6 +365,10 @@ def enrich_manager_fields(fields, findings, *, signal_kind):
         lines.append("Страница: " + page["url"])
         lines.append("Извлечённый текст (НЕ доказательство намерения купить): "
                      + page["excerpt"][:350])
+    employer = findings.get("employer_named_in_source", "")
+    if employer:
+        lines.append("Работодатель, УКАЗАННЫЙ НА ПУБЛИЧНОЙ СТРАНИЦЕ: "
+                     + employer + " (не сверено с ИНН/ФНС).")
     contacts = findings.get("contacts") or []
     if contacts:
         lines.append("ПУБЛИЧНО ОПУБЛИКОВАННЫЕ КОНТАКТЫ (не подтверждено право рассылки):")

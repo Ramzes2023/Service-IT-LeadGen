@@ -91,7 +91,24 @@ def _safe_order_diagnostics(rows):
     first_win = min(wins) if wins else None
     can_compare = last_process is not None and first_win is not None
     gap = first_win - last_process if can_compare else None
+    ordered = sorted(enumerate(rows), key=lambda pair: (pair[1]["sort"], pair[0]))
+    roles = []
+    for _, entry in ordered:
+        if entry["semantic"] == "success":
+            roles.append("S")
+        elif entry["semantic"] == "failure":
+            roles.append("F")
+        elif "интерес" in entry["name"].casefold():
+            roles.append("I")
+        elif any(t in entry["name"].casefold() for t in ("кп", "расч", "предложен")):
+            roles.append("Q")
+        else:
+            roles.append("P")
     return {
+        # Only anonymous semantic letters are published; no CRM stage names,
+        # status identifiers, SORT integers, user IDs, or company information.
+        "anonymous_sorted_stage_roles": "".join(roles),
+        "sort_values_have_ties": len({r["sort"] for r in rows}) != len(rows),
         "process_stages": len(processes),
         "failed_stages": len(failures),
         "process_before_success": bool(can_compare and gap > 0),

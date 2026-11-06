@@ -211,3 +211,14 @@ def test_owner_preflight_exception_logs_only_allowlisted_code(monkeypatch, capsy
     monkeypatch.setattr(repair, "_allow_owner_marker", private)
     assert repair.main() == 2
     assert json.loads(capsys.readouterr().out)["reason_code"] == "UNCLASSIFIED"
+
+
+def test_bitrix_original_success_and_quote_sort_tie_is_repairable_without_duplicates():
+    fixture = rows()
+    fixture[5]["sort"] = fixture[6]["sort"]  # success and quote both 60
+    from leadpilot import serviceit_sales_stages_guarded as old
+    assert old._safe_order_diagnostics(fixture)["anonymous_sorted_stage_roles"] == "PPPIPSQFF"
+    plan = repair.build_plan(fixture, 4)
+    assert plan["strategy"] == "MOVE_QUOTE_SORT_ONLY"
+    assert plan["updates"] == [("C4:QUOTE", 41)]
+    assert plan["new_sorts"] == (42, 43)

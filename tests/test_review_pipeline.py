@@ -153,14 +153,14 @@ def test_simulated_retry_idempotency_new_signal_and_deal(tmp_path):
     crm = MemoryCRM()
     assert crm.submit(c)["status"] == "SIMULATION_HOLD"
     crm.available = False
-    assert crm.submit(c, manager_reviewed=True)["status"] == "SIMULATION_QUEUED_RETRY"
+    assert crm.submit(c, manager_reviewed=True, today=NOW)["status"] == "SIMULATION_QUEUED_RETRY"
     crm.available = True
-    assert crm.retry(manager_reviewed=True)[0]["status"] == "SIMULATED_LEAD_LINKED"
-    crm.submit(c, manager_reviewed=True)
+    assert crm.retry(manager_reviewed=True, today=NOW)[0]["status"] == "SIMULATED_LEAD_LINKED"
+    crm.submit(c, manager_reviewed=True, today=NOW)
     assert len(crm.leads) == len(crm.history) == 1
     c2 = deepcopy(c)
     c2["signals"][0]["id"] = "second-signal"
-    crm.submit(c2, manager_reviewed=True)
+    crm.submit(c2, manager_reviewed=True, today=NOW)
     assert len(crm.leads) == 1 and len(crm.history) == 2
     assert len(crm.leads[SME]["tasks"]) == 2
     with pytest.raises(ValueError):

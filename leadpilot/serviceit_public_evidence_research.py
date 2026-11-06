@@ -50,7 +50,8 @@ def _host(url, allowed):
             or p.username or p.password or p.fragment or port not in (None, 443)
             or not p.path.startswith(("/", "")) or p.path.startswith("//")
             or any(ord(ch) < 32 for ch in url)
-            or hostname not in allowed
+            or not any(hostname == approved or hostname.endswith("." + approved)
+                       for approved in allowed)
             or any(hostname == m or hostname.endswith("." + m) for m in
                    ("localhost", "local", "internal", "example.invalid"))):
         raise ResearchBlocked("RESEARCH_HOST_NOT_APPROVED")
@@ -150,7 +151,7 @@ def _page(client, url, allowed):
 
 def _contact_role(email):
     local = email.split("@", 1)[0].lower()
-    if local in ("hr", "job", "jobs", "career", "career", "recruitment"):
+    if local in ("hr", "job", "jobs", "career", "recruitment"):
         return "отдел подбора персонала"
     if local in ("zakupki", "purchase", "procurement", "tender"):
         return "отдел закупок"

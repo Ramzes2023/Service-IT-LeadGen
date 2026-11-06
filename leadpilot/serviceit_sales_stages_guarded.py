@@ -70,6 +70,10 @@ def _read_stages(client, base, category_id):
         else:
             raise StageGateBlocked("UNKNOWN_STAGE_SEMANTICS")
         normal.append({
+            # Required only by the separately gated V2 SORT-only repair.
+            # Historical read-only mocks may omit the REST dictionary ID.
+            "id": int(r["ID"]) if str(r.get("ID", "")).isdigit()
+            and int(r["ID"]) > 0 else None,
             "code": r["STATUS_ID"],
             "name": r["NAME"].strip(),
             "sort": int(r["SORT"]),

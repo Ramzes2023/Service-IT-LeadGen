@@ -26,6 +26,7 @@ from .serviceit_public_evidence_research import (
 SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 MAX_SEARCH_CALLS = 3
 MAX_EXTERNAL_PAGES = 6
+MAX_EXTERNAL_FETCHES = 9
 MAX_EXTERNAL_HOSTS = 5
 MAX_INDEX_RESULTS = 24
 
@@ -174,7 +175,8 @@ def _site_allowed(raw_url, *, source_host, accepted_hosts):
         if (host == source_host
                 or any(host == d or host.endswith("." + d)
                        for d in BLOCKED_DISCOVERY + tuple(MARKETPLACES))
-                or host in accepted_hosts and len(accepted_hosts) >= MAX_EXTERNAL_HOSTS):
+                or (host not in accepted_hosts
+                    and len(accepted_hosts) >= MAX_EXTERNAL_HOSTS)):
             return None
         # _host verifies scheme, credentials, port, unsafe/local names;
         # public DNS and robots are checked on every actual fetch by _page.
@@ -185,7 +187,7 @@ def _site_allowed(raw_url, *, source_host, accepted_hosts):
 
 
 def _signals(text, url):
-    lowered = " ".join(text.casefold().replace("ё", "е").split())
+    lowered = text.casefold().replace("ё", "е")
     result = []
     for code, phrases, question in SIGNALS:
         for phrase in phrases:
@@ -219,14 +221,16 @@ def independent_company_research(client, *, company_name, signal_kind,
                 "contacts": [], "hypotheses": [], "checked_at": stamp}
     pages, contacts, hypotheses = [], [], []
     seen_hosts, seen_urls = set(), set()
+    attempts = 0
     for url in hits:
-        if len(pages) >= MAX_EXTERNAL_PAGES:
+        if len(pages) >= MAX_EXTERNAL_PAGES or attempts >= MAX_EXTERNAL_FETCHES:
             break
         host = _site_allowed(url, source_host=source_host,
                              accepted_hosts=seen_hosts)
         if host is None or url in seen_urls:
             continue
         seen_urls.add(url)
+        attempts += 1
         try:
             page = _page(client, url, frozenset({host}))
         except (ResearchBlocked, httpx.HTTPError, ValueError):
@@ -264,6 +268,7 @@ def independent_company_research(client, *, company_name, signal_kind,
                             for h in hypotheses}.values())[:8],
         "index_candidates": min(len(hits), MAX_INDEX_RESULTS),
         "independent_pages_checked": len(pages),
+        "external_fetch_attempts": attempts,
         "company_identity_verified": False,
         "contact_outreach_authorized": False,
     }

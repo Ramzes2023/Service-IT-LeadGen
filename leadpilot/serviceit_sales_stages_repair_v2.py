@@ -83,10 +83,18 @@ def build_plan(rows, category):
     fails.sort(key=lambda r: (r["sort"], r["id"]))
     remaining = [r for r in processes if r["code"] != quote["code"]]
     other_max = max(r["sort"] for r in remaining)
-    if (not interest["sort"] < quote["sort"]
-            or not other_max <= win["sort"] < quote["sort"]
-            or not quote["sort"] < min(r["sort"] for r in fails)):
-        raise RepairBlocked("EXISTING_STAGE_RELATIVE_ORDER_CHANGED")
+    # Exact allowlisted reasons distinguish harmless preexisting ties from
+    # truly unsafe stage arrangements without disclosing SORT values or names.
+    if not interest["sort"] < quote["sort"]:
+        raise RepairBlocked("INTEREST_NOT_BEFORE_QUOTE")
+    if not other_max <= win["sort"]:
+        raise RepairBlocked("OTHER_PROCESS_AFTER_SUCCESS")
+    # Bitrix may store success and quotation at the SAME SORT while returning
+    # success first. Final readback still requires strict ordering.
+    if not win["sort"] <= quote["sort"]:
+        raise RepairBlocked("SUCCESS_AFTER_QUOTE")
+    if not quote["sort"] < min(r["sort"] for r in fails):
+        raise RepairBlocked("FAILURE_NOT_AFTER_QUOTE")
     # Minimal route: place the mis-sorted quotation before success, if three
     # strictly free integers exist; the two new stages follow it immediately.
     if win["sort"] - other_max >= 4:
@@ -294,6 +302,10 @@ def main():
             "EXISTING_STATUS_IDENTITIES_NOT_VERIFIED",
             "STATUS_ROLES_AMBIGUOUS",
             "EXISTING_STAGE_RELATIVE_ORDER_CHANGED",
+            "INTEREST_NOT_BEFORE_QUOTE",
+            "OTHER_PROCESS_AFTER_SUCCESS",
+            "SUCCESS_AFTER_QUOTE",
+            "FAILURE_NOT_AFTER_QUOTE",
             "SORT_RANGE_EXHAUSTED",
             "WRONG_CORPORATE_PORTAL",
             "FUNNEL_IDENTITY_NOT_UNIQUE",

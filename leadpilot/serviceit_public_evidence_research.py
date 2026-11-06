@@ -339,7 +339,7 @@ def enrich_manager_fields(fields, findings, *, signal_kind):
                     "какой объём работ и срок рассмотрения предложения?»")
     lines.append("Кому предложить рассмотрение: " + audience + ".")
     lines.append(approach)
-    lines.append("Сначала проверить корпоративный STOP, CRM-дубли, законность обращения.")
+    lines.append("Сначала проверить собственный STOP-лист лидогенерации, CRM-дубли и законность обращения.")
     appendix = "\n".join(lines)
     updated = dict(fields)
     for suffix, extra in (

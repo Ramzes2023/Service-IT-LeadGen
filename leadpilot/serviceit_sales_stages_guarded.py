@@ -82,6 +82,36 @@ def _read_stages(client, base, category_id):
     return normal
 
 
+def _safe_order_diagnostics(rows):
+    """Derived booleans/counts only: never reveal confidential CRM stage data."""
+    processes = [r["sort"] for r in rows if r["semantic"] == "process"]
+    wins = [r["sort"] for r in rows if r["semantic"] == "success"]
+    failures = [r["sort"] for r in rows if r["semantic"] == "failure"]
+    last_process = max(processes) if processes else None
+    first_win = min(wins) if wins else None
+    can_compare = last_process is not None and first_win is not None
+    gap = first_win - last_process if can_compare else None
+    return {
+        "process_stages": len(processes),
+        "failed_stages": len(failures),
+        "process_before_success": bool(can_compare and gap > 0),
+        "two_sort_slots_before_success": bool(can_compare and gap >= 3),
+        "failure_before_or_at_success": bool(
+            first_win is not None and any(x <= first_win for x in failures)
+        ),
+        "failure_before_or_at_last_process": bool(
+            last_process is not None and any(x <= last_process for x in failures)
+        ),
+        "interest_stage_present": any(
+            "интерес" in r["name"].casefold() for r in rows
+        ),
+        "quote_stage_present": any(
+            any(token in r["name"].casefold() for token in ("кп", "расч", "предложен"))
+            for r in rows
+        ),
+    }
+
+
 def _plan(rows):
     names = [r["name"].casefold() for r in rows]
     negotiation = [i for i, n in enumerate(names) if "переговор" in n]
@@ -180,8 +210,13 @@ def run(client, env, *, apply=False):
     before = _read_stages(client, base, cat)
     plan = _plan(before)
     summary = {"status": plan["status"], "crm_writes": 0,
-               "stages_visible": len(before), "admin_ready": is_admin is True,
-               "missing_required_stages": plan["missing"]}
+               "stages_visible": len(before),
+               "portal_admin_ready": is_admin is True,
+               # user.admin checks portal-level rights, not the CRM settings role.
+               # crm.status.add requires CRM settings permission (unverified here).
+               "crm_settings_rights": "NOT_VERIFIED_BY_READONLY",
+               "missing_required_stages": plan["missing"],
+               "stage_order_diagnostics": _safe_order_diagnostics(before)}
     if not apply or not plan["can_add"]:
         return summary
     if is_admin is not True:

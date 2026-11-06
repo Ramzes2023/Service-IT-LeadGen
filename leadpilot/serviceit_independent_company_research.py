@@ -128,13 +128,14 @@ def _queries(name, kind):
     )
 
 
-def _index_search(client, name, kind, token):
+def _index_search(client, name, kind, token, *, query_indices=(0, 1, 2)):
     if not (isinstance(client, httpx.Client) and isinstance(token, str)
             and 12 <= len(token) <= 200 and token.isascii()
             and "\n" not in token and "\r" not in token):
         raise DeepResearchBlocked("INDEX_AUTH_NOT_CONFIGURED")
     results = []
-    for q in _queries(name, kind)[:MAX_SEARCH_CALLS]:
+    for index in query_indices[:MAX_SEARCH_CALLS]:
+        q = _queries(name, kind)[index]
         try:
             response = client.get(
                 SEARCH_URL, params={
@@ -258,7 +259,8 @@ def _signals(text, url):
 
 
 def independent_company_research(client, *, company_name, signal_kind,
-                                 source_host, search_token, now=None):
+                                 source_host, search_token, now=None,
+                                 llm_context_enabled=False):
     """At most three queries and six external pages, never a write or outreach."""
     stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
     if not (isinstance(company_name, str)
@@ -267,9 +269,37 @@ def independent_company_research(client, *, company_name, signal_kind,
         return {"status": "NO_PUBLIC_COMPANY_IDENTITY", "pages": [],
                 "contacts": [], "hypotheses": [], "checked_at": stamp}
     backend = "BRAVE_WEB_INDEX" if search_token else "FREE_GDELT_NEWS_ONLY"
+    context_status = "CONTEXT_DISABLED"
     if search_token:
         try:
-            hits = _index_search(client, company_name, signal_kind, search_token)
+            if llm_context_enabled:
+                # Replace the 2nd normal Web query with ONE LLM Context query.
+                # Two Web calls + one Context call = SAME max-three budget.
+                hits_web = _index_search(
+                    client, company_name, signal_kind, search_token,
+                    query_indices=(0, 2))
+                from .serviceit_brave_llm_context import (
+                    context_candidates, ContextUnavailable,
+                )
+                try:
+                    hits_context = context_candidates(
+                        client, query=_queries(company_name, signal_kind)[1],
+                        public_name=company_name, token=search_token)
+                    context_status = ("CONTEXT_CANDIDATES_UNVERIFIED"
+                                      if hits_context else "CONTEXT_NO_MATCH")
+                    backend = "BRAVE_WEB_PLUS_LLM_CONTEXT"
+                except ContextUnavailable:
+                    # Never add a fourth paid search request to compensate.
+                    hits_context = []
+                    context_status = "CONTEXT_UNAVAILABLE_NO_EXTRA_REQUEST"
+                    backend = "BRAVE_WEB_CONTEXT_UNAVAILABLE"
+                # Keep company website/contact hits before extra research, and
+                # inspect context-ranked articles before lower-ranked Web hits.
+                hits = list(dict.fromkeys(
+                    hits_web[:2] + hits_context[:5] + hits_web[2:]))[:MAX_INDEX_RESULTS]
+            else:
+                hits = _index_search(
+                    client, company_name, signal_kind, search_token)
             index_status = "INDEX_SEARCH_DONE" if hits else "INDEX_NO_RELEVANT_RESULTS"
         except DeepResearchBlocked:
             # The official free news index is a graceful fallback, not proof
@@ -333,6 +363,9 @@ def independent_company_research(client, *, company_name, signal_kind,
                              "origin": "INDEPENDENT_PUBLIC_PAGE"})
     return {
         "status": index_status, "search_backend": backend,
+        "llm_context_status": context_status,
+        "brave_search_requests_max_per_card": (
+            MAX_SEARCH_CALLS if search_token else 0),
         "checked_at": stamp, "pages": pages[:MAX_EXTERNAL_PAGES],
         "contacts": list({(c["type"], c["value"], c["url"]): c
                           for c in contacts}.values())[:8],
@@ -362,6 +395,13 @@ def append_independent_intelligence(fields, data):
         "НЕЗАВИСИМОЕ ИССЛЕДОВАНИЕ КОМПАНИИ ВО ВНЕШНЕМ ИНТЕРНЕТЕ",
         "Проверено: " + str(data.get("checked_at", "")),
         "Статус: " + data["status"],
+        ("Brave: максимум три поисковых запроса на карточку (2 Web + 1 "
+         "LLM Context). LLM Context: " + data["llm_context_status"] + ". "
+         "Его фрагменты использованы только для отбора URL; доказательствами "
+         "становятся лишь отдельно прочитанные публичные страницы."
+         if data.get("search_backend") in (
+             "BRAVE_WEB_PLUS_LLM_CONTEXT", "BRAVE_WEB_CONTEXT_UNAVAILABLE")
+         else "Brave: классический индекс поиска или бесплатный поиск новостей."),
         ("Бесплатные новости: GDELT Project, https://www.gdeltproject.org/ "
          "(поиск новостей за три месяца, НЕ полный веб-поиск)."
          if data.get("search_backend") == "FREE_GDELT_NEWS_ONLY" else

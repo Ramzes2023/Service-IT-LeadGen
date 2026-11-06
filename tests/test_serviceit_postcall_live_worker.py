@@ -226,7 +226,7 @@ def test_readonly_uses_no_task_or_item_mutation(monkeypatch):
 def test_multiline_notes_normalized_without_leaking_or_inventing(monkeypatch):
     def fake_api(client, base, method, args):
         a = activity()
-        a["DESCRIPTION"] = "Клиент спросил 1С.\\nВозражение: срок внедрения."
+        a["DESCRIPTION"] = "Клиент спросил 1С.\nВозражение: срок внедрения."
         if method == "crm.activity.list":
             return {"result": [a]}
         if method == "crm.activity.get":

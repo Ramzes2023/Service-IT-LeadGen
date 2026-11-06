@@ -41,7 +41,7 @@ from .serviceit_stage4_all_new_signed_score_writer import (
 )
 from .serviceit_stage4_fns_dedupe_watch import same_process_visible_duplicates
 from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
-from .serviceit_corporate_stop_inn import precheck as stop_precheck, CorporateStopBlocked
+from .serviceit_own_signal_stop import read_rules as own_stop_rules, check as own_stop_check, SignalStopBlocked
 from .serviceit_three_signal_triage import classify_signal, REVIEW
 from .serviceit_preliminary_score_markers import VERSION, provisional_payload, is_exact_own_provisional
 
@@ -172,17 +172,21 @@ def evaluate_one(client, env, card, *, now=None):
     if (signal_id == "DEMO-ITREQ-001"
             or kind == "demo-synthetic" or source == "synthetic-fixture"):
         return "SYNTHETIC_EXCLUDED"
-    # A known corporate exclusion must block even a provisional numeric Score.
-    # When no approved STOP list is connected, provisional scoring remains
-    # possible, but it is explicitly NOT a contact or formal verification.
+    # Independent LeadGen-only STOP: manager-approved exclusions for a
+    # particular NEW card or exact company INN. No corporate STOP database
+    # is required for preliminary internal triage; this NEVER authorizes
+    # outreach or the independently gated formal Lead Score.
     inn = item.get(PREFIX + "COMPANY_INN")
-    if type(inn) is str and _is_valid_inn(inn):
-        try:
-            stop_result = stop_precheck(inn, env)
-        except CorporateStopBlocked:
-            return "CORPORATE_STOP_CONFIG_HOLD_NO_SCORE"
-        if stop_result == "HIT":
-            return "CORPORATE_STOP_MATCH_HOLD_NO_SCORE"
+    try:
+        own_status, _ = own_stop_check(inn, own_stop_rules(), card_id=card)
+    except SignalStopBlocked:
+        return "OWN_SIGNAL_STOP_CONFIG_HOLD_NO_SCORE"
+    if own_status == "HOLD_OWN_SIGNAL_STOP":
+        return "OWN_SIGNAL_STOP_MATCH_HOLD_NO_SCORE"
+    if own_status not in ("OWN_SIGNAL_STOP_EMPTY", "NOT_IN_OWN_SIGNAL_STOP",
+                          "HOLD_MISSING_VALID_INN"):
+        return "OWN_SIGNAL_STOP_UNVERIFIED_NO_SCORE"
+    # Individual card_id STOPs work even when the company has no valid INN.
     # STOP_REASON is a source/HOLD marker in current B2B cards; it is never
     # interpreted as a cleared corporate STOP list. All scores stay no-contact.
     triage = classify_preliminary(item, now)

@@ -24,7 +24,7 @@ def provisional_payload(score, duplicate_status):
     text = (
         f"🔎 {score}/100 · ПРЕДВАРИТЕЛЬНО · "
         f"ФНС: НЕ ПРОВЕРЕНА · Дубли: {duplicate_status} · "
-        "STOP: НЕ НАСТРОЕН · Контакт: НЕ РАЗРЕШЁН"
+        "STOP: СВОЙ СПИСОК · Контакт: НЕ РАЗРЕШЁН"
     )
     if len(text) > 200:
         raise ValueError("PROVISIONAL_BADGE_TOO_LONG")
@@ -45,9 +45,13 @@ def is_exact_own_provisional(item):
     if item.get(VERSION_FIELD) != VERSION:
         return False
     badge = item.get(BADGE_FIELD)
+    # Historical old-labelled provisional cards stay safely upgradable.
     return (type(badge) is str and any(
-        badge == provisional_payload(score, kind)[BADGE_FIELD]
-        for kind in DUP_STATUSES
+        badge in (
+            provisional_payload(score, kind)[BADGE_FIELD],
+            provisional_payload(score, kind)[BADGE_FIELD].replace(
+                "STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),
+        ) for kind in DUP_STATUSES
     ))
 
 

@@ -332,9 +332,10 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
             if approval is not None:
                 observed = Worker(store, rest, lambda _: approval, model, enabled=True).once(card)
             else:
-                observed = preliminary_once(store, rest, card, model=model,
-                                            public_ai_hosts=public_hosts,
-                                            researcher=researcher)
+                kwargs = {"model": model, "public_ai_hosts": public_hosts}
+                if researcher is not None:
+                    kwargs["researcher"] = researcher
+                observed = preliminary_once(store, rest, card, **kwargs)
         except Exception:
             observed = "NEEDS_REVIEW"
         finally:

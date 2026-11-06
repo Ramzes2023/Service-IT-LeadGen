@@ -26,6 +26,7 @@ from .bitrix_metadata_audit import validate_webhook
 from .serviceit_bitrix_dispatch_worker import EncryptedEventFence, REPOSITORY, PORTAL
 from .serviceit_postcall_confirmed_intent import draft_verified_intent, PostCallBlocked
 from .serviceit_b2b_hold_ai_fields import PREFIX
+from .serviceit_safe_crm_read_retry import post_read
 
 CUTOVER = datetime(2026, 11, 6, 10, 40, tzinfo=timezone.utc)
 ACCEPTED = {
@@ -82,10 +83,15 @@ def api(client, base, method, params):
     require(method in READS | WRITES and type(params) is dict,
             "METHOD_NOT_ALLOWED")
     try:
-        response = client.post(
-            base + "/" + method + ".json", json=params,
-            follow_redirects=False, timeout=24,
-        )
+        if method in READS:
+            # Only verified read endpoints can recover transient 5xx/timeouts.
+            response = post_read(client, base, method, params, timeout=24)
+        else:
+            # Actual CRM/task writes are NEVER retried on unknown outcomes.
+            response = client.post(
+                base + "/" + method + ".json", json=params,
+                follow_redirects=False, timeout=24,
+            )
         require(response.status_code == 200 and
                 0 < len(response.content) <= 600_000,
                 "BITRIX_HTTP_NOT_VERIFIED")

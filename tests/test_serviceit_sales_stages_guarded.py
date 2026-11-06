@@ -105,3 +105,21 @@ def test_cannot_call_other_rest_methods(monkeypatch):
     from pytest import raises
     with raises(s.StageGateBlocked,match="STAGE_ADD_PARAMS_INVALID"):
         s._add_stage(None,"",4,"BAD_CODE","BAD_NAME",40)
+
+
+def test_readonly_diagnostic_is_allowlisted_never_leaks_portal_data(monkeypatch, capsys):
+    import json
+    from leadpilot import serviceit_sales_stages_guarded as stage
+    def block(_env,_apply):
+        raise stage.StageGateBlocked("LEADGEN_FUNNEL_NOT_UNIQUE")
+    monkeypatch.setattr(stage, "_allowed_event", block)
+    assert stage.main() == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "LEADGEN_STAGE_CHECK_BLOCKED",
+        "reason_code": "LEADGEN_FUNNEL_NOT_UNIQUE", "crm_writes": 0,
+    }
+    def private(_env,_apply):
+        raise stage.StageGateBlocked("PRIVATE_CUSTOMER_ID_12345")
+    monkeypatch.setattr(stage, "_allowed_event", private)
+    assert stage.main() == 2
+    assert json.loads(capsys.readouterr().out)["reason_code"] == "UNCLASSIFIED"

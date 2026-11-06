@@ -240,9 +240,31 @@ def main():
         _allowed_event(env, apply)
         with httpx.Client(trust_env=False, follow_redirects=False) as client:
             out = run(client, env, apply=apply)
+    except (StageGateBlocked, funnel.SalesFunnelBlocked) as exc:
+        # Only fixed internal error codes reach logs, never portal payloads,
+        # category IDs, stage names, URLs or exception chains.
+        diagnostic = str(exc)
+        safe = {
+            "STAGES_UNAVAILABLE", "STAGE_SCOPE_OR_SHAPE_INVALID",
+            "UNKNOWN_STAGE_SEMANTICS", "SUCCESS_STAGE_AMBIGUOUS",
+            "MISSING_FAILURE_STAGE", "AMBIGUOUS_STAGE_NAMES",
+            "CODE_ALREADY_USED_BY_DIFFERENT_STAGE",
+            "LEADGEN_FUNNEL_NOT_UNIQUE", "WRONG_PORTAL",
+            "FUNNEL_API_HTTP_OR_SCOPE_DENIED",
+            "FUNNEL_REST_RESULT_UNVERIFIED",
+            "FUNNEL_REST_TRANSPORT_OR_SHAPE_UNVERIFIED",
+            "FUNNEL_LIST_NOT_COMPLETE", "FUNNEL_LIST_EMPTY_OR_EXCESSIVE",
+            "FUNNEL_LIST_IDENTITY_UNVERIFIED", "DEFAULT_DEAL_FUNNEL_NOT_VISIBLE",
+            "CATEGORY_READBACK_SHAPE_INVALID",
+            "CATEGORY_READBACK_IDENTITY_NOT_VERIFIED",
+            "UNAUTHORIZED_GITHUB_EVENT", "OWNER_MARKER_NOT_AUTHORIZED",
+        }
+        out = {"status": "LEADGEN_STAGE_CHECK_BLOCKED",
+               "reason_code": diagnostic if diagnostic in safe else "UNCLASSIFIED",
+               "crm_writes": 0}
     except Exception:
         out = {"status": "LEADGEN_STAGE_CHECK_BLOCKED",
-               "crm_writes": 0}
+               "reason_code": "INTERNAL_UNCLASSIFIED", "crm_writes": 0}
     print(json.dumps(out, ensure_ascii=False, sort_keys=True), flush=True)
     return 0 if out["status"] in {
         "LEADGEN_SALES_STAGES_READY", "TWO_MISSING_STAGES_CAN_BE_ADDED",

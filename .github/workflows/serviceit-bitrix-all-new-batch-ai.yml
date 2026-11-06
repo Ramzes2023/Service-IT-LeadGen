@@ -46,6 +46,10 @@ jobs:
       SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
       SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
       SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      # Read only publicly accessible pages on already approved domains.
+      # No CRM PII is used as a search query; no messaging/outreach.
+      SERVICEIT_PUBLIC_RESEARCH_ENABLED: 'YES'
+      SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS: ${{ vars.SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS }}
       # RouterAI primary is explicitly owner-approved, but remains privacy and key gated.
       SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
       AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}

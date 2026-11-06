@@ -268,6 +268,24 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                 return raw_rest(method, params)
             model = None
             public_hosts = frozenset()
+            researcher = None
+            # External investigation reads only approved PUBLIC hosts. It
+            # NEVER sends a Bitrix webhook, client INN or private CRM fields.
+            if (env.get("SERVICEIT_PUBLIC_RESEARCH_ENABLED") == "YES"
+                    and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"):
+                raw_hosts = ",".join((
+                    env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", ""),
+                    env.get("SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS", ""),
+                ))
+                names = [h.strip().lower() for h in raw_hosts.split(",") if h.strip()]
+                require(1 <= len(names) <= 80 and all(
+                    re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", h)
+                    and not h.endswith((".test", ".invalid", ".local", ".localhost"))
+                    for h in names), "PUBLIC_RESEARCH_HOSTS_INVALID")
+                from .serviceit_public_evidence_research import research_public
+                approved = frozenset(names)
+                def researcher(item):
+                    return research_public(item, client, approved)
             approvals = json.loads(env.get("SERVICEIT_CORPORATE_APPROVALS_JSON") or "{}")
             require(type(approvals) is dict, "APPROVAL_ADAPTER_INVALID")
             approval = approvals.get(str(card))
@@ -314,8 +332,10 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
             if approval is not None:
                 observed = Worker(store, rest, lambda _: approval, model, enabled=True).once(card)
             else:
-                observed = preliminary_once(store, rest, card, model=model,
-                                            public_ai_hosts=public_hosts)
+                kwargs = {"model": model, "public_ai_hosts": public_hosts}
+                if researcher is not None:
+                    kwargs["researcher"] = researcher
+                observed = preliminary_once(store, rest, card, **kwargs)
         except Exception:
             observed = "NEEDS_REVIEW"
         finally:

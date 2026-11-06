@@ -43,6 +43,10 @@ jobs:
       SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
       SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
       SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      # Read only publicly accessible pages on already approved domains.
+      # No CRM PII is used as a search query; no messaging/outreach.
+      SERVICEIT_PUBLIC_RESEARCH_ENABLED: 'YES'
+      SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS: ${{ vars.SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS }}
       # User approved primary RouterAI after successful live API attestation #42034007218.
       # GigaChat is always prepared as per-card fallback; never transfer unapproved content.
       # Trusted, short-lived independent evidence adapter; never event/CRM prose.

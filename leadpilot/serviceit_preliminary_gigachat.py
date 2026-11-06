@@ -57,19 +57,23 @@ def allowed_public_title(item: dict, hosts: frozenset[str]) -> str:
         raise PreliminaryAIBlocked("PUBLIC_TITLE_UNSAFE") from None
 
 
-def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
+def model_hypothesis_fields(base_fields: dict, title: str, ai: dict, *, public_excerpt: str = "") -> dict:
     """Upgrade nine preliminary review fields to an honest GigaChat hypothesis."""
     if not isinstance(base_fields, dict) or set(base_fields) != AI_FIELDS:
         raise PreliminaryAIBlocked("NINE_BASE_FIELDS_REQUIRED")
     try:
         title = plain(title, TITLE_MAX)
+        if public_excerpt:
+            # This excerpt comes only from the source-host-restricted public
+            # research adapter; it must never contain contact information.
+            public_excerpt = plain(public_excerpt, 500)
         if (not isinstance(ai, dict) or ai.get("provider") not in ("gigachat", "routerai")
                 or ai.get("origin") != "AI_hypothesis"
                 or ai.get("quality_status") != "complete"
                 or ai.get("service") not in ALLOWED
                 or ai["service"] == "Требуется проверка"
                 or not isinstance(ai.get("evidence_quote"), str)
-                or ai["evidence_quote"] not in title):
+                or ai["evidence_quote"] not in (title + "\n" + public_excerpt)):
             raise PreliminaryAIBlocked("GIGACHAT_UNVERIFIED_OUTPUT")
         confidence = ai.get("confidence")
         if (isinstance(confidence, bool) or not isinstance(confidence, (int, float))
@@ -106,8 +110,9 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         "Нужны независимые проверки источника, ИНН, дублей, STOP и права контакта."
     )
     fields[PREFIX + "AI_LIMITATIONS"] += (
-        " Модель видела только публичное название сигнала; "
-        "её confidence не является Lead Score."
+        (" Модель видела только публичное название и ограниченный фрагмент открытой страницы; "
+         if public_excerpt else " Модель видела только публичное название сигнала; ")
+        + "её confidence не является Lead Score."
     )
     fields[PREFIX + "AI_FULL_REPORT"] = (
         (badge + "\n" if badge else "")
@@ -116,7 +121,7 @@ def model_hypothesis_fields(base_fields: dict, title: str, ai: dict) -> dict:
         "Lead Score: НЕ РАССЧИТАН\n"
         "Контакт: НЕ РАЗРЕШЁН\n"
         "Модель: " + model_name + "\n\n"
-        "Дословный фрагмент названия источника:\n" + quote + "\n\n"
+        "Дословный фрагмент публичного источника:\n" + quote + "\n\n"
         "Возможная потребность (гипотеза):\n" + hypothesis + "\n\n"
         "Предложение:\n" + fields[PREFIX + "AI_RECOMMENDATION"] + "\n\n"
         "Что сделать менеджеру:\n" + fields[PREFIX + "AI_MANAGER_BRIEF"] + "\n\n"

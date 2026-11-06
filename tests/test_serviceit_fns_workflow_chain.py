@@ -52,4 +52,4 @@ def test_fns_workflow_file_listens_to_collector_with_no_global_crm_rights():
     assert "workflow_run:" in doc
     assert OFFICIAL_WORKFLOW in doc
     assert "github.event.workflow_run.conclusion == 'success'" in doc
-    assert "SERVICEIT_FNS_MSP_RESULT_WRITE" in doc
+    assert "SERVICEIT_FNS_MSP_CRM_RESULT_ENABLED" in doc

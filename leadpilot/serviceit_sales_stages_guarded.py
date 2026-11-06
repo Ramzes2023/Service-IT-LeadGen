@@ -89,6 +89,16 @@ def _plan(rows):
     present = (bool(negotiation), bool(agreement))
     if any(x != y for x, y in zip(present, (False, False))):
         if all(present):
+            quotes = [r["sort"] for r in rows
+                      if "кп" in r["name"].casefold()
+                      or "расч" in r["name"].casefold()
+                      or "предложен" in r["name"].casefold()]
+            wins = [r["sort"] for r in rows if r["semantic"] == "success"]
+            if (not quotes or len(wins) != 1
+                    or not max(quotes) < rows[negotiation[0]]["sort"]
+                    < rows[agreement[0]]["sort"] < wins[0]):
+                return {"status": "EXISTING_SALES_STAGE_ORDER_REVIEW_REQUIRED",
+                        "ready": False, "can_add": False, "missing": 0}
             return {"status": "LEADGEN_SALES_STAGES_READY", "ready": True,
                     "can_add": False, "missing": 0}
         # One already exists: never add blindly in the wrong relative order.
@@ -240,7 +250,7 @@ def main():
         "LEADGEN_TWO_SALES_STAGES_ADDED_AND_VERIFIED",
         "PARTIAL_STAGES_REQUIRE_MANAGER_REVIEW",
         "STAGE_SORT_REVIEW_REQUIRED", "INTEREST_OR_QUOTATION_STAGE_MISSING",
-        "NO_SAFE_STAGE_SORT_GAP",
+        "NO_SAFE_STAGE_SORT_GAP", "EXISTING_SALES_STAGE_ORDER_REVIEW_REQUIRED",
     } else 2
 
 

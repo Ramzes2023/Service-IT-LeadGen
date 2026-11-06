@@ -1,0 +1,45 @@
+name: ServiceIT Brave + AI + Bitrix live readiness (read-only)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/serviceit-brave-connection-readonly.yml'
+      - 'leadpilot/serviceit_brave_connection_readonly.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No item.create, CRM writes, mass search, internal text or company PII.
+jobs:
+  connection-attestation:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVICEIT_BRAVE_SEARCH_API_KEY: ${{ secrets.SERVICEIT_BRAVE_SEARCH_API_KEY }}
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+      SERVICEIT_BITRIX_EVENT_AI_ENABLED: ${{ vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED }}
+      SERVICEIT_BITRIX_POLL_ENABLED: ${{ vars.SERVICEIT_BITRIX_POLL_ENABLED }}
+      SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED: 'YES'
+      SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_HOSTS }}
+      SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS: ${{ vars.SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS }}
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED }}
+      SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED: ${{ vars.SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED }}
+      SERVICEIT_AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER }}
+      SERVICEIT_ROUTERAI_PRIVACY_APPROVED: ${{ vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED }}
+      ROUTERAI_API_KEY: ${{ secrets.SERVICEIT_ROUTERAI_API_KEY }}
+      GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install pinned application dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Live public Brave search and Bitrix nine-field metadata read-only attestation
+        run: python -m leadpilot.serviceit_brave_connection_readonly

@@ -50,6 +50,10 @@ jobs:
       # No CRM PII is used as a search query; no messaging/outreach.
       SERVICEIT_PUBLIC_RESEARCH_ENABLED: 'YES'
       SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS: ${{ vars.SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS }}
+      # Independent index search uses only publicly attributed company names.
+      # No key => explain INDEX_API_KEY_NOT_CONFIGURED; never fabricate findings.
+      SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED: 'YES'
+      SERVICEIT_BRAVE_SEARCH_API_KEY: ${{ secrets.SERVICEIT_BRAVE_SEARCH_API_KEY }}
       # RouterAI primary is explicitly owner-approved, but remains privacy and key gated.
       SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
       AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}

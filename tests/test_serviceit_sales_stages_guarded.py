@@ -166,3 +166,32 @@ def test_unknown_status_semantics_still_fail_closed(monkeypatch):
     monkeypatch.setattr(funnel, "rest", rest)
     with raises(s.StageGateBlocked, match="UNKNOWN_STAGE_SEMANTICS"):
         s._read_stages(None, "https://serviseit.bitrix24.ru/rest/1/x", 4)
+
+
+def test_safe_order_diagnostics_distinguishes_terminal_sort_problem():
+    demo = rows()
+    # Real terminal error can be solely an early failed stage; don't leak names/IDs.
+    demo[-1]["sort"] = 30
+    report = s._safe_order_diagnostics(demo)
+    assert report == {
+        "process_stages": 2,
+        "failed_stages": 1,
+        "process_before_success": True,
+        "two_sort_slots_before_success": True,
+        "failure_before_or_at_success": True,
+        "failure_before_or_at_last_process": False,
+        "interest_stage_present": True,
+        "quote_stage_present": True,
+    }
+    report_text = str(report)
+    assert "C4:" not in report_text
+    assert "КП/расчёт" not in report_text
+    assert "Есть интерес" not in report_text
+
+
+def test_stage_sort_diagnostics_does_not_mask_actual_process_after_success():
+    demo = rows()
+    demo[1]["sort"] = 95
+    report = s._safe_order_diagnostics(demo)
+    assert report["process_before_success"] is False
+    assert report["two_sort_slots_before_success"] is False

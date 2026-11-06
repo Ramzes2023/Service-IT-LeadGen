@@ -285,7 +285,12 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
                 from .serviceit_public_evidence_research import research_public
                 approved = frozenset(names)
                 def researcher(item):
-                    return research_public(item, client, approved)
+                    return research_public(
+                        item, client, approved,
+                        deep_search_enabled=(
+                            env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") == "YES"),
+                        deep_search_key=env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", ""),
+                    )
             approvals = json.loads(env.get("SERVICEIT_CORPORATE_APPROVALS_JSON") or "{}")
             require(type(approvals) is dict, "APPROVAL_ADAPTER_INVALID")
             approval = approvals.get(str(card))

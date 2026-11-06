@@ -271,9 +271,8 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
             researcher = None
             # External investigation reads only approved PUBLIC hosts. It
             # NEVER sends a Bitrix webhook, client INN or private CRM fields.
-            if env.get("SERVICEIT_PUBLIC_RESEARCH_ENABLED") == "YES":
-                require(env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES",
-                        "PUBLIC_RESEARCH_PRIVACY_GATE_MISSING")
+            if (env.get("SERVICEIT_PUBLIC_RESEARCH_ENABLED") == "YES"
+                    and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"):
                 raw_hosts = ",".join((
                     env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", ""),
                     env.get("SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS", ""),

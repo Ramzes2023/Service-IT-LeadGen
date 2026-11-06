@@ -39,6 +39,7 @@ BONUS = {"MICRO": 0, "SMALL": 4, "MEDIUM": 8, None: 0}
 SIZES = {"MICRO": "микро", "SMALL": "малое",
          "MEDIUM": "среднее", None: "размер неизвестен"}
 MAX_WRITES = 12
+OWNER_MARKER = "SERVICEIT_LEADGEN_FREE_MSP_SCORE_LIVE_ONCE_V1"
 
 
 class InternalScoreBlocked(ValueError):
@@ -234,16 +235,24 @@ def run(client, env, *, now=None):
     need(env.get("GITHUB_REPOSITORY") == REPOSITORY
          and env.get("GITHUB_REF") == "refs/heads/main"
          and env.get("SERVICEIT_LEADGEN_FREE_SCORE_ENABLED") == GATE
-         and env.get("GITHUB_EVENT_NAME") in ("schedule", "workflow_run", "repository_dispatch"),
+         and env.get("GITHUB_EVENT_NAME") in ("schedule", "workflow_run", "repository_dispatch", "issue_comment"),
          "SCORE_EVENT_SCOPE_INVALID")
     event_card = None
-    if env["GITHUB_EVENT_NAME"] in ("workflow_run", "repository_dispatch"):
+    if env["GITHUB_EVENT_NAME"] in ("workflow_run", "repository_dispatch", "issue_comment"):
         path = Path(env.get("GITHUB_EVENT_PATH", ""))
         need(path.is_file() and 0 < path.stat().st_size <= 256_000,
              "SCORE_EVENT_FILE_INVALID")
         event = json.loads(path.read_text("utf-8"))
         if env["GITHUB_EVENT_NAME"] == "workflow_run":
             verified_official_workflow_run(event)
+        elif env["GITHUB_EVENT_NAME"] == "issue_comment":
+            need(event.get("action") == "created"
+                 and (event.get("repository") or {}).get("full_name") == REPOSITORY
+                 and (event.get("issue") or {}).get("number") == 200
+                 and not (event.get("issue") or {}).get("pull_request")
+                 and (event.get("sender") or {}).get("login") == "Ramzes2023"
+                 and (event.get("comment") or {}).get("body") == OWNER_MARKER,
+                 "UNTRUSTED_OWNER_MANUAL_EVENT")
         else:
             event_card = verify_event(event, env.get("SERVICEIT_BITRIX_EVENT_BRIDGE_KEY", ""))
     base = validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK", ""))

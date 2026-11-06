@@ -51,7 +51,30 @@ WATCHED_NAMES = frozenset({
     "ServiceIT manager-confirmed call outcome and next action (CRM only)",
     "ServiceIT hourly real new-card AI / task / Score readback (READ ONLY)",
     "ServiceIT hybrid finance auto / manager fallback for NEW won LeadGen deals",
+    "ServiceIT new Bitrix card to AI manager (free event)",
 })
+
+
+# Exact GitHub display names and paths only; no untrusted event labels are used.
+DISPLAY_FILES = {
+    "ServiceIT Bitrix24 new-card polling fallback (no outgoing webhook)":
+        "serviceit-bitrix-poll-fallback.yml",
+    "ServiceIT all-new 1062/21 AI batch catch-up (real CRM, no demo)":
+        "serviceit-bitrix-all-new-batch-ai.yml",
+    "ServiceIT stage3 auto internal review task for ALL future 1062/21 cards":
+        "serviceit-stage3-all-new-task-automation.yml",
+    "ServiceIT provisional Lead Score for every NEW 1062/21 card":
+        "serviceit-stage4-prelim-score-live.yml",
+    "ServiceIT manager-confirmed call outcome and next action (CRM only)":
+        "serviceit-postcall-manager-approved-auto.yml",
+    "ServiceIT hourly real new-card AI / task / Score readback (READ ONLY)":
+        "serviceit-live-new-card-reconciliation.yml",
+    "ServiceIT hybrid finance auto / manager fallback for NEW won LeadGen deals":
+        "serviceit-finance-hybrid-live.yml",
+    # This critical worker is event driven only; no synthetic cron is assumed.
+    "ServiceIT new Bitrix card to AI manager (free event)":
+        "serviceit-bitrix-new-card-ai.yml",
+}
 
 
 class WatchdogBlocked(ValueError):
@@ -122,9 +145,43 @@ def assess(target, records, *, now):
     }
 
 
+def include_failed_event(rows, event):
+    """Immediately alert for a failed signed event, even when cron is green.
+
+    Workflow-run event has already passed authorize(); only exact allowlisted
+    display names are mapped. Event-only AI card worker has NO fake schedule.
+    """
+    raw = event.get("workflow_run") if type(event) is dict else None
+    if not isinstance(raw, dict) or raw.get("conclusion") not in BAD:
+        return rows
+    name = raw.get("name")
+    target = DISPLAY_FILES.get(name)
+    if not target:
+        raise WatchdogBlocked("FAILED_EVENT_NOT_ALLOWLISTED")
+    run_id = raw.get("id")
+    if type(run_id) is not int or run_id <= 0:
+        raise WatchdogBlocked("FAILED_EVENT_ID_INVALID")
+    stamp = parsed(raw.get("created_at"))
+    copy = [dict(row) for row in rows]
+    match = next((row for row in copy if row["file"] == target), None)
+    if match is None:
+        match = {
+            "file": target, "label": "AI новой карточки — событие",
+            "seen_6h": 0, "expected_6h": 0,
+            "maximum_gap_minutes": 0, "last_success": None,
+            "age_minutes": 0,
+        }
+        copy.append(match)
+    match["status"] = "EVENT_FAILED"
+    match["run_id"] = run_id
+    match["run_source"] = "event"
+    match["last_run"] = stamp.isoformat()
+    return copy
+
+
 def signature(rows):
     key = sorted((r["file"], r["status"],
-                  r["run_id"] if r["status"] == "SCHEDULE_FAILED" else None)
+                  r["run_id"] if r["status"] in ("SCHEDULE_FAILED", "EVENT_FAILED") else None)
                  for r in rows)
     return sha256(json.dumps(key, separators=(",", ":")).encode()).hexdigest()
 
@@ -143,6 +200,8 @@ def report(rows, mark, *, now):
         href = ("https://github.com/" + REPO + "/actions/runs/" + str(r["run_id"])
                 if r["run_id"] else None)
         when = r["last_run"] or "нет"
+        if r.get("run_source") == "event":
+            when = "событие: " + when
         if href:
             when = "[" + when + "](" + href + ")"
         lines.append(
@@ -157,6 +216,7 @@ def report(rows, mark, *, now):
         "",
         "STALE = давно нет зарегистрированного cron, SPARSE = меньше 25% "
         "ожидаемых запусков, SCHEDULE_FAILED = последний cron завершился ошибкой, "
+        "EVENT_FAILED = ошибочное событие от новой CRM-карточки или другого автоматического триггера, "
         "WARMUP = недавно включённый процесс.",
         "",
         "**Действия при ошибке:** проверить GitHub run и журнал идемпотентности, "
@@ -292,6 +352,8 @@ def main():
         now = datetime.now(timezone.utc)
         token = env.get("GH_WATCHDOG_TOKEN", "")
         rows = collect(token, now)
+        if env.get("GITHUB_EVENT_NAME") == "workflow_run":
+            rows = include_failed_event(rows, event)
         out = publish(token, rows, now)
         stats = {}
         for row in rows:

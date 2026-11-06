@@ -158,7 +158,9 @@ def _contact_role(email):
         return "отдел закупок"
     if local in ("sales", "commercial", "partners"):
         return "коммерческий отдел"
-    return "общая корпоративная почта"
+    if local in ("info", "office", "contact", "hello", "reception", "mail"):
+        return "общая корпоративная почта"
+    return "публичный корпоративный email; адресат и должность не установлены"
 
 
 def _phone(value):

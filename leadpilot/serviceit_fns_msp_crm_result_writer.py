@@ -25,6 +25,7 @@ from .serviceit_stage4_fns_dedupe_watch import read_item
 from .serviceit_fns_msp_official_live import (
     OfficialMspFence, discover_official_url,
 )
+from .serviceit_own_signal_stop import read_rules as own_stop_rules, check as own_stop_check, SignalStopBlocked
 
 FIELD = "UF_CRM_13_SVCIT_FNS_MSP_RESULT"
 ENABLED = "YES_1062_21_FNS_MSP_RESULT_WRITE"
@@ -123,8 +124,18 @@ def result_field_verified(client, base):
 def write_one(client, env, base, fence, official_fence, card, *, destination="FIELD"):
     before = read_item(client, base, card)
     inn = before.get(PREFIX + "COMPANY_INN")
+    # Do not write FNS-MSP membership to a new signal excluded by the own
+    # LeadGen STOP list. This is independent of any corporate STOP registry.
+    try:
+        own_status, _ = own_stop_check(inn, own_stop_rules(), card_id=card)
+    except SignalStopBlocked:
+        return "HOLD_OWN_STOP_CONFIG_INVALID"
+    if own_status == "HOLD_OWN_SIGNAL_STOP":
+        return "HOLD_OWN_STOP_NO_FNS_WRITE"
     if type(inn) is not str or not _is_valid_inn(inn):
         return "HOLD_NO_VALID_INN"
+    need(own_status in ("OWN_SIGNAL_STOP_EMPTY", "NOT_IN_OWN_SIGNAL_STOP"),
+         "OWN_STOP_STATUS_UNVERIFIED")
     receipt = official_fence.read_checked_receipt(card, inn)
     if receipt is None:
         return "HOLD_AWAITING_OFFICIAL_SNAPSHOT"

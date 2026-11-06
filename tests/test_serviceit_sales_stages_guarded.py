@@ -174,6 +174,8 @@ def test_safe_order_diagnostics_distinguishes_terminal_sort_problem():
     demo[-1]["sort"] = 30
     report = s._safe_order_diagnostics(demo)
     assert report == {
+        "anonymous_sorted_stage_roles": "IQFS",
+        "sort_values_have_ties": False,
         "process_stages": 2,
         "failed_stages": 1,
         "process_before_success": True,

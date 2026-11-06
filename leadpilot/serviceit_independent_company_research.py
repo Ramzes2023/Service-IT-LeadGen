@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -24,6 +25,9 @@ from .serviceit_public_evidence_research import (
 )
 
 SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+GDELT_NEWS_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+_GDELT_MIN_INTERVAL = 5.0
+_last_gdelt_call = 0.0
 MAX_SEARCH_CALLS = 3
 MAX_EXTERNAL_PAGES = 6
 MAX_EXTERNAL_FETCHES = 9
@@ -168,6 +172,57 @@ def _index_search(client, name, kind, token):
     return list(dict.fromkeys(results))[:MAX_INDEX_RESULTS]
 
 
+
+def _gdelt_news_search(client, name):
+    """One free, official GDELT DOC API news lookup, no vendor API key.
+
+    Only source-published company name is transmitted. GDELT indexes recent
+    news, not arbitrary official websites, and offers no company contact API.
+    Respect its 1 request / 5 seconds guidance within the worker process.
+    """
+    global _last_gdelt_call
+    delay = max(0.0, _GDELT_MIN_INTERVAL - (time.monotonic() - _last_gdelt_call))
+    if _last_gdelt_call and delay > 0:
+        time.sleep(delay)
+    _last_gdelt_call = time.monotonic()
+    try:
+        response = client.get(
+            GDELT_NEWS_URL,
+            params={
+                "query": '"' + name.replace('"', "") + '"',
+                "mode": "ArtList", "format": "json", "maxrecords": 10,
+                "timespan": "3m", "sort": "DateDesc",
+            },
+            headers={"Accept": "application/json"},
+            timeout=10.0, follow_redirects=False)
+        if response.status_code != 200 or len(response.content) > 180000:
+            raise DeepResearchBlocked("GDELT_UNAVAILABLE_OR_RATE_LIMITED")
+        if not response.content.strip():
+            return []
+        result = response.json()
+        if not isinstance(result, dict):
+            raise DeepResearchBlocked("GDELT_UNTRUSTED_RESPONSE")
+        articles = result.get("articles", [])
+        if not isinstance(articles, list) or len(articles) > 100:
+            raise DeepResearchBlocked("GDELT_UNTRUSTED_ARTICLES")
+        urls = []
+        for row in articles[:10]:
+            if not isinstance(row, dict):
+                continue
+            url = row.get("url")
+            title = row.get("title")
+            if (not isinstance(url, str) or len(url) > 1000
+                    or not isinstance(title, str) or len(title) > 500):
+                continue
+            # Index title need not contain the legal name: indexed full text
+            # search may have matched inside the article. It remains merely
+            # a candidate until the independent page is fetched and checked.
+            urls.append(url)
+        return list(dict.fromkeys(urls))[:10]
+    except (httpx.HTTPError, ValueError):
+        raise DeepResearchBlocked("GDELT_UNAVAILABLE_OR_RATE_LIMITED") from None
+
+
 def _site_allowed(raw_url, *, source_host, accepted_hosts):
     try:
         u = urlsplit(raw_url)
@@ -211,14 +266,31 @@ def independent_company_research(client, *, company_name, signal_kind,
             and _norm(company_name) and len(_norm(company_name).split()) >= 2):
         return {"status": "NO_PUBLIC_COMPANY_IDENTITY", "pages": [],
                 "contacts": [], "hypotheses": [], "checked_at": stamp}
-    if not search_token:
-        return {"status": "INDEX_API_KEY_NOT_CONFIGURED", "pages": [],
-                "contacts": [], "hypotheses": [], "checked_at": stamp}
-    try:
-        hits = _index_search(client, company_name, signal_kind, search_token)
-    except DeepResearchBlocked:
-        return {"status": "INDEX_UNAVAILABLE_OR_UNVERIFIED", "pages": [],
-                "contacts": [], "hypotheses": [], "checked_at": stamp}
+    backend = "BRAVE_WEB_INDEX" if search_token else "FREE_GDELT_NEWS_ONLY"
+    if search_token:
+        try:
+            hits = _index_search(client, company_name, signal_kind, search_token)
+            index_status = "INDEX_SEARCH_DONE" if hits else "INDEX_NO_RELEVANT_RESULTS"
+        except DeepResearchBlocked:
+            # The official free news index is a graceful fallback, not proof
+            # that the full independent web search completed.
+            backend = "FREE_GDELT_NEWS_ONLY"
+            try:
+                hits = _gdelt_news_search(client, company_name)
+                index_status = "INDEX_UNAVAILABLE_FALLBACK_FREE_NEWS"
+            except DeepResearchBlocked:
+                return {"status": "INDEX_UNAVAILABLE_OR_UNVERIFIED",
+                        "pages": [], "contacts": [], "hypotheses": [],
+                        "checked_at": stamp}
+    else:
+        try:
+            hits = _gdelt_news_search(client, company_name)
+            index_status = ("FREE_NEWS_SEARCH_DONE_FULL_WEB_KEY_MISSING"
+                            if hits else "FREE_NEWS_NO_MATCH_FULL_WEB_KEY_MISSING")
+        except DeepResearchBlocked:
+            return {"status": "FREE_NEWS_UNAVAILABLE_FULL_WEB_KEY_MISSING",
+                    "pages": [], "contacts": [], "hypotheses": [],
+                    "checked_at": stamp}
     pages, contacts, hypotheses = [], [], []
     seen_hosts, seen_urls = set(), set()
     attempts = 0
@@ -260,7 +332,7 @@ def independent_company_research(client, *, company_name, signal_kind,
                              "identity": "WEBSITE_CANDIDATE_NOT_LEGAL_ENTITY_PROOF",
                              "origin": "INDEPENDENT_PUBLIC_PAGE"})
     return {
-        "status": "INDEX_SEARCH_DONE" if hits else "INDEX_NO_RELEVANT_RESULTS",
+        "status": index_status, "search_backend": backend,
         "checked_at": stamp, "pages": pages[:MAX_EXTERNAL_PAGES],
         "contacts": list({(c["type"], c["value"], c["url"]): c
                           for c in contacts}.values())[:8],
@@ -281,12 +353,19 @@ def append_independent_intelligence(fields, data):
     if not isinstance(data, dict) or data.get("status") not in {
             "INDEX_SEARCH_DONE", "INDEX_NO_RELEVANT_RESULTS",
             "INDEX_API_KEY_NOT_CONFIGURED", "INDEX_UNAVAILABLE_OR_UNVERIFIED",
-            "NO_PUBLIC_COMPANY_IDENTITY"}:
+            "NO_PUBLIC_COMPANY_IDENTITY", "FREE_NEWS_SEARCH_DONE_FULL_WEB_KEY_MISSING",
+            "FREE_NEWS_NO_MATCH_FULL_WEB_KEY_MISSING",
+            "FREE_NEWS_UNAVAILABLE_FULL_WEB_KEY_MISSING",
+            "INDEX_UNAVAILABLE_FALLBACK_FREE_NEWS"}:
         return fields
     lines = [
         "НЕЗАВИСИМОЕ ИССЛЕДОВАНИЕ КОМПАНИИ ВО ВНЕШНЕМ ИНТЕРНЕТЕ",
         "Проверено: " + str(data.get("checked_at", "")),
         "Статус: " + data["status"],
+        ("Бесплатные новости: GDELT Project, https://www.gdeltproject.org/ "
+         "(поиск новостей за три месяца, НЕ полный веб-поиск)."
+         if data.get("search_backend") == "FREE_GDELT_NEWS_ONLY" else
+         "Независимый поиск: лицензированный веб-индекс."),
         "Внешние сайты и совпадение названия НЕ доказывают юрлицо, проект, "
         "бюджет или согласие на контакт.",
     ]

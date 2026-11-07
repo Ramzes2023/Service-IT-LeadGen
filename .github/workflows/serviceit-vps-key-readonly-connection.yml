@@ -46,7 +46,7 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-ssh/known_hosts"
           chmod 600 "$RUNNER_TEMP/serviceit-ssh/id_ed25519" "$RUNNER_TEMP/serviceit-ssh/known_hosts"
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-ssh/known_hosts" >/dev/null || { echo "HOST_NOT_PINNED"; exit 2; }
-          expected="SHA256:TYVtMSVRMuxykPPBRrF5zyZjJfqaXwHvGtpEy6K9RKA"
+          expected="SHA256:TYYtMSVRMuxykPPBRrF5zyZiJfqaXwHvGtpEy6K9RKA"
           actual="$(ssh-keygen -lf "$RUNNER_TEMP/serviceit-ssh/known_hosts" -E sha256 | awk 'NR==1{print $2}')"
           [[ "$actual" == "$expected" ]] || { echo "SSH_HOST_FINGERPRINT_MISMATCH"; exit 2; }
           echo "SSH_HOST_MATCHES_2026_11_07_WINDOWS_CAPTURE=YES"

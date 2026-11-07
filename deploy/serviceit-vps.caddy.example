@@ -12,8 +12,9 @@ leadgen.serviseit.ru {
         }
         reverse_proxy 127.0.0.1:18780
     }
+    # Health checks the ACTUAL ingress app, not only Caddy itself.
     handle /health {
-        respond "ok" 200
+        reverse_proxy 127.0.0.1:18780
     }
     handle {
         respond "Not Found" 404

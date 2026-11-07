@@ -53,6 +53,7 @@ def test_compose_requires_seven_secrets_no_event_token_no_gigachat():
     assert "serviceit_bitrix_app_token" not in text.lower()
     assert "SERVICEIT_BITRIX_APPLICATION_TOKEN_FILE" not in text
     assert 'SERVICEIT_VPS_INTAKE_ENABLED: "NO"' in text
+    assert "    # credentials, not even the Bitrix REST webhook.\n    secrets: []" in text
     assert "serviceit_event_bridge_key" in text
     assert "serviceit_gh_ledger_key" in text
     assert "serviceit_brave_api_key" in text

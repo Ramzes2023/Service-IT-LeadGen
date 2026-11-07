@@ -1,0 +1,67 @@
+name: ServiceIT VPS ephemeral PostgreSQL integration tests (no production)
+
+on:
+  pull_request:
+    paths:
+      - 'leadpilot/serviceit_vps_*.py'
+      - 'tests/test_serviceit_vps_*.py'
+      - 'requirements-vps.txt'
+      - 'deploy/serviceit-vps.compose.yml'
+      - '.github/workflows/serviceit-vps-postgres-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'leadpilot/serviceit_vps_*.py'
+      - 'tests/test_serviceit_vps_*.py'
+      - 'requirements-vps.txt'
+      - 'deploy/serviceit-vps.compose.yml'
+      - '.github/workflows/serviceit-vps-postgres-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  real-postgres-queue-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      pg:
+        image: postgres:16
+        env:
+          POSTGRES_USER: leadgen
+          POSTGRES_DB: leadgen
+          POSTGRES_PASSWORD: synthetic-ci-pg-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U leadgen -d leadgen"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SERVICEIT_PG_CI_EPHEMERAL: 'YES'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-vps.txt
+      - name: Install server-only requirements
+        run: python -m pip install -r requirements-vps.txt
+      - name: Verify real disposable PostgreSQL queue transaction safety
+        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_pg_cutover.py
+      - name: Validate Compose structure using ONLY synthetic local placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ci-vps-secrets"
+          for filename in pg_password bitrix_webhook bitrix_app_token \
+            event_bridge_key gh_ledger_key github_ledger_pat \
+            brave_api_key routerai_key gigachat_credentials; do
+            printf 'SYNTHETIC_NOT_REAL\n' > "$RUNNER_TEMP/ci-vps-secrets/$filename"
+          done
+          export SERVICEIT_VPS_SECRETS_DIR="$RUNNER_TEMP/ci-vps-secrets"
+          docker compose -f deploy/serviceit-vps.compose.yml config --quiet
+          echo "VPS_COMPOSE_STRUCTURE_VALIDATED_WITH_SYNTHETIC_SECRET_FILES"

@@ -152,7 +152,10 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                         int(time.time())),
                 }
                 outcome = exact_run(event, exact_env, client=client)
-                ok = outcome.get("status") == "SERVICEIT_NEW_CARD_EVENT_PROCESSED"
+                ok = outcome.get("status") in (
+                    "SERVICEIT_NEW_CARD_EVENT_PROCESSED",
+                    "EXACT_TARGET_READBACK",
+                )
                 result_status = "DONE" if ok else "REVIEW"
                 safe_reason = "EXACT_WORKER_ACK" if ok else "EXACT_WORKER_REVIEW"
                 finalize(connection, card, result_status, safe_reason)

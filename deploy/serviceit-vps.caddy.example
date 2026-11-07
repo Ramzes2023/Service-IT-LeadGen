@@ -1,0 +1,21 @@
+# Include in existing Caddy config ONLY after DNS and TLS validation.
+# Does not replace any corporate sites.
+leadgen.serviseit.ru {
+    encode zstd gzip
+    @bitrix_event {
+        method POST
+        path /integrations/serviceit/bitrix24/new-card
+    }
+    handle @bitrix_event {
+        request_body {
+            max_size 16KB
+        }
+        reverse_proxy 127.0.0.1:18780
+    }
+    handle /health {
+        respond "ok" 200
+    }
+    handle {
+        respond "Not Found" 404
+    }
+}

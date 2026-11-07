@@ -42,7 +42,7 @@ def test_routerai_only_by_default(monkeypatch):
     assert actual["GIGACHAT_CREDENTIALS"] == ""
 
 
-def test_compose_requires_eight_secrets_no_gigachat():
+def test_compose_requires_seven_secrets_no_event_token_no_gigachat():
     text = (
         Path(__file__).resolve().parents[1]
         / "deploy" / "serviceit-vps.compose.yml"
@@ -50,6 +50,12 @@ def test_compose_requires_eight_secrets_no_gigachat():
     assert 'SERVICEIT_AI_PROVIDER: "routerai"' in text
     assert 'SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: "NO"' in text
     assert "serviceit_gigachat_credentials" not in text.lower()
+    assert "serviceit_bitrix_app_token" not in text.lower()
+    assert "SERVICEIT_BITRIX_APPLICATION_TOKEN_FILE" not in text
+    assert 'SERVICEIT_VPS_INTAKE_ENABLED: "NO"' in text
+    assert "serviceit_event_bridge_key" in text
+    assert "serviceit_gh_ledger_key" in text
+    assert "serviceit_brave_api_key" in text
     assert "GIGACHAT_SCOPE:" not in text
     assert "GIGACHAT_MODEL:" not in text
     assert "serviceit_gigachat_ca_setup" not in text

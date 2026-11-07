@@ -55,6 +55,9 @@ x-base: &base
 services:
   ingress:
     <<: *base
+    # Public gateway handles health only in poll-only mode. It receives NO
+    # credentials, not even the Bitrix REST webhook.
+    secrets: []
     command: ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_ingress:app",
               "--host", "127.0.0.1", "--port", "18780",
               "--workers", "1", "--no-access-log"]

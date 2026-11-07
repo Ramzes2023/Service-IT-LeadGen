@@ -35,9 +35,16 @@ async def new_card(request: Request):
     raw_length = request.headers.get("content-length", "")
     if raw_length.isdigit() and int(raw_length) > MAX_BODY_BYTES:
         return JSONResponse({"status": "REQUEST_TOO_LARGE"}, status_code=413)
-    body = await request.body()
-    if not body or len(body) > MAX_BODY_BYTES:
-        return JSONResponse({"status": "REQUEST_TOO_LARGE"}, status_code=413)
+    parts = []
+    read_size = 0
+    async for chunk in request.stream():
+        read_size += len(chunk)
+        if read_size > MAX_BODY_BYTES:
+            return JSONResponse({"status": "REQUEST_TOO_LARGE"}, status_code=413)
+        parts.append(chunk)
+    body = b"".join(parts)
+    if not body:
+        return JSONResponse({"status": "EMPTY_EVENT_BODY"}, status_code=400)
     try:
         token = secret_file(os.environ, "SERVICEIT_BITRIX_APPLICATION_TOKEN")
         candidate = parse_event(

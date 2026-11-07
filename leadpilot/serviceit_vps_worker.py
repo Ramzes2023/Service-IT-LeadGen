@@ -45,6 +45,8 @@ def live_permitted(env: dict) -> bool:
         and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") == "YES"
         and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") == "YES"
         and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
+        and (env.get("SERVICEIT_AI_PROVIDER") != "routerai"
+             or env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21")
     )
 
 

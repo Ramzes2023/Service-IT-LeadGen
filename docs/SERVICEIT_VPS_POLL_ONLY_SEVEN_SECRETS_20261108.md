@@ -55,6 +55,17 @@ Still required:
 
 VPS local-only installer is
 `deploy/serviceit-vps-interactive-secret-install.py`.
+
+List only the seven required polling-mode secret names and their
+permission/status metadata on VPS (never reads or prints values):
+
+```bash
+APP=/home/serviceitdeploy/serviceit/staging/source
+python3 "$APP/deploy/serviceit-vps-interactive-secret-install.py" inventory-poll-only
+```
+
+The older `inventory` command remains for legacy full inventory; it
+includes now-optional `bitrix_app_token` and `gigachat_credentials`.
 Do not paste secret contents in chats, shell commands, GitHub Issues,
 workflow logs or commits.
 

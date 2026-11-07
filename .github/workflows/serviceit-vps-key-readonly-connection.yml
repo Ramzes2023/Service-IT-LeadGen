@@ -1,0 +1,68 @@
+name: ServiceIT VPS SSH key check (manual, read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: Type SSH_KEY_CHECK_READONLY
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-key-check-readonly
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'SSH_KEY_CHECK_READONLY'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      VPS_HOST: 80.66.79.156
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }"
+      PRIVATE_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }"
+      KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify key files and pinned host fingerprint without leaking secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ ]] || { echo "DEPLOY_USER_MISSING"; exit 2; }
+          [[ "$VPS_USER" != root ]] || { echo "ROOT_LOGIN_FOR_DEPLOY_FORBIDDEN"; exit 2; }
+          [[ -n "$PRIVATE_KEY" && -n "$KNOWN_HOSTS" ]] || { echo "VPS_KEY_OR_KNOWN_HOSTS_SECRET_MISSING"; exit 2; }
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-ssh"
+          printf '%s\n' "$PRIVATE_KEY" > "$RUNNER_TEMP/serviceit-ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-ssh/id_ed25519" "$RUNNER_TEMP/serviceit-ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-ssh/known_hosts" >/dev/null || { echo "HOST_NOT_PINNED"; exit 2; }
+          expected="SHA256:TYVtMSVRMuxykPPBRrF5zyZjJfqaXwHvGtpEy6K9RKA"
+          actual="$(ssh-keygen -lf "$RUNNER_TEMP/serviceit-ssh/known_hosts" -E sha256 | awk 'NR==1{print $2}')"
+          [[ "$actual" == "$expected" ]] || { echo "SSH_HOST_FINGERPRINT_MISMATCH"; exit 2; }
+          echo "SSH_HOST_MATCHES_2026_11_07_WINDOWS_CAPTURE=YES"
+      - name: Authenticate to existing Mihail VPS without password prompt, read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$RUNNER_TEMP/serviceit-ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes \
+            -o PubkeyAuthentication=yes \
+            -o PasswordAuthentication=no \
+            -o KbdInteractiveAuthentication=no \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-ssh/known_hosts" \
+            -o ConnectTimeout=12 \
+            "$VPS_USER@$VPS_HOST" 'bash -s' \
+            < deploy/serviceit-vps-github-ssh-readonly-probe.sh
+          echo "SERVICEIT_VPS_SSH_KEY_READONLY=PASS"

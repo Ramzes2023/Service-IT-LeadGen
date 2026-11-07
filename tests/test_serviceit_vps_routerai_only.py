@@ -49,7 +49,10 @@ def test_compose_requires_eight_secrets_no_gigachat():
     ).read_text(encoding="utf8")
     assert 'SERVICEIT_AI_PROVIDER: "routerai"' in text
     assert 'SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: "NO"' in text
-    assert "gigachat" not in text.lower()
+    assert "serviceit_gigachat_credentials" not in text.lower()
+    assert "GIGACHAT_SCOPE:" not in text
+    assert "GIGACHAT_MODEL:" not in text
+    assert "serviceit_gigachat_ca_setup" not in text
     assert "serviceit_routerai_key" in text
     assert "serviceit_github_ledger_pat" in text
 

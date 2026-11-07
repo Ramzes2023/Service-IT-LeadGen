@@ -25,8 +25,8 @@ x-base: &base
     SERVICEIT_PG_USER: "leadgen"
     SERVICEIT_PG_PASSWORD_FILE: /run/secrets/serviceit_pg_password
     SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
-    SERVICEIT_BITRIX_APPLICATION_TOKEN_FILE: /run/secrets/serviceit_bitrix_app_token
-    SERVICEIT_VPS_INTAKE_ENABLED: "${SERVICEIT_VPS_INTAKE_ENABLED:-NO}"
+    # REST polling only; authenticated outgoing-event intake is disabled.
+    SERVICEIT_VPS_INTAKE_ENABLED: "NO"
     SERVICEIT_VPS_WRITER_MODE: "${SERVICEIT_VPS_WRITER_MODE:-READONLY}"
     SERVICEIT_VPS_CUTOVER_AUTHORIZED: "${SERVICEIT_VPS_CUTOVER_AUTHORIZED:-NO}"
     SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
@@ -46,7 +46,6 @@ x-base: &base
   secrets: &common-secrets
     - serviceit_pg_password
     - serviceit_bitrix_webhook
-    - serviceit_bitrix_app_token
     - serviceit_event_bridge_key
     - serviceit_gh_ledger_key
     - serviceit_github_ledger_pat
@@ -56,6 +55,9 @@ x-base: &base
 services:
   ingress:
     <<: *base
+    # Public gateway handles health only in poll-only mode. It receives NO
+    # credentials, not even the Bitrix REST webhook.
+    secrets: []
     command: ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_ingress:app",
               "--host", "127.0.0.1", "--port", "18780",
               "--workers", "1", "--no-access-log"]
@@ -67,7 +69,8 @@ services:
       start_period: 20s
   coordinator:
     <<: *base
-    # RouterAI-only; system default TLS validation stays enabled.
+    # Poll-only RouterAI; no Bitrix outgoing-event token or GigaChat.
+    # System default TLS validation stays enabled.
     command: ["python", "-m", "leadpilot.serviceit_vps_worker", "--loop"]
     environment:
       <<: *common-env
@@ -84,8 +87,6 @@ secrets:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/pg_password"
   serviceit_bitrix_webhook:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/bitrix_webhook"
-  serviceit_bitrix_app_token:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/bitrix_app_token"
   serviceit_event_bridge_key:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/event_bridge_key"
   serviceit_gh_ledger_key:

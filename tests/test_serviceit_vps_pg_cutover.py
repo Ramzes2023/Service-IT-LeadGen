@@ -56,14 +56,25 @@ def test_writer_off_by_default_multiple_independent_approvals():
         "SERVICEIT_VPS_WRITER_MODE": "LIVE",
         "SERVICEIT_VPS_CUTOVER_AUTHORIZED": "YES",
         "SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK": "YES",
+        "SERVICEIT_VPS_INTAKE_ENABLED": "NO",
+        "SERVICEIT_VPS_POLL_ENABLED": "YES",
+        "SERVICEIT_AI_PROVIDER": "routerai",
+        "SERVICEIT_ROUTERAI_PRIVACY_APPROVED": "YES_1062_21",
         "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "YES",
     }
     assert worker.live_permitted(flag)
     for k in flag:
         altered = dict(flag)
-        altered[k] = "NO" if k != "SERVICEIT_VPS_WRITER_MODE" else "READONLY"
+        altered[k] = {
+            "SERVICEIT_VPS_WRITER_MODE": "READONLY",
+            "SERVICEIT_VPS_INTAKE_ENABLED": "YES",
+            "SERVICEIT_AI_PROVIDER": "gigachat",
+        }.get(k, "NO")
         assert not worker.live_permitted(altered)
     assert not worker.live_permitted({})
+    assert not worker.live_permitted(dict(flag, SERVICEIT_VPS_POLL_ENABLED="NO"))
+    assert not worker.live_permitted(dict(flag, SERVICEIT_VPS_INTAKE_ENABLED="YES"))
+    assert not worker.live_permitted(dict(flag, SERVICEIT_AI_PROVIDER="gigachat"))
 
 
 def test_pg_sql_is_at_most_once_and_no_automatic_retry():

@@ -1,0 +1,110 @@
+# Corporate VPS. Host-mode networking is REQUIRED for PostgreSQL which is
+# only bound to 127.0.0.1:5432; HTTP listens only on loopback 127.0.0.1:18780.
+# Caddy is already installed on the host and terminates TLS separately.
+name: serviceit-leadgen-vps
+x-base: &base
+  build:
+    context: ..
+    dockerfile: Dockerfile.serviceit-vps
+  restart: unless-stopped
+  network_mode: host
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 128
+  init: true
+  environment: &common-env
+    SERVICEIT_PG_HOST: "127.0.0.1"
+    SERVICEIT_PG_PORT: "5432"
+    SERVICEIT_PG_DB: "leadgen"
+    SERVICEIT_PG_USER: "leadgen"
+    SERVICEIT_PG_PASSWORD_FILE: /run/secrets/serviceit_pg_password
+    SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
+    SERVICEIT_BITRIX_APPLICATION_TOKEN_FILE: /run/secrets/serviceit_bitrix_app_token
+    SERVICEIT_VPS_INTAKE_ENABLED: "${SERVICEIT_VPS_INTAKE_ENABLED:-NO}"
+    SERVICEIT_VPS_WRITER_MODE: "${SERVICEIT_VPS_WRITER_MODE:-READONLY}"
+    SERVICEIT_VPS_CUTOVER_AUTHORIZED: "${SERVICEIT_VPS_CUTOVER_AUTHORIZED:-NO}"
+    SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
+    SERVICEIT_VPS_POLL_ENABLED: "${SERVICEIT_VPS_POLL_ENABLED:-NO}"
+    SERVICEIT_BITRIX_POLL_START_UTC: "${SERVICEIT_BITRIX_POLL_START_UTC:-}"
+    SERVICEIT_BITRIX_EVENT_BRIDGE_KEY_FILE: /run/secrets/serviceit_event_bridge_key
+    SERVICEIT_GH_LEDGER_KEY_FILE: /run/secrets/serviceit_gh_ledger_key
+    GITHUB_TOKEN_FILE: /run/secrets/serviceit_github_ledger_pat
+    SERVICEIT_BRAVE_SEARCH_API_KEY_FILE: /run/secrets/serviceit_brave_api_key
+    SERVICEIT_AI_PROVIDER: "${SERVICEIT_AI_PROVIDER:-routerai}"
+    SERVICEIT_ROUTERAI_API_KEY_FILE: /run/secrets/serviceit_routerai_key
+    SERVICEIT_GIGACHAT_CREDENTIALS_FILE: /run/secrets/serviceit_gigachat_credentials
+    SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
+    SERVICEIT_ROUTERAI_PRIVACY_APPROVED: "${SERVICEIT_ROUTERAI_PRIVACY_APPROVED:-NO}"
+    SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: "${SERVICEIT_PRELIMINARY_PUBLIC_HOSTS:-}"
+    SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS: "${SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS:-}"
+    GIGACHAT_SCOPE: "${GIGACHAT_SCOPE:-GIGACHAT_API_B2B}"
+    GIGACHAT_MODEL: "${GIGACHAT_MODEL:-GigaChat-2}"
+  secrets: &common-secrets
+    - serviceit_pg_password
+    - serviceit_bitrix_webhook
+    - serviceit_bitrix_app_token
+    - serviceit_event_bridge_key
+    - serviceit_gh_ledger_key
+    - serviceit_github_ledger_pat
+    - serviceit_brave_api_key
+    - serviceit_routerai_key
+    - serviceit_gigachat_credentials
+
+services:
+  ingress:
+    <<: *base
+    command: ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_ingress:app",
+              "--host", "127.0.0.1", "--port", "18780",
+              "--workers", "1", "--no-access-log"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://127.0.0.1:18780/health',timeout=3); assert r.status_code==200 and r.json()['crm_writer_enabled'] is False"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  coordinator:
+    <<: *base
+    # Verify the pinned public GigaChat CA on each start. Never disable TLS.
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        python -m leadpilot.serviceit_gigachat_ca_setup /tmp/serviceit-verified-ca.pem > /dev/null
+        && export GIGACHAT_CA_BUNDLE_FILE=/tmp/serviceit-verified-ca.pem
+        && exec python -m leadpilot.serviceit_vps_worker --loop
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_INTAKE_ENABLED: "NO"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; from leadpilot.serviceit_vps_pg_queue import postgres_settings; assert postgres_settings(os.environ)['host']=='127.0.0.1'"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+secrets:
+  serviceit_pg_password:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/pg_password"
+  serviceit_bitrix_webhook:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/bitrix_webhook"
+  serviceit_bitrix_app_token:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/bitrix_app_token"
+  serviceit_event_bridge_key:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/event_bridge_key"
+  serviceit_gh_ledger_key:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/gh_ledger_key"
+  serviceit_github_ledger_pat:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/github_ledger_pat"
+  serviceit_brave_api_key:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/brave_api_key"
+  serviceit_routerai_key:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/routerai_key"
+
+  serviceit_gigachat_credentials:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/gigachat_credentials"

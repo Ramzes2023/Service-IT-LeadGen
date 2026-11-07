@@ -22,3 +22,8 @@ artifacts
 tests
 docs
 fixtures
+
+# Only this audited PUBLIC trust root is included in the VPS image.
+# All private PEM keys remain excluded.
+!certificates/
+!certificates/russian_trusted_root_ca.pem

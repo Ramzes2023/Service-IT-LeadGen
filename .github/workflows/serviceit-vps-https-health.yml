@@ -1,0 +1,28 @@
+name: ServiceIT VPS live HTTPS health monitor (no CRM)
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-vps-health:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_VPS_HEALTH_ENABLED == 'YES'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify Caddy TLS and actual VPS ingress endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error --max-time 10 \
+                      --proto '=https' --tlsv1.2 \
+                      https://leadgen.serviseit.ru/health)"
+          python -c 'import sys,json; result=json.loads(sys.argv[1]); assert result.get("status") == "SERVICEIT_GATEWAY_RUNNING" and result.get("crm_writer_enabled") is False' "$response"
+          echo "VPS_PUBLIC_HTTPS_HEALTH=PASS"

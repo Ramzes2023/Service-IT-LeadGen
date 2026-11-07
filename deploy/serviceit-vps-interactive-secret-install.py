@@ -29,6 +29,12 @@ AUTHORIZED = (
 )
 # Existing secrets are purposely excluded from all write operations.
 EXISTING = ("pg_password", "bitrix_webhook")
+# RouterAI-only polling: official outgoing Bitrix event token and GigaChat
+# credentials are deliberately NOT required by the reviewed full VPS Compose.
+POLL_ONLY_REQUIRED = (
+    "pg_password", "bitrix_webhook", "event_bridge_key", "gh_ledger_key",
+    "github_ledger_pat", "brave_api_key", "routerai_key",
+)
 UID = 10001
 GID = 10001
 MAX_BYTES = 10000
@@ -43,8 +49,8 @@ def secure_dir() -> int:
     return os.open(DIRECTORY, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
-def inventory(dirfd: int) -> None:
-    for name in EXISTING + AUTHORIZED:
+def inventory(dirfd: int, names: tuple[str, ...] | None = None) -> None:
+    for name in (EXISTING + AUTHORIZED if names is None else names):
         try:
             fd = os.open(
                 name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -122,10 +128,10 @@ def put(dirfd: int, name: str) -> None:
 
 def main() -> int:
     args = sys.argv[1:]
-    if args != ["inventory"] and not (
+    if args not in (["inventory"], ["inventory-poll-only"]) and not (
         len(args) == 2 and args[0] == "put" and args[1] in AUTHORIZED
     ):
-        print("Usage: python3 script.py inventory | put <allowed-secret-name>")
+        print("Usage: python3 script.py inventory | inventory-poll-only | put <allowed-secret-name>")
         return 2
     if os.geteuid() != 0:
         print("ROOT_REQUIRED")
@@ -135,6 +141,8 @@ def main() -> int:
         try:
             if args[0] == "inventory":
                 inventory(dirfd)
+            elif args[0] == "inventory-poll-only":
+                inventory(dirfd, POLL_ONLY_REQUIRED)
             else:
                 put(dirfd, args[1])
         finally:

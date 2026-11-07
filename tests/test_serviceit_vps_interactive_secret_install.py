@@ -4,6 +4,8 @@ from pathlib import Path
 import os
 import stat
 import tempfile
+import io
+from contextlib import redirect_stdout
 import types
 import unittest
 from unittest import mock
@@ -57,6 +59,21 @@ class LocalSecretInstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "INVALID"):
                 module.put(self.dirfd, "gigachat_credentials")
         self.assertFalse((self.directory / "gigachat_credentials").exists())
+
+    def test_poll_only_inventory_is_exactly_seven_safe_names(self):
+        expected = (
+            "pg_password", "bitrix_webhook", "event_bridge_key",
+            "gh_ledger_key", "github_ledger_pat", "brave_api_key",
+            "routerai_key",
+        )
+        self.assertEqual(module.POLL_ONLY_REQUIRED, expected)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            module.inventory(self.dirfd, module.POLL_ONLY_REQUIRED)
+        self.assertEqual(output.getvalue().splitlines(),
+                         [name + "=MISSING" for name in expected])
+        self.assertNotIn("gigachat_credentials", output.getvalue())
+        self.assertNotIn("bitrix_app_token", output.getvalue())
 
     def test_disallow_existing_password_names(self):
         with self.assertRaisesRegex(ValueError, "NOT_ALLOWED"):

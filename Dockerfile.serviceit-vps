@@ -1,0 +1,12 @@
+# Independent corporate VPS; NEVER runs a writer on container startup.
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+COPY requirements.txt requirements-vps.txt /app/
+RUN python -m pip install --no-cache-dir -r requirements-vps.txt
+COPY leadpilot /app/leadpilot
+RUN groupadd --gid 10001 serviceit && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin serviceit
+USER 10001:10001
+# Host networking makes local PostgreSQL reachable at 127.0.0.1:5432.
+# ASGI ingress listens ONLY on host loopback 127.0.0.1:18780.
+CMD ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_ingress:app", "--host", "127.0.0.1", "--port", "18780", "--workers", "1", "--no-access-log"]

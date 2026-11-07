@@ -44,9 +44,12 @@ def live_permitted(env: dict) -> bool:
         env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
         and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") == "YES"
         and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") == "YES"
+        # Incoming event intake is forbidden in this REST-poll deployment.
+        and env.get("SERVICEIT_VPS_INTAKE_ENABLED", "NO") == "NO"
+        and env.get("SERVICEIT_VPS_POLL_ENABLED") == "YES"
+        and env.get("SERVICEIT_AI_PROVIDER") == "routerai"
         and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
-        and (env.get("SERVICEIT_AI_PROVIDER") != "routerai"
-             or env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21")
+        and env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21"
     )
 
 

@@ -70,7 +70,11 @@ def inventory(dirfd: int) -> None:
 def put(dirfd: int, name: str) -> None:
     if name not in AUTHORIZED:
         raise ValueError("SECRET_NAME_NOT_ALLOWED")
-    if os.path.lexists(str(DIRECTORY / name)):
+    try:
+        os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
         print(f"{name}=ALREADY_EXISTS_NO_OVERWRITE")
         return
     if not (sys.stdin.isatty() and sys.stderr.isatty()):

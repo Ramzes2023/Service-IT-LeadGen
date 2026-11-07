@@ -38,6 +38,7 @@ x-base: &base
     SERVICEIT_BRAVE_SEARCH_API_KEY_FILE: /run/secrets/serviceit_brave_api_key
     SERVICEIT_AI_PROVIDER: "${SERVICEIT_AI_PROVIDER:-routerai}"
     SERVICEIT_ROUTERAI_API_KEY_FILE: /run/secrets/serviceit_routerai_key
+    SERVICEIT_GIGACHAT_CREDENTIALS_FILE: /run/secrets/serviceit_gigachat_credentials
     SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
     SERVICEIT_ROUTERAI_PRIVACY_APPROVED: "${SERVICEIT_ROUTERAI_PRIVACY_APPROVED:-NO}"
     SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: "${SERVICEIT_PRELIMINARY_PUBLIC_HOSTS:-}"
@@ -53,6 +54,7 @@ x-base: &base
     - serviceit_github_ledger_pat
     - serviceit_brave_api_key
     - serviceit_routerai_key
+    - serviceit_gigachat_credentials
 
 services:
   ingress:
@@ -96,3 +98,6 @@ secrets:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/brave_api_key"
   serviceit_routerai_key:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/routerai_key"
+
+  serviceit_gigachat_credentials:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/gigachat_credentials"

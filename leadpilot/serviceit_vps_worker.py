@@ -61,13 +61,13 @@ def exact_environment(env: dict) -> dict:
         "SERVICEIT_BRAVE_SEARCH_API_KEY",
     ):
         result[name] = secret_file(env, name)
-    if env.get("SERVICEIT_AI_PROVIDER", "") == "routerai":
-        result["AI_PROVIDER"] = "routerai"
-        result["ROUTERAI_API_KEY"] = secret_file(env, "SERVICEIT_ROUTERAI_API_KEY")
-    else:
-        result["AI_PROVIDER"] = "gigachat"
-    result["GIGACHAT_CREDENTIALS"] = secret_file(
-        env, "SERVICEIT_GIGACHAT_CREDENTIALS", optional=True)
+    # This VPS deployment is RouterAI-only. Do not silently select GigaChat
+    # for an unset/unknown provider or use any inherited credential.
+    if env.get("SERVICEIT_AI_PROVIDER", "routerai") != "routerai":
+        raise VpsBlocked("ROUTERAI_ONLY_VPS_CONFIGURATION_REQUIRED")
+    result["AI_PROVIDER"] = "routerai"
+    result["ROUTERAI_API_KEY"] = secret_file(env, "SERVICEIT_ROUTERAI_API_KEY")
+    result["GIGACHAT_CREDENTIALS"] = ""
     result["SERVICEIT_CORPORATE_APPROVALS_JSON"] = "{}"
     result["GITHUB_REPOSITORY"] = REPOSITORY
     result["GITHUB_REF"] = "refs/heads/main"
@@ -78,8 +78,7 @@ def exact_environment(env: dict) -> dict:
     result["SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"] = "YES"
     result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"
     result["SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED"] = "YES"
-    result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = (
-        "YES" if result["GIGACHAT_CREDENTIALS"] else "NO")
+    result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = "NO"
     # The remote one-use reservation + before image + 9-field readback are
     # inside exact_run; this layer cannot bypass those gates.
     return result

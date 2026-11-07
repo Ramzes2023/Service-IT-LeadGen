@@ -36,15 +36,13 @@ x-base: &base
     SERVICEIT_GH_LEDGER_KEY_FILE: /run/secrets/serviceit_gh_ledger_key
     GITHUB_TOKEN_FILE: /run/secrets/serviceit_github_ledger_pat
     SERVICEIT_BRAVE_SEARCH_API_KEY_FILE: /run/secrets/serviceit_brave_api_key
-    SERVICEIT_AI_PROVIDER: "${SERVICEIT_AI_PROVIDER:-routerai}"
+    SERVICEIT_AI_PROVIDER: "routerai"
     SERVICEIT_ROUTERAI_API_KEY_FILE: /run/secrets/serviceit_routerai_key
-    SERVICEIT_GIGACHAT_CREDENTIALS_FILE: /run/secrets/serviceit_gigachat_credentials
+    SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: "NO"
     SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
     SERVICEIT_ROUTERAI_PRIVACY_APPROVED: "${SERVICEIT_ROUTERAI_PRIVACY_APPROVED:-NO}"
     SERVICEIT_PRELIMINARY_PUBLIC_HOSTS: "${SERVICEIT_PRELIMINARY_PUBLIC_HOSTS:-}"
     SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS: "${SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS:-}"
-    GIGACHAT_SCOPE: "${GIGACHAT_SCOPE:-GIGACHAT_API_B2B}"
-    GIGACHAT_MODEL: "${GIGACHAT_MODEL:-GigaChat-2}"
   secrets: &common-secrets
     - serviceit_pg_password
     - serviceit_bitrix_webhook
@@ -54,7 +52,6 @@ x-base: &base
     - serviceit_github_ledger_pat
     - serviceit_brave_api_key
     - serviceit_routerai_key
-    - serviceit_gigachat_credentials
 
 services:
   ingress:
@@ -70,14 +67,8 @@ services:
       start_period: 20s
   coordinator:
     <<: *base
-    # Verify the pinned public GigaChat CA on each start. Never disable TLS.
-    command:
-      - /bin/sh
-      - -ec
-      - >-
-        python -m leadpilot.serviceit_gigachat_ca_setup /tmp/serviceit-verified-ca.pem > /dev/null
-        && export GIGACHAT_CA_BUNDLE_FILE=/tmp/serviceit-verified-ca.pem
-        && exec python -m leadpilot.serviceit_vps_worker --loop
+    # RouterAI-only; system default TLS validation stays enabled.
+    command: ["python", "-m", "leadpilot.serviceit_vps_worker", "--loop"]
     environment:
       <<: *common-env
       SERVICEIT_VPS_INTAKE_ENABLED: "NO"
@@ -106,5 +97,3 @@ secrets:
   serviceit_routerai_key:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/routerai_key"
 
-  serviceit_gigachat_credentials:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/gigachat_credentials"

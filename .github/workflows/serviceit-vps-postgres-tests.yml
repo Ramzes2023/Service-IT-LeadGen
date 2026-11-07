@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ci-vps-secrets"
-          for filename in pg_password bitrix_webhook bitrix_app_token \
+          for filename in pg_password bitrix_webhook \
             event_bridge_key gh_ledger_key github_ledger_pat \
             brave_api_key routerai_key; do
             printf 'SYNTHETIC_NOT_REAL\n' > "$RUNNER_TEMP/ci-vps-secrets/$filename"

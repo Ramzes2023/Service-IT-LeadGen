@@ -26,9 +26,9 @@ jobs:
     timeout-minutes: 4
     env:
       VPS_HOST: 80.66.79.156
-      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }"
-      PRIVATE_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }"
-      KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      PRIVATE_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
     steps:
       - uses: actions/checkout@v4
         with:

@@ -1,0 +1,144 @@
+name: ServiceIT one-click VPS final READONLY cutover readiness (NO CRM writes)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type FINAL_READONLY_AUDIT_1062_21; NO production cutover'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+
+jobs:
+  verify-readiness:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'FINAL_READONLY_AUDIT_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      CLOUD_CUTOVER_FLAG: "${{ vars.SERVICEIT_VPS_CUTOVER_ACTIVE }}"
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify overlapping cloud-writer fences and empty owner STOP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          named = (
+              "serviceit-bitrix-all-new-batch-ai.yml",
+              "serviceit-bitrix-new-card-ai.yml",
+              "serviceit-free-cloud-ai-cards.yml",
+              "serviceit-crm-duplicate-auto.yml",
+              "serviceit-finance-hybrid-live.yml",
+              "serviceit-fns-msp-crm-result.yml",
+              "serviceit-kanban-three-signal-title-auto.yml",
+              "serviceit-leadgen-free-msp-internal-score.yml",
+              "serviceit-own-signal-stop-auto.yml",
+              "serviceit-postcall-manager-approved-auto.yml",
+              "serviceit-stage3-all-new-task-automation.yml",
+              "serviceit-stage4-all-new-signed-score-writer.yml",
+              "serviceit-stage4-prelim-score-live.yml",
+          )
+          for name in named:
+              source = Path(".github/workflows", name).read_text(encoding="utf-8")
+              assert "vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES'" in source, name
+          poll = Path(".github/workflows/serviceit-bitrix-poll-fallback.yml").read_text(encoding="utf-8")
+          assert poll.count("vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES'") == 2
+          import json
+          personal = json.loads(Path("config/serviceit_own_signal_stop.json").read_text(encoding="utf-8"))
+          assert personal["rules"] == []
+          print("CLOUD_OVERLAPPING_WRITER_FENCES=14_OF_14")
+          print("OWNER_STOP_LIST=EMPTY_BY_OWNER_CHOICE")
+          print("NON_SOURCE_INTAKE=NOT_TOUCHED")
+          PY
+          if [[ "$CLOUD_CUTOVER_FLAG" == "YES" ]]; then
+            echo "CLOUD_CUTOVER_ALREADY_ACTIVE_REVIEW_MANUALLY"
+            exit 2
+          fi
+          echo "CLOUD_CUTOVER_VARIABLE=NOT_ACTIVE"
+      - name: Recent cloud writer scan (informational, not proof of drain)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for kind in in_progress queued; do
+            count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100&status=$kind" \
+                --jq '[.workflow_runs[] | select(.name | test("all-new 1062/21|new Bitrix card|duplicate review|Kanban|stage3 auto|Lead Score|FNS-MSP|finance|call outcome";"i"))] | length')"
+            echo "VISIBLE_OVERLAPPING_CLOUD_$kind=$count"
+          done
+          echo "CLOUD_JOB_DRAIN=NOT_CERTIFIED_BY_SNAPSHOT"
+      - name: Verify pinned non-root SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          mkdir -m 0700 -p "$RUNNER_TEMP/serviceit-final-ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-final-ssh/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-final-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-final-ssh/id" "$RUNNER_TEMP/serviceit-final-ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-final-ssh/known_hosts" >/dev/null
+      - name: Native VPS readiness via READONLY Docker modules (no new cards)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$RUNNER_TEMP/serviceit-final-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-final-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          assert_flag() {
+            actual="$(docker exec "$1" printenv "$2")"
+            [[ "$actual" == "$3" ]] || { echo "VPS_READONLY_FLAG_MISMATCH"; exit 2; }
+          }
+          c=serviceit-leadgen-vps-coordinator-1
+          a=serviceit-leadgen-vps-auxiliaries-1
+          b=serviceit-leadgen-vps-business-1
+          o=serviceit-leadgen-vps-observer-1
+          for n in "$c" "$a" "$b" "$o"; do
+            health="$(docker inspect -f '{{.State.Running}}:{{.State.Health.Status}}' "$n")"
+            [[ "$health" == true:healthy ]] || { echo "VPS_FOUR_HEALTHY=FAIL"; exit 2; }
+          done
+          echo "VPS_FOUR_HEALTHY=PASS"
+          assert_flag "$c" SERVICEIT_VPS_WRITER_MODE READONLY
+          assert_flag "$c" SERVICEIT_VPS_CUTOVER_AUTHORIZED NO
+          assert_flag "$c" SERVICEIT_VPS_POLL_ENABLED NO
+          assert_flag "$c" SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK NO
+          assert_flag "$c" SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED YES
+          assert_flag "$c" SERVICEIT_ROUTERAI_PRIVACY_APPROVED YES_1062_21
+          assert_flag "$a" SERVICEIT_VPS_WRITER_MODE READONLY
+          assert_flag "$a" SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED YES_1062_21_INTERNAL_MANAGER
+          assert_flag "$a" SERVICEIT_VPS_TASK_ASSIGNEE_ID 605
+          assert_flag "$a" SERVICEIT_VPS_MANAGER_TASK_ENABLED NO
+          assert_flag "$b" SERVICEIT_VPS_POSTCALL_ENABLED NO
+          assert_flag "$b" SERVICEIT_VPS_FINANCE_ENABLED NO
+          echo "VPS_FLAGS=SAFE_AND_OLGA_605_PREPARED"
+          docker exec "$c" python -m leadpilot.serviceit_vps_poll_readonly_probe
+          docker exec "$c" python -m leadpilot.serviceit_vps_worker --once
+          docker exec "$a" python -m leadpilot.serviceit_vps_native_aux --flags-only
+          docker exec "$b" python -m leadpilot.serviceit_vps_native_business --flags-only
+          docker exec "$o" python -m leadpilot.serviceit_vps_native_observer --once
+          echo "VPS_READONLY_READINESS=PASS"
+          echo "VPS_LIVE_CUTOVER=NOT_PERFORMED"
+          echo "CRM_WRITES=0;TASKS_CREATED=0;SOURCES_ADDED=0"
+          REMOTE

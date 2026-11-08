@@ -44,7 +44,8 @@ def test_live_updater_only_replaces_coordinator_after_browser_smoke():
 def test_bridge_network_sandbox_shape():
     assert "internal: true" in COMPOSE
     assert "serviceit_vps_public_browser_proxy" in COMPOSE
-    assert '127.0.0.1:18785:8766' in COMPOSE\n    assert "ports:" not in COMPOSE.split("\\n  egress:", 1)[0]
+    assert '127.0.0.1:18785:8766' in COMPOSE
+    assert "ports:" not in COMPOSE.split("\n  egress:", 1)[0]
     assert "user: pwuser" in COMPOSE
     assert "cap_drop: [ALL]" in COMPOSE
     assert "read_only: true" in COMPOSE

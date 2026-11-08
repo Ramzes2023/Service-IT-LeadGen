@@ -482,28 +482,28 @@ def process_deal(client,base,env,cat,deal_id,creator,now,
             "отсутствие дополнительного запроса не подтверждает банковские "
             "поступления и не разрешает выплату.\n"
         )
+    def invoke(fn,*args):
+        # Existing GitHub worker and tests retain their exact signatures.
+        # Only the native VPS path passes PostgreSQL transaction context.
+        return (fn(*args) if native_connection is None else
+                fn(*args,native_connection=native_connection))
     if req:
         request_id=positive(req[0].get("id",req[0].get("ID")))
-        request=update_request(client,base,env,deal_id,request_id,
-                               manager,creator,description,
-                               native_connection=native_connection)
+        request=invoke(update_request,client,base,env,deal_id,request_id,
+                       manager,creator,description)
     elif needed:
-        request=create_task(client,base,env,deal_id,manager,
-                            creator,"request",description,
-                            native_connection=native_connection)
+        request=invoke(create_task,client,base,env,deal_id,manager,
+                       creator,"request",description)
     else:
         request="INPUT_REQUEST_NOT_NEEDED"
-    # If a report exists, keep it up to date or hide stale figures on missing
-    # data; if no report exists, create one only when both values are present.
+    # Updating a report or its request is never an authorized payment.
     if rep:
         task_id=positive(rep[0].get("id",rep[0].get("ID")))
-        action=update_report(client,base,env,deal_id,task_id,manager,
-                             creator,report_text(result),
-                             native_connection=native_connection)
+        action=invoke(update_report,client,base,env,deal_id,task_id,manager,
+                      creator,report_text(result))
     elif result["status"] in (STATUS_DRAFT,STATUS_DOCS):
-        action=create_task(client,base,env,deal_id,manager,
-                           creator,"report",report_text(result),
-                            native_connection=native_connection)
+        action=invoke(create_task,client,base,env,deal_id,manager,
+                      creator,"report",report_text(result))
     else:
         action="REPORT_NOT_READY"
     return {"data_status":result["status"],"request_action":request,

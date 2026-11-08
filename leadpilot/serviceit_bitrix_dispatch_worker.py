@@ -298,6 +298,16 @@ def _run_reserved_exact_card(card: int, env: dict, *, client: httpx.Client,
                 if names:
                     from .serviceit_public_evidence_research import research_public
                     approved = frozenset(names)
+                    browser_render = None
+                    # Optional browser is never invoked by legacy cloud workers,
+                    # shadow workers or without external network firewall proof.
+                    # The HTTP bridge receives ONLY the allowlisted source URL.
+                    if (env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
+                            and env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
+                            and env.get("SERVICEIT_VPS_BROWSER_EGRESS_FIREWALL_VERIFIED") == "YES"):
+                        from .serviceit_vps_browser_client import render_approved_url
+                        def browser_render(url):
+                            return render_approved_url(url, approved, client=client)
                     def researcher(item):
                         return research_public(
                             item, client, approved,
@@ -306,6 +316,7 @@ def _run_reserved_exact_card(card: int, env: dict, *, client: httpx.Client,
                             deep_search_key=env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", ""),
                             deep_llm_context_enabled=(
                                 env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES"),
+                            browser_render=browser_render,
                         )
             approvals = json.loads(env.get("SERVICEIT_CORPORATE_APPROVALS_JSON") or "{}")
             require(type(approvals) is dict, "APPROVAL_ADAPTER_INVALID")

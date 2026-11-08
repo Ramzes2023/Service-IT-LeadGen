@@ -246,6 +246,53 @@ def encrypted_receipt_exists(client: httpx.Client, card: int,
     return True
 
 
+CLOUD_TICK_EVENT = "serviceit_vps_poll_tick_v1"
+CLOUD_TICK_SOURCE = "serviceit-vps-cloud-tick-v1"
+
+
+def verified_vps_tick_event(env: dict, now: datetime) -> bool:
+    """Verify authenticated owner repository_dispatch without a new shared key.
+
+    GitHub authenticates the token initiating repository_dispatch. The
+    repository, action, payload marker, account, and a fresh timestamp are all
+    checked before any CRM read or downstream signed card event.
+    """
+    if (env.get("GITHUB_EVENT_NAME") != "repository_dispatch"
+            or env.get("GITHUB_ACTOR") != "Ramzes2023"
+            or env.get("GITHUB_REPOSITORY") != REPOSITORY
+            or now.tzinfo is None):
+        return False
+    path = env.get("GITHUB_EVENT_PATH")
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        from pathlib import Path
+        file = Path(path)
+        if not file.is_file() or not 0 < file.stat().st_size <= 16_384:
+            return False
+        event = json.loads(file.read_text("utf-8"))
+    except (OSError, TypeError, ValueError, UnicodeError):
+        return False
+    if not isinstance(event, dict):
+        return False
+    repo = event.get("repository")
+    sender = event.get("sender")
+    payload = event.get("client_payload")
+    if (event.get("action") != CLOUD_TICK_EVENT
+            or not isinstance(repo, dict)
+            or repo.get("full_name") != REPOSITORY
+            or not isinstance(sender, dict)
+            or sender.get("login") != "Ramzes2023"
+            or not isinstance(payload, dict)
+            or set(payload) != {"source", "kind", "sent_at"}
+            or payload.get("source") != CLOUD_TICK_SOURCE
+            or payload.get("kind") != "ID_ONLY_POLL"):
+        return False
+    sent_at = payload.get("sent_at")
+    return (type(sent_at) is int
+            and abs(int(now.timestamp()) - sent_at) <= 900)
+
+
 OWNER_ONCE_MARKER = "SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1"
 OWNER_ONCE_ISSUE = 74
 OWNER_LOGIN = "Ramzes2023"
@@ -296,13 +343,20 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
     """Probe is GET/read-only only. Live requires BOTH explicit owner gates."""
     require(env.get("GITHUB_REPOSITORY") == REPOSITORY
             and env.get("GITHUB_REF") == "refs/heads/main"
-            and env.get("GITHUB_EVENT_NAME") in ("schedule", "workflow_dispatch", "issue_comment"),
+            and env.get("GITHUB_EVENT_NAME") in (
+                "schedule", "workflow_dispatch", "issue_comment",
+                "repository_dispatch"),
             "POLL_GITHUB_SCOPE_INVALID")
     if not probe_only:
         if owner_once:
             require(owner_once_event_verified(env), "POLL_OWNER_ONCE_NOT_AUTHORIZED")
+        elif env.get("GITHUB_EVENT_NAME") == "repository_dispatch":
+            tick_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+            require(verified_vps_tick_event(env, tick_now),
+                    "POLL_CLOUD_TICK_EVENT_INVALID")
         else:
-            require(env.get("GITHUB_EVENT_NAME") == "schedule", "POLL_SCHEDULE_REQUIRED")
+            require(env.get("GITHUB_EVENT_NAME") == "schedule",
+                    "POLL_SCHEDULE_REQUIRED")
         if env.get("SERVICEIT_BITRIX_POLL_ENABLED") != POLL_FLAG:
             return {"status": "POLL_DISABLED", "crm_writes": 0, "dispatches": 0}
         require(env.get("SERVICEIT_BITRIX_EVENT_AI_ENABLED") == LIVE_FLAG,

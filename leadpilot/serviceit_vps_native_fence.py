@@ -20,6 +20,7 @@ NAMESPACE = "AI_NINE_V1"
 NATIVE_NAMESPACES = frozenset({
     "AI_NINE_V1", "OWN_STOP_V1", "CRM_DUP_V1",
     "KANBAN_TITLE_V1", "TASK_V1", "FNS_CRM_V1",
+    "PROVISIONAL_SCORE_V1", "FREE_MSP_SCORE_V1",
 })
 ALLOWED_STATUSES = frozenset({
     "HOLD_9_WRITTEN", "HOLD", "UNCERTAIN", "LEASE_LOST",
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS serviceit_vps_native_receipts (
     PRIMARY KEY(namespace, card_id),
     CHECK(
       (field_names IS NULL AND digest_salt IS NULL AND expected_digest IS NULL)
-      OR (cardinality(field_names) IN (1, 2, 9, 12)
+      OR (cardinality(field_names) IN (1, 2, 3, 9, 12)
           AND octet_length(digest_salt) = 16
           AND octet_length(expected_digest) = 32)
     )
@@ -131,7 +132,7 @@ class PostgresNativeFence:
                     and not self._prewrite_once)
         if prewrite:
             expected = self.receipt.get("expected")
-            if type(expected) is not dict or len(expected) not in (1, 2):
+            if type(expected) is not dict or len(expected) not in (1, 2, 3):
                 raise VpsBlocked("NATIVE_PREWRITE_EXPECTED_INVALID")
             salt = secrets.token_bytes(16)
             digest = digested(expected, salt)

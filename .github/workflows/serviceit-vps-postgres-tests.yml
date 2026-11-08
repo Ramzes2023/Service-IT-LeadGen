@@ -6,6 +6,8 @@ on:
       - 'leadpilot/serviceit_vps_*.py'
       - 'tests/test_serviceit_vps_*.py'
       - 'requirements-vps.txt'
+      - 'Dockerfile.serviceit-vps'
+      - 'deploy/serviceit-vps-native-shadow-install.sh'
       - 'deploy/serviceit-vps.compose.yml'
       - '.github/workflows/serviceit-vps-postgres-tests.yml'
   push:
@@ -14,6 +16,8 @@ on:
       - 'leadpilot/serviceit_vps_*.py'
       - 'tests/test_serviceit_vps_*.py'
       - 'requirements-vps.txt'
+      - 'Dockerfile.serviceit-vps'
+      - 'deploy/serviceit-vps-native-shadow-install.sh'
       - 'deploy/serviceit-vps.compose.yml'
       - '.github/workflows/serviceit-vps-postgres-tests.yml'
 
@@ -65,3 +69,32 @@ jobs:
           export SERVICEIT_VPS_SECRETS_DIR="$RUNNER_TEMP/ci-vps-secrets"
           docker compose -f deploy/serviceit-vps.compose.yml config --quiet
           echo "VPS_COMPOSE_STRUCTURE_VALIDATED_WITH_SYNTHETIC_SECRET_FILES"
+
+  nonroot-image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Simulate tightly permissioned VPS SHA256 release extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx leadpilot certificates
+          chmod go-rwx config/serviceit_own_signal_stop.json
+          echo "VPS_SIMULATED_RESTRICTIVE_CODE_MODES=YES"
+      - name: Build production Dockerfile with restricted Git release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file Dockerfile.serviceit-vps \
+            --tag serviceit-native-nonroot:ci .
+      - name: Nonroot Python import smoke, no network, read-only filesystem
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:size=32m,mode=1777 \
+            --entrypoint python serviceit-native-nonroot:ci -c \
+            "import os; assert os.geteuid() == 10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer, leadpilot.serviceit_vps_poll_checkpoint; print('SERVICEIT_NONROOT_PYTHON_IMPORTS=PASS;CRM_WRITES=0')"

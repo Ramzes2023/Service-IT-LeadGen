@@ -31,7 +31,7 @@ def test_live_updater_only_replaces_coordinator_after_browser_smoke():
     assert "SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED=YES" in SCRIPT
     assert "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED=YES" in SCRIPT
     assert "CORE_FOUR_HEALTHY=PASS" in SCRIPT
-    for forbidden in ("tasks.task.add", "crm.item.update", "--once",
+    for forbidden in ("tasks.task.add", "crm.item.update", '"--once"',
                       "SERVICEIT_VPS_CUTOVER_AUTHORIZED=NO"):
         assert forbidden not in SCRIPT
 

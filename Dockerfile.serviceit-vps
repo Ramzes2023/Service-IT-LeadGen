@@ -8,6 +8,11 @@ COPY leadpilot /app/leadpilot
 # Independent project STOP rules; empty by default. No credentials are copied.
 COPY config/serviceit_own_signal_stop.json /app/config/serviceit_own_signal_stop.json
 COPY certificates /app/certificates
+# Release archives are unpacked on the VPS under umask 077, so Docker COPY
+# preserves 0600 source modes. Regrant READ/TRAVERSE only to public application
+# code and public CA certificates INSIDE the image, not on the VPS host.
+# Mounted secrets under /run/secrets are NEVER copied or chmodded.
+RUN chmod -R a+rX /app/leadpilot /app/config /app/certificates
 RUN groupadd --gid 10001 serviceit && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin serviceit
 USER 10001:10001
 # Host networking makes local PostgreSQL reachable at 127.0.0.1:5432.

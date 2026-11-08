@@ -65,6 +65,11 @@ compose="$release/deploy/serviceit-vps.compose.yml"
 docker compose --env-file "$config" -f "$compose" config --quiet
 docker compose --env-file "$config" -f "$compose" build \
     coordinator auxiliaries business observer
+# Fail early if the hardened non-root image cannot read app modules;
+# no database/CRM/network access during this explicit smoke test.
+docker compose --env-file "$config" -f "$compose" run \
+    --rm --no-deps coordinator python -c \
+    "import os; assert os.geteuid()==10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer; print('SHADOW_NONROOT_MODULE_IMPORT=PASS')"
 docker compose --env-file "$config" -f "$compose" run \
     --rm --no-deps coordinator python -m leadpilot.serviceit_vps_worker --migrate
 docker compose --env-file "$config" -f "$compose" up \

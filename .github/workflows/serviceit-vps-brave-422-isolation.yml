@@ -1,0 +1,188 @@
+name: ServiceIT VPS isolate Brave HTTP 422 full vs minimal read-only
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type DIAGNOSE_BRAVE_422_FULL_VS_MINIMAL_2_CALLS'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+
+jobs:
+  brave-422-isolation:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'DIAGNOSE_BRAVE_422_FULL_VS_MINIMAL_2_CALLS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Upload only reviewed unprivileged diagnostic Python source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          dir="$RUNNER_TEMP/serviceit-brave-422"
+          mkdir -m 0700 -p "$dir"
+          printf '%s\n' "$VPS_SSH_KEY" > "$dir/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$dir/known_hosts"
+          chmod 600 "$dir/id" "$dir/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$dir/known_hosts" >/dev/null
+          sha="$(git rev-parse HEAD)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          digest="$(sha256sum leadpilot/serviceit_vps_brave_422_isolation.py | cut -d' ' -f1)"
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+          printf 'DIAG_SHA=%s\n' "$sha" >> "$GITHUB_ENV"
+          printf 'DIAG_HASH=%s\n' "$digest" >> "$GITHUB_ENV"
+          ssh -T -i "$dir/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$dir/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'mkdir -p "$HOME/serviceit/staging"'
+          scp -i "$dir/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$dir/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            leadpilot/serviceit_vps_brave_422_isolation.py \
+            "$VPS_USER@$VPS_HOST:serviceit/staging/brave-422-$sha.py"
+          echo "BRAVE_422_DIAG_SOURCE_STAGED=YES;LIVE_UNCHANGED=YES"
+
+      - name: Read native service health and run at most 2 generic Brave Web calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/serviceit-brave-422"
+          sha="$DIAG_SHA"
+          digest="$DIAG_HASH"
+          ssh -T -i "$dir/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$dir/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "python3 - $sha $digest" <<'REMOTE'
+          import hashlib
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+
+          sha, digest = sys.argv[1:]
+          if not re.fullmatch(r"[a-f0-9]{40}", sha) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+              print("BRAVE_422_DIAG=INVALID_PIN")
+              raise SystemExit(0)
+          source = Path.home() / "serviceit/staging" / ("brave-422-" + sha + ".py")
+          if not source.is_file() or source.is_symlink() or source.stat().st_size > 12000:
+              print("BRAVE_422_DIAG=SOURCE_MISSING")
+              raise SystemExit(0)
+          data = source.read_bytes()
+          if hashlib.sha256(data).hexdigest() != digest:
+              print("BRAVE_422_DIAG=SOURCE_HASH_MISMATCH")
+              raise SystemExit(0)
+
+          core = "serviceit-leadgen-vps-coordinator-1"
+          others = (
+              "serviceit-leadgen-vps-auxiliaries-1",
+              "serviceit-leadgen-vps-business-1",
+              "serviceit-leadgen-vps-observer-1",
+          )
+          browser = "serviceit-public-browser-vps-browser-1"
+
+          def run(*args, input_text=None, timeout=20):
+              return subprocess.run(args, input=input_text, text=True,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    check=False, timeout=timeout)
+
+          def healthy(name):
+              r = run("docker", "inspect", "-f",
+                      "{{.State.Running}}:{{.State.Health.Status}}", name)
+              return r.returncode == 0 and r.stdout.strip() == "true:healthy"
+
+          core_ok = healthy(core) and all(healthy(x) for x in others)
+          browser_ok = healthy(browser)
+          print("NATIVE_FOUR_HEALTHY=" + ("PASS" if core_ok else "FAIL"))
+          print("CHROMIUM_HEALTHY=" + ("PASS" if browser_ok else "FAIL"))
+          print("CRM_WRITES=0;EXISTING_CONTAINERS_RESTARTED=0;SOURCES_UNCHANGED=YES")
+          if not core_ok or not browser_ok:
+              print("BRAVE_422_DIAG=HEALTH_GATE_BLOCKED")
+              raise SystemExit(0)
+
+          release = Path.home() / "serviceit/releases/57973b7950cebd6c1f490e2e54aeffbee5890426/deploy"
+          config = Path.home() / "serviceit/config/vps.env"
+          base = release / "serviceit-vps.compose.yml"
+          overlay = release / "serviceit-vps-brave.compose.yml"
+          if any(not p.is_file() or p.is_symlink() for p in (base, overlay, config)):
+              print("BRAVE_422_DIAG=PINNED_COMPOSE_MISSING")
+              raise SystemExit(0)
+
+          cmd = ["docker", "compose", "--env-file", str(config),
+                 "-f", str(base), "-f", str(overlay),
+                 "run", "--rm", "--no-deps", "--pull", "never",
+                 "-T", "coordinator", "python", "-"]
+          try:
+              outcome = run(*cmd, input_text=data.decode("utf8"), timeout=100)
+          except (subprocess.TimeoutExpired, UnicodeError):
+              print("BRAVE_422_DIAG=DISPOSABLE_CALL_TIMEOUT_OR_ENCODING")
+              raise SystemExit(0)
+          if len(outcome.stdout) > 2200:
+              print("BRAVE_422_DIAG=OUTPUT_TOO_LARGE")
+              raise SystemExit(0)
+          try:
+              result = json.loads(outcome.stdout)
+          except (ValueError, TypeError):
+              print("BRAVE_422_DIAG=OUTPUT_INVALID_OR_CONTAINER_FAILED")
+              raise SystemExit(0)
+          if type(result) is not dict:
+              print("BRAVE_422_DIAG=OUTPUT_SCHEMA_INVALID")
+              raise SystemExit(0)
+          allowed_status = {
+              "HTTP_200", "HTTP_422", "HTTP_400", "HTTP_401", "HTTP_402",
+              "HTTP_403", "HTTP_404", "HTTP_408", "HTTP_429",
+              "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504",
+              "HTTP_OTHER", "TRANSPORT_OR_RESPONSE_ERROR", "NOT_CALLED",
+          }
+          allowed_codes = {
+              "NONE", "UNKNOWN", "VALIDATION", "QUOTA_LIMITED",
+              "RATE_LIMITED", "UNAUTHORIZED", "INVALID_API_KEY",
+              "SUBSCRIPTION_NOT_FOUND", "INVALID_SUBSCRIPTION",
+              "FORBIDDEN", "BAD_REQUEST", "INVALID_REQUEST", "NOT_FOUND",
+          }
+          allowed_fields = {
+              "NONE", "UNKNOWN", "QUERY_Q", "QUERY_COUNTRY",
+              "QUERY_SEARCH_LANG", "QUERY_SAFESEARCH", "QUERY_COUNT",
+              "HEADER_CACHE_CONTROL", "HEADER_X_SUBSCRIPTION_TOKEN",
+              "HEADER_ACCEPT", "HEADER_API_VERSION",
+          }
+          def safe(value, options):
+              return value if type(value) is str and value in options else "UNKNOWN"
+          for label in ("full", "minimal"):
+              record = result.get(label)
+              if type(record) is not dict:
+                  record = {}
+              print("BRAVE_" + label.upper() + "_STATUS=" + safe(record.get("status"), allowed_status))
+              print("BRAVE_" + label.upper() + "_ERROR_CODE=" + safe(record.get("code"), allowed_codes))
+              print("BRAVE_" + label.upper() + "_ERROR_FIELD=" + safe(record.get("field"), allowed_fields))
+          print("BRAVE_REQUESTS_MAX=" + str(result.get("requests_max") if result.get("requests_max") in (0,1,2) else 0))
+          print("BRAVE_422_DIAG=COMPLETED_NO_LIVE_CHANGE")
+          print("REAL_NEW_CARD_E2E=NOT_YET_VERIFIED")
+          REMOTE

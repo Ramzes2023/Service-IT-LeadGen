@@ -31,12 +31,14 @@ FLAGS = {
     "crm_duplicates": "SERVICEIT_VPS_CRM_DUPLICATE_ENABLED",
     "kanban_title": "SERVICEIT_VPS_KANBAN_TITLE_ENABLED",
     "manager_task": "SERVICEIT_VPS_MANAGER_TASK_ENABLED",
+    "fns_crm_result": "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED",
 }
 NAMESPACES = {
     "own_stop": "OWN_STOP_V1",
     "crm_duplicates": "CRM_DUP_V1",
     "kanban_title": "KANBAN_TITLE_V1",
     "manager_task": "TASK_V1",
+    "fns_crm_result": "FNS_CRM_V1",
 }
 
 
@@ -106,6 +108,7 @@ def run_once(env: dict, *, client: httpx.Client, connection,
               "checks": 0, "review": 0,
               "own_stop_held": 0, "duplicate_notes_verified": 0,
               "kanban_titles_verified": 0, "tasks_verified": 0,
+              "fns_results_verified": 0,
               "crm_global_stop_clear": False,
               "external_contacts": 0, "payments": 0}
     for card in cards:
@@ -162,6 +165,19 @@ def run_once(env: dict, *, client: httpx.Client, connection,
             except Exception:
                 totals["review"] += 1
                 continue
+        if flags["fns_crm_result"]:
+            from .serviceit_vps_native_msp_result import process_one as fns_write
+            try:
+                status = fns_write(client, runtime_env, connection, base,
+                                   card, now=now)
+                totals["fns_results_verified"] += int(
+                    status in ("NATIVE_FNS_CRM_READBACK_VERIFIED",
+                               "NATIVE_FNS_RESULT_ALREADY_PRESENT"))
+                totals["checks"] += 1
+                totals["review"] += int("UNCERTAIN" in status)
+            except Exception:
+                totals["review"] += 1
+                # A missing or unverified FNS result never grants Score/contact.
         if flags["manager_task"]:
             from .serviceit_stage3_all_new_task_automation import process_card
             if not ai_receipt_allows_task(connection, card):

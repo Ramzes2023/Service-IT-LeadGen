@@ -13,10 +13,10 @@ import json
 import threading
 from urllib.parse import urlsplit
 
-from .serviceit_vps_public_browser import approved_hosts
+from .serviceit_public_evidence_research import SAFE_HOST
 
 MAX_REQUEST_BYTES = 1200
-MAX_REPLY_BYTES = 10000
+MAX_REPLY_BYTES = 40000
 RENDER_LIMIT = threading.BoundedSemaphore(1)
 UPSTREAM = "browser"
 UPSTREAM_PORT = 8765
@@ -31,7 +31,7 @@ def approved_url_only(url: object, hosts: frozenset[str]) -> bool:
         port = p.port
     except ValueError:
         return False
-    return (p.scheme == "https" and bool(host) and
+    return (p.scheme == "https" and bool(SAFE_HOST.fullmatch(host)) and
             port in (None, 443) and not p.username and not p.password and
             not p.fragment and
             any(host == h or host.endswith("." + h) for h in hosts))
@@ -83,7 +83,7 @@ class IngressHandler(BaseHTTPRequestHandler):
         pass
 
     def send_json(self, status: int, data: dict):
-        body = json.dumps(data, separators=(",", ":")).encode("utf8")
+        body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")

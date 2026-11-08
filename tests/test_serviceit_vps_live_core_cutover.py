@@ -102,7 +102,6 @@ def test_code_guards_against_late_unsafe_reenable_and_replay():
         "gh variable set SERVICEIT_VPS_CUTOVER_ACTIVE --repo $Repo --body YES")
     assert "GitHub-ActiveLegacyRuns" in ps
     assert "SourceHosts" in ps
-    assert "ReadOnly" not in ps or True
     assert "gh variable set SERVICEIT_VPS_CUTOVER_ACTIVE --repo $Repo --body NO" not in ps
     assert "gh workflow disable" not in ps
     assert "tasks.task.add" not in ps

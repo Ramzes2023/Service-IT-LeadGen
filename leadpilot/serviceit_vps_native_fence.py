@@ -170,7 +170,7 @@ class PostgresNativeFence:
                 "SELECT field_names, digest_salt, expected_digest "
                 "FROM serviceit_vps_native_receipts "
                 "WHERE namespace=%s AND card_id=%s",
-                (NAMESPACE, card))
+                (self.namespace, card))
             item = cur.fetchone()
         if not item or not item[0] or item[1] is None or item[2] is None:
             return "ALREADY_FENCED_NO_RETRY"

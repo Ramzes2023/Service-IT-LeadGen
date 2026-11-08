@@ -34,6 +34,10 @@ services:
     environment:
       SERVICEIT_VPS_BROWSER_APPROVED_HOSTS: "${SERVICEIT_VPS_BROWSER_APPROVED_HOSTS:?explicit public browser hosts required}"
       SERVICEIT_VPS_BROWSER_PROXY_URL: "http://egress:3128"
+      # Chromium Crashpad needs a writable XDG path; rootfs remains read-only.
+      # /tmp is the browser-only in-memory tmpfs, not a host mount.
+      XDG_CONFIG_HOME: "/tmp"
+      XDG_CACHE_HOME: "/tmp"
     command: ["python", "-m", "leadpilot.serviceit_vps_public_browser_bridge"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; assert b'BROWSER_BRIDGE_READY' in urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3).read()"]

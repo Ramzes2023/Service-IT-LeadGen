@@ -51,7 +51,8 @@ def context_candidates(client: httpx.Client, *, query: str,
                 "context_threshold_mode": "balanced",
             },
             headers={"X-Subscription-Token": token,
-                     "Accept": "application/json"},
+                     "Accept": "application/json",
+                     "Cache-Control": "no-cache"},
             timeout=15.0, follow_redirects=False)
         if (response.status_code != 200
                 or not 0 < len(response.content) <= MAX_BODY_BYTES

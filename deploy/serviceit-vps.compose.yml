@@ -113,6 +113,22 @@ services:
       retries: 3
       start_period: 30s
 
+  # Hourly real CRM readback and manager funnel audit, always read-only.
+  observer:
+    <<: *base
+    secrets:
+      - serviceit_bitrix_webhook
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_observer", "--loop"]
+    environment:
+      SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
+      SERVICEIT_VPS_NATIVE_ACTIVATION_UTC: "${SERVICEIT_VPS_NATIVE_ACTIVATION_UTC:-}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_native_observer; print('READY')"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   coordinator:
     <<: *base
     # Poll-only RouterAI; no Bitrix outgoing-event token or GigaChat.

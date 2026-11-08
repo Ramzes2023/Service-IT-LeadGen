@@ -451,8 +451,10 @@ def report_text(result):
 
 def process_deal(client,base,env,cat,deal_id,creator,now,
                  *,native_connection=None,native_after=None):
-    deal,manager=read_deal(client,base,cat,deal_id,now,
-                           native_after=native_after)
+    deal,manager=(read_deal(client,base,cat,deal_id,now)
+                  if native_after is None else
+                  read_deal(client,base,cat,deal_id,now,
+                            native_after=native_after))
     verify_employee(client,base,manager)
     finance_fields={key:deal.get(key) for key in AUTOMATIC.values()}
     result=reconcile(finance_fields,deal.get("COMMENTS"))
@@ -551,7 +553,9 @@ def run(client,env,*,now=None,native_connection=None):
         return totals
     deal_schema(client,base)
     task_schema(client,base)
-    ids=list_won(client,base,category,native_after=native_after)
+    ids=(list_won(client,base,category)
+         if native_after is None else
+         list_won(client,base,category,native_after=native_after))
     totals["new_won_deals_visible"]=len(ids)
     if not ids:
         totals["status"]="FINANCE_NO_NEW_CLOSED_WON_SALES"
@@ -559,9 +563,11 @@ def run(client,env,*,now=None,native_connection=None):
     creator=current_employee(client,base)
     for id in ids:
         try:
-            item=process_deal(client,base,env,category,id,creator,now,
-                              native_connection=native_connection,
-                              native_after=native_after)
+            item=(process_deal(client,base,env,category,id,creator,now)
+                  if native_connection is None else
+                  process_deal(client,base,env,category,id,creator,now,
+                               native_connection=native_connection,
+                               native_after=native_after))
         except Exception:
             totals["blocked"]+=1
             continue

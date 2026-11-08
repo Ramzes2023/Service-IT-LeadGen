@@ -19,6 +19,7 @@ def test_full_422_minimal_200_and_safe_location_only(monkeypatch):
         calls.append(request)
         assert request.url.host == "api.search.brave.com"
         assert request.headers["Cache-Control"] == "no-cache"
+        assert request.headers["Accept-Encoding"] == "gzip"
         assert request.headers["X-Subscription-Token"].startswith("SYNTHETIC_BRAVE_")
         if request.url.params.get("country") == "RU":
             assert request.url.params["search_lang"] == "ru"
@@ -120,6 +121,16 @@ def test_owner_only_readonly_workflow_runs_on_vps_without_mutation():
                       "secrets.SERVICEIT_BRAVE_SEARCH_API_KEY",
                       "print(outcome.stderr)", "print(outcome.stdout)"):
         assert forbidden not in wf
+
+
+def test_vps_minimal_request_matches_successful_windows_brave_query():
+    # Windows returned HTTP 200 for /web/search?q=brave%20search with
+    # Accept, Accept-Encoding=gzip and Cache-Control=no-cache headers.
+    assert diag.QUERY == "brave search"
+    assert diag.MINIMAL == {"q": "brave search"}
+    text = Path("leadpilot/serviceit_vps_brave_422_isolation.py").read_text("utf8")
+    assert '"Accept-Encoding": "gzip"' in text
+    assert '"Cache-Control": "no-cache"' in text
 
 
 def test_failed_brave_probe_no_longer_attempts_old_image_retag():

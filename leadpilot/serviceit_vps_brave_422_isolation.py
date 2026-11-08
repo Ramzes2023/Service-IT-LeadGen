@@ -15,7 +15,9 @@ import httpx
 from leadpilot.serviceit_vps_pg_queue import VpsBlocked, secret_file
 
 URL = "https://api.search.brave.com/res/v1/web/search"
-QUERY = "Python official documentation"
+# Match the exact public search phrase that returned HTTP 200 on Windows.
+# Comparing identical queries isolates host/network/API-key differences.
+QUERY = "brave search"
 FULL = {
     "q": QUERY,
     "count": 2,
@@ -46,6 +48,8 @@ def request(client: httpx.Client, key: str, params: dict) -> dict:
                 "X-Subscription-Token": key,
                 "Accept": "application/json",
                 "Cache-Control": "no-cache",
+                # Match the explicit Windows request header.
+                "Accept-Encoding": "gzip",
             },
             follow_redirects=False,
             timeout=15.0,

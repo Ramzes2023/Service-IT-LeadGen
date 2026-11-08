@@ -17,6 +17,10 @@ import secrets
 from .serviceit_vps_pg_queue import CARD_MIN, CARD_MAX, VpsBlocked
 
 NAMESPACE = "AI_NINE_V1"
+NATIVE_NAMESPACES = frozenset({
+    "AI_NINE_V1", "OWN_STOP_V1", "CRM_DUP_V1",
+    "KANBAN_TITLE_V1", "TASK_V1",
+})
 ALLOWED_STATUSES = frozenset({
     "HOLD_9_WRITTEN", "HOLD", "UNCERTAIN", "LEASE_LOST",
     "IDLE", "NEEDS_REVIEW", "VERIFIED", "HOLD_9_PRESENT",
@@ -38,7 +42,7 @@ CREATE TABLE IF NOT EXISTS serviceit_vps_native_receipts (
     PRIMARY KEY(namespace, card_id),
     CHECK(
       (field_names IS NULL AND digest_salt IS NULL AND expected_digest IS NULL)
-      OR (cardinality(field_names) IN (9, 12)
+      OR (cardinality(field_names) IN (1, 2, 9, 12)
           AND octet_length(digest_salt) = 16
           AND octet_length(expected_digest) = 32)
     )
@@ -64,10 +68,15 @@ def digested(fields: dict, salt: bytes) -> bytes:
 class PostgresNativeFence:
     """Transactionally fenced, never-blind-replayed per-card AI writer."""
 
-    def __init__(self, connection):
+    def __init__(self, connection, namespace=NAMESPACE):
+        if namespace not in NATIVE_NAMESPACES:
+            raise VpsBlocked("NATIVE_NAMESPACE_INVALID")
         self.connection = connection
+        self.namespace = namespace
         self.card = None
         self.active = False
+        self.receipt = None
+        self._prewrite_once = False
 
     @staticmethod
     def validate_card(card):
@@ -85,7 +94,7 @@ class PostgresNativeFence:
                     "INSERT INTO serviceit_vps_native_receipts"
                     "(namespace, card_id, status) VALUES(%s, %s, 'RESERVED') "
                     "ON CONFLICT(namespace, card_id) DO NOTHING RETURNING card_id",
-                    (NAMESPACE, card))
+                    (self.namespace, card))
                 new = cur.fetchone() is not None
         self.active = bool(new)
         return "RESERVED" if new else "ALREADY_FENCED_NO_RETRY"
@@ -107,7 +116,7 @@ class PostgresNativeFence:
                     "digest_salt=%s, expected_digest=%s, updated_at=now() "
                     "WHERE namespace=%s AND card_id=%s AND status='RESERVED' "
                     "RETURNING card_id",
-                    (sorted(fields), salt, digest, NAMESPACE, card))
+                    (sorted(fields), salt, digest, self.namespace, card))
                 if cur.fetchone() is None:
                     raise VpsBlocked("NATIVE_CHECKPOINT_UNVERIFIED")
 
@@ -115,14 +124,42 @@ class PostgresNativeFence:
         if not self.active or self.card != card:
             return False
         status = result if result in ALLOWED_STATUSES else "NEEDS_REVIEW"
+        # For timeline/kanban workers, the old API checkpoints intent by
+        # setting receipt.expected and finalizing UNCERTAIN BEFORE POST.
+        # Preserve the same durable two-phase semantics in PostgreSQL.
+        prewrite = (status == "UNCERTAIN" and self.receipt is not None
+                    and not self._prewrite_once)
+        if prewrite:
+            expected = self.receipt.get("expected")
+            if type(expected) is not dict or len(expected) not in (1, 2):
+                raise VpsBlocked("NATIVE_PREWRITE_EXPECTED_INVALID")
+            salt = secrets.token_bytes(16)
+            digest = digested(expected, salt)
+            with self.connection.transaction():
+                with self.connection.cursor() as cur:
+                    cur.execute(
+                        "UPDATE serviceit_vps_native_receipts "
+                        "SET status='UNCERTAIN', field_names=%s, "
+                        "digest_salt=%s, expected_digest=%s, updated_at=now() "
+                        "WHERE namespace=%s AND card_id=%s AND status='RESERVED' "
+                        "RETURNING card_id",
+                        (sorted(expected), salt, digest, self.namespace, card))
+                    ok = cur.fetchone() is not None
+            self._prewrite_once = ok
+            return ok
+        allowed_from = ("'UNCERTAIN'" if self._prewrite_once
+                        else "'RESERVED','WRITE_INTENT'")
         with self.connection.transaction():
             with self.connection.cursor() as cur:
                 cur.execute(
                     "UPDATE serviceit_vps_native_receipts SET status=%s, "
                     "updated_at=now() WHERE namespace=%s AND card_id=%s "
-                    "AND status IN ('RESERVED','WRITE_INTENT') RETURNING card_id",
-                    (status, NAMESPACE, card))
-                return cur.fetchone() is not None
+                    "AND status IN (" + allowed_from + ") RETURNING card_id",
+                    (status, self.namespace, card))
+                ok = cur.fetchone() is not None
+        if ok:
+            self.active = False
+        return ok
 
     def reconcile(self, card, rest):
         """GET-only, compare salted hash; never re-enter a CRM mutation."""

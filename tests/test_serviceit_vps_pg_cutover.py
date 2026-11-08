@@ -100,7 +100,7 @@ def test_vps_readonly_mode_never_calls_exact_ai_or_card_writer(monkeypatch):
     monkeypatch.setattr(worker, "readonly_preflight", lambda env, client: {
         "status": "READONLY_CRM_FIELD_METADATA_CONFIRMED",
         "crm_writes": 0, "ai_calls": 0})
-    monkeypatch.setattr(worker, "exact_run", lambda *a, **kw: pytest.fail("NO CRM WRITE"))
+    monkeypatch.setattr(worker, "run_vps_native", lambda *a, **kw: pytest.fail("NO CRM WRITE"))
     result = worker.run_once({}, client=object())
     assert result["migration_cutover"] == "NOT_AUTHORIZED"
     assert result["queue_counts"] == {"PENDING": 2}
@@ -141,15 +141,18 @@ def test_ingress_token_and_id_only_queue(monkeypatch):
         assert client.get("/health").json()["crm_writer_enabled"] is False
 
 
-def test_reuse_old_github_once_fence_not_an_independent_crm_writer(monkeypatch):
+def test_native_vps_exact_env_does_not_read_any_legacy_github_key(monkeypatch):
     import leadpilot.serviceit_vps_pg_queue as pg
     monkeypatch.setattr(pg, "secret_file", lambda env, name, optional=False:
                         "" if optional else "SYNTHETIC_ONLY_12345678901234567890")
     monkeypatch.setattr(worker, "secret_file", lambda env, name, optional=False:
                         "" if optional else "SYNTHETIC_ONLY_12345678901234567890")
     result = worker.exact_environment({"SERVICEIT_AI_PROVIDER": "routerai"})
-    assert result["GITHUB_REPOSITORY"] == "Ramzes2023/Service-IT-LeadGen"
+    assert "GITHUB_REPOSITORY" not in result
+    assert "SERVICEIT_GH_LEDGER_KEY" not in result
+    assert "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY" not in result
+    assert "GITHUB_TOKEN" not in result
     assert result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] == "YES"
     assert result["SERVICEIT_PUBLIC_RESEARCH_ENABLED"] == "YES"
     assert result["SERVICEIT_CORPORATE_APPROVALS_JSON"] == "{}"
-    assert result["GITHUB_EVENT_NAME"] == "repository_dispatch"
+    assert "GITHUB_EVENT_NAME" not in result

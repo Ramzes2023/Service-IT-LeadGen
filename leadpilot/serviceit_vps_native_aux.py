@@ -97,6 +97,10 @@ def run_once(env: dict, *, client: httpx.Client, connection,
     cards = eligible_cards(client, env, base, now)
     runtime_env = {
         **env, "SERVICEIT_BITRIX_WEBHOOK": webhook,
+        # Reuse reviewed future-only validators, but NEVER the old cloud
+        # activation date. Every adapter sees the native cutover timestamp.
+        "SERVICEIT_BITRIX_POLL_START_UTC":
+            env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
         "SERVICEIT_STAGE3_TASK_WRITE_ENABLED": (
             "YES_1062_21_INTERNAL_REVIEW"
             if flags["manager_task"] else "NO"),

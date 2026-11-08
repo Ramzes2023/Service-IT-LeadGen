@@ -32,10 +32,8 @@ x-base: &base
     SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
     SERVICEIT_VPS_POLL_ENABLED: "${SERVICEIT_VPS_POLL_ENABLED:-NO}"
     SERVICEIT_BITRIX_POLL_START_UTC: "${SERVICEIT_BITRIX_POLL_START_UTC:-}"
-    SERVICEIT_BITRIX_EVENT_BRIDGE_KEY_FILE: /run/secrets/serviceit_event_bridge_key
-    SERVICEIT_GH_LEDGER_KEY_FILE: /run/secrets/serviceit_gh_ledger_key
-    GITHUB_TOKEN_FILE: /run/secrets/serviceit_github_ledger_pat
-    SERVICEIT_BRAVE_SEARCH_API_KEY_FILE: /run/secrets/serviceit_brave_api_key
+    # Native PostgreSQL receipts: NO GitHub/HMAC/Fernet secrets or API dependency.
+    # Optional Brave API can be mounted by a separately reviewed override.
     SERVICEIT_AI_PROVIDER: "routerai"
     SERVICEIT_ROUTERAI_API_KEY_FILE: /run/secrets/serviceit_routerai_key
     SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: "NO"
@@ -46,10 +44,6 @@ x-base: &base
   secrets: &common-secrets
     - serviceit_pg_password
     - serviceit_bitrix_webhook
-    - serviceit_event_bridge_key
-    - serviceit_gh_ledger_key
-    - serviceit_github_ledger_pat
-    - serviceit_brave_api_key
     - serviceit_routerai_key
 
 services:
@@ -87,14 +81,6 @@ secrets:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/pg_password"
   serviceit_bitrix_webhook:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/bitrix_webhook"
-  serviceit_event_bridge_key:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/event_bridge_key"
-  serviceit_gh_ledger_key:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/gh_ledger_key"
-  serviceit_github_ledger_pat:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/github_ledger_pat"
-  serviceit_brave_api_key:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/brave_api_key"
   serviceit_routerai_key:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/routerai_key"
 

@@ -94,7 +94,7 @@ jobs:
               "docker","compose","--env-file",str(CONF),
               "-f",str(BASE/"serviceit-vps.compose.yml"),
               "-f",str(BASE/"serviceit-vps-brave.compose.yml"),
-              "run","--rm","--no-deps","--no-build","-T",
+              "run","--rm","--no-deps","--pull","never","-T",
               "coordinator","python","-m",
               "leadpilot.serviceit_vps_brave_auth_probe",
           ]

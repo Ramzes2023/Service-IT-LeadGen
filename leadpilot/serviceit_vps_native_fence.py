@@ -19,7 +19,7 @@ from .serviceit_vps_pg_queue import CARD_MIN, CARD_MAX, VpsBlocked
 NAMESPACE = "AI_NINE_V1"
 NATIVE_NAMESPACES = frozenset({
     "AI_NINE_V1", "OWN_STOP_V1", "CRM_DUP_V1",
-    "KANBAN_TITLE_V1", "TASK_V1",
+    "KANBAN_TITLE_V1", "TASK_V1", "FNS_CRM_V1",
 })
 ALLOWED_STATUSES = frozenset({
     "HOLD_9_WRITTEN", "HOLD", "UNCERTAIN", "LEASE_LOST",

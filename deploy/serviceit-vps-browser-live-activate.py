@@ -223,7 +223,7 @@ def activate(sha: str, approval: str, smoke_url: str):
     old_image = check_core()
     browser_env = dict(os.environ)
     browser_env["SERVICEIT_VPS_BROWSER_APPROVED_HOSTS"] = hosts
-    seccomp = release / "deploy/playwright-chromium-sandbox-seccomp.json"
+    seccomp = release / "deploy/serviceit-chromium-sandbox-seccomp.json"
     if not seccomp.is_file() or seccomp.is_symlink():
         raise Blocked("OFFICIAL_CHROMIUM_SECCOMP_PROFILE_MISSING")
     browser_env["SERVICEIT_VPS_BROWSER_SECCOMP_PROFILE"] = str(seccomp)

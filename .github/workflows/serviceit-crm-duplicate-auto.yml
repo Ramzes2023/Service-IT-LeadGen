@@ -17,6 +17,7 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
       (github.event_name != 'issue_comment' ||
        (github.actor == 'Ramzes2023' &&
         github.event.issue.number == 200 &&

@@ -33,9 +33,11 @@ jobs:
         !github.event.issue.pull_request &&
         (github.event.comment.body == 'SERVICEIT_NMODE_NEW_CARD_POLL_READONLY_V1' ||
          (github.event.comment.body == 'SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1' &&
+          vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
           vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
           vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))) ||
        (github.event_name == 'schedule' &&
+        vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
         vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
         vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))
     runs-on: ubuntu-latest

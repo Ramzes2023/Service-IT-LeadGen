@@ -11,6 +11,7 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
       vars.SERVICEIT_STAGE4_CORPORATE_VERIFIER_ENABLED == 'YES_VERIFIED_9_GATES_1062_21' &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'repository_dispatch' &&

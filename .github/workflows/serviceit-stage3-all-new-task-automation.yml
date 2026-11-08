@@ -20,6 +20,7 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
       (github.event_name == 'schedule' ||
        (github.event_name == 'repository_dispatch' &&
         github.event.action == 'serviceit_bitrix_item_add_v1') ||

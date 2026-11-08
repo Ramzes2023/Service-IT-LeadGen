@@ -18,6 +18,7 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
       vars.SERVICEIT_FREE_CLOUD_ENABLED == 'YES'
     runs-on: ubuntu-latest
     timeout-minutes: 4

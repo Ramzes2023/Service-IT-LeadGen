@@ -225,7 +225,21 @@ def process_card(client, env, card, *, now=None, native_fence=None):
     if n:
         return "VISIBLE_TASK_EXISTS_NO_WRITE"
     assigned_on_card=item.get("assignedById")
-    if assigned_on_card in (None,"",0,"0"):
+    # VPS-only, owner-approved internal task recipient for this smart process.
+    # The CRM card's own assignedById is NEVER modified.  The legacy GitHub
+    # worker retains its original card-assignee / explicit fallback behavior.
+    named_native = (
+        native_fence is not None and
+        (env.get("SERVICEIT_VPS_TASK_ASSIGNEE_ID") not in (None, "", "0") or
+         env.get("SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED") not in (None, "", "NO"))
+    )
+    if named_native:
+        require(env.get("SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED") ==
+                "YES_1062_21_INTERNAL_MANAGER",
+                "NATIVE_TASK_NAMED_ASSIGNEE_APPROVAL_MISSING")
+        uid=positive(env.get("SERVICEIT_VPS_TASK_ASSIGNEE_ID"))
+        require(uid==605, "NATIVE_TASK_ASSIGNEE_MUST_BE_APPROVED_USER_605")
+    elif assigned_on_card in (None,"",0,"0"):
         # The corporate owner must explicitly approve an exact backup
         # manager for this ONE smart-process category; no name guessing.
         require(env.get("SERVICEIT_STAGE3_FALLBACK_APPROVED")==

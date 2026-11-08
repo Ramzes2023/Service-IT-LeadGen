@@ -31,7 +31,8 @@ x-base: &base
     SERVICEIT_VPS_CUTOVER_AUTHORIZED: "${SERVICEIT_VPS_CUTOVER_AUTHORIZED:-NO}"
     SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
     SERVICEIT_VPS_POLL_ENABLED: "${SERVICEIT_VPS_POLL_ENABLED:-NO}"
-    SERVICEIT_BITRIX_POLL_START_UTC: "${SERVICEIT_BITRIX_POLL_START_UTC:-}"
+    # REQUIRED only after old cloud writers have actually stopped.
+    SERVICEIT_VPS_NATIVE_ACTIVATION_UTC: "${SERVICEIT_VPS_NATIVE_ACTIVATION_UTC:-}"
     # Native PostgreSQL receipts: NO GitHub/HMAC/Fernet secrets or API dependency.
     # Optional Brave API can be mounted by a separately reviewed override.
     SERVICEIT_AI_PROVIDER: "routerai"

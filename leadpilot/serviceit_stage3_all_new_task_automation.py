@@ -180,6 +180,30 @@ def manager_task_fields(item, card, uid, binding, *, now):
             "RESPONSIBLE_ID": uid, "UF_CRM_TASK": [binding]}
 
 
+def task_recipient_for_card(assigned_on_card, env, *, native_fence=None):
+    """Exact owner-approved VPS native task recipient, legacy path unchanged."""
+    named_native = (
+        native_fence is not None and
+        (env.get("SERVICEIT_VPS_TASK_ASSIGNEE_ID") not in (None, "", "0") or
+         env.get("SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED") not in (None, "", "NO"))
+    )
+    if named_native:
+        require(env.get("SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED") ==
+                "YES_1062_21_INTERNAL_MANAGER",
+                "NATIVE_TASK_NAMED_ASSIGNEE_APPROVAL_MISSING")
+        uid=positive(env.get("SERVICEIT_VPS_TASK_ASSIGNEE_ID"))
+        require(uid==605, "NATIVE_TASK_ASSIGNEE_MUST_BE_APPROVED_USER_605")
+        return uid
+    if assigned_on_card in (None,"",0,"0"):
+        # Existing fallback logic remains unchanged for legacy GitHub tasks.
+        require(env.get("SERVICEIT_STAGE3_FALLBACK_APPROVED")==
+                "YES_1062_21_INTERNAL_MANAGER", "FALLBACK_MANAGER_NOT_APPROVED")
+        uid=positive(env.get("SERVICEIT_STAGE3_FALLBACK_MANAGER_ID"))
+        require(uid>0, "FALLBACK_MANAGER_ID_MISSING")
+        return uid
+    return positive(assigned_on_card)
+
+
 def process_card(client, env, card, *, now=None, native_fence=None):
     """One card. Every refusal before reserve is non-destructive.
 
@@ -225,15 +249,7 @@ def process_card(client, env, card, *, now=None, native_fence=None):
     if n:
         return "VISIBLE_TASK_EXISTS_NO_WRITE"
     assigned_on_card=item.get("assignedById")
-    if assigned_on_card in (None,"",0,"0"):
-        # The corporate owner must explicitly approve an exact backup
-        # manager for this ONE smart-process category; no name guessing.
-        require(env.get("SERVICEIT_STAGE3_FALLBACK_APPROVED")==
-                "YES_1062_21_INTERNAL_MANAGER", "FALLBACK_MANAGER_NOT_APPROVED")
-        uid=positive(env.get("SERVICEIT_STAGE3_FALLBACK_MANAGER_ID"))
-        require(uid>0, "FALLBACK_MANAGER_ID_MISSING")
-    else:
-        uid=positive(assigned_on_card)
+    uid=task_recipient_for_card(assigned_on_card,env,native_fence=native_fence)
     state=assigned_employee(client,base,uid)
     require(state=="ONE_ACTIVE_ASSIGNED_EMPLOYEE_UNAPPROVED",
             "NO_ACTIVE_CARD_ASSIGNEE")

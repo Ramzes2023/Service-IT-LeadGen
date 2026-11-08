@@ -62,4 +62,7 @@ def test_legacy_poll_live_branch_fenced_but_readonly_diagnostics_survive():
 ])
 def test_sources_watchdogs_and_shadow_are_not_blocked(name):
     text = (BASE / name).read_text(encoding="utf8")
-    assert "vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES'" not in text
+    # Source AI env may be fenced after native cutover, but the SOURCE JOB
+    # itself must remain able to import/create a new HOLD card.
+    job_conditions = text.split("    env:", 1)[0]
+    assert "vars.SERVICEIT_VPS_CUTOVER_ACTIVE" not in job_conditions

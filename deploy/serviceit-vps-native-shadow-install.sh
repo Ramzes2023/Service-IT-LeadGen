@@ -67,15 +67,50 @@ docker compose --env-file "$config" -f "$compose" build \
     coordinator auxiliaries business observer
 # Fail early if the hardened non-root image cannot read app modules;
 # no database/CRM/network access during this explicit smoke test.
-docker compose --env-file "$config" -f "$compose" run \
+# Never let docker compose run consume stdin from an SSH "bash -s" script.
+# Both standalone invocations explicitly disable interactive stdin and TTY.
+docker compose --env-file "$config" -f "$compose" run -T \
     --rm --no-deps coordinator python -c \
-    "import os; assert os.geteuid()==10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer; print('SHADOW_NONROOT_MODULE_IMPORT=PASS')"
-docker compose --env-file "$config" -f "$compose" run \
-    --rm --no-deps coordinator python -m leadpilot.serviceit_vps_worker --migrate
+    "import os; assert os.geteuid()==10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer; print('SHADOW_NONROOT_MODULE_IMPORT=PASS')" \
+    </dev/null
+
+docker compose --env-file "$config" -f "$compose" run -T \
+    --rm --no-deps coordinator python -m leadpilot.serviceit_vps_worker --migrate \
+    </dev/null
+
+echo "SHADOW_DB_SCHEMA_STEP_FINISHED=YES"
+
 docker compose --env-file "$config" -f "$compose" up \
     -d --no-build --no-deps coordinator auxiliaries business observer
-docker compose --env-file "$config" -f "$compose" ps \
-    --status running --format json >/dev/null
+
+# Do not declare SUCCESS merely because docker compose up returned 0.
+# Inspect EVERY expected service after start, including healthchecks, and
+# exit nonzero if a process is absent, restarting, exited or unhealthy.
+expected_services=(coordinator auxiliaries business observer)
+healthy=0
+for attempt in $(seq 1 18); do
+    healthy=1
+    for service in "${expected_services[@]}"; do
+        container_id="$(docker compose --env-file "$config" -f "$compose" ps -aq "$service")"
+        if [[ ! "$container_id" =~ ^[a-f0-9]{12,64}$ ]]; then
+            healthy=0
+            break
+        fi
+        state="$(docker inspect --format '{{.State.Running}}:{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container_id")"
+        if [[ "$state" != 'true:healthy' ]]; then
+            healthy=0
+            break
+        fi
+    done
+    [[ "$healthy" -eq 1 ]] && break
+    sleep 5
+done
+if [[ "$healthy" -ne 1 ]]; then
+    echo "SHADOW_EXPECTED_FOUR_HEALTHY_SERVICES_NOT_CONFIRMED"
+    docker compose --env-file "$config" -f "$compose" ps -a
+    exit 2
+fi
+echo "SHADOW_FOUR_HEALTHY_SERVICES=PASS"
 
 echo "SERVICEIT_VPS_NATIVE_SHADOW_DEPLOYED_SHA=$sha"
 echo "SERVICEIT_VPS_SHADOW_WRITES=DISABLED"

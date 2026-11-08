@@ -5,6 +5,8 @@ WORKDIR /app
 COPY requirements.txt requirements-vps.txt /app/
 RUN python -m pip install --no-cache-dir -r requirements-vps.txt
 COPY leadpilot /app/leadpilot
+# Independent project STOP rules; empty by default. No credentials are copied.
+COPY config/serviceit_own_signal_stop.json /app/config/serviceit_own_signal_stop.json
 COPY certificates /app/certificates
 RUN groupadd --gid 10001 serviceit && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin serviceit
 USER 10001:10001

@@ -142,7 +142,8 @@ def _index_search(client, name, kind, token, *, query_indices=(0, 1, 2)):
                     "q": q, "count": 8, "country": "RU",
                     "search_lang": "ru", "safesearch": "strict"},
                 headers={"X-Subscription-Token": token,
-                         "Accept": "application/json"},
+                         "Accept": "application/json",
+                         "Cache-Control": "no-cache"},
                 follow_redirects=False, timeout=9.0)
             if (response.status_code != 200 or not 0 < len(response.content) <= 200000
                     or "application/json" not in response.headers.get("content-type", "")):

@@ -13,6 +13,8 @@ on:
       - 'leadpilot/serviceit_stage3_all_new_task_automation.py'
       - '.github/workflows/serviceit-vps-olga-task-readonly-prepare.yml'
       - '.github/workflows/serviceit-vps-routerai-readonly-prepare.yml'
+      - 'deploy/SERVICEIT_VPS_FINAL_CUTOVER.ps1'
+      - 'deploy/serviceit-vps-live-core-cutover.py'
       - 'deploy/serviceit-vps.compose.yml'
       - '.github/workflows/serviceit-vps-final-cutover-readonly-audit.yml'
       - '.github/workflows/serviceit-vps-postgres-tests.yml'
@@ -61,7 +63,7 @@ jobs:
       - name: Install server-only requirements
         run: python -m pip install -r requirements-vps.txt
       - name: Verify real disposable PostgreSQL queue transaction safety
-        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_pg_cutover.py tests/test_serviceit_vps_routerai_only.py tests/test_serviceit_vps_poll_readonly_probe.py tests/test_serviceit_vps_native_fence.py tests/test_serviceit_vps_native_aux.py tests/test_serviceit_vps_native_actions.py tests/test_serviceit_vps_poll_checkpoint.py tests/test_serviceit_vps_shadow_install_flow.py tests/test_serviceit_vps_routerai_readonly_prepare.py tests/test_serviceit_vps_cloud_writer_cutover_fence.py tests/test_serviceit_vps_olga_605_readonly_prepare.py tests/test_serviceit_vps_final_readonly_audit.py tests/test_serviceit_vps_source_ai_handoff.py tests/test_serviceit_vps_deep_research_readiness.py tests/test_serviceit_vps_public_browser.py
+        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_pg_cutover.py tests/test_serviceit_vps_routerai_only.py tests/test_serviceit_vps_poll_readonly_probe.py tests/test_serviceit_vps_native_fence.py tests/test_serviceit_vps_native_aux.py tests/test_serviceit_vps_native_actions.py tests/test_serviceit_vps_poll_checkpoint.py tests/test_serviceit_vps_shadow_install_flow.py tests/test_serviceit_vps_routerai_readonly_prepare.py tests/test_serviceit_vps_cloud_writer_cutover_fence.py tests/test_serviceit_vps_olga_605_readonly_prepare.py tests/test_serviceit_vps_final_readonly_audit.py tests/test_serviceit_vps_source_ai_handoff.py tests/test_serviceit_vps_deep_research_readiness.py tests/test_serviceit_vps_public_browser.py tests/test_serviceit_vps_live_core_cutover.py
       - name: Verify native shadow installer shell syntax
         run: bash -n deploy/serviceit-vps-native-shadow-install.sh
       - name: Validate Compose structure using ONLY synthetic local placeholders
@@ -104,3 +106,26 @@ jobs:
             --tmpfs /tmp:size=32m,mode=1777 \
             --entrypoint python serviceit-native-nonroot:ci -c \
             "import os; assert os.geteuid() == 10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer, leadpilot.serviceit_vps_poll_checkpoint; print('SERVICEIT_NONROOT_PYTHON_IMPORTS=PASS;CRM_WRITES=0')"
+
+  powershell-cutover-parse-only:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Parse PowerShell cutover script without running it
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './deploy/SERVICEIT_VPS_FINAL_CUTOVER.ps1').Path,
+            [ref]$tokens,
+            [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            Write-Error 'PowerShell cutover syntax invalid'
+            exit 2
+          }
+          Write-Host 'SERVICEIT_CUTOVER_POWERSHELL_STATIC_PARSE=PASS'

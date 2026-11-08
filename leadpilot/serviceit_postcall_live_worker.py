@@ -119,15 +119,16 @@ def field_preflight(client, base):
     return True
 
 
-def _card_ids(client, base):
+def _card_ids(client, base, *, native_after=None):
     """Bounded read of new items. No historic cards may be processed."""
+    minimum = max(CUTOVER, native_after) if native_after is not None else CUTOVER
     collected = []
     page = 0
     while page < 3:
         args = {
             "entityTypeId": 1062, "useOriginalUfNames": "Y",
             "filter": {"categoryId": 21,
-                       ">=createdTime": CUTOVER.isoformat()},
+                       ">=createdTime": minimum.isoformat()},
             "select": ["id", "categoryId", "createdTime",
                        "updatedTime", "updatedBy", "assignedById",
                        REVIEW, NEXT_ACTION],
@@ -141,7 +142,7 @@ def _card_ids(client, base):
         require(len(items) <= 50, "ITEM_PAGE_OVERSIZED")
         for entry in items:
             require(type(entry) is dict and str(entry.get("categoryId")) == "21"
-                    and parse_date(entry.get("createdTime")) >= CUTOVER,
+                    and parse_date(entry.get("createdTime")) >= minimum,
                     "ITEM_LIST_SCOPE")
             collected.append(entry)
         if not items or response.get("next") is None:
@@ -328,8 +329,16 @@ class CallFence(EncryptedEventFence):
                 + digest + ".enc")
 
 
-def _write_one(client, base, env, cid, *, now):
+def _write_one(client, base, env, cid, *, now, native_connection=None):
     before = _read_card(client, base, cid)
+    if native_connection is not None:
+        from .serviceit_bitrix_poll_fallback import after_activation
+        activation = after_activation({
+            **env, "SERVICEIT_BITRIX_POLL_START_UTC":
+                env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
+        }, now)
+        require(activation <= parse_date(before.get("createdTime")) <= now,
+                "NATIVE_POSTCALL_HISTORIC_OR_FUTURE_CARD")
     interest, action, due, manager, approval_at = _approved_fields(
         before, now=now,
     )
@@ -366,10 +375,14 @@ def _write_one(client, base, env, cid, *, now):
                 REVIEW, NEXT_ACTION):
         require(before.get(key) == reread.get(key),
                 "MANAGER_APPROVAL_CHANGED_BEFORE_WRITE")
-    fence = CallFence(
-        client, env.get("GITHUB_TOKEN", ""),
-        env.get("SERVICEIT_GH_LEDGER_KEY", ""), cid,
-    )
+    if native_connection is None:
+        fence = CallFence(
+            client, env.get("GITHUB_TOKEN", ""),
+            env.get("SERVICEIT_GH_LEDGER_KEY", ""), cid,
+        )
+    else:
+        from .serviceit_vps_native_actions import PostgresActionFence
+        fence = PostgresActionFence(native_connection, "POSTCALL", cid)
     if fence.reserve(aid) != "RESERVED":
         return "POSTCALL_PRIOR_INTENT_FENCED"
     task_created = False
@@ -421,15 +434,32 @@ def _write_one(client, base, env, cid, *, now):
             if task_created else "POSTCALL_NO_CONTACT_RESULT_VERIFIED")
 
 
-def run(client, env, *, write=False, now=None):
+def run(client, env, *, write=False, now=None, native_connection=None):
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    require(env.get("GITHUB_REPOSITORY") == REPOSITORY
-            and env.get("GITHUB_REF") == "refs/heads/main",
-            "GITHUB_SCOPE_INVALID")
+    if native_connection is None:
+        require(env.get("GITHUB_REPOSITORY") == REPOSITORY
+                and env.get("GITHUB_REF") == "refs/heads/main",
+                "GITHUB_SCOPE_INVALID")
+    else:
+        require(
+            env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
+            and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") == "YES"
+            and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") == "YES"
+            and env.get("SERVICEIT_VPS_POLL_ENABLED") == "YES"
+            and env.get("SERVICEIT_VPS_POSTCALL_ENABLED") == "YES"
+            and env.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"),
+            "NATIVE_POSTCALL_CUTOVER_NOT_READY")
     base = validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK", ""))
     require(base.startswith(BASE_PORTAL), "CORPORATE_PORTAL_INVALID")
     field_preflight(client, base)
-    cards = _card_ids(client, base)
+    native_after = None
+    if native_connection is not None:
+        from .serviceit_bitrix_poll_fallback import after_activation
+        native_after = after_activation({
+            **env, "SERVICEIT_BITRIX_POLL_START_UTC":
+                env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
+        }, now)
+    cards = _card_ids(client, base, native_after=native_after)
     counts = {"approved_candidates": len(cards), "inspected": 0,
               "processed": 0, "no_contact": 0, "needs_review": 0,
               "crm_writes": 0, "tasks_created": 0}
@@ -440,7 +470,8 @@ def run(client, env, *, write=False, now=None):
             "POSTCALL_AUTO_WRITE_NOT_APPROVED")
     for cid in cards:
         try:
-            result = _write_one(client, base, env, cid, now=now)
+            result = _write_one(client, base, env, cid, now=now,
+                                native_connection=native_connection)
         except (PostCallLiveBlocked, PostCallBlocked, ValueError, KeyError):
             counts["needs_review"] += 1
             continue

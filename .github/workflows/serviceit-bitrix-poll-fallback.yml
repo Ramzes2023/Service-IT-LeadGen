@@ -13,6 +13,9 @@ on:
         type: boolean
   issue_comment:
     types: [created]
+  # VPS sends only a wake-up tick; ALL ledger/HMAC/Bitrix secrets stay in GitHub.
+  repository_dispatch:
+    types: [serviceit_vps_poll_tick_v1]
 
 permissions:
   contents: write
@@ -35,7 +38,12 @@ jobs:
          (github.event.comment.body == 'SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1' &&
           vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
           vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))) ||
-       (github.event_name == 'schedule' &&
+       ((github.event_name == 'schedule' ||
+         (github.event_name == 'repository_dispatch' &&
+          github.actor == 'Ramzes2023' &&
+          github.event.action == 'serviceit_vps_poll_tick_v1' &&
+          github.event.client_payload.source == 'serviceit-vps-cloud-tick-v1' &&
+          github.event.client_payload.kind == 'ID_ONLY_POLL')) &&
         vars.SERVICEIT_BITRIX_POLL_ENABLED == 'YES_1062_21_READONLY' &&
         vars.SERVICEIT_BITRIX_EVENT_AI_ENABLED == 'YES_1062_21_CLOUD'))
     runs-on: ubuntu-latest
@@ -65,5 +73,5 @@ jobs:
         if: github.event_name == 'issue_comment' && github.event.comment.body == 'SERVICEIT_OWNER_NEW_CARD_LIVE_ONCE_V1'
         run: python -m leadpilot.serviceit_bitrix_poll_fallback --owner-once
       - name: Scan recent new-card IDs and dispatch signed events
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'repository_dispatch'
         run: python -m leadpilot.serviceit_bitrix_poll_fallback

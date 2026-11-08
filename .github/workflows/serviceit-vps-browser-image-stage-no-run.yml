@@ -50,40 +50,78 @@ jobs:
           chmod 600 "$RUNNER_TEMP/serviceit-browser-ssh/id" "$RUNNER_TEMP/serviceit-browser-ssh/known_hosts"
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-browser-ssh/known_hosts" >/dev/null
           [[ "$(git rev-parse HEAD)" =~ ^[a-f0-9]{40}$ ]]
+      # Browser-image staging is independent of core LIVE and the READONLY
+      # shadow installer, which correctly refuses to run after cutover.
+      - name: Upload exactly pinned source archive for optional browser build (NO core redeploy)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          archive="$RUNNER_TEMP/browser-only-$sha.tgz"
+          git archive --format=tar.gz -o "$archive" HEAD
+          digest="$(sha256sum "$archive" | cut -d' ' -f1)"
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+          printf 'BROWSER_ARCHIVE_SHA256=%s\n' "$digest" >> "$GITHUB_ENV"
+          ssh -T -i "$RUNNER_TEMP/serviceit-browser-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'mkdir -p "$HOME/serviceit/staging"'
+          scp -i "$RUNNER_TEMP/serviceit-browser-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$archive" "$VPS_USER@$VPS_HOST:serviceit/staging/browser-only-$sha.tgz"
+          echo "BROWSER_SOURCE_ARCHIVE_UPLOADED=YES"
+
       - name: Build optional pinned Chromium image; NEVER start it or mutate Bitrix
         shell: bash
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
+          [[ "$BROWSER_ARCHIVE_SHA256" =~ ^[a-f0-9]{64}$ ]]
           ssh -T -i "$RUNNER_TEMP/serviceit-browser-ssh/id" \
             -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-ssh/known_hosts" \
             -o BatchMode=yes -o ConnectTimeout=15 \
-            "$VPS_USER@$VPS_HOST" "bash -se -- $sha" <<'REMOTE'
+            "$VPS_USER@$VPS_HOST" "bash -se -- $sha $BROWSER_ARCHIVE_SHA256" <<'REMOTE'
           set -euo pipefail
+          umask 077
           sha="$1"
-          [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || exit 2
-          release="$HOME/serviceit/releases/$sha"
-          [[ -f "$release/Dockerfile.serviceit-vps-browser" ]] || {
-            echo "BROWSER_RELEASE_NOT_PREPARED_BY_READONLY_SHADOW"; exit 2;
-          }
-          [[ -f "$release/deploy/serviceit-vps-browser.compose.yml" ]] || exit 2
-          bytes="$(df -Pk "$HOME" | awk 'NR==2 {print $4}')"
-          [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 6291456 ]] || {
+          digest="$2"
+          [[ "$(id -u)" != 0 ]] || exit 2
+          [[ "$sha" =~ ^[a-f0-9]{40}$ && "$digest" =~ ^[a-f0-9]{64}$ ]] || exit 2
+          base="$HOME/serviceit"
+          archive="$base/staging/browser-only-$sha.tgz"
+          [[ -f "$archive" ]] || exit 2
+          printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --status \
+            || { echo "BROWSER_SOURCE_ARCHIVE_HASH_INVALID"; exit 2; }
+          free_kb="$(df -Pk "$HOME" | awk 'NR==2 {print $4}')"
+          [[ "$free_kb" =~ ^[0-9]+$ && "$free_kb" -gt 6291456 ]] || {
             echo "BROWSER_STAGE_DISK_FREE_UNVERIFIED"; exit 2;
           }
-          # No public browser container may be active in this stage.
-          live="$(docker ps --filter label=com.docker.compose.project=serviceit-public-browser-vps --format '{{.Names}}')"
-          [[ -z "$live" ]] || {
+          running="$(docker ps --filter label=com.docker.compose.project=serviceit-public-browser-vps --format '{{.Names}}')"
+          [[ -z "$running" ]] || {
             echo "BROWSER_CONTAINER_ALREADY_ACTIVE_HOLD"; exit 2;
           }
-          docker build --file "$release/Dockerfile.serviceit-vps-browser" \
-            --tag serviceit-vps-public-browser:staged "$release" >/dev/null
+          # Never invoke the READONLY shadow deployment after native LIVE cutover.
+          # Extract the reviewed commit archive only into a separate browser
+          # build directory. Docker may reuse its unfinished download cache.
+          builds="$base/browser-image-builds"
+          mkdir -p "$builds"
+          temp="$(mktemp -d "$builds/$sha.XXXXXXXX")"
+          trap 'rm -rf -- "$temp"' EXIT
+          tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$temp"
+          [[ -f "$temp/Dockerfile.serviceit-vps-browser" ]] || exit 2
+          [[ -f "$temp/deploy/serviceit-vps-browser.compose.yml" ]] || exit 2
+          docker build --file "$temp/Dockerfile.serviceit-vps-browser" \
+            --tag serviceit-vps-public-browser:staged "$temp" >/dev/null
           docker image inspect serviceit-vps-public-browser:staged >/dev/null
-          live="$(docker ps --filter label=com.docker.compose.project=serviceit-public-browser-vps --format '{{.Names}}')"
-          [[ -z "$live" ]] || exit 2
+          running="$(docker ps --filter label=com.docker.compose.project=serviceit-public-browser-vps --format '{{.Names}}')"
+          [[ -z "$running" ]] || exit 2
           echo "BROWSER_IMAGE_ON_VPS=STAGED_NOT_RUNNING"
           echo "BROWSER_SANDBOX_AND_EGRESS_FIREWALL=NOT_VERIFIED"
           echo "BROWSER_CONNECTED_TO_NATIVE_WORKER=NO"
+          echo "CORE_LIVE_CONTAINERS=NOT_TOUCHED"
           echo "CRM_WRITES=0;TASKS_CREATED=0;BROWSER_URLS_VISITED=0"
           REMOTE

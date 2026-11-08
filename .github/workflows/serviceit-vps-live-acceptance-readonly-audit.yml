@@ -1,0 +1,244 @@
+name: ServiceIT VPS LIVE module flags and Bitrix read-only evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type AUDIT_NATIVE_LIVE_CRM_READONLY_1062_21; no CRM writes or restart'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+
+jobs:
+  actual-native-state:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'AUDIT_NATIVE_LIVE_CRM_READONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      CLOUD_CUTOVER_FLAG: "${{ vars.SERVICEIT_VPS_CUTOVER_ACTIVE }}"
+    steps:
+      - name: Verify owner-only SSH host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          dir="$RUNNER_TEMP/serviceit-vps-actual-state"
+          mkdir -m 0700 -p "$dir"
+          printf '%s\n' "$VPS_SSH_KEY" > "$dir/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$dir/known_hosts"
+          chmod 600 "$dir/id" "$dir/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$dir/known_hosts" >/dev/null
+          if [[ "$CLOUD_CUTOVER_FLAG" == "YES" ]]; then
+            echo 'CLOUD_OLD_WRITER_FENCE=YES'
+          else
+            echo 'CLOUD_OLD_WRITER_FENCE=UNVERIFIED'
+          fi
+
+      - name: Verify LIVE Docker flags, queue receipts and Bitrix aggregate readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/serviceit-vps-actual-state"
+          ssh -T -i "$dir/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$dir/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import json
+          import subprocess
+
+          SERVICES = {
+              "coordinator": "serviceit-leadgen-vps-coordinator-1",
+              "auxiliaries": "serviceit-leadgen-vps-auxiliaries-1",
+              "business": "serviceit-leadgen-vps-business-1",
+              "observer": "serviceit-leadgen-vps-observer-1",
+              "chromium": "serviceit-public-browser-vps-browser-1",
+              "egress": "serviceit-public-browser-vps-egress-1",
+          }
+
+          def call(*args, timeout=25):
+              try:
+                  return subprocess.run(args, check=False, capture_output=True,
+                                        text=True, timeout=timeout)
+              except (OSError, subprocess.TimeoutExpired):
+                  return None
+
+          def output(command, *, timeout=25):
+              r = call(*command, timeout=timeout)
+              return r.stdout.strip() if r is not None and r.returncode == 0 else ""
+
+          def container_health(name):
+              s = output(("docker", "inspect", "-f",
+                          "{{.State.Running}}:{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+                          name))
+              return "PASS" if s == "true:healthy" else "FAIL"
+
+          for name in ("coordinator", "auxiliaries", "business", "observer", "chromium"):
+              print("VPS_" + name.upper() + "_HEALTH=" +
+                    container_health(SERVICES[name]), flush=True)
+          egress = output(("docker", "inspect", "-f",
+                           "{{.State.Running}}", SERVICES["egress"]))
+          print("VPS_BROWSER_EGRESS_RUNNING=" +
+                ("YES" if egress == "true" else "NO"), flush=True)
+
+          def setting(service, name):
+              return output(("docker", "exec", SERVICES[service], "printenv", name))
+
+          expected = [
+              ("NATIVE_WRITER_LIVE", "coordinator", "SERVICEIT_VPS_WRITER_MODE", "LIVE"),
+              ("NATIVE_CUTOVER_AUTHORIZED", "coordinator", "SERVICEIT_VPS_CUTOVER_AUTHORIZED", "YES"),
+              ("NATIVE_OLD_GH_DISABLED_ACK", "coordinator", "SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK", "YES"),
+              ("NATIVE_POLL_10MIN_ENABLED", "coordinator", "SERVICEIT_VPS_POLL_ENABLED", "YES"),
+              ("NATIVE_ROUTERAI_SELECTED", "coordinator", "SERVICEIT_AI_PROVIDER", "routerai"),
+              ("NATIVE_ROUTERAI_PRIVACY", "coordinator", "SERVICEIT_ROUTERAI_PRIVACY_APPROVED", "YES_1062_21"),
+              ("BROWSER_RESEARCH_ENABLED", "coordinator", "SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED", "YES"),
+              ("BROWSER_PROXY_VERIFIED", "coordinator", "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED", "YES"),
+              ("NATIVE_OWN_STOP_ENABLED", "auxiliaries", "SERVICEIT_VPS_OWN_STOP_ENABLED", "YES"),
+              ("NATIVE_CRM_DUPLICATE_ENABLED", "auxiliaries", "SERVICEIT_VPS_CRM_DUPLICATE_ENABLED", "YES"),
+              ("NATIVE_KANBAN_TITLE_ENABLED", "auxiliaries", "SERVICEIT_VPS_KANBAN_TITLE_ENABLED", "YES"),
+              ("NATIVE_OLGA_TASK_ENABLED", "auxiliaries", "SERVICEIT_VPS_MANAGER_TASK_ENABLED", "YES"),
+              ("NATIVE_OLGA_ASSIGNEE_APPROVED", "auxiliaries", "SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED", "YES_1062_21_INTERNAL_MANAGER"),
+              ("NATIVE_OLGA_ID_605", "auxiliaries", "SERVICEIT_VPS_TASK_ASSIGNEE_ID", "605"),
+              ("NATIVE_PROVISIONAL_SCORE_ENABLED", "auxiliaries", "SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED", "YES"),
+              ("NATIVE_FREE_MSP_SCORE_ENABLED", "auxiliaries", "SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED", "YES"),
+              ("NATIVE_FNS_CRM_RESULT_ENABLED", "auxiliaries", "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED", "YES"),
+              ("NATIVE_POSTCALL_ENABLED", "business", "SERVICEIT_VPS_POSTCALL_ENABLED", "YES"),
+              ("NATIVE_FINANCE_ENABLED", "business", "SERVICEIT_VPS_FINANCE_ENABLED", "YES"),
+          ]
+          for label, service, name, positive in expected:
+              actual = setting(service, name)
+              result = "YES" if actual == positive else ("NO" if actual == "NO" else "OTHER")
+              print(label + "=" + result, flush=True)
+          brave_path = setting("coordinator", "SERVICEIT_BRAVE_SEARCH_API_KEY_FILE")
+          mount = output(("docker", "inspect", "-f",
+                          "{{range .Mounts}}{{println .Destination}}{{end}}",
+                          SERVICES["coordinator"]))
+          brave_ok = (brave_path == "/run/secrets/serviceit_brave_search_key"
+                      and "/run/secrets/serviceit_brave_search_key" in mount.splitlines())
+          print("BRAVE_LIVE_KEY_MOUNT=" + ("YES" if brave_ok else "NO"), flush=True)
+
+          # Only read already emitted, structured worker summaries. Never echo
+          # raw Docker logs, URLs, company data, tokens or stderr.
+          for service in ("coordinator", "auxiliaries", "business", "observer"):
+              proc = call("docker", "logs", "--since", "70m", "--tail", "400",
+                          SERVICES[service], timeout=25)
+              totals = {"cycles": 0, "blocked": 0}
+              if proc is not None:
+                  for line in proc.stdout.splitlines()[-400:]:
+                      if len(line) > 2200:
+                          continue
+                      try:
+                          row = json.loads(line)
+                      except (TypeError, ValueError):
+                          continue
+                      if type(row) is not dict:
+                          continue
+                      status = row.get("status")
+                      if status in {
+                          "VPS_LIVE_CYCLE_COMPLETE", "NATIVE_AUX_CYCLE",
+                          "NATIVE_BUSINESS_DISABLED", "NATIVE_BUSINESS_CYCLE",
+                          "NATIVE_OBSERVER_READONLY",
+                      }:
+                          totals["cycles"] += 1
+                      if status in {
+                          "VPS_CYCLE_BLOCKED_OR_UNVERIFIED",
+                          "NATIVE_AUX_BLOCKED", "NATIVE_BUSINESS_HOLD",
+                          "NATIVE_OBSERVER_UNVERIFIED",
+                      }:
+                          totals["blocked"] += 1
+              print("VPS_" + service.upper() + "_CYCLES_LAST_70M=" +
+                    str(min(totals["cycles"], 400)), flush=True)
+              print("VPS_" + service.upper() + "_BLOCKS_LAST_70M=" +
+                    str(min(totals["blocked"], 400)), flush=True)
+
+          # PostgreSQL SELECTs in an explicitly READ ONLY transaction.
+          # Only aggregate statuses/namespaces are returned (never card IDs).
+          query = """
+          import json
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          permitted = {"PENDING","RUNNING","DONE","REVIEW","UNCERTAIN"}
+          allowed_ns = {"AI_NINE_V1","KANBAN_TITLE_V1","TASK_V1",
+                        "PROVISIONAL_SCORE_V1","CRM_DUP_V1"}
+          allowed_stat = {"RESERVED","WRITE_INTENT","HOLD_9_WRITTEN",
+                          "HOLD_9_PRESENT","VERIFIED","HOLD","UNCERTAIN",
+                          "LEASE_LOST","IDLE","NEEDS_REVIEW"}
+          result = {"queue": {}, "receipts": {}}
+          with db(dict(os.environ)) as con:
+              with con.transaction():
+                  with con.cursor() as cur:
+                      cur.execute("SET TRANSACTION READ ONLY")
+                      cur.execute("SELECT status,count(*) FROM serviceit_vps_new_cards GROUP BY status")
+                      result["queue"] = {s:int(n) for s,n in cur.fetchall() if s in permitted}
+                      cur.execute("SELECT namespace,status,count(*) FROM serviceit_vps_native_receipts GROUP BY namespace,status")
+                      result["receipts"] = {ns+"_"+st:int(n) for ns,st,n in cur.fetchall()
+                                            if ns in allowed_ns and st in allowed_stat}
+          print(json.dumps(result,sort_keys=True))
+          """
+          raw = output(("docker", "exec", SERVICES["coordinator"],
+                        "python", "-c", query), timeout=35)
+          try:
+              data = json.loads(raw)
+          except (TypeError, ValueError):
+              data = None
+          if type(data) is not dict:
+              print("VPS_PG_READONLY_AGGREGATES=UNVERIFIED", flush=True)
+          else:
+              print("VPS_PG_READONLY_AGGREGATES=PASS", flush=True)
+              for s in ("PENDING", "RUNNING", "DONE", "REVIEW", "UNCERTAIN"):
+                  n = data.get("queue", {}).get(s, 0)
+                  print("PG_QUEUE_" + s + "=" +
+                        str(n if type(n) is int and 0 <= n <= 1000000 else "UNVERIFIED"), flush=True)
+              receipts = data.get("receipts", {})
+              for ns in ("AI_NINE_V1", "KANBAN_TITLE_V1", "TASK_V1", "PROVISIONAL_SCORE_V1", "CRM_DUP_V1"):
+                  count = sum(v for k, v in receipts.items()
+                              if k.startswith(ns + "_") and type(v) is int and 0 <= v <= 1000000)
+                  print("PG_RECEIPTS_" + ns + "_TOTAL=" + str(count), flush=True)
+
+          # One explicit CRM READONLY aggregate audit using already-running
+          # observer code. No writable CRM methods. Never print raw output.
+          observer = output(("docker", "exec", SERVICES["observer"],
+                             "python", "-m", "leadpilot.serviceit_vps_native_observer",
+                             "--once"), timeout=100)
+          record = None
+          for line in observer.splitlines()[-3:]:
+              try:
+                  value = json.loads(line)
+                  if type(value) is dict and value.get("status") == "NATIVE_OBSERVER_READONLY":
+                      record = value
+              except (TypeError, ValueError):
+                  pass
+          if record is None:
+              print("BITRIX_READONLY_AGGREGATE=UNVERIFIED", flush=True)
+          else:
+              print("BITRIX_READONLY_AGGREGATE=PASS", flush=True)
+              for field in ("visible_new_cards", "ai_nine_complete", "ai_partial",
+                            "ai_absent", "linked_task_visible",
+                            "task_visibility_unknown", "provisional_score_fields_visible"):
+                  count = record.get(field)
+                  if type(count) is int and 0 <= count <= 1000000:
+                      print("BITRIX_" + field.upper() + "=" + str(count), flush=True)
+                  else:
+                      print("BITRIX_" + field.upper() + "=UNVERIFIED", flush=True)
+
+          print("CRM_WRITES_BY_AUDIT=0;SOURCES_CHANGED=NO;LIVE_RESTARTS=0", flush=True)
+          print("SHARED_KANBAN_UI_VIEW=NOT_VERIFIED_BY_SERVER", flush=True)
+          print("EXACT_NEW_CARD_NINE_FIELDS_TASK_KANBAN_E2E=NOT_YET_VERIFIED", flush=True)
+          PY

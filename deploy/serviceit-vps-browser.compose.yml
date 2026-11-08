@@ -8,8 +8,8 @@ services:
     profiles: ["browser"]
     image: serviceit-vps-public-browser:staged
     user: pwuser
-    ports:
-      - "127.0.0.1:18785:8765"
+    # No host-published port on the internal-only Chromium network.
+    # Access to the browser goes through the secretless egress ingress relay.
     networks:
       - browser_internal
     depends_on:
@@ -50,6 +50,10 @@ services:
     profiles: ["browser"]
     image: serviceit-vps-public-browser:staged
     user: pwuser
+    # Host loopback -> ordinary egress bridge -> fixed browser:8765 relay.
+    # Do NOT publish the HTTPS CONNECT proxy port (3128).
+    ports:
+      - "127.0.0.1:18785:8766"
     # Browser traffic can reach the Internet ONLY via this validating proxy.
     # The egress container has NO routes to the host's core Docker network.
     networks:

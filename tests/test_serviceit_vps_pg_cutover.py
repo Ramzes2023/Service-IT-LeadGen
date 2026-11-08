@@ -100,10 +100,15 @@ def test_vps_readonly_mode_never_calls_exact_ai_or_card_writer(monkeypatch):
     monkeypatch.setattr(worker, "readonly_preflight", lambda env, client: {
         "status": "READONLY_CRM_FIELD_METADATA_CONFIRMED",
         "crm_writes": 0, "ai_calls": 0})
+    monkeypatch.setattr(worker, "inspect_api", lambda env, client: {
+        "positive_control_card3": "PASS",
+        "new_card_candidates": 0})
     monkeypatch.setattr(worker, "run_vps_native", lambda *a, **kw: pytest.fail("NO CRM WRITE"))
     result = worker.run_once({}, client=object())
     assert result["migration_cutover"] == "NOT_AUTHORIZED"
     assert result["queue_counts"] == {"PENDING": 2}
+    assert result["poll_positive_control"] == "PASS"
+    assert result["new_card_candidates_10m"] == 0
 
 
 def test_ingress_default_disabled_no_postgres_calls(monkeypatch):

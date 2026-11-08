@@ -23,7 +23,10 @@ jobs:
       github.actor == 'Ramzes2023' &&
       inputs.approval == 'STAGE_CHROMIUM_IMAGE_NO_RUN'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Official Playwright image includes an ~860 MB layer; on this VPS the
+    # previous 25-minute attempt was cancelled mid-download at ~449 MB.
+    # This remains an OWNER-ONLY image build: no browser run or CRM writes.
+    timeout-minutes: 90
     environment: serviceit-vps-readonly
     env:
       VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"

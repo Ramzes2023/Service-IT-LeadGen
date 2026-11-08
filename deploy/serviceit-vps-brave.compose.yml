@@ -1,0 +1,17 @@
+# Optional Brave Search API mounting for the already LIVE cloud coordinator.
+# Merge this overlay with the existing serviceit-vps.compose.yml ONLY after
+# the root owner installs /etc/serviceit/secrets/brave_api_key securely.
+# The other 3 LIVE workers and browser/egress sidecars are untouched.
+services:
+  coordinator:
+    environment:
+      SERVICEIT_BRAVE_SEARCH_API_KEY_FILE: /run/secrets/serviceit_brave_search_key
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+      - serviceit_routerai_key
+      - serviceit_brave_search_key
+
+secrets:
+  serviceit_brave_search_key:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/brave_api_key"

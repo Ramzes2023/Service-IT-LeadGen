@@ -30,3 +30,15 @@ def test_stage_cannot_modify_native_four_worker_compose():
     assert "serviceit_vps_public_browser" not in active
     assert "profiles: [\"browser\"]" in Path(
         "deploy/serviceit-vps-browser.compose.yml").read_text("utf8")
+
+
+def test_browser_staging_after_live_does_not_redeploy_core():
+    """The READONLY shadow installer must never be reused after LIVE cutover."""
+    assert 'git archive --format=tar.gz' in BODY
+    assert 'BROWSER_ARCHIVE_SHA256=' in BODY
+    assert 'sha256sum --check --status' in BODY
+    assert 'browser-image-builds' in BODY
+    assert 'CORE_LIVE_CONTAINERS=NOT_TOUCHED' in BODY
+    assert 'serviceit-vps-native-shadow-deploy.yml' not in BODY
+    assert 'serviceit-vps-native-shadow-install.sh' not in BODY
+    assert 'docker compose build' not in BODY

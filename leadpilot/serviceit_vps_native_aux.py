@@ -32,6 +32,8 @@ FLAGS = {
     "kanban_title": "SERVICEIT_VPS_KANBAN_TITLE_ENABLED",
     "manager_task": "SERVICEIT_VPS_MANAGER_TASK_ENABLED",
     "fns_crm_result": "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED",
+    "provisional_score": "SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED",
+    "free_msp_score": "SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED",
 }
 NAMESPACES = {
     "own_stop": "OWN_STOP_V1",
@@ -39,6 +41,8 @@ NAMESPACES = {
     "kanban_title": "KANBAN_TITLE_V1",
     "manager_task": "TASK_V1",
     "fns_crm_result": "FNS_CRM_V1",
+    "provisional_score": "PROVISIONAL_SCORE_V1",
+    "free_msp_score": "FREE_MSP_SCORE_V1",
 }
 
 
@@ -49,6 +53,8 @@ def enabled(env: dict) -> dict:
         if raw not in ("YES", "NO"):
             raise VpsBlocked("NATIVE_AUX_FLAG_INVALID")
         flags[key] = raw == "YES"
+    if flags["provisional_score"] and flags["free_msp_score"]:
+        raise VpsBlocked("NATIVE_CONFLICTING_SCORE_VERSIONS")
     return flags
 
 
@@ -104,6 +110,12 @@ def run_once(env: dict, *, client: httpx.Client, connection,
         "SERVICEIT_STAGE3_TASK_WRITE_ENABLED": (
             "YES_1062_21_INTERNAL_REVIEW"
             if flags["manager_task"] else "NO"),
+        "SERVICEIT_STAGE4_PRELIMINARY_SCORE_ENABLED": (
+            "YES_1062_21_PROVISIONAL_ONLY"
+            if flags["provisional_score"] else "NO"),
+        "SERVICEIT_LEADGEN_FREE_SCORE_ENABLED": (
+            "YES_1062_21_FREE_MSP_INTERNAL"
+            if flags["free_msp_score"] else "NO"),
     }
     # The explicit real employee fallback is kept unset unless separately
     # approved by the company and present as a genuine valid ID.
@@ -112,7 +124,7 @@ def run_once(env: dict, *, client: httpx.Client, connection,
               "checks": 0, "review": 0,
               "own_stop_held": 0, "duplicate_notes_verified": 0,
               "kanban_titles_verified": 0, "tasks_verified": 0,
-              "fns_results_verified": 0,
+              "fns_results_verified": 0, "score_verified": 0,
               "crm_global_stop_clear": False,
               "external_contacts": 0, "payments": 0}
     for card in cards:
@@ -182,6 +194,37 @@ def run_once(env: dict, *, client: httpx.Client, connection,
             except Exception:
                 totals["review"] += 1
                 # A missing or unverified FNS result never grants Score/contact.
+        if flags["provisional_score"]:
+            from .serviceit_stage4_provisional_score_live import (
+                evaluate_one as score_once)
+            try:
+                fence = PostgresNativeFence(
+                    connection, NAMESPACES["provisional_score"])
+                state = score_once(
+                    client, runtime_env, card, now=now, native_fence=fence)
+                totals["score_verified"] += int(
+                    state in ("PROVISIONAL_SCORE_EXACT_READBACK",
+                              "ALREADY_PROVISIONAL_NO_REWRITE"))
+                totals["checks"] += 1
+                totals["review"] += int("UNCERTAIN" in state)
+            except Exception:
+                totals["review"] += 1
+        if flags["free_msp_score"]:
+            from .serviceit_leadgen_free_msp_score import (
+                evaluate_one as free_msp_score_once)
+            try:
+                fence = PostgresNativeFence(
+                    connection, NAMESPACES["free_msp_score"])
+                state = free_msp_score_once(
+                    client, runtime_env, card, now=now,
+                    native_fence=fence, native_connection=connection)
+                totals["score_verified"] += int(
+                    state in ("INTERNAL_SCORE_EXACT_READBACK",
+                              "ALREADY_INTERNAL_SCORE_NO_REWRITE"))
+                totals["checks"] += 1
+                totals["review"] += int("UNCERTAIN" in state)
+            except Exception:
+                totals["review"] += 1
         if flags["manager_task"]:
             from .serviceit_stage3_all_new_task_automation import process_card
             if not ai_receipt_allows_task(connection, card):

@@ -74,7 +74,9 @@ def test_rendered_content_no_automatic_ai_or_crm_side_effects():
     assert 'accept_downloads=False' in text
     assert '_robots(client, url, allowed)' in text
     assert 'context.route("**/*", route_guard)' in text
-    assert 'verify_url(route.request.url, allowed)' in text
+    assert '_proxy_validated_host(route.request.url, allowed)' in text
+    assert '_proxy_validated_host(page.url, allowed)' in text
+    assert 'def _robots(client: httpx.Client' in text
     assert 'follow_redirects=False' in text
     assert 'model_calls": 0' in text
     assert 'crm_writes": 0' in text

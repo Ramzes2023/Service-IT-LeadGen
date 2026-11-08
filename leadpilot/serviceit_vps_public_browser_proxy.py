@@ -119,8 +119,17 @@ class ProxyServer(ThreadingHTTPServer):
 
 def main():
     hosts = approved_hosts(os.environ.get("SERVICEIT_VPS_BROWSER_APPROVED_HOSTS", ""))
-    with ProxyServer(("0.0.0.0", 3128), hosts) as server:
-        print(json.dumps({"status": "PUBLIC_HTTPS_CONNECT_PROXY_READY",
+    # Browser stays on Docker internal: true network: only the egress sidecar
+    # is published to the host's 127.0.0.1. The ingress relay connects by
+    # the hardcoded internal Docker DNS name "browser", never external URLs.
+    from .serviceit_vps_public_browser_ingress import IngressServer
+    with ProxyServer(("0.0.0.0", 3128), hosts) as server, \
+            IngressServer(("0.0.0.0", 8766), hosts) as ingress:
+        thread = threading.Thread(
+            target=ingress.serve_forever, kwargs={"poll_interval": 0.5},
+            name="browser-localhost-ingress", daemon=True)
+        thread.start()
+        print(json.dumps({"status": "PUBLIC_HTTPS_CONNECT_PROXY_AND_INGRESS_READY",
                           "secrets": 0, "crm_writes": 0}), flush=True)
         server.serve_forever(poll_interval=0.5)
 

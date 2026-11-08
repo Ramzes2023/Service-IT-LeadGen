@@ -181,6 +181,26 @@ def smoke_browser():
     if len(details) != 1 or details[0].get("Internal") is not True:
         raise Blocked("BROWSER_EGRESS_NOT_ISOLATED")
 
+    # Local host bridge must be published ONLY on the separate secretless
+    # egress relay, never on the internal-only Chromium container.
+    browser_bindings = json.loads(cmd(
+        "docker", "inspect", BROWSER_NAME, "--format",
+        "{{json .HostConfig.PortBindings}}").stdout)
+    if browser_bindings:
+        raise Blocked("BROWSER_HOST_PORT_EXPOSURE_FORBIDDEN")
+    egress_bindings = json.loads(cmd(
+        "docker", "inspect", EGRESS_NAME, "--format",
+        "{{json .HostConfig.PortBindings}}").stdout)
+    if egress_bindings != {"8766/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18785"}]}:
+        raise Blocked("BROWSER_EGRESS_LOOPBACK_BINDING_INVALID")
+    egress_nets = json.loads(cmd(
+        "docker", "inspect", EGRESS_NAME, "--format",
+        "{{json .NetworkSettings.Networks}}").stdout)
+    if (len(egress_nets) != 2
+            or not any(name.endswith("_browser_internal") for name in egress_nets)
+            or not any(name.endswith("_public_egress") for name in egress_nets)):
+        raise Blocked("BROWSER_EGRESS_NETWORK_BOUNDARY_INVALID")
+
     # Core/PG credentials are neither mounted nor passed to this sidecar.
     env_names = cmd("docker", "inspect", BROWSER_NAME, "--format",
                     "{{json .Config.Env}}").stdout

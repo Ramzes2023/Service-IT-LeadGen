@@ -11,6 +11,8 @@ def test_qualified_owner_only_no_auto_or_customer_calls():
     assert "github.ref == 'refs/heads/main'" in BODY
     assert "inputs.approval == 'STAGE_CHROMIUM_IMAGE_NO_RUN'" in BODY
     assert "environment: serviceit-vps-readonly" in BODY
+    # Slow base layer pull must not be interrupted by the old 25m job limit.
+    assert "timeout-minutes: 90" in BODY
     assert "serviceit-vps-native-shadow-readonly" in BODY
     assert "Dockerfile.serviceit-vps-browser" in BODY
     assert "BROWSER_IMAGE_ON_VPS=STAGED_NOT_RUNNING" in BODY

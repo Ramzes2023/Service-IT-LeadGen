@@ -26,7 +26,6 @@ HARD_GATES = {
     "SERVICEIT_VPS_CUTOVER_AUTHORIZED": "NO",
     "SERVICEIT_VPS_POLL_ENABLED": "NO",
     "SERVICEIT_VPS_INTAKE_ENABLED": "NO",
-    "SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK": "NO",
 }
 OPTIONAL_DISABLED = (
     "SERVICEIT_VPS_OWN_STOP_ENABLED",
@@ -82,6 +81,10 @@ def validate_safety(values: dict[str, str]) -> None:
             raise Blocked("READONLY_GATE_INVALID_" + key)
     if values.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC", ""):
         raise Blocked("NATIVE_ACTIVATION_MUST_BE_EMPTY")
+    # The old-GitHub acknowledgement defaults to NO in Docker Compose.
+    # It may be omitted from the host vps.env but can never be YES here.
+    if values.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK", "NO") != "NO":
+        raise Blocked("OLD_GH_WRITER_ACK_MUST_REMAIN_NO")
     for key in OPTIONAL_DISABLED:
         if values.get(key, "NO") != "NO":
             raise Blocked("AUX_WRITER_MUST_REMAIN_OFF_" + key)

@@ -28,6 +28,7 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES' &&
       (github.event_name != 'workflow_run' ||
        (github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.head_branch == 'main' &&

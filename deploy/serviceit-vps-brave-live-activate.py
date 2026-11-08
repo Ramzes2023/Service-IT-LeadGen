@@ -95,11 +95,12 @@ def core_healthy():
         raise Blocked("CORE_LIVE_ENV_NOT_VERIFIED") from None
 
 
-def compose(files: tuple[Path, ...], config: Path, *args: str, timeout=180):
+def compose(files: tuple[Path, ...], config: Path, *args: str,
+            timeout=180, check=True):
     cmd = ["docker", "compose", "--env-file", str(config)]
     for file in files:
         cmd += ["-f", str(file)]
-    return call(*cmd, *args, timeout=timeout)
+    return call(*cmd, *args, timeout=timeout, check=check)
 
 
 def assert_isolated_brave_overlay(files: tuple[Path, ...], config: Path):
@@ -127,6 +128,38 @@ def assert_isolated_brave_overlay(files: tuple[Path, ...], config: Path):
     if spec.get("secrets", {}).get("serviceit_brave_search_key", {}).get("file") != (
             "/etc/serviceit/secrets/brave_api_key"):
         raise Blocked("BRAVE_SECRET_SOURCE_PATH_INVALID")
+
+
+def safe_probe_labels(stdout: str) -> tuple[str, str]:
+    # The probe produces at most one bounded JSON dictionary. Print only
+    # constant codes; never raw stdout/stderr or service-provider messages.
+    allowed = {
+        "BRAVE_API_200_VALID_WEB_RESULTS",
+        "BRAVE_CONTEXT_API_200_VALID_GROUNDING",
+        "BRAVE_INVALID_KEY_401", "BRAVE_FORBIDDEN_403",
+        "BRAVE_RATE_LIMIT_429",
+        "BRAVE_PLAN_OR_QUERY_REJECTED_402",
+        "BRAVE_PLAN_OR_QUERY_REJECTED_422",
+        "BRAVE_VALIDATION_CACHE_CONTROL_422",
+        "BRAVE_VALIDATION_COUNTRY_422",
+        "BRAVE_VALIDATION_SEARCH_LANG_422",
+        "BRAVE_RESPONSE_SIZE_INVALID", "BRAVE_NOT_JSON",
+        "BRAVE_CONTEXT_SCHEMA_UNVERIFIED", "BRAVE_RESULT_SCHEMA_UNVERIFIED",
+        "BRAVE_TRANSPORT_OR_RESPONSE_UNVERIFIED",
+        "BRAVE_VPS_SECRET_MISSING_OR_UNVERIFIED",
+        "BRAVE_KEY_MISSING_OR_INVALID", "NOT_CALLED",
+    }
+    if len(stdout) > 1600:
+        return "UNVERIFIED", "UNVERIFIED"
+    try:
+        data = json.loads(stdout)
+    except (TypeError, ValueError):
+        return "UNVERIFIED", "UNVERIFIED"
+    if type(data) is not dict:
+        return "UNVERIFIED", "UNVERIFIED"
+    def safe(value):
+        return value if type(value) is str and value in allowed else "UNVERIFIED"
+    return safe(data.get("web")), safe(data.get("context"))
 
 
 def verify_probe(stdout: str):
@@ -177,7 +210,12 @@ def main(sha: str, approval: str):
         test = compose(files, config, "run", "--rm", "--no-deps", "-T",
                        "coordinator", "python", "-m",
                        "leadpilot.serviceit_vps_brave_auth_probe",
-                       timeout=95)
+                       timeout=95, check=False)
+        web_code, context_code = safe_probe_labels(test.stdout)
+        print("BRAVE_WEB_STATUS=" + web_code, flush=True)
+        print("BRAVE_CONTEXT_STATUS=" + context_code, flush=True)
+        if test.returncode != 0:
+            raise Blocked("BRAVE_AUTH_NOT_CONFIRMED_NO_LIVE_CUTOVER")
         verify_probe(test.stdout)
         print("BRAVE_WEB_SEARCH=PASS;BRAVE_LLM_CONTEXT=PASS", flush=True)
         phase = "BRAVE_COORDINATOR_ONLY_RESTART"
@@ -222,6 +260,15 @@ def main(sha: str, approval: str):
                         timeout=240)
                 core_healthy()
                 print("BRAVE_ROLLBACK=RESTORED_CORE_AND_BROWSER", flush=True)
+            else:
+                # Only an image tag might have changed during build. The
+                # original LIVE container was never recreated; prove this.
+                core_healthy()
+                current = call("docker", "inspect", "-f", "{{.Image}}",
+                               CORE).stdout.strip()
+                if current != old_image:
+                    raise Blocked("COORDINATOR_CHANGED_BEFORE_CUTOVER")
+                print("BRAVE_ROLLBACK=NO_LIVE_CONTAINER_CHANGED", flush=True)
         except Exception:
             print("BRAVE_ROLLBACK=NEEDS_OPERATOR_REVIEW", flush=True)
         if isinstance(ex, subprocess.CalledProcessError):

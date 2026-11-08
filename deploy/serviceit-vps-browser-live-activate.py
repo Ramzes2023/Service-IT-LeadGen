@@ -88,13 +88,13 @@ def set_existing_or_append_flags(raw: str, updates: dict[str, str]) -> str:
             if key in seen:
                 raise Blocked("BROWSER_FLAG_DUPLICATE")
             seen.add(key)
-            lines[idx] = key + "=" + updates[key] + ("\\n" if line.endswith("\\n") else "")
+            lines[idx] = key + "=" + updates[key] + ("\n" if line.endswith("\n") else "")
     out = "".join(lines)
-    if out and not out.endswith("\\n"):
-        out += "\\n"
+    if out and not out.endswith("\n"):
+        out += "\n"
     for key, value in updates.items():
         if key not in seen:
-            out += key + "=" + value + "\\n"
+            out += key + "=" + value + "\n"
     return out
 
 

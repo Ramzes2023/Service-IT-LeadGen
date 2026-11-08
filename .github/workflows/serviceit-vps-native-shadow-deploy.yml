@@ -78,6 +78,6 @@ jobs:
             -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-shadow-ssh/known_hosts" \
             -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
-            "set -e; printf '%s  %s\\n' '$script_digest' "\$HOME/serviceit/staging/shadow-install-$sha.sh" | sha256sum --check --status; exec bash "\$HOME/serviceit/staging/shadow-install-$sha.sh" '$sha' '$digest' </dev/null"
+            "test \$(sha256sum \"\$HOME/serviceit/staging/shadow-install-$sha.sh\" | cut -d' ' -f1) = '$script_digest' && exec bash \"\$HOME/serviceit/staging/shadow-install-$sha.sh\" '$sha' '$digest' </dev/null"
           echo "NATIVE_SHADOW_READONLY_DEPLOY_APPROVED_SHA=$sha"
           echo "OLD_CLOUD_WRITERS_NOT_CHANGED"

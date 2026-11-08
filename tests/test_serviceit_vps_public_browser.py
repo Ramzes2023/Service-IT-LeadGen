@@ -52,7 +52,11 @@ def test_not_part_of_default_4_crm_worker_images():
     assert "playwright==1.64.1" in browser_docker
     assert "cap_drop: [ALL]" in browser_compose
     assert "read_only: true" in browser_compose
-    assert "network_mode: bridge" in browser_compose
+    assert "internal: true" in browser_compose
+    assert '"127.0.0.1:18785:8765"' in browser_compose
+    assert "SERVICEIT_VPS_BROWSER_PROXY_URL" in browser_compose
+    assert "serviceit_vps_public_browser_proxy" in browser_compose
+    assert "network_mode: host" not in browser_compose
     for text in (browser_docker, browser_compose):
         for forbidden in (
             "serviceit_pg_password", "serviceit_bitrix_webhook",

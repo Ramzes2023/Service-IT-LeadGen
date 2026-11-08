@@ -244,6 +244,23 @@ def run(args):
         previous = _private(config)
         preflight(config_parse(previous), now)
         _verified_readonly()
+        # The source writers can keep creating cards, but we require the
+        # immediate old-cloud handoff window to be QUIET before fencing.
+        # A missing/unknown Bitrix page is never interpreted as zero.
+        probe = _sub(["docker", "exec", SERVICES["coordinator"], "python",
+                      "-m", "leadpilot.serviceit_vps_poll_readonly_probe"])
+        observed = json.loads(probe.stdout)
+        if (observed.get("status") != "BITRIX_1062_21_POLL_READONLY_COMPATIBLE"
+                or observed.get("positive_control_card3") != "PASS"
+                or observed.get("new_card_candidates") != 0):
+            raise Blocked("RECENT_PRE_CUTOVER_CARDS_REQUIRE_OLD_CLOUD_DRAIN")
+        queue = _sub(["docker", "exec", SERVICES["coordinator"], "python",
+                      "-m", "leadpilot.serviceit_vps_worker", "--once"])
+        summary = json.loads(queue.stdout)
+        if (summary.get("status") != "READONLY_CRM_FIELD_METADATA_CONFIRMED"
+                or summary.get("queue_counts") != {}
+                or summary.get("migration_cutover") != "NOT_AUTHORIZED"):
+            raise Blocked("NATIVE_QUEUE_OR_METADATA_NOT_CLEAN")
         rule_file = release / "config/serviceit_own_signal_stop.json"
         rules = json.loads(rule_file.read_text("utf8"))
         if rules.get("rules") != []:

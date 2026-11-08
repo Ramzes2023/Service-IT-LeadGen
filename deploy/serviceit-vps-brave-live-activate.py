@@ -169,8 +169,8 @@ def main(sha: str, approval: str):
     phase = "BRAVE_COORDINATOR_IMAGE_BUILD"
     try:
         # Only build the new coordinator; no other LIVE service is changed.
+        built = True  # Restore old image tag even after a partial build failure.
         compose(files, config, "build", "coordinator", timeout=1200)
-        built = True
         phase = "BRAVE_AUTH_GENERIC_WEB_AND_CONTEXT"
         # A disposable container, with the same Brave secret mount but no
         # coordinator loop, CRM requests, AI inference or PostgreSQL changes.
@@ -181,9 +181,9 @@ def main(sha: str, approval: str):
         verify_probe(test.stdout)
         print("BRAVE_WEB_SEARCH=PASS;BRAVE_LLM_CONTEXT=PASS", flush=True)
         phase = "BRAVE_COORDINATOR_ONLY_RESTART"
+        changed = True  # Restore old coordinator even after partial Compose failure.
         compose(files, config, "up", "-d", "--no-deps", "--no-build",
                 "--force-recreate", "coordinator", timeout=240)
-        changed = True
         phase = "BRAVE_FOUR_LIVE_AND_BROWSER_VERIFY"
         for attempt in range(20):
             try:

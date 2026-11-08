@@ -56,12 +56,17 @@ def test_cannot_run_under_other_repo_branch(tmp_path):
         "ROUTERAI_PRIMARY_SCOPE_BLOCKED")
 
 
-def test_two_production_workflows_use_same_policy_and_ca():
+def test_production_workflows_are_routerai_only_and_readonly_standby_audit_is_legacy():
     base=Path(__file__).resolve().parents[1]/".github/workflows"
-    expected="AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}"
     for file in ["serviceit-bitrix-new-card-ai.yml",
-                 "serviceit-bitrix-all-new-batch-ai.yml",
-                 "serviceit-routerai-primary-readiness.yml"]:
+                 "serviceit-bitrix-all-new-batch-ai.yml"]:
         body=(base/file).read_text("utf8")
-        assert expected in body
-        assert "serviceit_gigachat_ca_setup" in body
+        assert "AI_PROVIDER: routerai" in body
+        assert "SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: 'NO'" in body
+        assert "GIGACHAT_CREDENTIALS:" not in body
+        assert "serviceit_gigachat_ca_setup" not in body
+    # Existing read-only standby diagnosis is retained for historical audit;
+    # it is not a live card writer and does not affect production selection.
+    audit=(base/"serviceit-routerai-primary-readiness.yml").read_text("utf8")
+    assert "leadpilot.serviceit_routerai_primary_readiness" in audit
+    assert "issue_comment:" in audit

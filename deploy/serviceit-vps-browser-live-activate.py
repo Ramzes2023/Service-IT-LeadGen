@@ -301,6 +301,29 @@ def activate(sha: str, approval: str, smoke_url: str):
                      "leadpilot.serviceit_vps_public_browser", "--url",
                      smoke_url, timeout=50, check=False)
         if result.returncode != 0 or "BROWSER_RENDERED_PUBLIC_PAGE_UNVERIFIED" not in result.stdout:
+            # The browser CLI writes ONLY one bounded JSON object with an
+            # allowlisted diagnostic code, never a URL or captured page text.
+            safe_codes = {
+                "BROWSER_DNS_NOT_PUBLIC", "BROWSER_ROBOTS_DISALLOWED",
+                "BROWSER_ROBOTS_UNAVAILABLE", "BROWSER_ROBOTS_DNS_UNVERIFIED",
+                "BROWSER_ROBOTS_NOT_APPROVED", "BROWSER_ROBOTS_PROXY_TIMEOUT",
+                "BROWSER_ROBOTS_PROXY_FAILURE", "BROWSER_PAGE_NOT_200",
+                "BROWSER_RESPONSE_NOT_HTML", "BROWSER_EMPTY_PUBLIC_TEXT",
+                "BROWSER_RENDER_UNVERIFIED", "BROWSER_PUBLIC_HOST_NOT_APPROVED",
+                "BROWSER_PINNED_EGRESS_PROXY_REQUIRED",
+                "BROWSER_FAILURE_UNCLASSIFIED",
+            }
+            reported = "BROWSER_FAILURE_UNCLASSIFIED"
+            try:
+                if len(result.stdout) <= 1024:
+                    parsed = json.loads(result.stdout)
+                    if (type(parsed) is dict
+                            and parsed.get("status") == "CHROMIUM_BROWSER_BLOCKED_OR_UNVERIFIED"
+                            and parsed.get("diagnostic_code") in safe_codes):
+                        reported = parsed["diagnostic_code"]
+            except (TypeError, ValueError):
+                pass
+            print("BROWSER_PUBLIC_SMOKE_DIAGNOSTIC=" + reported, flush=True)
             raise Blocked("BROWSER_REAL_PUBLIC_RENDER_UNVERIFIED")
         print("BROWSER_PUBLIC_RENDER_SMOKE=PASS", flush=True)
 

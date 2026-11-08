@@ -459,7 +459,8 @@ def run(client, env, *, write=False, now=None, native_connection=None):
             **env, "SERVICEIT_BITRIX_POLL_START_UTC":
                 env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
         }, now)
-    cards = _card_ids(client, base, native_after=native_after)
+    cards = (_card_ids(client, base) if native_after is None else
+             _card_ids(client, base, native_after=native_after))
     counts = {"approved_candidates": len(cards), "inspected": 0,
               "processed": 0, "no_contact": 0, "needs_review": 0,
               "crm_writes": 0, "tasks_created": 0}
@@ -470,8 +471,10 @@ def run(client, env, *, write=False, now=None, native_connection=None):
             "POSTCALL_AUTO_WRITE_NOT_APPROVED")
     for cid in cards:
         try:
-            result = _write_one(client, base, env, cid, now=now,
-                                native_connection=native_connection)
+            result = (_write_one(client, base, env, cid, now=now)
+                      if native_connection is None else
+                      _write_one(client, base, env, cid, now=now,
+                                 native_connection=native_connection))
         except (PostCallLiveBlocked, PostCallBlocked, ValueError, KeyError):
             counts["needs_review"] += 1
             continue

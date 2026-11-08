@@ -399,7 +399,10 @@ def run_vps_native(card: int, env: dict, *, client: httpx.Client, connection) ->
     from .serviceit_bitrix_poll_fallback import after_activation, date_value
     PostgresNativeFence.validate_card(card)
     now = datetime.now(timezone.utc)
-    started = after_activation(env, now)
+    activation = env.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")
+    if not activation:
+        raise VpsBlocked("NATIVE_ACTIVATION_UTC_REQUIRED")
+    started = after_activation({**env, "SERVICEIT_BITRIX_POLL_START_UTC": activation}, now)
     before = Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)(
         "crm.item.get", {"entityTypeId": 1062, "id": card,
                          "useOriginalUfNames": "Y"})

@@ -1,6 +1,6 @@
-# OPTIONAL, standalone secretless Chromium research bridge.
-# NEVER run until Docker bridge egress firewall + Chromium sandbox are validated.
-# Keep it outside the core LIVE Compose (no CRM/PG/RouterAI/GitHub secrets).
+# Optional browser research sidecars: only enable AFTER verified sandbox test.
+# Browser has NO external network route and NO Bitrix/PG/AI/GitHub secrets.
+# The egress proxy permits only allowlisted HTTPS CONNECT to pinned PUBLIC IPs.
 name: serviceit-public-browser-vps
 
 services:
@@ -8,11 +8,13 @@ services:
     profiles: ["browser"]
     image: serviceit-vps-public-browser:staged
     user: pwuser
-    # No host networking and no externally published browser endpoint.
     ports:
       - "127.0.0.1:18785:8765"
     networks:
-      - public_browser
+      - browser_internal
+    depends_on:
+      egress:
+        condition: service_started
     init: true
     restart: unless-stopped
     read_only: true
@@ -26,6 +28,7 @@ services:
       - /tmp:size=256m,mode=1777
     environment:
       SERVICEIT_VPS_BROWSER_APPROVED_HOSTS: "${SERVICEIT_VPS_BROWSER_APPROVED_HOSTS:?explicit public browser hosts required}"
+      SERVICEIT_VPS_BROWSER_PROXY_URL: "http://egress:3128"
     command: ["python", "-m", "leadpilot.serviceit_vps_public_browser_bridge"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; assert b'BROWSER_BRIDGE_READY' in urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3).read()"]
@@ -34,14 +37,34 @@ services:
       retries: 3
       start_period: 25s
 
+  egress:
+    profiles: ["browser"]
+    image: serviceit-vps-public-browser:staged
+    user: pwuser
+    # Browser traffic can reach the Internet ONLY via this validating proxy.
+    # The egress container has NO routes to the host's core Docker network.
+    networks:
+      - browser_internal
+      - public_egress
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 96
+    mem_limit: 128m
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    environment:
+      SERVICEIT_VPS_BROWSER_APPROVED_HOSTS: "${SERVICEIT_VPS_BROWSER_APPROVED_HOSTS:?explicit public browser hosts required}"
+    command: ["python", "-m", "leadpilot.serviceit_vps_public_browser_proxy"]
+
 networks:
-  public_browser:
+  browser_internal:
     driver: bridge
-    # Dedicated deterministic network exclusively for this untrusted runner.
-    # The host must apply explicit DROP/ALLOW egress rules to this bridge.
-    driver_opts:
-      com.docker.network.bridge.name: br-sit-browser
+    internal: true
     enable_ipv6: false
-    ipam:
-      config:
-        - subnet: 172.30.246.0/28
+  public_egress:
+    driver: bridge
+    enable_ipv6: false

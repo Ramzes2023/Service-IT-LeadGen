@@ -33,6 +33,20 @@ MAX_REQUESTS = 35
 MAX_OUTPUT = 10000
 MAX_HTML = 160000
 
+# Constant, audited diagnostic categories only. No URLs, page bodies, headers,
+# proxy messages, tokens, or exception text may be sent to GitHub Actions.
+SAFE_BROWSER_DIAGNOSTICS = frozenset({
+    "BROWSER_ALLOWLIST_INVALID", "BROWSER_ALLOWLIST_MISSING_OR_INVALID",
+    "BROWSER_URL_INVALID", "BROWSER_PUBLIC_HOST_NOT_APPROVED",
+    "BROWSER_DNS_NOT_PUBLIC", "BROWSER_PINNED_EGRESS_PROXY_REQUIRED",
+    "BROWSER_ROBOTS_DISALLOWED", "BROWSER_ROBOTS_UNAVAILABLE",
+    "BROWSER_ROBOTS_DNS_UNVERIFIED", "BROWSER_ROBOTS_NOT_APPROVED",
+    "BROWSER_ROBOTS_PROXY_TIMEOUT", "BROWSER_ROBOTS_PROXY_FAILURE",
+    "BROWSER_PACKAGE_NOT_INSTALLED", "BROWSER_PAGE_NOT_200",
+    "BROWSER_RESPONSE_NOT_HTML", "BROWSER_EMPTY_PUBLIC_TEXT",
+    "BROWSER_RENDER_UNVERIFIED", "BROWSER_EXECUTABLE_NOT_FOUND",
+})
+
 
 class BrowserBlocked(ValueError):
     pass
@@ -85,8 +99,20 @@ def render_public(url: str, allowed: frozenset[str]) -> dict:
     with httpx.Client(trust_env=False, follow_redirects=False, proxy=proxy) as client:
         try:
             _robots(client, url, allowed)
-        except (ResearchBlocked, httpx.HTTPError):
-            raise BrowserBlocked("BROWSER_ROBOTS_NOT_APPROVED") from None
+        except ResearchBlocked as error:
+            reason_map = {
+                "RESEARCH_ROBOTS_DISALLOWED": "BROWSER_ROBOTS_DISALLOWED",
+                "RESEARCH_ROBOTS_UNKNOWN": "BROWSER_ROBOTS_UNAVAILABLE",
+                "RESEARCH_DNS_UNVERIFIED": "BROWSER_ROBOTS_DNS_UNVERIFIED",
+                "RESEARCH_PAGE_UNAVAILABLE": "BROWSER_ROBOTS_UNAVAILABLE",
+            }
+            raise BrowserBlocked(
+                reason_map.get(str(error), "BROWSER_ROBOTS_NOT_APPROVED")
+            ) from None
+        except httpx.TimeoutException:
+            raise BrowserBlocked("BROWSER_ROBOTS_PROXY_TIMEOUT") from None
+        except httpx.HTTPError:
+            raise BrowserBlocked("BROWSER_ROBOTS_PROXY_FAILURE") from None
 
     try:
         from playwright.sync_api import sync_playwright
@@ -196,9 +222,16 @@ def main(argv=None) -> int:
             }
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (BrowserBlocked, ImportError):
+    except (BrowserBlocked, ImportError) as error:
+        # Do not print unsanitized exception text: only fixed policy codes.
+        safe_reason = (
+            str(error) if type(error) is BrowserBlocked
+            and str(error) in SAFE_BROWSER_DIAGNOSTICS
+            else "BROWSER_FAILURE_UNCLASSIFIED"
+        )
         print(json.dumps({
             "status": "CHROMIUM_BROWSER_BLOCKED_OR_UNVERIFIED",
+            "diagnostic_code": safe_reason,
             "crm_writes": 0, "model_calls": 0, "external_contacts": 0,
         }, sort_keys=True))
         return 2

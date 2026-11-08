@@ -251,8 +251,13 @@ def run(args):
                       "-m", "leadpilot.serviceit_vps_poll_readonly_probe"])
         observed = json.loads(probe.stdout)
         if (observed.get("status") != "BITRIX_1062_21_POLL_READONLY_COMPATIBLE"
-                or observed.get("positive_control_card3") != "PASS"
-                or observed.get("new_card_candidates") != 0):
+                or observed.get("positive_control_card3") != "PASS"):
+            raise Blocked("BITRIX_NEW_CARD_READABILITY_UNVERIFIED")
+        # Before the GitHub fence, a recent existing card can be pending
+        # in the old writer. After the fence, genuinely new cards are
+        # expected and MUST be included from the captured activation UTC.
+        if (args.mode == "preflight"
+                and observed.get("new_card_candidates") != 0):
             raise Blocked("RECENT_PRE_CUTOVER_CARDS_REQUIRE_OLD_CLOUD_DRAIN")
         queue = _sub(["docker", "exec", SERVICES["coordinator"], "python",
                       "-m", "leadpilot.serviceit_vps_worker", "--once"])

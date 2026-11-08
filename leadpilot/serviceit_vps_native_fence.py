@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS serviceit_vps_native_receipts (
     PRIMARY KEY(namespace, card_id),
     CHECK(
       (field_names IS NULL AND digest_salt IS NULL AND expected_digest IS NULL)
-      OR (cardinality(field_names) IN (9, 16)
+      OR (cardinality(field_names) IN (9, 12)
           AND octet_length(digest_salt) = 16
           AND octet_length(expected_digest) = 32)
     )

@@ -1,0 +1,149 @@
+name: ServiceIT VPS Brave Web and Context diagnostics (READONLY, 2 calls)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type DIAGNOSE_BRAVE_WEB_CONTEXT_2_PUBLIC_API_CALLS'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+
+jobs:
+  brave-readonly-diagnose:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'DIAGNOSE_BRAVE_WEB_CONTEXT_2_PUBLIC_API_CALLS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Verify owner-only SSH and known-host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          mkdir -m 0700 -p "$RUNNER_TEMP/serviceit-brave-readonly-ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-brave-readonly-ssh/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-brave-readonly-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-brave-readonly-ssh/id" "$RUNNER_TEMP/serviceit-brave-readonly-ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-brave-readonly-ssh/known_hosts" >/dev/null
+
+      - name: Inspect unchanged LIVE services and run generic Brave-only probe on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-brave-readonly-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-brave-readonly-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+
+          CORE="serviceit-leadgen-vps-coordinator-1"
+          FOUR=(CORE,
+                "serviceit-leadgen-vps-auxiliaries-1",
+                "serviceit-leadgen-vps-business-1",
+                "serviceit-leadgen-vps-observer-1")
+          BROWSER="serviceit-public-browser-vps-browser-1"
+          RELEASE="57973b7950cebd6c1f490e2e54aeffbee5890426"
+          BASE=Path.home() / "serviceit/releases" / RELEASE / "deploy"
+          CONF=Path.home() / "serviceit/config/vps.env"
+          def call(*argv, timeout=20):
+              return subprocess.run(argv, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True,
+                                    check=False, timeout=timeout)
+          def healthy(name):
+              r=call("docker","inspect","-f",
+                     "{{.State.Running}}:{{.State.Health.Status}}",name)
+              return r.returncode==0 and r.stdout.strip()=="true:healthy"
+          statuses={name:healthy(name) for name in FOUR+(BROWSER,)}
+          print("NATIVE_FOUR_HEALTHY="+("PASS" if all(statuses[n] for n in FOUR) else "FAIL"),flush=True)
+          print("CHROMIUM_HEALTHY="+("PASS" if statuses[BROWSER] else "FAIL"),flush=True)
+          mount=call("docker","inspect","-f",
+                    "{{range .Mounts}}{{println .Destination}}{{end}}",CORE)
+          brave_live=mount.returncode==0 and "/run/secrets/serviceit_brave_search_key" in mount.stdout.splitlines()
+          print("BRAVE_SECRET_MOUNT_IN_LIVE="+("YES" if brave_live else "NO"),flush=True)
+          print("CRM_WRITES=0;EXISTING_CONTAINERS_RESTARTED=0;SOURCES_UNCHANGED=YES",flush=True)
+          if not all(statuses.values()):
+              print("BRAVE_DIAGNOSTIC=CORE_OR_BROWSER_UNHEALTHY_NO_API_CALLS",flush=True)
+              raise SystemExit(0)
+          if any(not x.is_file() or x.is_symlink() for x in (
+                CONF,BASE/"serviceit-vps.compose.yml",BASE/"serviceit-vps-brave.compose.yml")):
+              print("BRAVE_DIAGNOSTIC=PINNED_RELEASE_MISSING_NO_API_CALLS",flush=True)
+              raise SystemExit(0)
+          command=[
+              "docker","compose","--env-file",str(CONF),
+              "-f",str(BASE/"serviceit-vps.compose.yml"),
+              "-f",str(BASE/"serviceit-vps-brave.compose.yml"),
+              "run","--rm","--no-deps","--no-build","-T",
+              "coordinator","python","-m",
+              "leadpilot.serviceit_vps_brave_auth_probe",
+          ]
+          try:
+              r=call(*command,timeout=90)
+          except subprocess.TimeoutExpired:
+              print("BRAVE_DIAGNOSTIC=DISPOSABLE_PROBE_TIMEOUT",flush=True)
+              raise SystemExit(0)
+          raw=r.stdout.strip()
+          if len(raw)>1600:
+              print("BRAVE_DIAGNOSTIC=PROBE_OUTPUT_TOO_LONG",flush=True)
+              raise SystemExit(0)
+          try:
+              d=json.loads(raw)
+          except (ValueError,TypeError):
+              print("BRAVE_DIAGNOSTIC=PROBE_NOT_JSON",flush=True)
+              raise SystemExit(0)
+          def code(v):
+              if type(v) is not str or not re.fullmatch(r"[A-Z][A-Z0-9_]{1,65}",v):
+                  return "UNVERIFIED"
+              if v.startswith("BRAVE_HTTP_") and not re.fullmatch(r"BRAVE_HTTP_[0-9]{3}",v):
+                  return "UNVERIFIED"
+              if v not in {
+                  "BRAVE_API_200_VALID_WEB_RESULTS",
+                  "BRAVE_CONTEXT_API_200_VALID_GROUNDING",
+                  "BRAVE_SEARCH_VPS_READY",
+                  "BRAVE_SEARCH_VPS_NOT_AUTHENTICATED",
+                  "BRAVE_VPS_SECRET_MISSING_OR_UNVERIFIED",
+                  "BRAVE_KEY_MISSING_OR_INVALID",
+                  "BRAVE_INVALID_KEY_401",
+                  "BRAVE_FORBIDDEN_403",
+                  "BRAVE_RATE_LIMIT_429",
+                  "BRAVE_PLAN_OR_QUERY_REJECTED_402",
+                  "BRAVE_PLAN_OR_QUERY_REJECTED_422",
+                  "BRAVE_RESPONSE_SIZE_INVALID",
+                  "BRAVE_NOT_JSON",
+                  "BRAVE_CONTEXT_SCHEMA_UNVERIFIED",
+                  "BRAVE_RESULT_SCHEMA_UNVERIFIED",
+                  "BRAVE_TRANSPORT_OR_RESPONSE_UNVERIFIED",
+                  "NOT_CALLED"
+              } and not v.startswith("BRAVE_HTTP_"):
+                  return "UNVERIFIED"
+              return v
+          if type(d) is not dict:
+              print("BRAVE_DIAGNOSTIC=PROBE_SCHEMA_INVALID",flush=True)
+              raise SystemExit(0)
+          print("BRAVE_PROBE_STATUS="+code(d.get("status")),flush=True)
+          print("BRAVE_WEB_STATUS="+code(d.get("web")),flush=True)
+          print("BRAVE_LLM_CONTEXT_STATUS="+code(d.get("context")),flush=True)
+          print("BRAVE_DISPOSABLE_PROBE_EXIT="+str(r.returncode if r.returncode in (0,2) else 99),flush=True)
+          print("REAL_NEW_CARD_E2E=NOT_YET_VERIFIED",flush=True)
+          PY

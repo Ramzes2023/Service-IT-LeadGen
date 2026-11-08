@@ -24,6 +24,8 @@ services:
       # Official Playwright Docker userns seccomp, only for untrusted Chromium.
       # The egress proxy stays under Docker's default seccomp policy.
       - seccomp:${SERVICEIT_VPS_BROWSER_SECCOMP_PROFILE:?pinned chromium seccomp profile required}
+      # Host-installed enforcing Docker-style AppArmor policy with userns.
+      - apparmor:serviceit-chromium
     pids_limit: 96
     mem_limit: 1g
     shm_size: 256m

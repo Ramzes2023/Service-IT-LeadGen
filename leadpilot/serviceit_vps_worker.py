@@ -25,6 +25,7 @@ from .serviceit_bitrix_poll_fallback import (
     after_activation, discover, calibrate_known_card,
 )
 from .serviceit_vps_native_fence import migrate_native
+from .serviceit_vps_poll_readonly_probe import inspect_api
 from .serviceit_bitrix_batch_worker import list_only
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS
@@ -114,7 +115,13 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
 def run_once(env: dict, *, client: httpx.Client) -> dict:
     with db(env) as connection:
         if not live_permitted(env):
+            # A successful empty list alone is insufficient. Validate the
+            # known Bitrix card #3 and the last 10 minutes on EVERY readonly
+            # cycle, with zero queue inserts and zero CRM writes.
             result = readonly_preflight(env, client=client)
+            probe = inspect_api(env, client=client)
+            result["poll_positive_control"] = probe["positive_control_card3"]
+            result["new_card_candidates_10m"] = probe["new_card_candidates"]
             result["queue_counts"] = metrics(connection)
             result["migration_cutover"] = "NOT_AUTHORIZED"
             return result

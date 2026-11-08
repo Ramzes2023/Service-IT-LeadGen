@@ -20,11 +20,12 @@ import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+from urllib.robotparser import RobotFileParser
 
 import httpx
 
 from .serviceit_public_evidence_research import (
-    _public_dns, _robots, SAFE_HOST, ResearchBlocked,
+    _public_dns, SAFE_HOST, ResearchBlocked, AGENT,
 )
 
 MAX_HOSTS = 24
@@ -87,13 +88,50 @@ def verify_url(url: str, allowed: frozenset[str], *, dns_check=_public_dns) -> s
     return host
 
 
+def _proxy_validated_host(url: str, allowed: frozenset[str]) -> str:
+    """Check URL syntax and allowlist; only the pinned egress proxy resolves DNS.
+
+    Chromium is deliberately confined to Docker's internal-only network and
+    cannot safely perform external DNS itself. DNS/global-IP validation takes
+    place atomically in resolve_public_socket() in the secretless egress proxy
+    immediately before that proxy connects to the already checked IP.
+    This helper MUST be used only by the browser flow with the required proxy.
+    """
+    return verify_url(url, allowed, dns_check=lambda _host: True)
+
+
+def _robots(client: httpx.Client, url: str, allowed: frozenset[str]) -> None:
+    """Require a readable, explicit robots.txt via the pinned HTTPS proxy.
+
+    This browser-only variant avoids the ordinary web researcher's *local*
+    DNS preflight; the egress proxy resolves and enforces public IPs instead.
+    Any redirect, HTTP error, overlarge file, proxy error or robots denial
+    blocks the browser; no robots bypass or unvalidated direct connection.
+    """
+    parsed = urlsplit(url)
+    robots_url = parsed.scheme + "://" + parsed.netloc + "/robots.txt"
+    _proxy_validated_host(robots_url, allowed)
+    response = client.get(
+        robots_url,
+        follow_redirects=False,
+        timeout=6.0,
+        headers={"User-Agent": AGENT, "Accept": "text/plain"},
+    )
+    if response.status_code != 200 or len(response.content) > MAX_HTML:
+        raise ResearchBlocked("RESEARCH_ROBOTS_UNKNOWN")
+    policy = RobotFileParser()
+    policy.parse(response.text[:20000].splitlines())
+    if not policy.can_fetch(AGENT, url):
+        raise ResearchBlocked("RESEARCH_ROBOTS_DISALLOWED")
+
+
 def render_public(url: str, allowed: frozenset[str]) -> dict:
-    verify_url(url, allowed)
     # Container has NO direct public network. The only egress goes through the
     # HTTPS-only proxy that resolves once, validates and pins a PUBLIC IP.
     proxy = os.environ.get("SERVICEIT_VPS_BROWSER_PROXY_URL", "")
     if proxy != "http://egress:3128":
         raise BrowserBlocked("BROWSER_PINNED_EGRESS_PROXY_REQUIRED")
+    _proxy_validated_host(url, allowed)
     # Explicit robots policy must be accessible and permissive; never
     # substitute a browser for the ordinary verified HTTP source fetch.
     with httpx.Client(trust_env=False, follow_redirects=False, proxy=proxy) as client:
@@ -147,7 +185,7 @@ def render_public(url: str, allowed: frozenset[str]) -> dict:
                         route.abort()
                         return
                     try:
-                        verify_url(route.request.url, allowed)
+                        _proxy_validated_host(route.request.url, allowed)
                         route.continue_()
                     except BrowserBlocked:
                         route.abort()
@@ -159,7 +197,7 @@ def render_public(url: str, allowed: frozenset[str]) -> dict:
                 )
                 if response is None or response.status != 200:
                     raise BrowserBlocked("BROWSER_PAGE_NOT_200")
-                final_host = verify_url(page.url, allowed)
+                final_host = _proxy_validated_host(page.url, allowed)
                 if response.headers.get("content-type", "").split(";",1)[0] not in (
                     "text/html", "application/xhtml+xml"
                 ):

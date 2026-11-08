@@ -76,6 +76,7 @@ services:
       SERVICEIT_VPS_CRM_DUPLICATE_ENABLED: "${SERVICEIT_VPS_CRM_DUPLICATE_ENABLED:-NO}"
       SERVICEIT_VPS_KANBAN_TITLE_ENABLED: "${SERVICEIT_VPS_KANBAN_TITLE_ENABLED:-NO}"
       SERVICEIT_VPS_MANAGER_TASK_ENABLED: "${SERVICEIT_VPS_MANAGER_TASK_ENABLED:-NO}"
+      SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED: "${SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED:-NO}"
       SERVICEIT_STAGE3_FALLBACK_APPROVED: "${SERVICEIT_STAGE3_FALLBACK_APPROVED:-NO}"
       SERVICEIT_STAGE3_FALLBACK_MANAGER_ID: "${SERVICEIT_STAGE3_FALLBACK_MANAGER_ID:-}"
     healthcheck:
@@ -84,6 +85,31 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # Optional official public FNS-MSP 2–3GB ZIP scanner; never included
+  # in the default Compose deployment.  A dedicated disk scratch must be
+  # prepared before profile 'msp' is activated; no GitHub or CRM write key.
+  fns-msp:
+    <<: *base
+    profiles: ["msp"]
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+    volumes:
+      - type: bind
+        source: "${SERVICEIT_VPS_FNS_SCRATCH_DIR:-/var/lib/serviceit/fns-scratch}"
+        target: /var/cache/serviceit-msp
+        read_only: false
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_msp", "--loop"]
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_FNS_MSP_ENABLED: "${SERVICEIT_VPS_FNS_MSP_ENABLED:-NO}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_native_msp; print('READY')"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   coordinator:
     <<: *base

@@ -113,6 +113,26 @@ services:
       retries: 3
       start_period: 30s
 
+  # Postcall manager-confirmation and finance internal request/task flow.
+  # The two writer modules are mutually scoped by independently explicit
+  # native cutover gates and NO-by-default per-module opt-ins.
+  business:
+    <<: *base
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_business", "--loop"]
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_POSTCALL_ENABLED: "${SERVICEIT_VPS_POSTCALL_ENABLED:-NO}"
+      SERVICEIT_VPS_FINANCE_ENABLED: "${SERVICEIT_VPS_FINANCE_ENABLED:-NO}"
+    healthcheck:
+      test: ["CMD", "python", "-m", "leadpilot.serviceit_vps_native_business", "--flags-only"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # Hourly real CRM readback and manager funnel audit, always read-only.
   observer:
     <<: *base

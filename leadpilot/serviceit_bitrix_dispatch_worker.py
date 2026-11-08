@@ -253,6 +253,16 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
     if reserved != "RESERVED":
         return {"status": remote.reconcile(card, Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)),
                 "crm_writes": 0}
+    return _run_reserved_exact_card(card, env, client=client, remote=remote)
+
+
+def _run_reserved_exact_card(card: int, env: dict, *, client: httpx.Client,
+                             remote) -> dict:
+    """Shared exact-card implementation; fence is chosen before entering.
+
+    Cloud runs the legacy GitHub Fernet fence. VPS calls this only with
+    the PostgreSQL fence, after independent native-only cutover gates.
+    """
     # After reservation, ambiguity permits GET-only recovery, never replay.
     observed = "NEEDS_REVIEW"
     with tempfile.TemporaryDirectory(prefix="serviceit-exact-event-") as temp:
@@ -362,6 +372,35 @@ def run(event: dict, env: dict, *, client: httpx.Client) -> dict:
         "crm_writes": 1 if observed in ("HOLD_9_WRITTEN", "VERIFIED") else "UNVERIFIED",
         "qualified_leads": int(observed == "VERIFIED"),
     }
+
+
+def run_vps_native(card: int, env: dict, *, client: httpx.Client, connection) -> dict:
+    """Server-only exact-card call, never requires GitHub/HMAC ledger secrets."""
+    from .serviceit_vps_native_fence import PostgresNativeFence
+    from .serviceit_vps_pg_queue import VpsBlocked
+    if (env.get("SERVICEIT_VPS_WRITER_MODE") != "LIVE"
+            or env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") != "YES"
+            or env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") != "YES"
+            or env.get("SERVICEIT_VPS_INTAKE_ENABLED", "NO") != "NO"
+            or env.get("SERVICEIT_VPS_POLL_ENABLED") != "YES"
+            or env.get("AI_PROVIDER") != "routerai"
+            or env.get("SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT") != "NO"
+            or env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") != "YES"
+            or env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") != "YES_1062_21"
+            or env.get("AI_ENABLE") != "1"):
+        raise VpsBlocked("NATIVE_LIVE_CUTOVER_GATES_REQUIRED")
+    from .ai import config_from_env
+    config = config_from_env(env)
+    if config.provider != "routerai":
+        raise VpsBlocked("NATIVE_ROUTERAI_ONLY")
+    fence = PostgresNativeFence(connection)
+    status = fence.reserve(card)
+    if status != "RESERVED":
+        # Never repeat an existing uncertain/possibly successful CRM write.
+        return {"status": fence.reconcile(
+            card, Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)),
+            "crm_writes": 0, "replay_allowed": False}
+    return _run_reserved_exact_card(card, env, client=client, remote=fence)
 
 
 def main() -> int:

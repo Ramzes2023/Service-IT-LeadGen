@@ -229,21 +229,26 @@ def activate(sha: str, approval: str, smoke_url: str):
     config_changed = False
     core_restarted = False
     browser_started = False
+    phase = "BROWSER_IMAGE_BUILD"
     try:
         cmd("docker", "build", "--file", str(release / "Dockerfile.serviceit-vps-browser"),
             "--tag", "serviceit-vps-public-browser:staged", str(release),
             timeout=5400)
+        phase = "BROWSER_COMPOSE_CONFIG"
         compose_browser(browser_yaml, browser_env, "config", "--quiet")
+        phase = "BROWSER_CONTAINERS_START"
+        browser_started = True  # Roll back even if Compose starts just one container.
         compose_browser(browser_yaml, browser_env, "up", "-d", "--no-build",
                         "egress", "browser", timeout=240)
-        browser_started = True
         for _ in range(15):
             if healthy(BROWSER_NAME):
                 break
             time.sleep(3)
+        phase = "BROWSER_SANDBOX_AND_NETWORK_SMOKE"
         smoke_browser()
         # Real approved page must be rendered, with robots/TLS/sandbox rules.
         # --url logs STATUS, HASH and COUNTS only, never public page text.
+        phase = "BROWSER_PUBLIC_PAGE_SMOKE"
         result = cmd("docker", "exec", BROWSER_NAME, "python", "-m",
                      "leadpilot.serviceit_vps_public_browser", "--url",
                      smoke_url, timeout=50, check=False)
@@ -252,17 +257,21 @@ def activate(sha: str, approval: str, smoke_url: str):
         print("BROWSER_PUBLIC_RENDER_SMOKE=PASS", flush=True)
 
         # Native coordinator only. The other three LIVE containers untouched.
+        phase = "CORE_COORDINATOR_BUILD"
         compose_core(core_yaml, config, "build", "coordinator", timeout=1000)
         new_config = original
         if new_config and not new_config.endswith("\n"):
             new_config += "\n"
         new_config += ("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED=YES\n"
                        "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED=YES\n")
+        phase = "CORE_CONFIG_WRITE"
         write_private(config, new_config)
         config_changed = True
+        phase = "CORE_COORDINATOR_RESTART"
         compose_core(core_yaml, config, "up", "-d", "--no-deps",
                      "--no-build", "--force-recreate", "coordinator", timeout=240)
         core_restarted = True
+        phase = "CORE_FOUR_HEALTHY_VERIFY"
         for _ in range(20):
             if healthy(CORE_NAME):
                 break
@@ -280,8 +289,11 @@ def activate(sha: str, approval: str, smoke_url: str):
         print("CORE_FOUR_HEALTHY=PASS", flush=True)
         print("BITRIX_SCOPE=1062_21;MANAGER_OLGA=605;SOURCES=UNCHANGED", flush=True)
         print("REAL_NEW_CARD_E2E=NOT_YET_VERIFIED", flush=True)
-    except Exception:
+    except Exception as error:
         print("BROWSER_ACTIVATION=BLOCKED_ROLLBACK", flush=True)
+        print("BLOCKED_PHASE=" + phase, flush=True)
+        if isinstance(error, subprocess.CalledProcessError):
+            print("BLOCKED_COMMAND_EXIT=" + str(error.returncode), flush=True)
         if config_changed:
             write_private(config, original)
         # Restore the exact prior coordinator digest even if the image tag

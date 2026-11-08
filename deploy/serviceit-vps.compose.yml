@@ -62,6 +62,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+  # Native auxiliaries: own STOP, visible CRM dedup, Kanban and manager task.
+  # ALL disabled until independent approval and VPS cloud-writer shutdown.
+  auxiliaries:
+    <<: *base
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_aux", "--loop"]
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_OWN_STOP_ENABLED: "${SERVICEIT_VPS_OWN_STOP_ENABLED:-NO}"
+      SERVICEIT_VPS_CRM_DUPLICATE_ENABLED: "${SERVICEIT_VPS_CRM_DUPLICATE_ENABLED:-NO}"
+      SERVICEIT_VPS_KANBAN_TITLE_ENABLED: "${SERVICEIT_VPS_KANBAN_TITLE_ENABLED:-NO}"
+      SERVICEIT_VPS_MANAGER_TASK_ENABLED: "${SERVICEIT_VPS_MANAGER_TASK_ENABLED:-NO}"
+      SERVICEIT_STAGE3_FALLBACK_APPROVED: "${SERVICEIT_STAGE3_FALLBACK_APPROVED:-NO}"
+      SERVICEIT_STAGE3_FALLBACK_MANAGER_ID: "${SERVICEIT_STAGE3_FALLBACK_MANAGER_ID:-}"
+    healthcheck:
+      test: ["CMD", "python", "-m", "leadpilot.serviceit_vps_native_aux", "--flags-only"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   coordinator:
     <<: *base
     # Poll-only RouterAI; no Bitrix outgoing-event token or GigaChat.

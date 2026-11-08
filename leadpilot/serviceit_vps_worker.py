@@ -94,7 +94,11 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
     webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
     base = validate_webhook(webhook)
     now = datetime.now(timezone.utc)
-    since = after_activation(env, now)
+    native_start = env.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")
+    if not native_start:
+        raise VpsBlocked("NATIVE_ACTIVATION_UTC_REQUIRED")
+    # Do not reuse the old cloud activation date: that could replay its cards.
+    since = after_activation({**env, "SERVICEIT_BITRIX_POLL_START_UTC": native_start}, now)
     def rest(method, args):
         return list_only(client, base, method, args)
     calibrate_known_card(rest)

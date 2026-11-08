@@ -150,13 +150,23 @@ def visible_corporate_duplicate_veto(client, webhook, inn):
     return "GLOBAL_CRM_UNVERIFIED"
 
 
-def evaluate_one(client, env, card, *, now=None):
+def evaluate_one(client, env, card, *, now=None,
+                 native_fence=None, native_connection=None):
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     need(type(card) is int and 8 <= card <= 2_000_000_000 and card not in (3, 7)
-         and env.get("GITHUB_REPOSITORY") == REPOSITORY
-         and env.get("GITHUB_REF") == "refs/heads/main"
          and env.get("SERVICEIT_LEADGEN_FREE_SCORE_ENABLED") == GATE,
          "INTERNAL_SCORE_SCOPE_OR_OWNER_INVALID")
+    if native_fence is None:
+        need(env.get("GITHUB_REPOSITORY") == REPOSITORY
+             and env.get("GITHUB_REF") == "refs/heads/main",
+             "INTERNAL_SCORE_SCOPE_OR_OWNER_INVALID")
+    else:
+        need(native_connection is not None
+             and env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
+             and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") == "YES"
+             and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") == "YES"
+             and getattr(native_fence, "namespace", None) == "FREE_MSP_SCORE_V1",
+             "INTERNAL_SCORE_NATIVE_GATE_MISSING")
     webhook = env.get("SERVICEIT_BITRIX_WEBHOOK", "")
     base = validate_webhook(webhook)
     need(base.startswith(f"https://{PORTAL}/rest/"), "INTERNAL_SCORE_PORTAL_INVALID")
@@ -194,7 +204,11 @@ def evaluate_one(client, env, card, *, now=None):
         return "HOLD_OWN_FUNNEL_DUPLICATE"
     if visible_corporate_duplicate_veto(client, webhook, inn) == "HOLD_VISIBLE_CORPORATE_MATCH":
         return "HOLD_VISIBLE_CORPORATE_MATCH"
-    receipt = recent_receipt(client, env, card, inn, today=now.date())
+    if native_fence is None:
+        receipt = recent_receipt(client, env, card, inn, today=now.date())
+    else:
+        from .serviceit_vps_native_msp_result import verified_receipt
+        receipt = verified_receipt(native_connection, card, inn, now)
     if receipt is None:
         return "WAIT_FOR_OFFICIAL_MSP_RECEIPT"
     output = internal_payload(triage["indicative_priority"], receipt)
@@ -203,9 +217,9 @@ def evaluate_one(client, env, card, *, now=None):
     need(fingerprint(latest) == fingerprint(before)
          and is_score_empty_or_ours(latest),
          "CARD_CHANGED_BEFORE_SCORE")
-    fence = InternalScoreFence(
+    fence = (native_fence if native_fence is not None else InternalScoreFence(
         client, env.get("GITHUB_TOKEN", ""),
-        env.get("SERVICEIT_GH_LEDGER_KEY", ""))
+        env.get("SERVICEIT_GH_LEDGER_KEY", "")))
     if fence.reserve(card) != "RESERVED":
         return "ALREADY_RESERVED_NO_RETRY"
     fence.receipt = {"expected": output}

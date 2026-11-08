@@ -133,6 +133,7 @@ jobs:
           assert_flag "$b" SERVICEIT_VPS_POSTCALL_ENABLED NO
           assert_flag "$b" SERVICEIT_VPS_FINANCE_ENABLED NO
           echo "VPS_FLAGS=SAFE_AND_OLGA_605_PREPARED"
+          docker exec "$c" python -m leadpilot.serviceit_vps_deep_research_readiness
           docker exec "$c" python -m leadpilot.serviceit_vps_poll_readonly_probe
           docker exec "$c" python -m leadpilot.serviceit_vps_worker --once
           docker exec "$a" python -m leadpilot.serviceit_vps_native_aux --flags-only

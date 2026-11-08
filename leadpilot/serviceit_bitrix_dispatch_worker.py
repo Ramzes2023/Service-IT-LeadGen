@@ -288,25 +288,33 @@ def _run_reserved_exact_card(card: int, env: dict, *, client: httpx.Client,
                     env.get("SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS", ""),
                 ))
                 names = [h.strip().lower() for h in raw_hosts.split(",") if h.strip()]
-                require(1 <= len(names) <= 80 and all(
+                require(len(names) <= 80 and all(
                     re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}", h)
                     and not h.endswith((".test", ".invalid", ".local", ".localhost"))
                     for h in names), "PUBLIC_RESEARCH_HOSTS_INVALID")
-                from .serviceit_public_evidence_research import research_public
-                approved = frozenset(names)
-                def researcher(item):
-                    return research_public(
-                        item, client, approved,
-                        deep_search_enabled=(
-                            env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") == "YES"),
-                        deep_search_key=env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", ""),
-                        deep_llm_context_enabled=(
-                            env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES"),
-                    )
+                # When the public host allowlist is empty, research is OFF.
+                # This must not prevent a truthful 9-field HOLD card or send
+                # any unapproved information to public sites.
+                if names:
+                    from .serviceit_public_evidence_research import research_public
+                    approved = frozenset(names)
+                    def researcher(item):
+                        return research_public(
+                            item, client, approved,
+                            deep_search_enabled=(
+                                env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") == "YES"),
+                            deep_search_key=env.get("SERVICEIT_BRAVE_SEARCH_API_KEY", ""),
+                            deep_llm_context_enabled=(
+                                env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES"),
+                        )
             approvals = json.loads(env.get("SERVICEIT_CORPORATE_APPROVALS_JSON") or "{}")
             require(type(approvals) is dict, "APPROVAL_ADAPTER_INVALID")
             approval = approvals.get(str(card))
-            if approval is not None or env.get("SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED") == "YES":
+            # No approved public source host: do not call RouterAI merely
+            # because the global model account itself is authorized.
+            if (approval is not None or
+                    (env.get("SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED") == "YES"
+                     and bool(env.get("SERVICEIT_PRELIMINARY_PUBLIC_HOSTS", "").strip()))):
                 require(env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES",
                         "MODEL_PRIVACY_CONSENT_REQUIRED")
                 # Only the hostname allowlist parser is needed; no remote server

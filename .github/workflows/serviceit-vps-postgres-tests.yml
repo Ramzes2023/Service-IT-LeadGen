@@ -9,6 +9,9 @@ on:
       - 'Dockerfile.serviceit-vps'
       - 'deploy/serviceit-vps-native-shadow-install.sh'
       - 'deploy/serviceit-vps-readonly-routerai-prepare.py'
+      - 'deploy/serviceit-vps-olga-task-readonly-prepare.py'
+      - 'leadpilot/serviceit_stage3_all_new_task_automation.py'
+      - '.github/workflows/serviceit-vps-olga-task-readonly-prepare.yml'
       - '.github/workflows/serviceit-vps-routerai-readonly-prepare.yml'
       - 'deploy/serviceit-vps.compose.yml'
       - '.github/workflows/serviceit-vps-postgres-tests.yml'
@@ -57,7 +60,7 @@ jobs:
       - name: Install server-only requirements
         run: python -m pip install -r requirements-vps.txt
       - name: Verify real disposable PostgreSQL queue transaction safety
-        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_pg_cutover.py tests/test_serviceit_vps_routerai_only.py tests/test_serviceit_vps_poll_readonly_probe.py tests/test_serviceit_vps_native_fence.py tests/test_serviceit_vps_native_aux.py tests/test_serviceit_vps_native_actions.py tests/test_serviceit_vps_poll_checkpoint.py tests/test_serviceit_vps_shadow_install_flow.py tests/test_serviceit_vps_routerai_readonly_prepare.py tests/test_serviceit_vps_cloud_writer_cutover_fence.py
+        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_pg_cutover.py tests/test_serviceit_vps_routerai_only.py tests/test_serviceit_vps_poll_readonly_probe.py tests/test_serviceit_vps_native_fence.py tests/test_serviceit_vps_native_aux.py tests/test_serviceit_vps_native_actions.py tests/test_serviceit_vps_poll_checkpoint.py tests/test_serviceit_vps_shadow_install_flow.py tests/test_serviceit_vps_routerai_readonly_prepare.py tests/test_serviceit_vps_cloud_writer_cutover_fence.py tests/test_serviceit_vps_olga_605_readonly_prepare.py
       - name: Verify native shadow installer shell syntax
         run: bash -n deploy/serviceit-vps-native-shadow-install.sh
       - name: Validate Compose structure using ONLY synthetic local placeholders

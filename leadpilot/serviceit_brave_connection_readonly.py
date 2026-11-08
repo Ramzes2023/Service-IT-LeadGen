@@ -41,7 +41,9 @@ def _brave(client: httpx.Client, key: str, *, context_mode=False):
                      "count": 2, "country": "RU",
                      "search_lang": "ru", "safesearch": "strict"}),
             headers={"X-Subscription-Token": key,
-                     "Accept": "application/json"},
+                     "Accept": "application/json",
+                     # Brave validates this exact header on some deployments.
+                     "Cache-Control": "no-cache"},
             follow_redirects=False, timeout=15.0)
         if response.status_code == 401:
             return "BRAVE_INVALID_KEY_401"

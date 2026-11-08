@@ -304,7 +304,7 @@ def _run_reserved_exact_card(card: int, env: dict, *, client: httpx.Client,
                     # The HTTP bridge receives ONLY the allowlisted source URL.
                     if (env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
                             and env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
-                            and env.get("SERVICEIT_VPS_BROWSER_EGRESS_FIREWALL_VERIFIED") == "YES"):
+                            and env.get("SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED") == "YES"):
                         from .serviceit_vps_browser_client import render_approved_url
                         def browser_render(url):
                             return render_approved_url(url, approved, client=client)

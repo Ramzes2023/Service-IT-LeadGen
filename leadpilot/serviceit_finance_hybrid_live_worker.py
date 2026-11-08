@@ -520,7 +520,7 @@ def run(client,env,*,now=None,native_connection=None):
              and env.get("GITHUB_REF")=="refs/heads/main",
              "FINANCE_LIVE_SCOPE_OR_OWNER_OPT_IN_MISSING")
     else:
-        from .serviceit_bitrix_poll_fallback import after_activation
+        from .serviceit_bitrix_poll_fallback import date_value
         need(env.get("SERVICEIT_VPS_FINANCE_ENABLED")=="YES"
              and env.get("SERVICEIT_VPS_WRITER_MODE")=="LIVE"
              and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED")=="YES"
@@ -528,10 +528,8 @@ def run(client,env,*,now=None,native_connection=None):
              and env.get("SERVICEIT_VPS_POLL_ENABLED")=="YES"
              and env.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"),
              "NATIVE_FINANCE_CUTOVER_NOT_READY")
-        native_after=after_activation({
-            **env,"SERVICEIT_BITRIX_POLL_START_UTC":
-                env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
-        },now)
+        native_after=date_value(env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"])
+        need(native_after <= now, "NATIVE_FINANCE_CUTOVER_TIME_INVALID")
     base=validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK",""))
     need(base.startswith(PORTAL),"FINANCE_WRONG_PORTAL")
     category=exact_category(client,base)

@@ -94,17 +94,18 @@ jobs:
               --user pwuser --cap-drop ALL \
               --security-opt no-new-privileges:true \
               --security-opt "seccomp=$seccomp" \
+              --security-opt "apparmor=serviceit-chromium" \
               --memory 1g --pids-limit 96 --shm-size 256m \
               --tmpfs /tmp:size=256m,mode=1777 \
               serviceit-vps-public-browser:staged \
               python -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True,chromium_sandbox=True); b.close(); p.stop()' \
               >/dev/null 2>&1; then
-            echo 'CHROMIUM_SANDBOX_WITH_SCOPED_SECCOMP=PASS'
+            echo 'CHROMIUM_SANDBOX_WITH_SCOPED_SECCOMP_APPARMOR=PASS'
             echo 'CRM_WRITES=0;BROWSER_URLS_VISITED=0;CORE_LIVE_UNCHANGED=YES'
           else
-            echo 'CHROMIUM_SANDBOX_WITH_SCOPED_SECCOMP=FAIL'
+            echo 'CHROMIUM_SANDBOX_WITH_SCOPED_SECCOMP_APPARMOR=FAIL'
             echo 'CORE_LIVE_UNCHANGED=YES;CRM_WRITES=0;BROWSER_URLS_VISITED=0'
-            echo 'NEXT=REVIEW_DOCKER_APPARMOR_USERNS_POLICY_NOT_NO_SANDBOX'
+            echo 'NEXT=REVIEW_CUSTOM_APPARMOR_PROFILE_AND_KERNEL_NO_NO_SANDBOX'
             exit 2
           fi
           REMOTE

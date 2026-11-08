@@ -43,7 +43,7 @@ def test_malicious_exception_text_is_never_exposed(monkeypatch, capsys):
 def test_robots_diagnostic_uses_constant_codes_only(
         monkeypatch, research_code, browser_code):
     monkeypatch.setenv("SERVICEIT_VPS_BROWSER_PROXY_URL", "http://egress:3128")
-    monkeypatch.setattr(browser, "verify_url", lambda *args: "hh.ru")
+    monkeypatch.setattr(browser, "verify_url", lambda *args, **kwargs: "hh.ru")
     monkeypatch.setattr(browser, "_robots", lambda *args: (
         (_ for _ in ()).throw(ResearchBlocked(research_code))))
     with pytest.raises(browser.BrowserBlocked, match="^" + browser_code + "$"):

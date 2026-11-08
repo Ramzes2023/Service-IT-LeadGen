@@ -42,7 +42,7 @@ def test_routerai_only_by_default(monkeypatch):
     assert actual["GIGACHAT_CREDENTIALS"] == ""
 
 
-def test_compose_requires_seven_secrets_no_event_token_no_gigachat():
+def test_compose_requires_only_native_vps_credentials_no_legacy_keys():
     text = (
         Path(__file__).resolve().parents[1]
         / "deploy" / "serviceit-vps.compose.yml"
@@ -54,14 +54,17 @@ def test_compose_requires_seven_secrets_no_event_token_no_gigachat():
     assert "SERVICEIT_BITRIX_APPLICATION_TOKEN_FILE" not in text
     assert 'SERVICEIT_VPS_INTAKE_ENABLED: "NO"' in text
     assert "    # credentials, not even the Bitrix REST webhook.\n    secrets: []" in text
-    assert "serviceit_event_bridge_key" in text
-    assert "serviceit_gh_ledger_key" in text
-    assert "serviceit_brave_api_key" in text
+    assert "serviceit_event_bridge_key" not in text
+    assert "serviceit_gh_ledger_key" not in text
+    assert "serviceit_github_ledger_pat" not in text
+    assert "serviceit_brave_api_key" not in text
+    assert "serviceit_pg_password" in text
+    assert "serviceit_bitrix_webhook" in text
     assert "GIGACHAT_SCOPE:" not in text
     assert "GIGACHAT_MODEL:" not in text
     assert "serviceit_gigachat_ca_setup" not in text
     assert "serviceit_routerai_key" in text
-    assert "serviceit_github_ledger_pat" in text
+    assert "GITHUB_TOKEN_FILE" not in text
 
 
 def test_readonly_compose_unaffected():

@@ -92,14 +92,16 @@ def test_preliminary_report_uses_actual_provider_without_false_sale():
     assert "ГИПОТЕЗА RouterAI (DeepSeek)" in fields[PREFIX+"AI_FULL_REPORT"]
 
 
-def test_workflow_switch_preserves_existing_gigachat_fallback():
+def test_workflow_switch_requires_routerai_only_and_keeps_independent_approval():
     for path in (
         ".github/workflows/serviceit-bitrix-new-card-ai.yml",
         ".github/workflows/serviceit-bitrix-all-new-batch-ai.yml",
     ):
         text=Path(path).read_text("utf-8")
-        assert "SERVICEIT_AI_PROVIDER" in text
+        assert "AI_PROVIDER: routerai" in text
         assert "SERVICEIT_ROUTERAI_PRIVACY_APPROVED" in text
+        assert "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED" in text
         assert "secrets.SERVICEIT_ROUTERAI_API_KEY" in text
-        assert "|| 'gigachat'" in text
-        assert "serviceit_gigachat_ca_setup" in text
+        assert "SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: 'NO'" in text
+        assert "|| 'gigachat'" not in text
+        assert "serviceit_gigachat_ca_setup" not in text

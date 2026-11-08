@@ -59,14 +59,13 @@ jobs:
       SERVICEIT_BRAVE_SEARCH_API_KEY: ${{ secrets.SERVICEIT_BRAVE_SEARCH_API_KEY }}
       # RouterAI primary is explicitly owner-approved, but remains privacy and key gated.
       SERVICEIT_CORPORATE_APPROVALS_JSON: ${{ secrets.SERVICEIT_CORPORATE_APPROVALS_JSON }}
-      AI_PROVIDER: ${{ vars.SERVICEIT_AI_PROVIDER == 'routerai' && vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED == 'YES_1062_21' && secrets.SERVICEIT_ROUTERAI_API_KEY != '' && 'routerai' || 'gigachat' }}
+      # Never silently switch to GigaChat if RouterAI is unavailable or lacks approval.
+      # The exact worker independently checks the existing privacy and key gates.
+      AI_PROVIDER: routerai
       SERVICEIT_ROUTERAI_PRIVACY_APPROVED: ${{ vars.SERVICEIT_ROUTERAI_PRIVACY_APPROVED }}
       ROUTERAI_API_KEY: ${{ secrets.SERVICEIT_ROUTERAI_API_KEY }}
       AI_ENABLE: ${{ vars.SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED == 'YES' && '1' || '0' }}
-      SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: 'YES'
-      GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
-      GIGACHAT_SCOPE: ${{ vars.GIGACHAT_SCOPE }}
-      GIGACHAT_MODEL: ${{ vars.GIGACHAT_MODEL }}
+      SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: 'NO'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,10 +76,5 @@ jobs:
           cache: pip
       - name: Install reviewed Python dependencies
         run: python -m pip install -r requirements.txt
-      - name: Prepare pinned GigaChat TLS CA for emergency fallback
-        shell: bash
-        run: |
-          python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"
-          echo "GIGACHAT_CA_BUNDLE_FILE=$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem" >> "$GITHUB_ENV"
       - name: Verify 1062/21 candidates, check encrypted receipts, process up to six NEW cards
         run: python -m leadpilot.serviceit_bitrix_batch_worker

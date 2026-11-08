@@ -4,7 +4,6 @@ No real credentials, Bitrix, GitHub, customers or AI calls.
 """
 import os
 import pytest
-import httpx
 
 from leadpilot import serviceit_vps_native_fence as native
 from leadpilot import serviceit_bitrix_dispatch_worker as exact
@@ -73,7 +72,6 @@ def test_postgres_real_native_receipt_prewrite_checksum_and_replay(monkeypatch):
         fields = {name: "SYNTHETIC_HOLD_FIELD" for name in AI_FIELDS}
         one = native.PostgresNativeFence(connection)
         assert one.reserve(101) == "RESERVED"
-        assert one.reserve(102) if False else True  # no unintended second reserve
         with pytest.raises(VpsBlocked, match="REUSE"):
             one.reserve(102)
         one.checkpoint_write(101, fields)

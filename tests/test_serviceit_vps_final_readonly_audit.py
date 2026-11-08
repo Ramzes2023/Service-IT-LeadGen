@@ -79,4 +79,3 @@ def test_no_mutation_actions_or_customer_data_in_audit():
         assert forbidden not in SOURCE
     assert "leadpilot.serviceit_vps_poll_readonly_probe" in SOURCE
     assert "leadpilot.serviceit_vps_native_observer --once" in SOURCE
-    assert "read_only" not in SOURCE or True

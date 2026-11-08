@@ -180,7 +180,7 @@ def manager_task_fields(item, card, uid, binding, *, now):
             "RESPONSIBLE_ID": uid, "UF_CRM_TASK": [binding]}
 
 
-def process_card(client, env, card, *, now=None):
+def process_card(client, env, card, *, now=None, native_fence=None):
     """One card. Every refusal before reserve is non-destructive.
 
     Distinct GitHub ledger path and workflow concurrency serialize this
@@ -192,9 +192,17 @@ def process_card(client, env, card, *, now=None):
     now=now.astimezone(timezone.utc)
     require(env.get("SERVICEIT_STAGE3_TASK_WRITE_ENABLED")==WRITE_GATE,
             "STAGE3_OWNER_OPT_IN_MISSING")
-    require(env.get("GITHUB_REPOSITORY")==REPOSITORY
-            and env.get("GITHUB_REF")=="refs/heads/main",
-            "GITHUB_SCOPE_INVALID")
+    if native_fence is None:
+        require(env.get("GITHUB_REPOSITORY")==REPOSITORY
+                and env.get("GITHUB_REF")=="refs/heads/main",
+                "GITHUB_SCOPE_INVALID")
+    else:
+        require(env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
+                and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") == "YES"
+                and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") == "YES"
+                and env.get("SERVICEIT_VPS_POLL_ENABLED") == "YES"
+                and getattr(native_fence, "namespace", None) == "TASK_V1",
+                "NATIVE_TASK_CUTOVER_NOT_APPROVED")
     base=validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK",""))
     require(base.startswith(f"https://{PORTAL}/rest/"),"PORTAL_INVALID")
     require(type(card) is int and 8 <= card <= 2_000_000_000
@@ -237,8 +245,9 @@ def process_card(client, env, card, *, now=None):
             "MANAGER_OR_STAGE_CHANGED_DURING_CHECK")
     task_fields = manager_task_fields(item, card, uid, binding, now=now)
     title = task_fields["TITLE"]
-    fence=TaskFence(client,env.get("GITHUB_TOKEN",""),
-                    env.get("SERVICEIT_GH_LEDGER_KEY",""))
+    fence=(native_fence if native_fence is not None else
+           TaskFence(client,env.get("GITHUB_TOKEN",""),
+                     env.get("SERVICEIT_GH_LEDGER_KEY","")))
     state=fence.reserve(card)
     if state!="RESERVED":
         return "ALREADY_RESERVED_NO_RETRY"

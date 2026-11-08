@@ -125,17 +125,26 @@ def visible_duplicate_status(client, webhook, base, item, card):
         return "НЕ ПРОВЕРЕНЫ"
 
 
-def evaluate_one(client, env, card, *, now=None):
+def evaluate_one(client, env, card, *, now=None, native_fence=None):
     now = now or datetime.now(timezone.utc)
     require(type(now) is datetime and now.tzinfo is not None,
             "PROVISIONAL_CLOCK_INVALID")
     now = now.astimezone(timezone.utc)
     require(type(card) is int and 8 <= card <= 2_000_000_000
             and card not in (3, 7), "PROVISIONAL_CARD_OUT_OF_SCOPE")
-    require(env.get("SERVICEIT_STAGE4_PRELIMINARY_SCORE_ENABLED") == GATE
-            and env.get("GITHUB_REPOSITORY") == REPOSITORY
-            and env.get("GITHUB_REF") == "refs/heads/main",
-            "PROVISIONAL_OWNER_SCOPE_INVALID")
+    if native_fence is None:
+        require(env.get("SERVICEIT_STAGE4_PRELIMINARY_SCORE_ENABLED") == GATE
+                and env.get("GITHUB_REPOSITORY") == REPOSITORY
+                and env.get("GITHUB_REF") == "refs/heads/main",
+                "PROVISIONAL_OWNER_SCOPE_INVALID")
+    else:
+        require(env.get("SERVICEIT_STAGE4_PRELIMINARY_SCORE_ENABLED") == GATE
+                and env.get("SERVICEIT_VPS_WRITER_MODE") == "LIVE"
+                and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED") == "YES"
+                and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK") == "YES"
+                and getattr(native_fence, "namespace", None)
+                    == "PROVISIONAL_SCORE_V1",
+                "PROVISIONAL_NATIVE_GATE_REQUIRED")
     webhook = env.get("SERVICEIT_BITRIX_WEBHOOK", "")
     base = validate_webhook(webhook)
     require(base.startswith(f"https://{PORTAL}/rest/"),
@@ -203,10 +212,10 @@ def evaluate_one(client, env, card, *, now=None):
     # Never compete with formal score or GigaChat's existing score.
     require(existing_score_state(latest) == "EMPTY",
             "PROVISIONAL_SCORE_CHANGED_DURING_CHECK")
-    fence = PreliminaryFence(
+    fence = (native_fence if native_fence is not None else PreliminaryFence(
         client, env.get("GITHUB_TOKEN", ""),
         env.get("SERVICEIT_GH_LEDGER_KEY", ""),
-    )
+    ))
     reserved = fence.reserve(card)
     if reserved != "RESERVED":
         return "ALREADY_RESERVED_NO_REPLAY"

@@ -31,11 +31,10 @@ x-base: &base
     SERVICEIT_VPS_CUTOVER_AUTHORIZED: "${SERVICEIT_VPS_CUTOVER_AUTHORIZED:-NO}"
     SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
     SERVICEIT_VPS_POLL_ENABLED: "${SERVICEIT_VPS_POLL_ENABLED:-NO}"
-    SERVICEIT_BITRIX_POLL_START_UTC: "${SERVICEIT_BITRIX_POLL_START_UTC:-}"
-    SERVICEIT_BITRIX_EVENT_BRIDGE_KEY_FILE: /run/secrets/serviceit_event_bridge_key
-    SERVICEIT_GH_LEDGER_KEY_FILE: /run/secrets/serviceit_gh_ledger_key
-    GITHUB_TOKEN_FILE: /run/secrets/serviceit_github_ledger_pat
-    SERVICEIT_BRAVE_SEARCH_API_KEY_FILE: /run/secrets/serviceit_brave_api_key
+    # REQUIRED only after old cloud writers have actually stopped.
+    SERVICEIT_VPS_NATIVE_ACTIVATION_UTC: "${SERVICEIT_VPS_NATIVE_ACTIVATION_UTC:-}"
+    # Native PostgreSQL receipts: NO GitHub/HMAC/Fernet secrets or API dependency.
+    # Optional Brave API can be mounted by a separately reviewed override.
     SERVICEIT_AI_PROVIDER: "routerai"
     SERVICEIT_ROUTERAI_API_KEY_FILE: /run/secrets/serviceit_routerai_key
     SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: "NO"
@@ -46,10 +45,6 @@ x-base: &base
   secrets: &common-secrets
     - serviceit_pg_password
     - serviceit_bitrix_webhook
-    - serviceit_event_bridge_key
-    - serviceit_gh_ledger_key
-    - serviceit_github_ledger_pat
-    - serviceit_brave_api_key
     - serviceit_routerai_key
 
 services:
@@ -67,6 +62,93 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+  # Native auxiliaries: own STOP, visible CRM dedup, Kanban and manager task.
+  # ALL disabled until independent approval and VPS cloud-writer shutdown.
+  auxiliaries:
+    <<: *base
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_aux", "--loop"]
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_OWN_STOP_ENABLED: "${SERVICEIT_VPS_OWN_STOP_ENABLED:-NO}"
+      SERVICEIT_VPS_CRM_DUPLICATE_ENABLED: "${SERVICEIT_VPS_CRM_DUPLICATE_ENABLED:-NO}"
+      SERVICEIT_VPS_KANBAN_TITLE_ENABLED: "${SERVICEIT_VPS_KANBAN_TITLE_ENABLED:-NO}"
+      SERVICEIT_VPS_MANAGER_TASK_ENABLED: "${SERVICEIT_VPS_MANAGER_TASK_ENABLED:-NO}"
+      SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED: "${SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED:-NO}"
+      SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED: "${SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED:-NO}"
+      SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED: "${SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED:-NO}"
+      SERVICEIT_STAGE3_FALLBACK_APPROVED: "${SERVICEIT_STAGE3_FALLBACK_APPROVED:-NO}"
+      SERVICEIT_STAGE3_FALLBACK_MANAGER_ID: "${SERVICEIT_STAGE3_FALLBACK_MANAGER_ID:-}"
+    healthcheck:
+      test: ["CMD", "python", "-m", "leadpilot.serviceit_vps_native_aux", "--flags-only"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Optional official public FNS-MSP 2–3GB ZIP scanner; never included
+  # in the default Compose deployment.  A dedicated disk scratch must be
+  # prepared before profile 'msp' is activated; no GitHub or CRM write key.
+  fns-msp:
+    <<: *base
+    profiles: ["msp"]
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+    volumes:
+      - type: bind
+        source: "${SERVICEIT_VPS_FNS_SCRATCH_DIR:-/var/lib/serviceit/fns-scratch}"
+        target: /var/cache/serviceit-msp
+        read_only: false
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_msp", "--loop"]
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_FNS_MSP_ENABLED: "${SERVICEIT_VPS_FNS_MSP_ENABLED:-NO}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_native_msp; print('READY')"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Postcall manager-confirmation and finance internal request/task flow.
+  # The two writer modules are mutually scoped by independently explicit
+  # native cutover gates and NO-by-default per-module opt-ins.
+  business:
+    <<: *base
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_business", "--loop"]
+    environment:
+      <<: *common-env
+      SERVICEIT_VPS_POSTCALL_ENABLED: "${SERVICEIT_VPS_POSTCALL_ENABLED:-NO}"
+      SERVICEIT_VPS_FINANCE_ENABLED: "${SERVICEIT_VPS_FINANCE_ENABLED:-NO}"
+    healthcheck:
+      test: ["CMD", "python", "-m", "leadpilot.serviceit_vps_native_business", "--flags-only"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Hourly real CRM readback and manager funnel audit, always read-only.
+  observer:
+    <<: *base
+    secrets:
+      - serviceit_bitrix_webhook
+    command: ["python", "-m", "leadpilot.serviceit_vps_native_observer", "--loop"]
+    environment:
+      SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
+      SERVICEIT_VPS_NATIVE_ACTIVATION_UTC: "${SERVICEIT_VPS_NATIVE_ACTIVATION_UTC:-}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_native_observer; print('READY')"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   coordinator:
     <<: *base
     # Poll-only RouterAI; no Bitrix outgoing-event token or GigaChat.
@@ -87,14 +169,6 @@ secrets:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/pg_password"
   serviceit_bitrix_webhook:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/bitrix_webhook"
-  serviceit_event_bridge_key:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/event_bridge_key"
-  serviceit_gh_ledger_key:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/gh_ledger_key"
-  serviceit_github_ledger_pat:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/github_ledger_pat"
-  serviceit_brave_api_key:
-    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/brave_api_key"
   serviceit_routerai_key:
     file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/routerai_key"
 

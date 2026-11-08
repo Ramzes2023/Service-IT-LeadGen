@@ -1,9 +1,9 @@
-"""VPS coordinator: Postgres queue -> existing signed exact-card worker.
+"""VPS coordinator: PostgreSQL-scoped future-only AI cards, no GitHub API.
 
 No new source ingestion, no CRM company/contact creation and no historical
-backfill. Reuses the SAME GitHub encrypted one-use ledger as cloud workers to
-fence cross-host duplicates during migration. Nothing writes CRM unless a
-separate operator LIVE gate is explicitly enabled after cutover.
+backfill. Uses PostgreSQL one-use receipts ONLY after all cloud writers have
+been stopped and a fresh cutover timestamp has been independently confirmed.
+GitHub ledger remains untouched. Normal mode is strictly READONLY.
 """
 from __future__ import annotations
 
@@ -20,12 +20,15 @@ from .serviceit_vps_pg_queue import (
     metrics, reconcile_stale, secret_file,
 )
 from .serviceit_enrichment_worker import Rest
-from .serviceit_bitrix_dispatch_worker import (
-    EVENT, REPOSITORY, run as exact_run,
-)
+from .serviceit_bitrix_dispatch_worker import run_vps_native
 from .serviceit_bitrix_poll_fallback import (
-    signed_payload, after_activation, discover, calibrate_known_card,
+    after_activation, discover, calibrate_known_card,
 )
+from .serviceit_vps_native_fence import migrate_native
+from .serviceit_vps_native_actions import migrate_actions
+from .serviceit_vps_native_msp import migrate as migrate_msp
+from .serviceit_vps_poll_checkpoint import migrate_poll, check_gap, mark_success
+from .serviceit_vps_poll_readonly_probe import inspect_api
 from .serviceit_bitrix_batch_worker import list_only
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS
@@ -54,38 +57,26 @@ def live_permitted(env: dict) -> bool:
 
 
 def exact_environment(env: dict) -> dict:
-    """Convert server secret files into the legacy exact-worker API boundary."""
-    result = dict(env)
-    for name in (
-        "SERVICEIT_BITRIX_WEBHOOK",
-        "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY",
-        "SERVICEIT_GH_LEDGER_KEY",
-        "GITHUB_TOKEN",
-        "SERVICEIT_BRAVE_SEARCH_API_KEY",
-    ):
-        result[name] = secret_file(env, name)
-    # This VPS deployment is RouterAI-only. Do not silently select GigaChat
-    # for an unset/unknown provider or use any inherited credential.
+    """Server-only AI environment; never read legacy GitHub secrets."""
     if env.get("SERVICEIT_AI_PROVIDER", "routerai") != "routerai":
         raise VpsBlocked("ROUTERAI_ONLY_VPS_CONFIGURATION_REQUIRED")
+    result = dict(env)
+    result["SERVICEIT_BITRIX_WEBHOOK"] = secret_file(
+        env, "SERVICEIT_BITRIX_WEBHOOK")
+    result["SERVICEIT_BRAVE_SEARCH_API_KEY"] = secret_file(
+        env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)
+    result["ROUTERAI_API_KEY"] = secret_file(
+        env, "SERVICEIT_ROUTERAI_API_KEY")
     result["AI_PROVIDER"] = "routerai"
-    result["ROUTERAI_API_KEY"] = secret_file(env, "SERVICEIT_ROUTERAI_API_KEY")
     result["GIGACHAT_CREDENTIALS"] = ""
     result["SERVICEIT_CORPORATE_APPROVALS_JSON"] = "{}"
-    result["GITHUB_REPOSITORY"] = REPOSITORY
-    result["GITHUB_REF"] = "refs/heads/main"
-    result["GITHUB_EVENT_NAME"] = "repository_dispatch"
-    result["SERVICEIT_BITRIX_EVENT_AI_ENABLED"] = "YES_1062_21_CLOUD"
     result["AI_ENABLE"] = "1"
     result["SERVICEIT_PUBLIC_RESEARCH_ENABLED"] = "YES"
     result["SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"] = "YES"
     result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"
     result["SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED"] = "YES"
     result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = "NO"
-    # The remote one-use reservation + before image + 9-field readback are
-    # inside exact_run; this layer cannot bypass those gates.
     return result
-
 
 def readonly_preflight(env: dict, *, client: httpx.Client):
     rest = Rest(secret_file(env, "SERVICEIT_BITRIX_WEBHOOK"), client)
@@ -107,7 +98,13 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
     webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
     base = validate_webhook(webhook)
     now = datetime.now(timezone.utc)
-    since = after_activation(env, now)
+    native_start = env.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")
+    if not native_start:
+        raise VpsBlocked("NATIVE_ACTIVATION_UTC_REQUIRED")
+    # Do not reuse the old cloud activation date: that could replay its cards.
+    since = after_activation({**env, "SERVICEIT_BITRIX_POLL_START_UTC": native_start}, now)
+    if not preview_only:
+        check_gap(connection, native_start, now)
     def rest(method, args):
         return list_only(client, base, method, args)
     calibrate_known_card(rest)
@@ -116,6 +113,7 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
     if not preview_only:
         for card in cards:
             added += int(insert_new(connection, card))
+        mark_success(connection, native_start, now)
     return {"status": "POLL_READONLY" if preview_only else "POLL_QUEUED",
             "candidates": len(cards), "queued": added, "crm_writes": 0}
 
@@ -123,16 +121,20 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
 def run_once(env: dict, *, client: httpx.Client) -> dict:
     with db(env) as connection:
         if not live_permitted(env):
+            # A successful empty list alone is insufficient. Validate the
+            # known Bitrix card #3 and the last 10 minutes on EVERY readonly
+            # cycle, with zero queue inserts and zero CRM writes.
             result = readonly_preflight(env, client=client)
+            probe = inspect_api(env, client=client)
+            result["poll_positive_control"] = probe["positive_control_card3"]
+            result["new_card_candidates_10m"] = probe["new_card_candidates"]
             result["queue_counts"] = metrics(connection)
             result["migration_cutover"] = "NOT_AUTHORIZED"
             return result
         exact_env = exact_environment(env)
-        # Validate source hosts, provider privacy, remote ledger config etc
-        # before reserving any item in Postgres or starting side effects.
-        from .serviceit_bitrix_dispatch_worker import gate
-        if gate(exact_env) != "READY":
-            raise VpsBlocked("EXACT_GATE_NOT_READY")
+        # The native worker verifies the independent cutover/privacy gates
+        # again immediately before reserving its PostgreSQL one-use receipt.
+        # No GitHub token/HMAC/Fernet key is needed on this VPS.
         reconcile_stale(connection)
         polled = {"status": "POLL_OFF", "candidates": 0, "queued": 0}
         if env.get("SERVICEIT_VPS_POLL_ENABLED") == "YES":
@@ -146,14 +148,8 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             # There is deliberately NO automatic replay after any exception.
             # A claim that crashes stays RUNNING, then becomes UNCERTAIN.
             try:
-                event = {
-                    "action": EVENT,
-                    "repository": {"full_name": REPOSITORY},
-                    "client_payload": signed_payload(
-                        card, exact_env["SERVICEIT_BITRIX_EVENT_BRIDGE_KEY"],
-                        int(time.time())),
-                }
-                outcome = exact_run(event, exact_env, client=client)
+                outcome = run_vps_native(card, exact_env, client=client,
+                                         connection=connection)
                 ok = outcome.get("status") in (
                     "SERVICEIT_NEW_CARD_EVENT_PROCESSED",
                     "EXACT_TARGET_READBACK",
@@ -194,7 +190,11 @@ def main(argv=None) -> int:
         try:
             with db(env) as connection:
                 migrate(connection)
-            safe_log({"status": "PG_QUEUE_SCHEMA_READY", "crm_writes": 0})
+                migrate_native(connection)
+                migrate_actions(connection)
+                migrate_msp(connection)
+                migrate_poll(connection)
+            safe_log({"status": "PG_NATIVE_ALL_SCHEMAS_READY", "crm_writes": 0})
             return 0
         except Exception:
             safe_log({"status": "PG_QUEUE_MIGRATION_FAILED", "crm_writes": 0})

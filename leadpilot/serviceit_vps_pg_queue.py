@@ -79,7 +79,10 @@ def postgres_settings(env: dict) -> dict:
 def db(env: dict):
     # psycopg is in server-only requirements, not the Windows user tools.
     import psycopg
-    with psycopg.connect(**postgres_settings(env)) as connection:
+    # Every one-use receipt and pre-write checkpoint MUST commit BEFORE
+    # the external CRM mutation, even if a preceding SELECT was performed.
+    # Explicit connection.transaction() blocks own the actual commits.
+    with psycopg.connect(**postgres_settings(env), autocommit=True) as connection:
         yield connection
 
 

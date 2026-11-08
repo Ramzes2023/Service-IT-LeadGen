@@ -27,6 +27,7 @@ from .serviceit_bitrix_poll_fallback import (
 from .serviceit_vps_native_fence import migrate_native
 from .serviceit_vps_native_actions import migrate_actions
 from .serviceit_vps_native_msp import migrate as migrate_msp
+from .serviceit_vps_poll_checkpoint import migrate_poll, check_gap, mark_success
 from .serviceit_vps_poll_readonly_probe import inspect_api
 from .serviceit_bitrix_batch_worker import list_only
 from .bitrix_metadata_audit import validate_webhook
@@ -102,6 +103,8 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
         raise VpsBlocked("NATIVE_ACTIVATION_UTC_REQUIRED")
     # Do not reuse the old cloud activation date: that could replay its cards.
     since = after_activation({**env, "SERVICEIT_BITRIX_POLL_START_UTC": native_start}, now)
+    if not preview_only:
+        check_gap(connection, native_start, now)
     def rest(method, args):
         return list_only(client, base, method, args)
     calibrate_known_card(rest)
@@ -110,6 +113,7 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
     if not preview_only:
         for card in cards:
             added += int(insert_new(connection, card))
+        mark_success(connection, native_start, now)
     return {"status": "POLL_READONLY" if preview_only else "POLL_QUEUED",
             "candidates": len(cards), "queued": added, "crm_writes": 0}
 
@@ -189,6 +193,7 @@ def main(argv=None) -> int:
                 migrate_native(connection)
                 migrate_actions(connection)
                 migrate_msp(connection)
+                migrate_poll(connection)
             safe_log({"status": "PG_NATIVE_ALL_SCHEMAS_READY", "crm_writes": 0})
             return 0
         except Exception:

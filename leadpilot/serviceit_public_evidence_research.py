@@ -259,7 +259,7 @@ def _safe_model_excerpt(text):
 
 def research_public(item, client, allow_hosts, *, now=None,
                     deep_search_enabled=False, deep_search_key="",
-                    deep_llm_context_enabled=False):
+                    deep_llm_context_enabled=False, browser_render=None):
     """At most five source/company pages plus optional independent web search.
 
     Caller must explicitly opt in; source host and prospective company host must
@@ -281,8 +281,19 @@ def research_public(item, client, allow_hosts, *, now=None,
     try:
         first = _page(client, url, allow_hosts)
     except (ResearchBlocked, httpx.HTTPError, ValueError):
-        return {"status": "PUBLIC_SOURCE_NOT_READABLE", "pages": [],
-                "contacts": [], "model_excerpt": "", "checked_at": stamp}
+        # The optional isolated JS renderer runs ONLY for an already-approved
+        # source URL. It checks robots/HTTPS/DNS itself, never bypasses rules.
+        first = browser_render(url) if browser_render else None
+        if not isinstance(first, dict):
+            return {"status": "PUBLIC_SOURCE_NOT_READABLE", "pages": [],
+                    "contacts": [], "model_excerpt": "", "checked_at": stamp}
+    if (browser_render is not None and not first.get("browser_unverified")
+            and len(first.get("text", "").strip()) < 160):
+        # A tiny HTTP response may be a JS application shell. Render once,
+        # do not click, log in, download, follow unknown hosts or reprocess.
+        rendered = browser_render(url)
+        if isinstance(rendered, dict) and rendered.get("browser_unverified"):
+            first = rendered
     pages = [first]
     candidates = []
     structured_site = first["employer"].get("site_candidate", "")
@@ -367,6 +378,7 @@ def research_public(item, client, allow_hosts, *, now=None,
             "model_excerpt": excerpt, "checked_at": stamp,
             "company_site_candidate": corporate or "",
             "employer_named_in_source": first["employer"].get("name", ""),
+            "browser_rendered_unverified": bool(first.get("browser_unverified")),
             "independent_company_research": independent}
 
 
@@ -382,6 +394,10 @@ def enrich_manager_fields(fields, findings, *, signal_kind):
     lines = ["ДОПОЛНИТЕЛЬНЫЙ ПОИСК ПО ОТКРЫТЫМ СТРАНИЦАМ",
              "Проверено: " + str(findings.get("checked_at", "дата неизвестна")),
              "Найденные сведения требуют сверки с организацией."]
+    if findings.get("browser_rendered_unverified"):
+        lines.append("Источник визуализирован Chromium/Playwright: только публичный "
+                     "текст, JS-содержимое НЕ подтверждает владельца компании, "
+                     "контакты, закупку или согласие на обращение.")
     for page in pages[:MAX_PAGES]:
         lines.append("Страница: " + page["url"])
         lines.append("Извлечённый текст (НЕ доказательство намерения купить): "

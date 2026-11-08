@@ -75,9 +75,14 @@ def verify_url(url: str, allowed: frozenset[str], *, dns_check=_public_dns) -> s
 
 def render_public(url: str, allowed: frozenset[str]) -> dict:
     verify_url(url, allowed)
+    # Container has NO direct public network. The only egress goes through the
+    # HTTPS-only proxy that resolves once, validates and pins a PUBLIC IP.
+    proxy = os.environ.get("SERVICEIT_VPS_BROWSER_PROXY_URL", "")
+    if proxy != "http://egress:3128":
+        raise BrowserBlocked("BROWSER_PINNED_EGRESS_PROXY_REQUIRED")
     # Explicit robots policy must be accessible and permissive; never
     # substitute a browser for the ordinary verified HTTP source fetch.
-    with httpx.Client(trust_env=False, follow_redirects=False) as client:
+    with httpx.Client(trust_env=False, follow_redirects=False, proxy=proxy) as client:
         try:
             _robots(client, url, allowed)
         except (ResearchBlocked, httpx.HTTPError):
@@ -96,6 +101,7 @@ def render_public(url: str, allowed: frozenset[str]) -> dict:
             browser = playwright.chromium.launch(
                 headless=True,
                 chromium_sandbox=True,
+                proxy={"server": proxy},
                 args=["--disable-background-networking", "--disable-sync"],
                 timeout=12000,
             )

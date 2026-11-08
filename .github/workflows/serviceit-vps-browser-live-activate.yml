@@ -1,0 +1,125 @@
+name: ServiceIT VPS activate isolated Chromium research for LIVE Bitrix cards
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type ACTIVATE_ISOLATED_CHROMIUM_PUBLIC_RESEARCH_1062_21'
+        required: true
+        type: string
+      smoke_site:
+        description: 'Previously approved public host for a real browser-only smoke test'
+        type: choice
+        required: true
+        default: hh.ru
+        options:
+          - hh.ru
+          - trudvsem.ru
+          - superjob.ru
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+
+jobs:
+  isolated-browser-activate:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'ACTIVATE_ISOLATED_CHROMIUM_PUBLIC_RESEARCH_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      SMOKE_SITE: "${{ inputs.smoke_site }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify owner-only SSH, release SHA and existing approved test host
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          case "$SMOKE_SITE" in
+            hh.ru|trudvsem.ru|superjob.ru) ;;
+            *) echo "SMOKE_NOT_AN_APPROVED_SITE"; exit 2;;
+          esac
+          mkdir -m 0700 -p "$RUNNER_TEMP/serviceit-browser-live-ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-browser-live-ssh/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-browser-live-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-browser-live-ssh/id" "$RUNNER_TEMP/serviceit-browser-live-ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-browser-live-ssh/known_hosts" >/dev/null
+
+      - name: Upload exact SHA256-verified source to VPS without touching LIVE
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          file="$RUNNER_TEMP/serviceit-browser-live-$sha.tgz"
+          git archive --format=tar.gz -o "$file" HEAD
+          digest="$(sha256sum "$file" | cut -d' ' -f1)"
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+          printf 'BROWSER_RELEASE_SHA=%s\n' "$sha" >> "$GITHUB_ENV"
+          printf 'BROWSER_RELEASE_HASH=%s\n' "$digest" >> "$GITHUB_ENV"
+          ssh -T -i "$RUNNER_TEMP/serviceit-browser-live-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-live-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'mkdir -p "$HOME/serviceit/staging"'
+          scp -i "$RUNNER_TEMP/serviceit-browser-live-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-live-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$file" "$VPS_USER@$VPS_HOST:serviceit/staging/browser-only-$sha.tgz"
+          echo "BROWSER_PINNED_ARCHIVE_UPLOADED=YES"
+
+      - name: Sandboxed real public render then guarded LIVE coordinator integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$BROWSER_RELEASE_SHA"
+          digest="$BROWSER_RELEASE_HASH"
+          case "$SMOKE_SITE" in
+            hh.ru) smoke='https://hh.ru/' ;;
+            trudvsem.ru) smoke='https://trudvsem.ru/' ;;
+            superjob.ru) smoke='https://www.superjob.ru/' ;;
+            *) exit 2 ;;
+          esac
+          ssh -T -i "$RUNNER_TEMP/serviceit-browser-live-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-live-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "bash -se -- $sha $digest $smoke" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          sha="$1"
+          digest="$2"
+          smoke="$3"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ && "$digest" =~ ^[a-f0-9]{64}$ ]] || exit 2
+          archive="$HOME/serviceit/staging/browser-only-$sha.tgz"
+          [[ -f "$archive" && ! -L "$archive" ]] || exit 2
+          printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --status || exit 2
+          release="$HOME/serviceit/releases/$sha"
+          if [[ ! -d "$release" ]]; then
+            mkdir -m 0700 "$release"
+            tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$release"
+          fi
+          [[ -f "$release/deploy/serviceit-vps-browser-live-activate.py" ]] || exit 2
+          python3 "$release/deploy/serviceit-vps-browser-live-activate.py" \
+            --sha "$sha" \
+            --approval ACTIVATE_ISOLATED_CHROMIUM_PUBLIC_RESEARCH_1062_21 \
+            --smoke-url "$smoke"
+          REMOTE

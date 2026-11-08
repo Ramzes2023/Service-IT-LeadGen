@@ -161,6 +161,9 @@ services:
     environment:
       <<: *common-env
       SERVICEIT_VPS_INTAKE_ENABLED: "NO"
+      # OFF until the isolated browser+egress-proxy passes live sandbox checks.
+      SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED: "${SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED:-NO}"
+      SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED: "${SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED:-NO}"
     healthcheck:
       test: ["CMD", "python", "-c", "import os; from leadpilot.serviceit_vps_pg_queue import postgres_settings; assert postgres_settings(os.environ)['host']=='127.0.0.1'"]
       interval: 60s

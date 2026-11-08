@@ -129,8 +129,9 @@ def test_brave_activator_checks_overlay_scoping_without_using_secret_values(monk
         }},
     }
     class Result:
-        stdout = json.dumps(overlay)
-    monkeypatch.setattr(mod, "compose", lambda *args: Result())
+        def __init__(self, payload):
+            self.stdout = json.dumps(payload)
+    monkeypatch.setattr(mod, "compose", lambda *args: Result(overlay))
     mod.assert_isolated_brave_overlay((Path("base"), Path("overlay")), Path("vps.env"))
     overlay["services"]["business"]["secrets"].append({"source": "serviceit_brave_search_key"})
     try:

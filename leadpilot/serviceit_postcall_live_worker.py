@@ -332,11 +332,10 @@ class CallFence(EncryptedEventFence):
 def _write_one(client, base, env, cid, *, now, native_connection=None):
     before = _read_card(client, base, cid)
     if native_connection is not None:
-        from .serviceit_bitrix_poll_fallback import after_activation
-        activation = after_activation({
-            **env, "SERVICEIT_BITRIX_POLL_START_UTC":
-                env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
-        }, now)
+        from .serviceit_bitrix_poll_fallback import date_value
+        # A manager may confirm the call weeks after the initial signal.
+        # Cutover scope is persistent, not a rolling seven-day polling window.
+        activation = date_value(env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"])
         require(activation <= parse_date(before.get("createdTime")) <= now,
                 "NATIVE_POSTCALL_HISTORIC_OR_FUTURE_CARD")
     interest, action, due, manager, approval_at = _approved_fields(
@@ -454,11 +453,9 @@ def run(client, env, *, write=False, now=None, native_connection=None):
     field_preflight(client, base)
     native_after = None
     if native_connection is not None:
-        from .serviceit_bitrix_poll_fallback import after_activation
-        native_after = after_activation({
-            **env, "SERVICEIT_BITRIX_POLL_START_UTC":
-                env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
-        }, now)
+        from .serviceit_bitrix_poll_fallback import date_value
+        native_after = date_value(env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"])
+        require(native_after <= now, "NATIVE_POSTCALL_CUTOVER_TIME_INVALID")
     cards = (_card_ids(client, base) if native_after is None else
              _card_ids(client, base, native_after=native_after))
     counts = {"approved_candidates": len(cards), "inspected": 0,

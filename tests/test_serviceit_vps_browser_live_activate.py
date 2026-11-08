@@ -28,8 +28,8 @@ def test_live_updater_only_replaces_coordinator_after_browser_smoke():
     assert '"--force-recreate", "coordinator"' in SCRIPT
     assert "write_private(config, original)" in SCRIPT
     assert "serviceit-leadgen-vps-coordinator:latest" in SCRIPT
-    assert "SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED=YES" in SCRIPT
-    assert "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED=YES" in SCRIPT
+    assert '"SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED": "YES"' in SCRIPT
+    assert '"SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED": "YES"' in SCRIPT
     assert "CORE_FOUR_HEALTHY=PASS" in SCRIPT
     # Failure must identify an opaque stage, not leak stderr, URL or secrets.
     assert "BLOCKED_PHASE=" in SCRIPT
@@ -44,7 +44,7 @@ def test_live_updater_only_replaces_coordinator_after_browser_smoke():
 def test_bridge_network_sandbox_shape():
     assert "internal: true" in COMPOSE
     assert "serviceit_vps_public_browser_proxy" in COMPOSE
-    assert '127.0.0.1:18785:8765' in COMPOSE
+    assert '127.0.0.1:18785:8766' in COMPOSE\n    assert "ports:" not in COMPOSE.split("\\n  egress:", 1)[0]
     assert "user: pwuser" in COMPOSE
     assert "cap_drop: [ALL]" in COMPOSE
     assert "read_only: true" in COMPOSE

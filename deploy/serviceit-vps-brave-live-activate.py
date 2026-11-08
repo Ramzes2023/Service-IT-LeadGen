@@ -251,18 +251,21 @@ def main(sha: str, approval: str):
         print("BRAVE_VPS_ACTIVATION=BLOCKED_ROLLBACK", flush=True)
         print("BLOCKED_PHASE=" + phase, flush=True)
         try:
-            if built:
-                call("docker", "tag", old_image,
-                     "serviceit-leadgen-vps-coordinator:latest")
             if changed:
+                # A partial coordinator recreate needs an explicit restore of
+                # the original exact image tag before base-only Compose.
+                if built:
+                    call("docker", "tag", old_image,
+                         "serviceit-leadgen-vps-coordinator:latest")
                 compose((base,), config, "up", "-d", "--no-build",
                         "--no-deps", "--force-recreate", "coordinator",
                         timeout=240)
                 core_healthy()
                 print("BRAVE_ROLLBACK=RESTORED_CORE_AND_BROWSER", flush=True)
             else:
-                # Only an image tag might have changed during build. The
-                # original LIVE container was never recreated; prove this.
+                # A failed disposable API probe never restarted the LIVE
+                # container. A build may change a local image tag, but no
+                # runtime recovery or retagging is necessary at this phase.
                 core_healthy()
                 current = call("docker", "inspect", "-f", "{{.Image}}",
                                CORE).stdout.strip()

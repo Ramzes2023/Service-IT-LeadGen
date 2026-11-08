@@ -41,7 +41,7 @@ jobs:
           [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
           [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
-          file=deploy/playwright-chromium-sandbox-seccomp.json
+          file=deploy/serviceit-chromium-sandbox-seccomp.json
           python3 -m json.tool "$file" >/dev/null
           sha="$(sha256sum "$file" | cut -d' ' -f1)"
           [[ "$sha" =~ ^[a-f0-9]{64}$ ]]

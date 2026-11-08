@@ -25,6 +25,8 @@ from .serviceit_bitrix_poll_fallback import (
     after_activation, discover, calibrate_known_card,
 )
 from .serviceit_vps_native_fence import migrate_native
+from .serviceit_vps_native_actions import migrate_actions
+from .serviceit_vps_native_msp import migrate as migrate_msp
 from .serviceit_vps_poll_readonly_probe import inspect_api
 from .serviceit_bitrix_batch_worker import list_only
 from .bitrix_metadata_audit import validate_webhook
@@ -185,7 +187,9 @@ def main(argv=None) -> int:
             with db(env) as connection:
                 migrate(connection)
                 migrate_native(connection)
-            safe_log({"status": "PG_NATIVE_QUEUE_AND_FENCE_READY", "crm_writes": 0})
+                migrate_actions(connection)
+                migrate_msp(connection)
+            safe_log({"status": "PG_NATIVE_ALL_SCHEMAS_READY", "crm_writes": 0})
             return 0
         except Exception:
             safe_log({"status": "PG_QUEUE_MIGRATION_FAILED", "crm_writes": 0})

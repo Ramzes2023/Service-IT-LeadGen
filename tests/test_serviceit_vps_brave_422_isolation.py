@@ -114,6 +114,13 @@ def test_owner_only_readonly_workflow_runs_on_vps_without_mutation():
     assert "CRM_WRITES=0;EXISTING_CONTAINERS_RESTARTED=0" in wf
     assert "BRAVE_FULL_ERROR_FIELD=" in wf.replace('" + label.upper() + "', "FULL")
     assert "BRAVE_REQUESTS_MAX=" in wf
+    assert "REAL_NEW_CARD_E2E=NOT_YET_VERIFIED" in wf
+    for forbidden in ("docker compose up", '"build", "coordinator"',
+                      "crm.item.update", "tasks.task.add",
+                      "SERVICEIT_BRAVE_SEARCH_API_KEY: ${{",
+                      "secrets.SERVICEIT_BRAVE_SEARCH_API_KEY",
+                      "print(outcome.stderr)", "print(outcome.stdout)"):
+        assert forbidden not in wf
 
 
 def test_vps_minimal_request_matches_successful_windows_brave_query():
@@ -124,13 +131,6 @@ def test_vps_minimal_request_matches_successful_windows_brave_query():
     text = Path("leadpilot/serviceit_vps_brave_422_isolation.py").read_text("utf8")
     assert '"Accept-Encoding": "gzip"' in text
     assert '"Cache-Control": "no-cache"' in text
-    assert "REAL_NEW_CARD_E2E=NOT_YET_VERIFIED" in wf
-    for forbidden in ("docker compose up", '"build", "coordinator"',
-                      "crm.item.update", "tasks.task.add",
-                      "SERVICEIT_BRAVE_SEARCH_API_KEY: ${{",
-                      "secrets.SERVICEIT_BRAVE_SEARCH_API_KEY",
-                      "print(outcome.stderr)", "print(outcome.stdout)"):
-        assert forbidden not in wf
 
 
 def test_failed_brave_probe_no_longer_attempts_old_image_retag():

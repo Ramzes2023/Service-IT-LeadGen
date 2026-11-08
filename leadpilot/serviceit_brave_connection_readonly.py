@@ -41,7 +41,9 @@ def _brave(client: httpx.Client, key: str, *, context_mode=False):
                      "count": 2, "country": "RU",
                      "search_lang": "ru", "safesearch": "strict"}),
             headers={"X-Subscription-Token": key,
-                     "Accept": "application/json"},
+                     "Accept": "application/json",
+                     # Brave validates this exact header on some deployments.
+                     "Cache-Control": "no-cache"},
             follow_redirects=False, timeout=15.0)
         if response.status_code == 401:
             return "BRAVE_INVALID_KEY_401"
@@ -49,8 +51,30 @@ def _brave(client: httpx.Client, key: str, *, context_mode=False):
             return "BRAVE_FORBIDDEN_403"
         if response.status_code == 429:
             return "BRAVE_RATE_LIMIT_429"
-        if response.status_code in (402, 422):
-            return "BRAVE_PLAN_OR_QUERY_REJECTED_" + str(response.status_code)
+        if response.status_code == 422:
+            # Emit only audited validation field names, never provider error
+            # messages, request values, search results or response bodies.
+            if len(response.content) <= 8192:
+                try:
+                    payload = response.json()
+                    error = payload.get("error") if type(payload) is dict else None
+                    if type(error) is dict and error.get("code") == "VALIDATION":
+                        meta = error.get("meta")
+                        errors = meta.get("errors") if type(meta) is dict else None
+                        if type(errors) is list and len(errors) <= 10:
+                            for item in errors:
+                                loc = item.get("loc") if type(item) is dict else None
+                                if loc == ["header", "cache-control"]:
+                                    return "BRAVE_VALIDATION_CACHE_CONTROL_422"
+                                if loc == ["query", "country"]:
+                                    return "BRAVE_VALIDATION_COUNTRY_422"
+                                if loc == ["query", "search_lang"]:
+                                    return "BRAVE_VALIDATION_SEARCH_LANG_422"
+                except (TypeError, ValueError):
+                    pass
+            return "BRAVE_PLAN_OR_QUERY_REJECTED_422"
+        if response.status_code == 402:
+            return "BRAVE_PLAN_OR_QUERY_REJECTED_402"
         if response.status_code != 200:
             return "BRAVE_HTTP_" + str(response.status_code)
         if not 0 < len(response.content) <= 200000:

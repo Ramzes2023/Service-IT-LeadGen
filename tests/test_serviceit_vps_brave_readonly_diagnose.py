@@ -24,7 +24,7 @@ def test_no_crm_or_server_mutations():
         "cat /etc/serviceit/secrets",
     ):
         assert forbidden not in WORKFLOW
-    assert '"run","--rm","--no-deps","--no-build","-T"' in WORKFLOW
+    assert '"run","--rm","--no-deps","--pull","never","-T"' in WORKFLOW
     assert "CHROMIUM_HEALTHY=" in WORKFLOW
     assert "NATIVE_FOUR_HEALTHY=" in WORKFLOW
     assert "BRAVE_SECRET_MOUNT_IN_LIVE=" in WORKFLOW

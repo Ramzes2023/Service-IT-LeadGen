@@ -1,0 +1,86 @@
+name: ServiceIT VPS stage isolated Chromium image ONLY (no browser run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type STAGE_CHROMIUM_IMAGE_NO_RUN; does not activate browser/CRM'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+
+jobs:
+  stage-browser-image-only:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'STAGE_CHROMIUM_IMAGE_NO_RUN'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate pinned non-root SSH and current release hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          mkdir -m 0700 -p "$RUNNER_TEMP/serviceit-browser-ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-browser-ssh/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-browser-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-browser-ssh/id" "$RUNNER_TEMP/serviceit-browser-ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-browser-ssh/known_hosts" >/dev/null
+          [[ "$(git rev-parse HEAD)" =~ ^[a-f0-9]{40}$ ]]
+      - name: Build optional pinned Chromium image; NEVER start it or mutate Bitrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          ssh -T -i "$RUNNER_TEMP/serviceit-browser-ssh/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-browser-ssh/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "bash -se -- $sha" <<'REMOTE'
+          set -euo pipefail
+          sha="$1"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || exit 2
+          release="$HOME/serviceit/releases/$sha"
+          [[ -f "$release/Dockerfile.serviceit-vps-browser" ]] || {
+            echo "BROWSER_RELEASE_NOT_PREPARED_BY_READONLY_SHADOW"; exit 2;
+          }
+          [[ -f "$release/deploy/serviceit-vps-browser.compose.yml" ]] || exit 2
+          bytes="$(df -Pk "$HOME" | awk 'NR==2 {print $4}')"
+          [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 6291456 ]] || {
+            echo "BROWSER_STAGE_DISK_FREE_UNVERIFIED"; exit 2;
+          }
+          # No public browser container may be active in this stage.
+          live="$(docker ps --filter label=com.docker.compose.project=serviceit-public-browser-vps --format '{{.Names}}')"
+          [[ -z "$live" ]] || {
+            echo "BROWSER_CONTAINER_ALREADY_ACTIVE_HOLD"; exit 2;
+          }
+          docker build --file "$release/Dockerfile.serviceit-vps-browser" \
+            --tag serviceit-vps-public-browser:staged "$release" >/dev/null
+          docker image inspect serviceit-vps-public-browser:staged >/dev/null
+          live="$(docker ps --filter label=com.docker.compose.project=serviceit-public-browser-vps --format '{{.Names}}')"
+          [[ -z "$live" ]] || exit 2
+          echo "BROWSER_IMAGE_ON_VPS=STAGED_NOT_RUNNING"
+          echo "BROWSER_SANDBOX_AND_EGRESS_FIREWALL=NOT_VERIFIED"
+          echo "BROWSER_CONNECTED_TO_NATIVE_WORKER=NO"
+          echo "CRM_WRITES=0;TASKS_CREATED=0;BROWSER_URLS_VISITED=0"
+          REMOTE

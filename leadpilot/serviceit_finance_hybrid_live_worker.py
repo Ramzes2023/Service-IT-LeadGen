@@ -155,12 +155,13 @@ def task_schema(client,base):
          "FINANCE_TASK_CRM_LINK_INVALID")
 
 
-def list_won(client,base,cat):
+def list_won(client,base,cat,*,native_after=None):
+    earliest=max(CUTOVER,native_after) if native_after is not None else CUTOVER
     items=[]
     for start in (0,50):
         response=call(client,base,"crm.deal.list",{
             "filter":{"CATEGORY_ID":cat,"STAGE_SEMANTIC_ID":"S",
-                      ">=DATE_CREATE":CUTOVER.isoformat()},
+                      ">=DATE_CREATE":earliest.isoformat()},
             "select":["ID","CATEGORY_ID","STAGE_SEMANTIC_ID","DATE_CREATE"],
             "start":start,
         })
@@ -171,7 +172,7 @@ def list_won(client,base,cat):
             need(type(row) is dict and
                  str(row.get("CATEGORY_ID"))==str(cat)
                  and row.get("STAGE_SEMANTIC_ID")=="S"
-                 and from_iso(row.get("DATE_CREATE"))>=CUTOVER,
+                 and from_iso(row.get("DATE_CREATE"))>=earliest,
                  "FINANCE_WRONG_DEAL_IN_LIST")
             id=positive(row.get("ID"))
             need(id not in items,"FINANCE_LIST_DUPLICATE_DEAL")
@@ -190,7 +191,7 @@ def list_won(client,base,cat):
     raise FinanceWorkerBlocked("FINANCE_TOO_MANY_DEALS_FAIL_CLOSED")
 
 
-def read_deal(client,base,cat,id,now):
+def read_deal(client,base,cat,id,now,*,native_after=None):
     deal=call(client,base,"crm.deal.get",{"id":id})["result"]
     need(type(deal) is dict and str(deal.get("ID"))==str(id)
          and str(deal.get("CATEGORY_ID"))==str(cat)
@@ -198,7 +199,8 @@ def read_deal(client,base,cat,id,now):
          and deal.get("CURRENCY_ID")=="RUB",
          "FINANCE_DEAL_NOT_ISOLATED_WON_RUB")
     created=from_iso(deal.get("DATE_CREATE"))
-    need(CUTOVER<=created<=now,"FINANCE_DEAL_HISTORICAL_OR_FUTURE")
+    earliest=max(CUTOVER,native_after) if native_after is not None else CUTOVER
+    need(earliest<=created<=now,"FINANCE_DEAL_HISTORICAL_OR_FUTURE")
     need(str(deal.get("IS_RECURRING","N")) in ("N","False","0"),
          "FINANCE_RECURRING_TEMPLATE_FORBIDDEN")
     uid=positive(deal.get("ASSIGNED_BY_ID"))
@@ -311,15 +313,31 @@ class FinanceFence(EncryptedEventFence):
                 "/contents/.serviceit/finance-task-once/"+hashpart+".enc")
 
 
-def create_task(client,base,env,deal,manager,creator,kind,description):
+def action_fence(client,env,deal,kind,version="v1",*,native_connection=None):
+    if native_connection is None:
+        return FinanceFence(client,env.get("GITHUB_TOKEN",""),
+                            env.get("SERVICEIT_GH_LEDGER_KEY",""),
+                            kind,version)
+    from .serviceit_vps_native_actions import PostgresActionFence
+    operation={
+        "request-add":"FINANCE_REQUEST_ADD",
+        "report-add":"FINANCE_REPORT_ADD",
+        "report-update":"FINANCE_REPORT_UPDATE",
+        "request-update":"FINANCE_REQUEST_UPDATE",
+    }.get(kind)
+    need(operation is not None,"NATIVE_FINANCE_KIND_INVALID")
+    return PostgresActionFence(native_connection,operation,deal,version)
+
+
+def create_task(client,base,env,deal,manager,creator,kind,description,
+                *,native_connection=None):
     link="D_"+str(deal)
     need(kind in ("request","report"),"FINANCE_TASK_KIND_INVALID")
     name=titles(deal)[kind]
     need(type(description) is str and TASK_MARKER in description
          and len(description)<=2500,"FINANCE_TASK_DESCRIPTION_INVALID")
-    fence=FinanceFence(client,env.get("GITHUB_TOKEN",""),
-                       env.get("SERVICEIT_GH_LEDGER_KEY",""),
-                       kind+"-add")
+    fence=action_fence(client,env,deal,kind+"-add",
+                       native_connection=native_connection)
     if fence.reserve(deal)!="RESERVED":
         return "ALREADY_FENCED_NO_RETRY"
     try:
@@ -340,16 +358,16 @@ def create_task(client,base,env,deal,manager,creator,kind,description):
     return "TASK_CREATED_AND_VERIFIED"
 
 
-def update_report(client,base,env,deal,report_task,manager,creator,description):
+def update_report(client,base,env,deal,report_task,manager,creator,description,
+                  *,native_connection=None):
     need(type(description) is str and TASK_MARKER in description
          and len(description)<=2500,"FINANCE_REPORT_DESCRIPTION_INVALID")
     before=our_task(client,base,report_task,"report",deal,manager,creator)
     if before==description:
         return "REPORT_ALREADY_CURRENT"
     version=sha256(description.encode("utf-8")).hexdigest()
-    fence=FinanceFence(client,env.get("GITHUB_TOKEN",""),
-                       env.get("SERVICEIT_GH_LEDGER_KEY",""),
-                       "report-update",version)
+    fence=action_fence(client,env,deal,"report-update",version,
+                       native_connection=native_connection)
     if fence.reserve(deal)!="RESERVED":
         return "REPORT_REVISION_PREVIOUSLY_FENCED"
     try:
@@ -369,16 +387,16 @@ def update_report(client,base,env,deal,report_task,manager,creator,description):
     return "REPORT_UPDATED_VERIFIED"
 
 
-def update_request(client,base,env,deal,request_task,manager,creator,description):
+def update_request(client,base,env,deal,request_task,manager,creator,description,
+                   *,native_connection=None):
     need(type(description) is str and TASK_MARKER in description
          and len(description)<=2500,"FINANCE_REQUEST_DESCRIPTION_INVALID")
     before=our_task(client,base,request_task,"request",deal,manager,creator)
     if before==description:
         return "REQUEST_ALREADY_CURRENT"
     version=sha256(description.encode("utf-8")).hexdigest()
-    fence=FinanceFence(client,env.get("GITHUB_TOKEN",""),
-                       env.get("SERVICEIT_GH_LEDGER_KEY",""),
-                       "request-update",version)
+    fence=action_fence(client,env,deal,"request-update",version,
+                       native_connection=native_connection)
     if fence.reserve(deal)!="RESERVED":
         return "REQUEST_REVISION_PREVIOUSLY_FENCED"
     try:
@@ -431,8 +449,10 @@ def report_text(result):
     return desc
 
 
-def process_deal(client,base,env,cat,deal_id,creator,now):
-    deal,manager=read_deal(client,base,cat,deal_id,now)
+def process_deal(client,base,env,cat,deal_id,creator,now,
+                 *,native_connection=None,native_after=None):
+    deal,manager=read_deal(client,base,cat,deal_id,now,
+                           native_after=native_after)
     verify_employee(client,base,manager)
     finance_fields={key:deal.get(key) for key in AUTOMATIC.values()}
     result=reconcile(finance_fields,deal.get("COMMENTS"))
@@ -463,10 +483,12 @@ def process_deal(client,base,env,cat,deal_id,creator,now):
     if req:
         request_id=positive(req[0].get("id",req[0].get("ID")))
         request=update_request(client,base,env,deal_id,request_id,
-                               manager,creator,description)
+                               manager,creator,description,
+                               native_connection=native_connection)
     elif needed:
         request=create_task(client,base,env,deal_id,manager,
-                            creator,"request",description)
+                            creator,"request",description,
+                            native_connection=native_connection)
     else:
         request="INPUT_REQUEST_NOT_NEEDED"
     # If a report exists, keep it up to date or hide stale figures on missing
@@ -474,22 +496,40 @@ def process_deal(client,base,env,cat,deal_id,creator,now):
     if rep:
         task_id=positive(rep[0].get("id",rep[0].get("ID")))
         action=update_report(client,base,env,deal_id,task_id,manager,
-                             creator,report_text(result))
+                             creator,report_text(result),
+                             native_connection=native_connection)
     elif result["status"] in (STATUS_DRAFT,STATUS_DOCS):
         action=create_task(client,base,env,deal_id,manager,
-                           creator,"report",report_text(result))
+                           creator,"report",report_text(result),
+                            native_connection=native_connection)
     else:
         action="REPORT_NOT_READY"
     return {"data_status":result["status"],"request_action":request,
             "report_action":action}
 
 
-def run(client,env,*,now=None):
+def run(client,env,*,now=None,native_connection=None):
     now=(now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    need(env.get("GITHUB_REPOSITORY")==REPOSITORY
-         and env.get("GITHUB_REF")=="refs/heads/main"
-         and env.get("SERVICEIT_FINANCE_MANAGER_TASK_ENABLED")==ENABLED,
+    need(env.get("SERVICEIT_FINANCE_MANAGER_TASK_ENABLED")==ENABLED,
          "FINANCE_LIVE_SCOPE_OR_OWNER_OPT_IN_MISSING")
+    native_after=None
+    if native_connection is None:
+        need(env.get("GITHUB_REPOSITORY")==REPOSITORY
+             and env.get("GITHUB_REF")=="refs/heads/main",
+             "FINANCE_LIVE_SCOPE_OR_OWNER_OPT_IN_MISSING")
+    else:
+        from .serviceit_bitrix_poll_fallback import after_activation
+        need(env.get("SERVICEIT_VPS_FINANCE_ENABLED")=="YES"
+             and env.get("SERVICEIT_VPS_WRITER_MODE")=="LIVE"
+             and env.get("SERVICEIT_VPS_CUTOVER_AUTHORIZED")=="YES"
+             and env.get("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK")=="YES"
+             and env.get("SERVICEIT_VPS_POLL_ENABLED")=="YES"
+             and env.get("SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"),
+             "NATIVE_FINANCE_CUTOVER_NOT_READY")
+        native_after=after_activation({
+            **env,"SERVICEIT_BITRIX_POLL_START_UTC":
+                env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
+        },now)
     base=validate_webhook(env.get("SERVICEIT_BITRIX_WEBHOOK",""))
     need(base.startswith(PORTAL),"FINANCE_WRONG_PORTAL")
     category=exact_category(client,base)
@@ -511,7 +551,7 @@ def run(client,env,*,now=None):
         return totals
     deal_schema(client,base)
     task_schema(client,base)
-    ids=list_won(client,base,category)
+    ids=list_won(client,base,category,native_after=native_after)
     totals["new_won_deals_visible"]=len(ids)
     if not ids:
         totals["status"]="FINANCE_NO_NEW_CLOSED_WON_SALES"
@@ -519,7 +559,9 @@ def run(client,env,*,now=None):
     creator=current_employee(client,base)
     for id in ids:
         try:
-            item=process_deal(client,base,env,category,id,creator,now)
+            item=process_deal(client,base,env,category,id,creator,now,
+                              native_connection=native_connection,
+                              native_after=native_after)
         except Exception:
             totals["blocked"]+=1
             continue

@@ -31,6 +31,11 @@ def test_live_updater_only_replaces_coordinator_after_browser_smoke():
     assert "SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED=YES" in SCRIPT
     assert "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED=YES" in SCRIPT
     assert "CORE_FOUR_HEALTHY=PASS" in SCRIPT
+    # Failure must identify an opaque stage, not leak stderr, URL or secrets.
+    assert "BLOCKED_PHASE=" in SCRIPT
+    assert "BLOCKED_COMMAND_EXIT=" in SCRIPT
+    assert 'browser_started = True  # Roll back even if Compose starts just one container.' in SCRIPT
+    assert 'compose_browser(browser_yaml, browser_env, "down"' in SCRIPT
     for forbidden in ("tasks.task.add", "crm.item.update", '"--once"',
                       "SERVICEIT_VPS_CUTOVER_AUTHORIZED=NO"):
         assert forbidden not in SCRIPT

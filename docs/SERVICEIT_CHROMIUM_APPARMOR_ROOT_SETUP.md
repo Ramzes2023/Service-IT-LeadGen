@@ -23,9 +23,9 @@ From the owner's Windows PowerShell with GitHub CLI already authenticated:
 
     $Repo = "Ramzes2023/Service-IT-LeadGen"
     $Local = Join-Path $env:TEMP "serviceit-chromium.apparmor"
-    $Lines = @(gh api "repos/$Repo/contents/deploy/serviceit-chromium.apparmor" -H "Accept: application/vnd.github.raw")
-    if ($LASTEXITCODE -ne 0 -or $Lines.Count -lt 15) { throw "APPARMOR_DOWNLOAD_FAILED" }
-    [System.IO.File]::WriteAllText($Local, (($Lines -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
+    $Meta = gh api "repos/$Repo/contents/deploy/serviceit-chromium.apparmor" | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $Meta.sha -ne "c51bdc970632bdc94354b87f8d5b197fcd7ff287") { throw "APPARMOR_SOURCE_UNVERIFIED" }
+    [System.IO.File]::WriteAllBytes($Local, [Convert]::FromBase64String(($Meta.content -replace "\\s", "")))
     $Digest = (Get-FileHash -LiteralPath $Local -Algorithm SHA256).Hash.ToLower()
     scp $Local root@80.66.79.156:/root/serviceit-chromium.apparmor
     if ($LASTEXITCODE -ne 0) { throw "APPARMOR_COPY_FAILED" }

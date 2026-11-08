@@ -122,7 +122,8 @@ def test_browser_bridge_fail_closed_by_default_and_no_secrets():
     assert "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED:-NO" in coordinator
     assert "internal: true" in browser_compose
     assert "http://egress:3128" in browser_compose
-    assert '"127.0.0.1:18785:8765"' in browser_compose
+    assert '"127.0.0.1:18785:8766"' in browser_compose
+    assert "ports:" not in browser_compose.split("\n  egress:", 1)[0]
     for forbidden in ("bitrix_webhook", "routerai_key", "pg_password",
                       "network_mode: host", "privileged: true"):
         assert forbidden not in browser_compose.lower()

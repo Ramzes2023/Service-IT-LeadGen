@@ -76,6 +76,28 @@ def config_read(path: Path) -> tuple[str, dict]:
     return raw, values
 
 
+def set_existing_or_append_flags(raw: str, updates: dict[str, str]) -> str:
+    """Replace existing keys without duplicates, keep comments, append absent."""
+    lines = raw.splitlines(keepends=True)
+    seen = set()
+    for idx, line in enumerate(lines):
+        if "=" not in line or line.lstrip().startswith("#"):
+            continue
+        key = line.split("=", 1)[0]
+        if key in updates:
+            if key in seen:
+                raise Blocked("BROWSER_FLAG_DUPLICATE")
+            seen.add(key)
+            lines[idx] = key + "=" + updates[key] + ("\n" if line.endswith("\n") else "")
+    out = "".join(lines)
+    if out and not out.endswith("\n"):
+        out += "\n"
+    for key, value in updates.items():
+        if key not in seen:
+            out += key + "=" + value + "\n"
+    return out
+
+
 def write_private(path: Path, content: str):
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".serviceit-browser-")
     try:
@@ -159,6 +181,26 @@ def smoke_browser():
     if len(details) != 1 or details[0].get("Internal") is not True:
         raise Blocked("BROWSER_EGRESS_NOT_ISOLATED")
 
+    # Local host bridge must be published ONLY on the separate secretless
+    # egress relay, never on the internal-only Chromium container.
+    browser_bindings = json.loads(cmd(
+        "docker", "inspect", BROWSER_NAME, "--format",
+        "{{json .HostConfig.PortBindings}}").stdout)
+    if browser_bindings:
+        raise Blocked("BROWSER_HOST_PORT_EXPOSURE_FORBIDDEN")
+    egress_bindings = json.loads(cmd(
+        "docker", "inspect", EGRESS_NAME, "--format",
+        "{{json .HostConfig.PortBindings}}").stdout)
+    if egress_bindings != {"8766/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18785"}]}:
+        raise Blocked("BROWSER_EGRESS_LOOPBACK_BINDING_INVALID")
+    egress_nets = json.loads(cmd(
+        "docker", "inspect", EGRESS_NAME, "--format",
+        "{{json .NetworkSettings.Networks}}").stdout)
+    if (len(egress_nets) != 2
+            or not any(name.endswith("_browser_internal") for name in egress_nets)
+            or not any(name.endswith("_public_egress") for name in egress_nets)):
+        raise Blocked("BROWSER_EGRESS_NETWORK_BOUNDARY_INVALID")
+
     # Core/PG credentials are neither mounted nor passed to this sidecar.
     env_names = cmd("docker", "inspect", BROWSER_NAME, "--format",
                     "{{json .Config.Env}}").stdout
@@ -195,7 +237,9 @@ else:
                  timeout=15, check=False)
     if result.returncode != 0:
         raise Blocked("BROWSER_DIRECT_EGRESS_NOT_BLOCKED")
-    with urlopen("http://127.0.0.1:18785/health", timeout=4) as response:
+    # Explicit direct host-loopback connection, no HTTP_PROXY env bypass.
+    from urllib.request import build_opener, ProxyHandler
+    with build_opener(ProxyHandler({})).open("http://127.0.0.1:18785/health", timeout=4) as response:
         if b"BROWSER_BRIDGE_READY" not in response.read(1000):
             raise Blocked("BROWSER_HOST_LOOPBACK_BRIDGE_FAILED")
 
@@ -263,11 +307,10 @@ def activate(sha: str, approval: str, smoke_url: str):
         # Native coordinator only. The other three LIVE containers untouched.
         phase = "CORE_COORDINATOR_BUILD"
         compose_core(core_yaml, config, "build", "coordinator", timeout=1000)
-        new_config = original
-        if new_config and not new_config.endswith("\n"):
-            new_config += "\n"
-        new_config += ("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED=YES\n"
-                       "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED=YES\n")
+        new_config = set_existing_or_append_flags(original, {
+            "SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED": "YES",
+            "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED": "YES",
+        })
         phase = "CORE_CONFIG_WRITE"
         write_private(config, new_config)
         config_changed = True

@@ -53,7 +53,8 @@ def test_not_part_of_default_4_crm_worker_images():
     assert "cap_drop: [ALL]" in browser_compose
     assert "read_only: true" in browser_compose
     assert "internal: true" in browser_compose
-    assert '"127.0.0.1:18785:8765"' in browser_compose
+    assert '"127.0.0.1:18785:8766"' in browser_compose
+    assert "ports:" not in browser_compose.split("\n  egress:", 1)[0]
     assert "SERVICEIT_VPS_BROWSER_PROXY_URL" in browser_compose
     assert "serviceit_vps_public_browser_proxy" in browser_compose
     assert "network_mode: host" not in browser_compose

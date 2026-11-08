@@ -96,6 +96,7 @@ jobs:
               --security-opt "seccomp=$seccomp" \
               --security-opt "apparmor=serviceit-chromium" \
               --memory 1g --pids-limit 96 --shm-size 256m \
+              -e XDG_CONFIG_HOME=/tmp -e XDG_CACHE_HOME=/tmp \
               --tmpfs /tmp:size=256m,mode=1777 \
               serviceit-vps-public-browser:staged \
               python -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True,chromium_sandbox=True); b.close(); p.stop()' \

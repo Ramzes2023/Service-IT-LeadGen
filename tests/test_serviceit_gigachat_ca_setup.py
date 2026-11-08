@@ -60,22 +60,22 @@ def test_global_certifi_is_never_modified_and_output_symlink_is_blocked(tmp_path
     assert Path(certifi.where()).stat().st_size == before
 
 
-def test_github_actions_uses_pinned_tls_for_model_and_production_event_worker():
-    for name in (
-        "serviceit-gigachat-synthetic-once.yml",
-        "serviceit-bitrix-new-card-ai.yml",
-    ):
-        wf = Path(".github/workflows") / name
-        content = wf.read_text("utf-8")
-        assert "serviceit-gigachat-verified-ca.pem" in content
-        assert 'python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"' in content
-        assert 'echo "GIGACHAT_CA_BUNDLE_FILE=$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem" >> "$GITHUB_ENV"' in content
-        assert "${{ runner.temp }}" not in content
-        assert content.index("serviceit_gigachat_ca_setup") < (
-            content.index("serviceit_gigachat_cockpit_preflight") if "synthetic" in name
-            else content.index("serviceit_bitrix_dispatch_worker")
-        )
-        assert "verify=False" not in content
+def test_gigachat_tls_remains_pinned_only_for_legacy_synthetic_diagnostics():
+    # The standalone historical GigaChat test still verifies its pinned CA,
+    # but actual cloud Bitrix writer workflows must no longer instantiate it.
+    wf = Path(".github/workflows/serviceit-gigachat-synthetic-once.yml")
+    content = wf.read_text("utf-8")
+    assert "serviceit-gigachat-verified-ca.pem" in content
+    assert 'python -m leadpilot.serviceit_gigachat_ca_setup "$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem"' in content
+    assert 'echo "GIGACHAT_CA_BUNDLE_FILE=$RUNNER_TEMP/serviceit-gigachat-verified-ca.pem" >> "$GITHUB_ENV"' in content
+    assert "${{ runner.temp }}" not in content
+    assert content.index("serviceit_gigachat_ca_setup") < content.index("serviceit_gigachat_cockpit_preflight")
+    assert "verify=False" not in content
+    for name in ("serviceit-bitrix-new-card-ai.yml", "serviceit-bitrix-all-new-batch-ai.yml"):
+        writer = (Path(".github/workflows") / name).read_text("utf-8")
+        assert "serviceit_gigachat_ca_setup" not in writer
+        assert "GIGACHAT_CREDENTIALS" not in writer
+        assert "SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT: 'NO'" in writer
     oauth = Path("leadpilot/serviceit_gigachat_oauth_diag.py").read_text("utf-8")
     assert 'httpx.Client(verify=env.get("GIGACHAT_CA_BUNDLE_FILE") or True' in oauth
     assert "httpx.Client(verify=False" not in oauth

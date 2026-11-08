@@ -393,6 +393,21 @@ def run_vps_native(card: int, env: dict, *, client: httpx.Client, connection) ->
     config = config_from_env(env)
     if config.provider != "routerai":
         raise VpsBlocked("NATIVE_ROUTERAI_ONLY")
+    # A queue entry alone is NOT authorization.  Re-read this exact CRM item
+    # before reserving it, and independently prove creation after cutover.
+    from datetime import datetime, timezone, timedelta
+    from .serviceit_bitrix_poll_fallback import after_activation, date_value
+    PostgresNativeFence.validate_card(card)
+    now = datetime.now(timezone.utc)
+    started = after_activation(env, now)
+    before = Rest(env["SERVICEIT_BITRIX_WEBHOOK"], client)(
+        "crm.item.get", {"entityTypeId": 1062, "id": card,
+                         "useOriginalUfNames": "Y"})
+    item = normalized(before["item"])
+    validate_identity(item, card)
+    created = date_value(item.get("createdTime"))
+    if not started <= created <= now + timedelta(minutes=2):
+        raise VpsBlocked("NATIVE_HISTORICAL_OR_FUTURE_CARD_BLOCKED")
     fence = PostgresNativeFence(connection)
     status = fence.reserve(card)
     if status != "RESERVED":

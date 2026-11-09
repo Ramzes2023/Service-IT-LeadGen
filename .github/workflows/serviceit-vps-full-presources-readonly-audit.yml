@@ -242,6 +242,34 @@ jobs:
               else:
                   result=yesno(value=="YES") if value in ("YES","NO") else "UNVERIFIED"
               say(name,result)
+          # A healthy browser/Brave installation is NOT enough: the
+          # source research adapter is disabled when its public domain
+          # allowlist is empty. Count only, never print hostnames.
+          raw_hosts=",".join((
+              flag("core","SERVICEIT_PRELIMINARY_PUBLIC_HOSTS"),
+              flag("core","SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS"),
+          ))
+          allowed=[h.strip().lower() for h in raw_hosts.split(",") if h.strip()]
+          valid=(len(allowed)<=80 and all(
+              re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}",h) is not None
+              for h in allowed))
+          say("RESEARCH_PUBLIC_ALLOWLIST_VALID",yesno(valid))
+          say("RESEARCH_PUBLIC_ALLOWLIST_COUNT",len(allowed) if valid else "UNVERIFIED")
+          mounted=execute(["docker","inspect","-f",
+              "{{range .Mounts}}{{println .Destination}}{{end}}",CONTAINERS["core"]])
+          mounts=(mounted or "").splitlines()
+          for name,key in (
+              ("BRAVE","SERVICEIT_BRAVE_SEARCH_API_KEY_FILE"),
+              ("ROUTERAI","SERVICEIT_ROUTERAI_API_KEY_FILE"),
+          ):
+              pathname=flag("core",key)
+              say("VPS_"+name+"_KEY_MOUNTED",
+                  yesno(pathname.startswith("/run/secrets/") and pathname in mounts))
+          say("PUBLIC_DEEP_RESEARCH_CONFIGURED",yesno(
+              valid and len(allowed)>0 and
+              flag("core","SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED")=="YES" and
+              flag("core","SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED")=="YES"
+          ))
           aux_flags={
               "OWN_STOP":"SERVICEIT_VPS_OWN_STOP_ENABLED",
               "CRM_DUPLICATES":"SERVICEIT_VPS_CRM_DUPLICATE_ENABLED",

@@ -1,30 +1,16 @@
-name: ServiceIT official FNS MSP monthly snapshot for new 1062/21 cards (NO CRM WRITE)
+# Retired after verified native VPS FNS collector activation on 2026-11-09.
+# Kept in Git history for audit; never schedule/download/create GitHub receipts.
+name: ServiceIT LEGACY official FNS snapshot RETIRED (native VPS only)
+
 on:
-  schedule:
-    # Once daily at most. Skip 2+ GB archive if no genuine new INNs.
-    - cron: '36 3 * * *'
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: read
-
-concurrency:
-  group: serviceit-official-fns-msp-snapshot-readonly
-  cancel-in-progress: false
+  contents: read
 
 jobs:
   exact-official-fns-msp:
-    if: >-
-      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'schedule' ||
-       (github.event_name == 'issue_comment' &&
-        github.actor == 'Ramzes2023' &&
-        github.event.issue.number == 148 &&
-        !github.event.issue.pull_request &&
-        github.event.comment.body == 'SERVICEIT_FNS_MSP_OFFICIAL_LIVE_ONCE_V1'))
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:

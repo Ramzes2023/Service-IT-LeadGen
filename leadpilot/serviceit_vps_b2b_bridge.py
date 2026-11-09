@@ -165,6 +165,17 @@ def set_existing(connection, source):
             return cur.fetchone() is not None
 
 
+def set_review(connection, source):
+    """Terminal safety hold for unparseable notice, not an external CRM action."""
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE serviceit_vps_b2b_inbox SET state='REVIEW', completed_at=now() "
+                "WHERE source_id=%s AND state='PENDING' RETURNING source_id",
+                (source,))
+            return cur.fetchone() is not None
+
+
 def reserve_post(connection, source):
     """Commit irreversible POST_UNCERTAIN before issuing external mutation."""
     with connection.transaction():
@@ -202,8 +213,11 @@ def deliver_one(connection, client, webhook):
     if candidate is None:
         return "NO_PENDING"
     source, notice = candidate
-    payload = hold_payload(notice, classify_services(notice["subject"]))
-    must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
+    try:
+        payload = hold_payload(notice, classify_services(notice["subject"]))
+        must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
+    except (BridgeBlocked, B2BBlocked, KeyError, TypeError, ValueError):
+        return "REVIEW" if set_review(connection, source) else "ALREADY_RESERVED"
     base = validate_webhook(webhook)
     # Existing known source MUST be visible (the portal once gave false empties).
     must(len(exact_duplicate(client, base, "B2B-CENTER-4665948")) == 1,
@@ -257,6 +271,7 @@ def worker_once(env: dict, *, client):
             "batch_processed": len(outcomes),
             "new_holds": outcomes.count("ONE_REAL_HOLD_QUEUED"),
             "existing": outcomes.count("EXISTING"),
+            "review": outcomes.count("REVIEW"),
             "backlog_throttled": "DAILY_BUDGET_THROTTLED" in outcomes,
             "qualified_leads": 0,
             "outbound_contacts": 0,

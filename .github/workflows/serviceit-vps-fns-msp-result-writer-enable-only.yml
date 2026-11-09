@@ -1,0 +1,284 @@
+name: ServiceIT VPS native FNS-MSP CRM result writer activation ONLY
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type ENABLE_FNS_MSP_RESULT_WRITER_ONLY_1062_21"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-fns-msp-writer-activation
+  cancel-in-progress: false
+
+jobs:
+  activate-fns-result-only:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'ENABLE_FNS_MSP_RESULT_WRITER_ONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Validate pinned non-root SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[0-9a-zA-Z.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-fns-writer"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-fns-writer/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-fns-writer/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-fns-writer/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-fns-writer/known_hosts" >/dev/null
+
+      - name: Verify collector and enable only result writer (one aux restart)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-fns-writer/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-fns-writer/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          from pathlib import Path
+          import fcntl
+          import os
+          import re
+          import stat
+          import subprocess
+          import tempfile
+          import time
+
+          BASE = "serviceit-leadgen-vps-"
+          CORE = BASE+"coordinator-1"
+          AUX = BASE+"auxiliaries-1"
+          BIZ = BASE+"business-1"
+          OBS = BASE+"observer-1"
+          FNS = BASE+"fns-msp-1"
+          CONFIG = Path.home()/"serviceit/config/vps.env"
+          RELEASES = (Path.home()/"serviceit/releases").resolve()
+          KEY = "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED"
+          FNS_SWITCH = "SERVICEIT_VPS_FNS_MSP_ENABLED"
+
+          class Blocked(Exception): pass
+          def need(state, code):
+              if not state: raise Blocked(code)
+          def run(args,timeout=45):
+              try:
+                  return subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                                        text=True,timeout=timeout)
+              except (OSError,subprocess.TimeoutExpired):
+                  raise Blocked("OS_SUBPROCESS_TIMEOUT")
+          def output(args,timeout=45):
+              p=run(args,timeout)
+              need(p.returncode==0,"REMOTE_COMMAND_FAILED")
+              return p.stdout.strip()
+          def inspect(container, template):
+              return output(["docker","inspect","-f",template,container])
+          def flag(container,name):
+              return output(["docker","exec",container,"printenv",name])
+          def health(container):
+              return inspect(container,"{{.State.Running}}:{{.State.Health.Status}}")=="true:healthy"
+          def assert_other_health():
+              for c in (CORE,BIZ,OBS,FNS):
+                  need(health(c),"EXISTING_SERVICE_NOT_HEALTHY")
+          def private_config():
+              need(CONFIG.is_file() and not CONFIG.is_symlink(),"CONFIG_NOT_REGULAR_FILE")
+              st=CONFIG.stat()
+              need(st.st_uid==os.geteuid() and
+                   not(stat.S_IMODE(st.st_mode)&0o077),"CONFIG_NOT_PRIVATE")
+              return CONFIG.read_text(encoding="utf8")
+          def parsed_config(text):
+              result={}
+              for line in text.splitlines():
+                  if not line or line.lstrip().startswith("#"): continue
+                  m=re.fullmatch(r"([A-Z][A-Z0-9_]*)=(.*)",line)
+                  need(m is not None and m[1] not in result,"CONFIG_INVALID_OR_DUPLICATE")
+                  result[m[1]]=m[2]
+              return result
+          def atomic_write(new_text):
+              fd,temp=tempfile.mkstemp(prefix=".fns-writer-",dir=CONFIG.parent)
+              try:
+                  with os.fdopen(fd,"w",encoding="utf8") as handle:
+                      os.fchmod(handle.fileno(),0o600)
+                      handle.write(new_text)
+                      handle.flush()
+                      os.fsync(handle.fileno())
+                  os.replace(temp,CONFIG)
+              finally:
+                  try: os.unlink(temp)
+                  except FileNotFoundError: pass
+          def verifier():
+              pg = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as connection:
+              with connection.transaction():
+                  with connection.cursor() as cursor:
+                      cursor.execute("SET TRANSACTION READ ONLY")
+                      cursor.execute("SELECT to_regclass('public.serviceit_vps_msp_snapshot') IS NOT NULL")
+                      print("READY" if cursor.fetchone()[0] else "NOT_READY")
+          """
+              p=output(["docker","exec",CORE,"python","-c",pg],60)
+              need(p=="READY","FNS_PG_SCHEMA_NOT_READY")
+              metadata = """
+          import os
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_fns_msp_crm_result_writer import result_field_verified
+          try:
+              base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as client:
+                  result_field_verified(client,base)
+              print("READY")
+          except Exception:
+              print("BLOCKED")
+          """
+              p=output(["docker","exec",AUX,"python","-c",metadata],60)
+              need(p=="READY","SERVER_BITRIX_FNS_FIELD_NOT_READY")
+              module = """
+          import importlib
+          from leadpilot.serviceit_vps_native_msp_result import process_one
+          from leadpilot.serviceit_vps_native_aux import enabled
+          assert callable(process_one) and callable(enabled)
+          print("READY")
+          """
+              p=output(["docker","exec",AUX,"python","-c",module],45)
+              need(p=="READY","NATIVE_FNS_WRITER_CODE_MISSING")
+
+          def compose_call(compose,*args,timeout=90):
+              return run(["docker","compose","--env-file",str(CONFIG),
+                          "-f",str(compose),*args],timeout=timeout)
+          def assert_original_flags():
+              for name,want in (
+                  ("SERVICEIT_VPS_OWN_STOP_ENABLED","YES"),
+                  ("SERVICEIT_VPS_CRM_DUPLICATE_ENABLED","YES"),
+                  ("SERVICEIT_VPS_KANBAN_TITLE_ENABLED","YES"),
+                  ("SERVICEIT_VPS_MANAGER_TASK_ENABLED","YES"),
+                  ("SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED","YES"),
+                  ("SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED","NO"),
+                  ("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED","NO"),
+              ):
+                  need(flag(AUX,name)==want,"AUXILIARY_FLAG_CHANGED_"+name)
+
+          lock=CONFIG.parent/".serviceit-fns-result-activate.lock"
+          changed=False
+          original=None
+          compose=None
+          try:
+              print("FNS_MSP_CRM_RESULT_ACTIVATION=START",flush=True)
+              need(os.geteuid()!=0,"ROOT_NOT_PERMITTED")
+              with lock.open("a") as fp:
+                  os.chmod(lock,0o600)
+                  fcntl.flock(fp.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                  assert_other_health()
+                  need(health(AUX),"AUXILIARIES_NOT_HEALTHY")
+                  for k,v in (
+                      ("SERVICEIT_VPS_WRITER_MODE","LIVE"),
+                      ("SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES"),
+                      ("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK","YES"),
+                      ("SERVICEIT_VPS_POLL_ENABLED","YES"),
+                  ):
+                      need(flag(CORE,k)==v,"GLOBAL_NATIVE_GATE_NOT_READY")
+                  need(bool(flag(CORE,"SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")),
+                       "NATIVE_ACTIVATION_TIME_ABSENT")
+                  need(flag(FNS,FNS_SWITCH)=="YES","FNS_COLLECTOR_NOT_ENABLED")
+                  assert_original_flags()
+                  labels=inspect(AUX,'{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+                  paths=[Path(p.strip()) for p in labels.split(",") if p.strip().endswith(
+                      "/deploy/serviceit-vps.compose.yml")]
+                  need(len(paths)==1,"AUX_PINNED_COMPOSE_NOT_CONFIRMED")
+                  compose=paths[0]
+                  need(compose.is_file() and not compose.is_symlink()
+                       and compose.resolve().is_relative_to(RELEASES)
+                       and re.search(r"/releases/[a-f0-9]{40}/deploy/serviceit-vps.compose.yml$",
+                                     str(compose.resolve())) is not None,
+                       "PINNED_RELEASE_PATH_INVALID")
+                  other=inspect(CORE,'{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+                  need(str(compose) in other.split(","),"AUX_AND_CORE_RELEASE_MISMATCH")
+                  original=private_config()
+                  cfg=parsed_config(original)
+                  need(cfg.get(FNS_SWITCH)=="YES","FNS_ENV_CONFIG_NOT_ENABLED")
+                  need(cfg.get(KEY,"NO")=="NO","FNS_RESULT_ALREADY_ENABLED_OR_DIFFERENT")
+                  for name,expected in (
+                      ("SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED","YES"),
+                      ("SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED","NO"),
+                      ("SERVICEIT_VPS_POSTCALL_ENABLED","NO"),
+                      ("SERVICEIT_VPS_FINANCE_ENABLED","NO"),
+                  ):
+                      need(cfg.get(name,"NO")==expected,"UNEXPECTED_BUSINESS_FLAG_"+name)
+                  need(compose_call(compose,"config","--quiet",timeout=30).returncode==0,
+                       "COMPOSE_INVALID_BEFORE_CHANGE")
+                  verifier()
+                  print("FNS_MSP_FIELD_AND_DB_PREFLIGHT=PASS",flush=True)
+                  old=cfg.copy()
+                  cfg[KEY]="YES"
+                  lines=original.splitlines(keepends=True)
+                  new=[];seen=False
+                  for line in lines:
+                      if line.startswith(KEY+"="):
+                          new.append(KEY+"=YES\n")
+                          seen=True
+                      else:
+                          new.append(line)
+                  updated="".join(new)
+                  if not updated.endswith("\n"): updated+="\n"
+                  if not seen: updated+=KEY+"=YES\n"
+                  need(parsed_config(updated)==cfg,"FLAG_ONLY_CHANGE_INVARIANT_FAILED")
+                  atomic_write(updated)
+                  changed=True
+                  # This explicitly RECREATES ONLY auxiliaries, not core/observer/business/MSP.
+                  p=compose_call(compose,"up","-d","--no-deps","--no-build",
+                                 "--force-recreate","auxiliaries",timeout=135)
+                  need(p.returncode==0,"AUX_ONLY_RECREATE_FAILED")
+                  for _ in range(20):
+                      if health(AUX): break
+                      time.sleep(5)
+                  need(health(AUX),"AUX_RESULT_WRITER_RELOAD_NOT_HEALTHY")
+                  need(flag(AUX,KEY)=="YES","FNS_RESULT_NEW_FLAG_NOT_VISIBLE")
+                  for name,want in (
+                      ("SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED","YES"),
+                      ("SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED","NO"),
+                      ("SERVICEIT_VPS_MANAGER_TASK_ENABLED","YES"),
+                      ("SERVICEIT_VPS_KANBAN_TITLE_ENABLED","YES"),
+                  ):
+                      need(flag(AUX,name)==want,"AUX_OTHER_FLAG_CHANGED")
+                  assert_other_health()
+                  print("FNS_RESULT_WRITER_FLAG=YES",flush=True)
+                  print("FNS_COLLECTOR_CONTAINER=HEALTHY",flush=True)
+                  print("AUXILIARIES_CONTAINER=HEALTHY",flush=True)
+                  print("RESTARTED_ONLY_AUXILIARIES=YES",flush=True)
+                  print("FNS_RESULT_SCOPE=FUTURE_CARDS_WITH_VERIFIED_PG_RECEIPTS_ONLY",flush=True)
+                  print("FREE_MSP_SCORE_ENABLED=NO;PROVISIONAL_SCORE_ENABLED=YES",flush=True)
+                  print("SOURCES_CHANGED=NO;HISTORICAL_CARDS_MODIFIED_BY_ACTIVATION=0",flush=True)
+                  print("FNS_E2E_NEW_CARD=AWAITING_REAL_ELIGIBLE_CARD",flush=True)
+          except Exception as e:
+              message=str(e) if isinstance(e,Blocked) else "UNEXPECTED_FAILURE"
+              if not re.fullmatch(r"[A-Z0-9_]+",message):message="UNEXPECTED_FAILURE"
+              print("FNS_RESULT_ACTIVATION=BLOCKED_"+message,flush=True)
+              if changed and original is not None:
+                  try:
+                      atomic_write(original)
+                      if compose is not None:
+                          compose_call(compose,"up","-d","--no-deps","--no-build",
+                                      "--force-recreate","auxiliaries",timeout=135)
+                      print("FNS_RESULT_ROLLBACK=PREVIOUS_CONFIG_RESTORED_RECREATE_ATTEMPTED",
+                            flush=True)
+                  except Exception:
+                      print("FNS_RESULT_ROLLBACK=MANUAL_INTERVENTION_REQUIRED",flush=True)
+              raise SystemExit(2)
+          PY

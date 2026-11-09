@@ -81,10 +81,28 @@ def call(client,base,method,args):
     if method=="crm.category.list":
         need(args=={"entityTypeId":2},"FINANCE_CATEGORY_FILTER_FORBIDDEN")
     if method=="crm.deal.list":
-        need(args.get("filter",{}).get("STAGE_SEMANTIC_ID")=="S"
-             and type(args["filter"].get("CATEGORY_ID")) is int
-             and args["filter"]["CATEGORY_ID"]>0
-             and args["filter"].get(">=DATE_CREATE")==CUTOVER.isoformat()
+        # Native VPS cutover happens after the original cloud CUTOVER. The
+        # effective threshold is max(CUTOVER, native activation UTC) in
+        # list_won(); never require equality with the *older* fixed CUTOVER.
+        filters=args.get("filter")
+        threshold=filters.get(">=DATE_CREATE") if type(filters) is dict else None
+        threshold_ok=False
+        if type(threshold) is str:
+            try:
+                parsed=from_iso(threshold)
+                threshold_ok=(
+                    threshold == parsed.isoformat()
+                    and CUTOVER <= parsed <=
+                        datetime.now(timezone.utc)+timedelta(minutes=5)
+                )
+            except FinanceWorkerBlocked:
+                threshold_ok=False
+        need(type(filters) is dict
+             and set(filters)=={"CATEGORY_ID","STAGE_SEMANTIC_ID",">=DATE_CREATE"}
+             and filters.get("STAGE_SEMANTIC_ID")=="S"
+             and type(filters.get("CATEGORY_ID")) is int
+             and filters["CATEGORY_ID"]>0
+             and threshold_ok
              and args.get("start") in (0,50)
              and args.get("select")==[
                  "ID","CATEGORY_ID","STAGE_SEMANTIC_ID","DATE_CREATE"],

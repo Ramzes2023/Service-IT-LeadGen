@@ -76,8 +76,13 @@ def render(original: str) -> str:
     if end < 0 or in_quote:
         raise ActivationBlocked("CADDY_SITE_UNBALANCED")
     inside = original[start:end]
-    if not ("/health" in inside and "/integrations/serviceit/bitrix24/new-card" in inside):
-        raise ActivationBlocked("CADDY_EXISTING_ROUTES_UNVERIFIED")
+    # Production native Bitrix operates with outbound five-minute REST polls;
+    # the old inbound /bitrix24/new-card HTTP route may be absent by design.
+    # Live VPS readonly audit 42712781098 independently confirmed that the
+    # existing site owns /health -> 127.0.0.1:18780 and has no old event route.
+    # Preserve the present health ingress, not the obsolete event path.
+    if not ("/health" in inside and "127.0.0.1:18780" in inside):
+        raise ActivationBlocked("CADDY_EXISTING_HEALTH_ROUTE_UNVERIFIED")
     # Production can have a valid Caddyfile WITHOUT an explicit catch-all
     # 'handle {'; in that case insert before the site's closing brace.
     # A matcher-specific 'handle @serviceit_b2b_direct' is then sorted by

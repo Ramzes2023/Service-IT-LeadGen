@@ -12,8 +12,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .serviceit_vps_b2b_bridge import (
-    MAX_BODY, PATH, enabled, signed_notice, migrate, accept,
-    B2BBlocked,
+    MAX_BODY, PATH, enabled, signed_notice, verified_probe,
+    migrate, accept, B2BBlocked,
 )
 from .serviceit_vps_pg_queue import db, secret_file, VpsBlocked
 from .serviceit_b2b_appsscript_ingest import IngestBlocked
@@ -24,12 +24,42 @@ app = FastAPI(title="ServiceIT B2B VPS signed ingress",
 
 
 @app.get("/health")
+@app.get("/integrations/serviceit/b2b-center/health")
 def health():
     return {
         "status": "B2B_INGRESS_ALIVE",
         "source_enabled": os.getenv("SERVICEIT_VPS_B2B_RECEIVER_ENABLED") == "YES",
         "crm_writes": 0,
     }
+
+
+@app.post("/integrations/serviceit/b2b-center/probe")
+async def b2b_probe(request: Request):
+    if os.getenv("SERVICEIT_VPS_B2B_RECEIVER_ENABLED") != "YES":
+        return JSONResponse({"status":"B2B_RECEIVER_DISABLED"},status_code=503)
+    if request.headers.get("content-type","").split(";")[0].strip().lower() != "application/json":
+        return JSONResponse({"status":"JSON_ONLY"},status_code=415)
+    try:
+        length = request.headers.get("content-length","")
+        if not length.isdecimal() or not 0 < int(length) < 1200:
+            return JSONResponse({"status":"PROBE_BODY_INVALID"},status_code=413)
+        body = await request.body()
+        if len(body) != int(length):
+            return JSONResponse({"status":"PROBE_SIZE_MISMATCH"},status_code=400)
+        value = json.loads(body)
+        key = secret_file(dict(os.environ),"SERVICEIT_VPS_B2B_HMAC_KEY")
+        verified_probe(value,key)
+        # Source receiver must actually see the isolated local PostgreSQL.
+        with db(dict(os.environ)) as connection:
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+                if cur.fetchone() != (1,):
+                    raise VpsBlocked("B2B_DATABASE_UNAVAILABLE")
+        return {"status":"B2B_VPS_SIGNED_PROBE_PASS","crm_writes":0}
+    except (B2BBlocked, ValueError, TypeError, KeyError, UnicodeError):
+        return JSONResponse({"status":"B2B_PROBE_REJECTED"},status_code=403)
+    except Exception:
+        return JSONResponse({"status":"B2B_PROBE_UNAVAILABLE"},status_code=503)
 
 
 @app.post(PATH)

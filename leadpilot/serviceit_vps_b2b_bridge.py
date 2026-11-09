@@ -6,6 +6,8 @@ Uncertain POST is NEVER retried automatically. Source is OFF by default.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -25,6 +27,7 @@ from .b2b_bitrix_readiness import ReadOnlyBitrix, preflight
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS
 from .serviceit_vps_pg_queue import db, insert_new, secret_file, VpsBlocked
 from .serviceit_vps_worker import live_permitted
+from .b2b_email_opportunity_bridge import classify_services
 from .bitrix_metadata_audit import validate_webhook
 
 PATH = "/integrations/serviceit/b2b-center/notice"
@@ -85,6 +88,30 @@ def signed_notice(payload: dict, key: str, *, now: float | None = None):
     notice, groups = notice_from_event(synthetic)
     must(bool(groups), "B2B_SOURCE_RELEVANCE_REQUIRED")
     return notice, groups, dispatch_id
+
+
+def verified_probe(payload, key, *, now=None):
+    """Side-effect-free proof that Apps Script and VPS share an HMAC key."""
+    must(type(payload) is dict and set(payload) ==
+         {"timestamp", "nonce", "signature"}, "B2B_PROBE_SHAPE_INVALID")
+    ts, nonce, sig = (payload.get(k) for k in
+                      ("timestamp", "nonce", "signature"))
+    must(type(ts) is str and re.fullmatch(r"[0-9]{10,12}", ts),
+         "B2B_PROBE_TIME_INVALID")
+    must(type(nonce) is str and re.fullmatch(r"[a-zA-Z0-9-]{20,80}", nonce),
+         "B2B_PROBE_NONCE_INVALID")
+    must(type(sig) is str and re.fullmatch(r"sha256=[0-9a-f]{64}", sig),
+         "B2B_PROBE_SIGNATURE_INVALID")
+    must(type(key) is str and len(key) >= 32, "B2B_PROBE_KEY_MISSING")
+    must(abs((time.time() if now is None else now) - int(ts)) <= 300,
+         "B2B_PROBE_EXPIRED")
+    expected = "sha256=" + hmac.new(
+        key.encode("utf-8"),
+        ("v1|b2b-probe|" + ts + "|" + nonce).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    must(hmac.compare_digest(sig, expected), "B2B_PROBE_HMAC_MISMATCH")
+    return True
 
 
 def migrate(connection):
@@ -175,9 +202,7 @@ def deliver_one(connection, client, webhook):
     if candidate is None:
         return "NO_PENDING"
     source, notice = candidate
-    payload = hold_payload(notice, __import__(
-        "leadpilot.b2b_email_opportunity_bridge", fromlist=["classify_services"]
-    ).classify_services(notice["subject"]))
+    payload = hold_payload(notice, classify_services(notice["subject"]))
     must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
     base = validate_webhook(webhook)
     # Existing known source MUST be visible (the portal once gave false empties).

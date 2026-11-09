@@ -1,0 +1,119 @@
+name: ServiceIT B2B direct source image STAGE ONLY (no CRM or Caddy changes)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-vps-stage-only
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_VPS_STAGE_IMAGE_ONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build exact unprivileged release archive with no secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-image-stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-image-stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-image-stage/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-image-stage/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-image-stage/known_hosts" >/dev/null
+          python -m py_compile leadpilot/serviceit_vps_b2b_bridge.py leadpilot/serviceit_vps_b2b_ingress.py
+          tar -czf "$RUNNER_TEMP/b2b-image-stage/release.tar.gz" \
+            Dockerfile.serviceit-vps requirements.txt requirements-vps.txt \
+            leadpilot certificates config/serviceit_own_signal_stop.json \
+            deploy/serviceit-vps-b2b-direct.compose.yml \
+            deploy/serviceit-vps-b2b.caddy.fragment
+          sha256sum "$RUNNER_TEMP/b2b-image-stage/release.tar.gz" |
+            cut -d ' ' -f1 > "$RUNNER_TEMP/b2b-image-stage/archive.sha256"
+      - name: Stage B2B-only image on dedicated VPS without running it
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="serviceit/staging/b2b-direct-image-$RUN_ID"
+          dest="$VPS_USER@$VPS_HOST"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-image-stage/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          ssh -T -i "$RUNNER_TEMP/b2b-image-stage/id" "${opts[@]}" "$dest" \
+            "umask 077; install -d -m 0700 '$dir/source'"
+          scp -i "$RUNNER_TEMP/b2b-image-stage/id" "${opts[@]}" \
+            "$RUNNER_TEMP/b2b-image-stage/release.tar.gz" "$dest:$dir/release.tar.gz"
+          digest="$(cat "$RUNNER_TEMP/b2b-image-stage/archive.sha256")"
+          ssh -T -i "$RUNNER_TEMP/b2b-image-stage/id" "${opts[@]}" "$dest" \
+            "bash -s -- '$dir' '$digest'" \
+            > "$RUNNER_TEMP/b2b-image-stage/server-status.txt" <<'SH'
+          set -euo pipefail
+          path="$HOME/$1"
+          expected="$2"
+          archive="$path/release.tar.gz"
+          observed="$(sha256sum "$archive" | cut -d ' ' -f1)"
+          [[ "$observed" == "$expected" ]]
+          tar -xzf "$archive" -C "$path/source"
+          cd "$path/source"
+          test -f leadpilot/serviceit_vps_b2b_ingress.py
+          test -f leadpilot/serviceit_vps_b2b_bridge.py
+          if docker build --file Dockerfile.serviceit-vps \
+            --tag serviceit-vps-b2b-direct:20261109-pilot . \
+            > "$path/build.log" 2>&1; then
+            echo B2B_STAGE_BUILD=YES
+          else
+            echo B2B_STAGE_BUILD=NO
+            exit 2
+          fi
+          actual="$(docker image inspect -f '{{.Config.User}}' \
+            serviceit-vps-b2b-direct:20261109-pilot)"
+          [[ "$actual" == '10001:10001' ]]
+          echo B2B_STAGE_NONROOT=YES
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:size=32m,mode=1777 \
+            --entrypoint python serviceit-vps-b2b-direct:20261109-pilot \
+            -c "import leadpilot.serviceit_vps_b2b_ingress, leadpilot.serviceit_vps_b2b_bridge; print('B2B_STAGE_IMPORT=YES')" \
+            | grep -qx B2B_STAGE_IMPORT=YES
+          echo B2B_STAGE_IMPORT=YES
+          echo B2B_STAGE_CONTAINERS_STARTED=NO
+          echo B2B_STAGE_CADDY_CHANGED=NO
+          echo B2B_STAGE_CRM_WRITES=ZERO
+          SH
+          grep -E '^B2B_STAGE_[A-Z0-9_]+=(YES|NO|ZERO)$' \
+            "$RUNNER_TEMP/b2b-image-stage/server-status.txt" \
+            > "$RUNNER_TEMP/b2b-image-stage/safe.txt" || true
+          cat "$RUNNER_TEMP/b2b-image-stage/safe.txt"
+          grep -qx 'B2B_STAGE_IMPORT=YES' "$RUNNER_TEMP/b2b-image-stage/safe.txt"
+      - name: Record redacted stage result to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/b2b-image-stage/safe.txt"
+          result="$(grep -E '^B2B_STAGE_[A-Z0-9_]+=(YES|NO|ZERO)$' "$file" | head -20 || true)"
+          [[ -n "$result" ]] || result='B2B_STAGE_BUILD=UNVERIFIED'
+          msg="$(printf 'B2B-Center VPS-only IMAGE stage (NO live source):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nCore containers not restarted, no secret install, no Caddy reload, no Bitrix writes.' "$result" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

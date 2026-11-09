@@ -14,8 +14,8 @@ x-base: &base
   init: true
   tmpfs:
     - /tmp:size=32m,mode=1777
-  cap_drop: [ALL}
-  security_opt: ["no-new-privileges:true"}
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
   pids_limit: 128
   mem_limit: 400m
   environment: &common_env
@@ -31,13 +31,13 @@ x-base: &base
 services:
   receiver:
     <<: *base
-    command: ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_b2b_ingress:app", "--host", "127.0.0.1", "--port", "18781", "--workers", "1", "--no-access-log"}
+    command: ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_b2b_ingress:app", "--host", "127.0.0.1", "--port", "18781", "--workers", "1", "--no-access-log"]
     environment:
       <<: *common_env
       SERVICEIT_VPS_B2B_HMAC_KEY_FILE: /run/secrets/serviceit_b2b_hmac
-    secrets: [serviceit_pg_password, serviceit_b2b_hmac}
+    secrets: [serviceit_pg_password, serviceit_b2b_hmac]
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://127.0.0.1:18781/health',timeout=3); assert r.status_code==200 and r.json()['crm_writes'}==0"}
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://127.0.0.1:18781/health',timeout=3); assert r.status_code==200 and r.json()['crm_writes'}==0"]
       interval: 45s
       timeout: 5s
       retries: 3
@@ -45,7 +45,7 @@ services:
 
   writer:
     <<: *base
-    command: ["python", "-m", "leadpilot.serviceit_vps_b2b_bridge"}
+    command: ["python", "-m", "leadpilot.serviceit_vps_b2b_bridge"]
     environment:
       <<: *common_env
       SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
@@ -57,9 +57,9 @@ services:
       SERVICEIT_AI_PROVIDER: routerai
       SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
       SERVICEIT_ROUTERAI_PRIVACY_APPROVED: "${SERVICEIT_ROUTERAI_PRIVACY_APPROVED:-NO}"
-    secrets: [serviceit_pg_password, serviceit_bitrix_webhook}
+    secrets: [serviceit_pg_password, serviceit_bitrix_webhook]
     healthcheck:
-      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_b2b_bridge as s; assert s.INTERVAL_SECONDS == 300"}
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_b2b_bridge as s; assert s.INTERVAL_SECONDS == 300"]
       interval: 60s
       timeout: 5s
       retries: 3

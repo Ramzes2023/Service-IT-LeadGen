@@ -84,7 +84,7 @@ def render(original: str) -> str:
     # Caddy independently of the site's existing generic routes.
     # If the site has a single direct catch-all, preserve its original
     # ordering by inserting ahead of it as in the original installer.
-    markers = list(re.finditer(r"(?m)^[ \\t]*handle[ \\t]*\\{[ \\t]*(?:#.*)?$", inside))
+    markers = list(re.finditer(r"(?m)^[ \t]*handle[ \t]*\{[ \t]*(?:#.*)?$", inside))
     if len(markers) > 1:
         raise ActivationBlocked("CADDY_MULTIPLE_CATCHALLS_REVIEW")
     pos = start + markers[0].start() if markers else end

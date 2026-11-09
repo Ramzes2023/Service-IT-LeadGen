@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
+from datetime import datetime, timezone
 
 import pytest
 
@@ -30,7 +31,7 @@ def config():
         "SERVICEIT_AI_PROVIDER": "routerai",
         "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED": "YES",
         "SERVICEIT_ROUTERAI_PRIVACY_APPROVED": "YES_1062_21",
-        "SERVICEIT_VPS_B2B_ACTIVATION_UTC": "2026-11-09T00:00:00Z",
+        "SERVICEIT_VPS_B2B_ACTIVATION_UTC": datetime.now(timezone.utc).isoformat(),
     }
 
 

@@ -20,6 +20,7 @@ def test_health_never_has_secrets(monkeypatch):
 
 def test_public_ingress_rejects_bad_transport(monkeypatch):
     monkeypatch.setenv("SERVICEIT_VPS_B2B_RECEIVER_ENABLED","YES")
+    monkeypatch.setattr(ingress,"secret_file", lambda env,name:"synthetic-only-signing-key-1234567890")
     client=TestClient(ingress.app)
     assert client.post("/integrations/serviceit/b2b-center/notice",
                        data="{}",headers={"content-type":"text/plain"}).status_code==415

@@ -102,8 +102,8 @@ jobs:
           age=pg.get('poll_age_sec')
           if pg.get('ready') is not True:
               faults.append('POSTGRES_UNVERIFIED')
-          if type(age) is not int or age>1200 or age<0:
-              faults.append('POLL_OVER_20_MIN')
+          if type(age) is not int or age>720 or age<0:
+              faults.append('POLL_OVER_12_MIN')
           for key in ('pending','review','uncertain'):
               if type(pg.get(key)) is not int:
                   faults.append('PG_'+key+'_UNKNOWN')

@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   guarded-b2b-hold:
-    if: ${{ github.event.issue.number == 66 && !github.event.issue.pull_request && github.actor == 'Ramzes2023' && startsWith(github.event.comment.body, 'SERVICEIT_B2B_NOTICE_V1') }}
+    if: ${{ github.event.issue.number == 66 && !github.event.issue.pull_request && github.actor == 'Ramzes2023' && vars.SERVICEIT_VPS_CUTOVER_ACTIVE == 'NO' && startsWith(github.event.comment.body, 'SERVICEIT_B2B_NOTICE_V1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

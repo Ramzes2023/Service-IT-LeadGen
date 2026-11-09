@@ -17,6 +17,7 @@ jobs:
   source-to-direct-id:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE == 'NO' &&
       github.event.issue.number == 66 &&
       !github.event.issue.pull_request &&
       github.actor == 'Ramzes2023' &&

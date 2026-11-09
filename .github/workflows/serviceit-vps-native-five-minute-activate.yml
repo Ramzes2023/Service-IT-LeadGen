@@ -1,0 +1,153 @@
+name: ServiceIT VPS switch native Bitrix + aux + business to 5-minute cycles ONLY
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type ENABLE_VPS_NATIVE_FIVE_MINUTE_1062_21"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-five-minute-native-cutover
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'ENABLE_VPS_NATIVE_FIVE_MINUTE_1062_21')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.action == 'created' &&
+         github.event.issue.number == 307 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_VPS_SWITCH_TO_FIVE_MINUTES_307_20261109')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compile reviewed Python and prepare exact old/new SHA256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            leadpilot/serviceit_vps_worker.py \
+            leadpilot/serviceit_vps_native_aux.py \
+            leadpilot/serviceit_vps_native_business.py \
+            ops/serviceit_vps_five_minute_activate.py
+          python - <<'PY'
+          from pathlib import Path
+          import base64,hashlib,json,subprocess
+          base="ac7d88ed40bb5d1a4643f8c6c16e6575c45b44d8"
+          paths={
+              'core':'leadpilot/serviceit_vps_worker.py',
+              'aux':'leadpilot/serviceit_vps_native_aux.py',
+              'business':'leadpilot/serviceit_vps_native_business.py',
+          }
+          digest=lambda x: hashlib.sha256(x).hexdigest()
+          out={}
+          for group,path in paths.items():
+              before=subprocess.check_output(['git','show',base+':'+path])
+              after=Path(path).read_bytes()
+              assert before!=after
+              assert b'INTERVAL_SECONDS = 600' in before
+              assert b'INTERVAL_SECONDS = 300' in after
+              out[group]={'old':digest(before),'new':digest(after)}
+          Path('/tmp/serviceit-five-minute-manifest.b64').write_text(
+              base64.b64encode(json.dumps(out,sort_keys=True).encode()).decode())
+          PY
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-five-minute"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-five-minute/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-five-minute/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-five-minute/"*
+          ssh-keygen -F "$VPS_HOST" \
+            -f "$RUNNER_TEMP/serviceit-five-minute/known_hosts" >/dev/null
+
+      - name: Stage only three reviewed non-secret Python files on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="$RUNNER_TEMP/serviceit-five-minute/id"
+          known="$RUNNER_TEMP/serviceit-five-minute/known_hosts"
+          destination="$VPS_USER@$VPS_HOST"
+          ssh -i "$identity" -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o UserKnownHostsFile="$known" \
+            -o BatchMode=yes "$destination" \
+            'umask 077; install -d -m 0700 "$HOME/serviceit/staging/native-5min-20261109"'
+          scp -i "$identity" -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o UserKnownHostsFile="$known" \
+            -o BatchMode=yes leadpilot/serviceit_vps_worker.py \
+            "$destination:serviceit/staging/native-5min-20261109/core.py"
+          scp -i "$identity" -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o UserKnownHostsFile="$known" \
+            -o BatchMode=yes leadpilot/serviceit_vps_native_aux.py \
+            "$destination:serviceit/staging/native-5min-20261109/aux.py"
+          scp -i "$identity" -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes -o UserKnownHostsFile="$known" \
+            -o BatchMode=yes leadpilot/serviceit_vps_native_business.py \
+            "$destination:serviceit/staging/native-5min-20261109/business.py"
+
+      - name: Deploy exact code overlays offline and restart only three native services
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(cat /tmp/serviceit-five-minute-manifest.b64)"
+          ssh -T -i "$RUNNER_TEMP/serviceit-five-minute/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-five-minute/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "python3 - '$manifest'" \
+            < ops/serviceit_vps_five_minute_activate.py \
+            > "$RUNNER_TEMP/serviceit-five-minute/status.txt"
+          grep -E '^VPS_5MIN_[A-Z0-9_]+=(PASS|YES|OFF|ZERO|300|3600_UNCHANGED|86400_UNCHANGED|SUCCESS|BLOCKED_[A-Z0-9_]+|ORIGINAL_IMAGES_RESTORED|MANUAL_REVIEW_REQUIRED)$' \
+            "$RUNNER_TEMP/serviceit-five-minute/status.txt" \
+            > "$RUNNER_TEMP/serviceit-five-minute/safe.txt" || true
+          cat "$RUNNER_TEMP/serviceit-five-minute/safe.txt"
+          grep -qx 'VPS_5MIN_CUTOVER=SUCCESS' \
+            "$RUNNER_TEMP/serviceit-five-minute/safe.txt"
+
+      - name: Record sanitized 5min VPS deployment result in Issue 307
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/serviceit-five-minute/status.txt"
+          if [[ -f "$f" ]]; then
+            summary="$(grep -E '^VPS_5MIN_[A-Z0-9_]+=(PASS|YES|OFF|ZERO|300|3600_UNCHANGED|86400_UNCHANGED|SUCCESS|BLOCKED_[A-Z0-9_]+|ORIGINAL_IMAGES_RESTORED|MANUAL_REVIEW_REQUIRED)$' "$f" | head -35 || true)"
+          else
+            summary="VPS_5MIN_CUTOVER=UNVERIFIED"
+          fi
+          [[ -n "$summary" ]] || summary="VPS_5MIN_CUTOVER=UNVERIFIED"
+          body="$(printf 'Переключение 10→5 минут для VPS+Bitrix24 (без включения источников):\n\n%s\n\nGitHub Actions: https://github.com/%s/actions/runs/%s\n\nПроверяются только три контейнера: coordinator, auxiliaries, business. ФНС ежедневная, observer почасовой. Реальную частоту подтвердим отдельными timestamp-логами через два цикла. Нет тестовых карточек, исходящих контактов и прямой записи CRM из GitHub.' "$summary" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/307/comments" -X POST \
+            --raw-field "body=$body" >/dev/null || true

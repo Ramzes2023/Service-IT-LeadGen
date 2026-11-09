@@ -263,8 +263,17 @@ function parseEmailMessage_(message, messageId) {
   const headers = messageHeaders_(message);
   const from = String(headers.from || "");
   const senderMatch = from.match(/<?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})>?/i);
-  if (!senderMatch || !senderMatch[1].toLowerCase().endsWith("@" + SERVICEIT_CONFIG.senderDomain)) {
+  if (!senderMatch || senderMatch[1].toLowerCase() !== "marketplace@b2b-center.ru") {
     throw new Error("SERVICEIT_SENDER_NOT_VENDOR");
+  }
+  // These are Gmail MX authentication headers, not vendor-supplied claims.
+  const auth = String(headers["authentication-results"] || "");
+  if (!/mx\.google\.com\s*;/i.test(auth) ||
+      !/\bdkim=pass\b/i.test(auth) ||
+      !/\bheader\.i=@b2b-center\.ru\b/i.test(auth) ||
+      !/\bdmarc=pass\b/i.test(auth) ||
+      !/\bheader\.from=b2b-center\.ru\b/i.test(auth)) {
+    throw new Error("SERVICEIT_GMAIL_DKIM_DMARC_NOT_VERIFIED");
   }
   const internalDate = Number(message.internalDate || 0);
   if (!Number.isFinite(internalDate) || internalDate <= 0) {

@@ -65,7 +65,7 @@ jobs:
             -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/svcit-finance-diagnostic/known_hosts" \
             -o BatchMode=yes -o ConnectTimeout=15 \
-            "$VPS_USER@$VPS_HOST" 'docker exec serviceit-leadgen-vps-business-1 python -' \
+            "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-leadgen-vps-business-1 python -' \
             > "$RUNNER_TEMP/svcit-finance-diagnostic/status.txt" <<'PY'
           import os
           import re

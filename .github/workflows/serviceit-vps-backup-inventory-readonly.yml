@@ -1,0 +1,193 @@
+name: ServiceIT VPS backup inventory & archive integrity READONLY
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type AUDIT_VPS_PG_BACKUP_READONLY_290"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-backup-readonly
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'AUDIT_VPS_PG_BACKUP_READONLY_290')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.action == 'created' &&
+         github.event.issue.number == 290 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_VPS_BACKUP_READONLY_290')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+    steps:
+      - name: Validate owner pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-backup"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-backup/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-backup/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-backup/"*
+
+      - name: Read-only host and sealed archive probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-backup/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-backup/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            > "$RUNNER_TEMP/serviceit-backup/result.txt" <<'PY'
+          import json,os,re,stat,subprocess,time
+          from pathlib import Path
+          ROOT=Path('/var/backups/serviceit')
+          def proc(argv,timeout=35):
+              try:
+                  p=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                                   text=True,timeout=timeout)
+                  return p.stdout.strip() if p.returncode==0 else None
+              except (OSError,subprocess.TimeoutExpired):
+                  return None
+          def emit(k,v):
+              v=str(v)
+              if not re.fullmatch(r'[A-Z0-9_.+-]{1,70}',v):v='UNVERIFIED'
+              print('BACKUP_'+k+'='+v,flush=True)
+          emit('HOST_PG_DUMP_TOOL','YES' if proc(['pg_dump','--version']) else 'NO')
+          emit('HOST_PG_RESTORE_TOOL','YES' if proc(['pg_restore','--version']) else 'NO')
+          emit('HOST_BACKUP_DIRECTORY_EXISTS','YES' if ROOT.is_dir() else 'NO')
+          emit('HOST_BACKUP_USER_ACCESS','YES' if os.access(ROOT,os.R_OK|os.X_OK) else 'NO')
+          emit('LOCAL_POSTGRES_IMAGE','YES' if proc(['docker','image','inspect','-f','{{.Id}}',
+                                                   'postgres:16-alpine']) else 'NO')
+          cap=proc(['docker','inspect','-f','{{.Image}}',
+                    'serviceit-leadgen-vps-coordinator-1'])
+          emit('COORDINATOR_IMAGE_PRESENT','YES' if cap and
+               re.fullmatch(r'sha256:[a-f0-9]{64}',cap) else 'NO')
+          cmd = r'''
+          import json,os,stat,time
+          from pathlib import Path
+          p=Path('/backup')
+          result={'accessible':False}
+          try:
+              files=[x for x in p.iterdir() if x.is_file() and not x.is_symlink()
+                     and x.suffix.lower() in ('.dump','.backup','.pgdump','.custom')]
+              result['accessible']=True
+              result['files']=len(files)
+              if files:
+                  recent=max(files,key=lambda x:x.stat().st_mtime)
+                  st=recent.stat()
+                  result['latest_age_hours']=max(0,int((time.time()-st.st_mtime)//3600))
+                  result['latest_bytes']=st.st_size
+                  with recent.open('rb') as f:
+                      result['pgdump_magic']=f.read(5)==b'PGDMP'
+          except Exception:
+              pass
+          print(json.dumps(result))
+          '''
+          if cap and ROOT.is_dir():
+              raw=proc(['docker','run','--rm','--pull','never','--network','none',
+                        '--read-only','--user','0:0','--pids-limit','64',
+                        '--memory','256m','--cap-drop','ALL','--cap-add','DAC_OVERRIDE',
+                        '--mount','type=bind,source=/var/backups/serviceit,target=/backup,readonly',
+                        '--entrypoint','python',cap,'-c',cmd],timeout=65)
+              try:
+                  data=json.loads(raw or '{}')
+              except (ValueError,TypeError):
+                  data={}
+              emit('ISOLATED_INVENTORY_READABLE','YES' if data.get('accessible') else 'NO')
+              n=data.get('files')
+              emit('ARCHIVE_COUNT',n if isinstance(n,int) and 0<=n<=10000 else 'UNVERIFIED')
+              v=data.get('latest_age_hours')
+              emit('NEWEST_AGE_HOURS',v if isinstance(v,int) and 0<=v<=999999 else 'UNVERIFIED')
+              v=data.get('latest_bytes')
+              emit('NEWEST_SIZE_BYTES',v if isinstance(v,int) and 0<=v<=2**42 else 'UNVERIFIED')
+              emit('NEWEST_PGDUMP_FORMAT','YES' if data.get('pgdump_magic') is True else 'NO_OR_UNVERIFIED')
+          else:
+              emit('ISOLATED_INVENTORY_READABLE','NO')
+          # pg_restore -l parses backup TOC, no SQL execution, offline & mounted read-only.
+          if proc(['docker','image','inspect','-f','{{.Id}}','postgres:16-alpine']) and ROOT.is_dir():
+              script=r'''
+          set -eu
+          chosen=""
+          for entry in /backup/*; do
+            [ -f "$entry" ] || continue
+            [ ! -L "$entry" ] || continue
+            case "$entry" in *.dump|*.backup|*.pgdump|*.custom) chosen="$entry";; esac
+          done
+          if [ -n "$chosen" ] && pg_restore --list "$chosen" >/dev/null 2>&1; then
+            echo PG_RESTORE_TOC_VERIFIED
+          else
+            echo PG_RESTORE_TOC_UNVERIFIED
+          fi
+          '''
+              raw=proc(['docker','run','--rm','--pull','never','--network','none',
+                        '--read-only','--user','0:0','--pids-limit','64','--memory','256m',
+                        '--cap-drop','ALL','--cap-add','DAC_OVERRIDE',
+                        '--mount','type=bind,source=/var/backups/serviceit,target=/backup,readonly',
+                        '--entrypoint','sh','postgres:16-alpine','-c',script],timeout=75)
+              emit('OFFLINE_PG_RESTORE_TOC','YES' if raw=="PG_RESTORE_TOC_VERIFIED"
+                   else 'NO_OR_UNVERIFIED')
+          else:
+              emit('OFFLINE_PG_RESTORE_TOC','NOT_TESTABLE')
+          for kind in ('serviceit-backup.timer','serviceit-postgres-backup.timer'):
+              res=proc(['systemctl','is-enabled',kind])
+              emit('TIMER_'+('A' if kind.endswith('backup.timer') and 'postgres' not in kind else 'B'),
+                   'YES' if res=='enabled' else 'NO_OR_UNVERIFIED')
+          timers=proc(['systemctl','list-timers','--all','--no-pager','--plain'],20)
+          emit('BACKUP_TIMER_VISIBLE','YES' if timers and
+               any(('backup' in s.lower() and 'serviceit' in s.lower())
+                   for s in timers.splitlines()) else 'NO_OR_UNVERIFIED')
+          emit('FULL_RESTORE_ISOLATED','NOT_YET_TESTED')
+          emit('CRM_WRITES','ZERO')
+          emit('SOURCES_CHANGED','NO')
+          emit('BACKUP_AUDIT_COMPLETE','YES')
+          PY
+          grep -E '^BACKUP_[A-Z0-9_]+=[A-Z0-9_.+-]{1,70}$' \
+            "$RUNNER_TEMP/serviceit-backup/result.txt" | tee "$RUNNER_TEMP/serviceit-backup/safe.txt"
+          grep -q '^BACKUP_BACKUP_AUDIT_COMPLETE=YES$' "$RUNNER_TEMP/serviceit-backup/safe.txt"
+
+      - name: Post sanitized backup summary to Issue 290
+        if: always()
+        shell: bash
+        env:
+          REPO: "${{ github.repository }}"
+          RUN_ID: "${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/serviceit-backup/safe.txt"
+          if [[ -f "$f" ]]; then
+            report="$(head -50 "$f")"
+          else
+            report="BACKUP_BACKUP_AUDIT_COMPLETE=UNVERIFIED"
+          fi
+          message="$(printf 'Независимая проверка резервных копий PostgreSQL (только чтение):\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nНет доступа к содержимому CRM или секретам, никакого изменения рабочего PostgreSQL. Результат FULL_RESTORE_ISOLATED=NOT_YET_TESTED не означает проверку восстановления.' "$report" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$message" \
+            >/dev/null || true

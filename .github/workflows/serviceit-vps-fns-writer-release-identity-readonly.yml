@@ -113,11 +113,11 @@ jobs:
                 bool(core["image"]) and core["image"]==aux["image"]))
           print("CORE_AUX_SAME_COMPOSE_PROJECT="+status(
                 core["project"]==aux["project"]=="serviceit-leadgen-vps"))
-          print("AUX_FNS_CRM_RESULT_FLAG="+(
-            execute("docker","exec",NAMES["AUX"],"printenv",
-                    "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED") or "UNVERIFIED"))
-          print("FNS_COLLECTOR_FLAG="+(
-            execute("docker","exec",NAMES["FNS"],"printenv",
-                    "SERVICEIT_VPS_FNS_MSP_ENABLED") or "UNVERIFIED"))
+          for label,name,key in (
+              ("AUX_FNS_CRM_RESULT_FLAG","AUX","SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED"),
+              ("FNS_COLLECTOR_FLAG","FNS","SERVICEIT_VPS_FNS_MSP_ENABLED"),
+          ):
+              value=execute("docker","exec",NAMES[name],"printenv",key)
+              print(label+"="+(value if value in ("YES","NO") else "UNVERIFIED"))
           print("CRM_WRITES_BY_AUDIT=0;CONFIG_CHANGES=0;RESTARTS=0;SOURCES_CHANGED=NO")
           PY

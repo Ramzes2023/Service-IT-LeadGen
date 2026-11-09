@@ -6,7 +6,7 @@ const crypto = require('crypto');
 
 const source = fs.readFileSync(__dirname + '/../Code.gs', 'utf8');
 const EMAIL = 'ramzesisayev444@gmail.com';
-const SECRET = 'synthetic-serviceit-hmac-secret-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SECRET = 'a'.repeat(64); // synthetic 256-bit hex; never production
 const TOKEN = 'synthetic-github-token-not-valid';
 const MID = '1a19b7630301bafb';
 const CUTOVER = Date.now() - 60 * 60 * 1000;

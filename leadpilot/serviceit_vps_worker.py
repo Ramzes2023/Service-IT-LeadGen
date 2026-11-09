@@ -34,7 +34,7 @@ from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS
 
 MAX_ITEMS = 6
-INTERVAL_SECONDS = 600
+INTERVAL_SECONDS = 300
 
 
 def safe_log(payload):
@@ -200,6 +200,7 @@ def main(argv=None) -> int:
             safe_log({"status": "PG_QUEUE_MIGRATION_FAILED", "crm_writes": 0})
             return 2
     while True:
+        cycle_started = time.monotonic()
         try:
             with httpx.Client(trust_env=False, follow_redirects=False) as client:
                 result = run_once(env, client=client)
@@ -212,7 +213,8 @@ def main(argv=None) -> int:
                       "no_blind_retry": True})
             if not args.loop:
                 return 2
-        time.sleep(INTERVAL_SECONDS)
+        # 5 min start-to-start; never overlap cycles or retry uncertain cards.
+        time.sleep(max(0.0, INTERVAL_SECONDS - (time.monotonic() - cycle_started)))
 
 
 if __name__ == "__main__":

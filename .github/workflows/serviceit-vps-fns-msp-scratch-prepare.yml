@@ -1,0 +1,213 @@
+name: ServiceIT VPS FNS-MSP scratch preparation + Bitrix readonly schema
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type PREPARE_FNS_MSP_SCRATCH_ONLY_1062_21'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-fns-msp-scratch
+  cancel-in-progress: false
+
+jobs:
+  scratch-only:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'PREPARE_FNS_MSP_SCRATCH_ONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Verify authenticated non-root SSH and pinned host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-msp-scratch"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-msp-scratch/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-msp-scratch/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-msp-scratch/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-msp-scratch/known_hosts" >/dev/null
+
+      - name: Set up isolated scratch directory only; probe FNS field READONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-msp-scratch/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-msp-scratch/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import re
+          import stat
+          import subprocess
+
+          C = "serviceit-leadgen-vps-coordinator-1"
+          A = "serviceit-leadgen-vps-auxiliaries-1"
+          M = "serviceit-leadgen-vps-fns-msp-1"
+          PARENT = Path("/var/lib/serviceit")
+          SCRATCH = PARENT / "fns-scratch"
+
+          def invoke(*args, timeout=60):
+              try:
+                  return subprocess.run(
+                      args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                      text=True, check=False, timeout=timeout)
+              except (OSError, subprocess.TimeoutExpired):
+                  return None
+
+          def value(*args):
+              proc = invoke(*args)
+              return proc.stdout.strip() if proc is not None and proc.returncode == 0 else ""
+
+          def gate(container, name, expected):
+              actual = value("docker", "exec", container, "printenv", name)
+              if actual != expected:
+                  raise RuntimeError("FNS_SCRATCH_GATE_" + name + "_NOT_READY")
+
+          def safe_state(path):
+              if path.is_symlink():
+                  raise RuntimeError("FNS_SCRATCH_SYMLINK_DENIED")
+              if path.exists():
+                  if not path.is_dir():
+                      raise RuntimeError("FNS_SCRATCH_NOT_DIRECTORY")
+                  s = path.stat()
+                  if s.st_uid not in (0,10001):
+                      raise RuntimeError("FNS_SCRATCH_OWNER_DENIED")
+
+          def field_probe():
+              code = """
+          import json
+          import httpx
+          import os
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_fns_msp_crm_result_writer import FIELD
+          result = dict(status='UNVERIFIED', exists='UNKNOWN',
+                        writable='UNKNOWN', single_string='UNKNOWN')
+          try:
+              base = validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as client:
+                  r = client.post(base+'/crm.item.fields.json',
+                      json={'entityTypeId':1062,'useOriginalUfNames':'Y'})
+              if r.status_code == 200:
+                  data = r.json()
+                  fields = (data.get('result') or {}).get('fields')
+                  if isinstance(fields,dict):
+                      f = fields.get(FIELD)
+                      result['status'] = 'READABLE'
+                      result['exists'] = 'YES' if isinstance(f,dict) else 'NO'
+                      if isinstance(f,dict):
+                          result['writable'] = 'YES' if f.get('isReadOnly') is False else 'NO'
+                          result['single_string'] = ('YES' if f.get('type') == 'string'
+                              and f.get('isMultiple') in (False,None) else 'NO')
+                  else:
+                      result['status']='INVALID_SCHEMA'
+              elif r.status_code in (400,401,403,404,429):
+                  result['status']='HTTP_'+str(r.status_code)
+              else:
+                  result['status']='OTHER_HTTP'
+          except Exception:
+              result['status']='REQUEST_OR_AUTH_FAILED'
+          print(json.dumps(result,sort_keys=True))
+          """
+              proc = invoke("docker", "exec", A, "python", "-c", code, timeout=45)
+              try:
+                  data = json.loads(proc.stdout.strip()) if proc is not None and proc.returncode == 0 else {}
+              except (ValueError,TypeError):
+                  data={}
+              for label in ("status","exists","writable","single_string"):
+                  allowed = (
+                    ("READABLE","INVALID_SCHEMA","HTTP_400","HTTP_401","HTTP_403",
+                     "HTTP_404","HTTP_429","OTHER_HTTP","REQUEST_OR_AUTH_FAILED")
+                    if label=="status" else ("YES","NO","UNKNOWN")
+                  )
+                  val=data.get(label)
+                  print("BITRIX_FNS_FIELD_"+label.upper()+"="+
+                        (val if val in allowed else "UNVERIFIED"),flush=True)
+
+          try:
+              print("FNS_SCRATCH_PREP=START", flush=True)
+              if os.geteuid() == 0:
+                  raise RuntimeError("FNS_SCRATCH_NONROOT_SSH_REQUIRED")
+              for container in (C,A):
+                  health = value("docker","inspect","-f",
+                    "{{.State.Running}}:{{.State.Health.Status}}",container)
+                  if health != "true:healthy":
+                      raise RuntimeError("FNS_SCRATCH_EXISTING_SERVICE_NOT_HEALTHY")
+              gate(C, "SERVICEIT_VPS_WRITER_MODE", "LIVE")
+              gate(C, "SERVICEIT_VPS_POLL_ENABLED", "YES")
+              gate(A, "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED", "NO")
+              gate(A, "SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED", "NO")
+              if value("docker","inspect","-f","{{.State.Running}}",M) == "true":
+                  raise RuntimeError("FNS_SCRATCH_COLLECTOR_ALREADY_RUNNING")
+
+              safe_state(PARENT)
+              safe_state(SCRATCH)
+              for path in (Path("/var"),Path("/var/lib")):
+                  if path.is_symlink() or not path.is_dir():
+                      raise RuntimeError("FNS_SCRATCH_PARENT_PATH_INVALID")
+              st = os.statvfs("/var/lib")
+              space = st.f_bavail*st.f_frsize
+              print("FNS_SCRATCH_FREE_GE_25GB="+
+                    ("YES" if space >= 25*1024**3 else "NO"),flush=True)
+              if space < 25*1024**3:
+                  raise RuntimeError("FNS_SCRATCH_INSUFFICIENT_FREE_SPACE")
+
+              image = value("docker","inspect","-f","{{.Image}}",C)
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}",image):
+                  raise RuntimeError("FNS_SCRATCH_LOCAL_IMAGE_ID_NOT_VERIFIED")
+              if not SCRATCH.exists() or SCRATCH.stat().st_uid != 10001 or \
+                    stat.S_IMODE(SCRATCH.stat().st_mode) != 0o700:
+                  if SCRATCH.exists() and any(SCRATCH.iterdir()):
+                      raise RuntimeError("FNS_SCRATCH_NONEMPTY_NOT_MODIFIED")
+                  # Docker daemon creates EXACT missing bind source directory.
+                  # This one-off container has no network, no secrets, no host root,
+                  # and only CHOWN capability for the dedicated empty scratch mount.
+                  prep = invoke(
+                      "docker","run","--rm","--pull","never","--network","none",
+                      "--read-only","--cap-drop","ALL","--cap-add","CHOWN",
+                      "--security-opt","no-new-privileges:true",
+                      "--pids-limit","64","--user","0:0",
+                      "--volume",str(SCRATCH)+":/fns-scratch:rw",
+                      "--entrypoint","python",image,"-c",
+                      "import os;os.chown('/fns-scratch',10001,10001);"
+                      "os.chmod('/fns-scratch',0o700)"
+                  ,timeout=100)
+                  if prep is None or prep.returncode != 0:
+                      raise RuntimeError("FNS_SCRATCH_DOCKER_PREP_FAILED")
+
+              safe_state(SCRATCH)
+              s = SCRATCH.stat()
+              if s.st_uid != 10001 or s.st_gid != 10001 or \
+                    stat.S_IMODE(s.st_mode) != 0o700:
+                  raise RuntimeError("FNS_SCRATCH_OWNER_MODE_MISMATCH")
+              print("FNS_SCRATCH=PREPARED_UID10001_MODE0700",flush=True)
+              field_probe()
+              print("FNS_COLLECTOR_STARTED=NO;FNS_CRM_WRITER_ENABLED=NO",flush=True)
+              print("CRM_WRITES=0;PG_WRITES=0;SERVICES_RESTARTED=0;SOURCES_CHANGED=NO",flush=True)
+          except Exception as error:
+              message = str(error)
+              if not re.fullmatch(r"[A-Z0-9_]+",message):
+                  message="FNS_SCRATCH_UNVERIFIED"
+              print("FNS_SCRATCH_PREP=BLOCKED_"+message,flush=True)
+              raise SystemExit(2)
+          PY

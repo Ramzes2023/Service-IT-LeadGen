@@ -507,12 +507,43 @@ function activateVpsB2BCenter() {
   if (props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") === "YES") {
     return {status:"ALREADY_ACTIVATED",crm_writes:0};
   }
-  const check = UrlFetchApp.fetch("https://leadgen.serviseit.ru/health", {
-    method:"get",followRedirects:false,validateHttpsCertificates:true,
-    muteHttpExceptions:true
-  });
-  if (!check || check.getResponseCode() !== 200) {
-    throw new Error("SERVICEIT_VPS_HEALTH_UNVERIFIED");
+  const health = UrlFetchApp.fetch(
+    "https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/health", {
+      method:"get",followRedirects:false,validateHttpsCertificates:true,
+      muteHttpExceptions:true
+    });
+  if (!health || health.getResponseCode() !== 200) {
+    throw new Error("SERVICEIT_VPS_B2B_HEALTH_UNVERIFIED");
+  }
+  let healthBody;
+  try { healthBody = JSON.parse(health.getContentText()); }
+  catch (_ignored) { throw new Error("SERVICEIT_VPS_B2B_HEALTH_FORMAT_INVALID"); }
+  if (!healthBody || healthBody.status !== "B2B_INGRESS_ALIVE" ||
+      healthBody.source_enabled !== true || healthBody.crm_writes !== 0) {
+    throw new Error("SERVICEIT_VPS_B2B_RECEIVER_NOT_READY");
+  }
+  // A separate signed, read-only handshake proves the key and PostgreSQL.
+  // It sends no real tender and creates no CRM card or inbox record.
+  const ts = String(Math.floor(Date.now()/1000));
+  const nonce = Utilities.getUuid();
+  const sig = "sha256=" + hmacHex_("v1|b2b-probe|" + ts + "|" + nonce,
+                                  privateConfig_().hmacSecret);
+  const probe = UrlFetchApp.fetch(
+    "https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/probe", {
+      method:"post",contentType:"application/json",
+      payload:JSON.stringify({timestamp:ts,nonce:nonce,signature:sig}),
+      followRedirects:false,validateHttpsCertificates:true,
+      muteHttpExceptions:true
+    });
+  if (!probe || probe.getResponseCode() !== 200) {
+    throw new Error("SERVICEIT_VPS_B2B_HMAC_OR_PG_UNVERIFIED");
+  }
+  let probeBody;
+  try { probeBody=JSON.parse(probe.getContentText()); }
+  catch (_ignored) { throw new Error("SERVICEIT_VPS_B2B_PROBE_FORMAT_INVALID"); }
+  if (!probeBody || probeBody.status !== "B2B_VPS_SIGNED_PROBE_PASS" ||
+      probeBody.crm_writes !== 0) {
+    throw new Error("SERVICEIT_VPS_B2B_PROBE_FAILED");
   }
   // Deliberately start from the activation moment, NEVER mail backlog.
   props.setProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS", String(Date.now()));

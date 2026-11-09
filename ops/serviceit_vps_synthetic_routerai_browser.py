@@ -21,7 +21,7 @@ from leadpilot.serviceit_vps_browser_client import render_approved_url
 def status(name, value):
     if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,65}", name):
         return
-    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,110}", value):
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,110}", value):
         value = "UNVERIFIED"
     print(name + "=" + value, flush=True)
 

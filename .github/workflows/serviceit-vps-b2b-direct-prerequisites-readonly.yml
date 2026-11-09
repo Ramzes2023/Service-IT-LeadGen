@@ -96,6 +96,23 @@ jobs:
                   in c.read_text('utf-8'))
           except (OSError,UnicodeError,PermissionError):
               out('SOURCE_ROUTE_PRESENT',None)
+          # Sanitize Caddy structure as booleans; NEVER print its content.
+          try:
+              import re
+              src=c.read_text('utf-8')
+              site=re.search(r'(?m)^leadgen\\.serviseit\\.ru\\s*\\{',src)
+              if site:
+                  frag=src[site.end():]
+                  out('CADDY_SITE_HEALTH', '/health' in frag)
+                  out('CADDY_SITE_OLD_EVENT', '/integrations/serviceit/bitrix24/new-card' in frag)
+                  out('CADDY_SITE_18780', '127.0.0.1:18780' in frag)
+                  out('CADDY_SITE_HANDLE', bool(re.search(r'(?m)^\\s*handle(?:\\s|$)',frag)))
+                  out('CADDY_SITE_ROUTE', bool(re.search(r'(?m)^\\s*route(?:\\s|$)',frag)))
+                  out('CADDY_SITE_CATCHALL', bool(re.search(r'(?m)^\\s*handle\\s*\\{',frag)))
+              else:
+                  out('CADDY_SITE_FOUND',False)
+          except (OSError,UnicodeError,PermissionError):
+              out('CADDY_SITE_FOUND',None)
           out('SUDO_NONINTERACTIVE',cmd(['sudo','-n','true'])[0]==0)
           print('B2B_PREFLIGHT_DONE=YES')
           PY

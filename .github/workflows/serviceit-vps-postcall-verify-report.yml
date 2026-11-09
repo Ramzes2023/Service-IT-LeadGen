@@ -1,0 +1,170 @@
+name: ServiceIT VPS postcall activation state READONLY reporter
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type VERIFY_VPS_POSTCALL_ONLY_280"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-postcall-verify-report
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'VERIFY_VPS_POSTCALL_ONLY_280')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.action == 'created' &&
+         github.event.issue.number == 280 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_POSTCALL_VERIFY_READONLY_280_20261109')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+    steps:
+      - name: Pin non-root SSH access
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-postcall-state"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-postcall-state/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-postcall-state/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-postcall-state/id" \
+            "$RUNNER_TEMP/serviceit-postcall-state/known_hosts"
+          ssh-keygen -F "$VPS_HOST" \
+            -f "$RUNNER_TEMP/serviceit-postcall-state/known_hosts" >/dev/null
+
+      - name: Read verified business state from VPS (no writes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-postcall-state/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-postcall-state/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            > "$RUNNER_TEMP/serviceit-postcall-state/status.txt" <<'PY'
+          import subprocess
+          def run(args):
+              try:
+                  r=subprocess.run(args, stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL,text=True,timeout=25)
+                  return r.stdout.strip() if r.returncode==0 else ""
+              except (OSError,subprocess.TimeoutExpired):
+                  return ""
+          containers={
+              "BUSINESS":"serviceit-leadgen-vps-business-1",
+              "CORE":"serviceit-leadgen-vps-coordinator-1",
+              "AUX":"serviceit-leadgen-vps-auxiliaries-1",
+              "OBSERVER":"serviceit-leadgen-vps-observer-1",
+              "FNS":"serviceit-leadgen-vps-fns-msp-1",
+          }
+          health={}
+          for label,name in containers.items():
+              result=run(["docker","inspect","-f",
+                        "{{.State.Running}}:{{.State.Health.Status}}",name])
+              health[label]="YES" if result=="true:healthy" else "NO"
+              print("POSTCALL_VERIFY_"+label+"_HEALTH="+health[label])
+          business=containers["BUSINESS"]
+          for label,key in (
+              ("POSTCALL_ENABLED","SERVICEIT_VPS_POSTCALL_ENABLED"),
+              ("FINANCE_ENABLED","SERVICEIT_VPS_FINANCE_ENABLED"),
+              ("POLL_ENABLED","SERVICEIT_VPS_POLL_ENABLED"),
+              ("CUTOVER_AUTHORIZED","SERVICEIT_VPS_CUTOVER_AUTHORIZED"),
+          ):
+              value=run(["docker","exec",business,"printenv",key])
+              print("POSTCALL_VERIFY_"+label+"="+
+                    (value if value in ("YES","NO") else "UNVERIFIED"))
+          pg_script = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          try:
+              with db(dict(os.environ)) as con:
+                  with con.transaction():
+                      with con.cursor() as cur:
+                          cur.execute('SET TRANSACTION READ ONLY')
+                          cur.execute("SELECT to_regclass('public.serviceit_vps_native_actions') IS NOT NULL")
+                          present=cur.fetchone()[0]
+                          if present:
+                              cur.execute("SELECT count(*) FROM serviceit_vps_native_actions "
+                                          "WHERE operation='POSTCALL' AND status='VERIFIED'")
+                              total=int(cur.fetchone()[0])
+                              print('PG_READY=YES')
+                              print('POSTCALL_VERIFIED_COUNT='+str(min(total,1000000)))
+                          else:
+                              print('PG_READY=NO')
+          except Exception:
+              print('PG_READY=UNVERIFIED')
+          """
+          lines=run(["docker","exec",business,"python","-c",pg_script])
+          valid={}
+          for line in lines.splitlines():
+              if line.startswith("PG_READY="):
+                  v=line.split("=",1)[1]
+                  valid["PG_READY"]=v if v in ("YES","NO","UNVERIFIED") else "UNVERIFIED"
+              if line.startswith("POSTCALL_VERIFIED_COUNT="):
+                  v=line.split("=",1)[1]
+                  if v.isdecimal() and int(v)<=1000000:
+                      valid["POSTCALL_VERIFIED_COUNT"]=v
+          print("POSTCALL_VERIFY_PG_READY="+valid.get("PG_READY","UNVERIFIED"))
+          print("POSTCALL_VERIFY_PREVIOUSLY_PROCESSED="+
+                valid.get("POSTCALL_VERIFIED_COUNT","UNVERIFIED"))
+          ready=(health["BUSINESS"]=="YES" and
+                 run(["docker","exec",business,"printenv","SERVICEIT_VPS_POSTCALL_ENABLED"])=="YES" and
+                 run(["docker","exec",business,"printenv","SERVICEIT_VPS_FINANCE_ENABLED"])=="NO" and
+                 valid.get("PG_READY")=="YES")
+          print("POSTCALL_VERIFY_ACTIVATION_CONFIRMED="+("YES" if ready else "NO"))
+          print("POSTCALL_VERIFY_CRM_WRITES=0;TASKS_CREATED=0;RESTARTS=0")
+          PY
+          # Show only explicitly allowlisted, short key/value summaries.
+          grep -E '^POSTCALL_VERIFY_[A-Z_]+=(YES|NO|UNVERIFIED|[0-9]{1,7})$' \
+            "$RUNNER_TEMP/serviceit-postcall-state/status.txt" || true
+          grep -F 'POSTCALL_VERIFY_CRM_WRITES=0;TASKS_CREATED=0;RESTARTS=0' \
+            "$RUNNER_TEMP/serviceit-postcall-state/status.txt" || true
+
+      - name: Report sanitized verification in owner issue 280
+        if: always()
+        shell: bash
+        env:
+          RUN_ID: "${{ github.run_id }}"
+          REPO: "${{ github.repository }}"
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/serviceit-postcall-state/status.txt"
+          if [[ -f "$report" ]]; then
+            summary="$(grep -E '^POSTCALL_VERIFY_(ACTIVATION_CONFIRMED|POSTCALL_ENABLED|FINANCE_ENABLED|BUSINESS_HEALTH|CORE_HEALTH|AUX_HEALTH|OBSERVER_HEALTH|FNS_HEALTH|PG_READY|PREVIOUSLY_PROCESSED)=(YES|NO|UNVERIFIED|[0-9]{1,7})$' "$report" || true)"
+          else
+            summary="POSTCALL_VERIFY_ACTIVATION_CONFIRMED=UNVERIFIED"
+          fi
+          if [[ -z "$summary" ]]; then
+            summary="POSTCALL_VERIFY_ACTIVATION_CONFIRMED=UNVERIFIED"
+          fi
+          body="$(printf 'Проверка автоматизации после звонка (только чтение VPS):\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nНикаких CRM-записей, задач и перезапусков в этой проверке.' "$summary" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/280/comments" -X POST --raw-field "body=$body" \
+            >/dev/null

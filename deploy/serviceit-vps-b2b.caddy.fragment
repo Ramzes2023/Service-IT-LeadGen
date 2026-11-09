@@ -1,0 +1,12 @@
+# Include these lines INSIDE the EXISTING leadgen.serviseit.ru Caddy site
+# BEFORE its catch-all 404 handler. Do NOT replace the current site, TLS
+# settings or corporate routes. Test with "caddy validate" before reload.
+@serviceit_b2b_direct {
+    path /integrations/serviceit/b2b-center/notice /integrations/serviceit/b2b-center/probe /integrations/serviceit/b2b-center/health
+}
+handle @serviceit_b2b_direct {
+    request_body {
+        max_size 6KB
+    }
+    reverse_proxy 127.0.0.1:18781
+}

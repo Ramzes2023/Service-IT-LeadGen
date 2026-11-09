@@ -19,6 +19,7 @@ jobs:
   guarded-b2b-hold:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      vars.SERVICEIT_VPS_CUTOVER_ACTIVE == 'NO' &&
       github.ref == 'refs/heads/main' &&
       github.event.action == 'serviceit_b2b_notice' &&
       vars.SERVICEIT_B2B_INGEST_ENABLED == 'YES'

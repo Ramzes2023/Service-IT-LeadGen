@@ -46,6 +46,34 @@ def test_caddy_valid_production_no_catchall_is_supported():
     assert render(after) == after
 
 
+def test_caddy_native_bitrix_poll_site_does_not_need_inbound_event_route():
+    """The real VPS uses REST polling and has no /new-card ingress."""
+    old = (BASE / "deploy/serviceit-vps.caddy.example").read_text("utf-8")
+    old = old.replace(
+        '    @bitrix_event {\n'
+        '        method POST\n'
+        '        path /integrations/serviceit/bitrix24/new-card\n'
+        '    }\n'
+        '    handle @bitrix_event {\n'
+        '        request_body {\n'
+        '            max_size 16KB\n'
+        '        }\n'
+        '        reverse_proxy 127.0.0.1:18780\n'
+        '    }\n',
+        ""
+    )
+    old = old.replace('    handle {\n        respond "Not Found" 404\n    }\n', '')
+    assert "/integrations/serviceit/bitrix24/new-card" not in old
+    assert "/health" in old
+    assert "127.0.0.1:18780" in old
+    after = render(old)
+    assert after != old
+    assert after.count("reverse_proxy 127.0.0.1:18780") == 1
+    assert after.count("reverse_proxy 127.0.0.1:18781") == 1
+    assert after.index("handle @serviceit_b2b_direct") < after.rindex("\n}")
+    assert render(after) == after
+
+
 def test_caddy_valid_tabs_or_two_space_catchall_is_supported():
     old = (BASE / "deploy/serviceit-vps.caddy.example").read_text("utf-8")
     old = old.replace('    handle {\n        respond "Not Found" 404\n    }',
@@ -60,8 +88,8 @@ def test_caddy_fails_closed_on_unknown_site_or_missing_routes():
     old = (BASE / "deploy/serviceit-vps.caddy.example").read_text("utf-8")
     for bad in (
         old.replace("leadgen.serviseit.ru", "unknown.example"),
-        old.replace("@bitrix_event", "@another_event").replace(
-            "/integrations/serviceit/bitrix24/new-card", "/other-path"),
+        old.replace("/health", "/missing_health"),
+        old.replace("127.0.0.1:18780", "127.0.0.1:99999"),
         old + old,
     ):
         with pytest.raises(ActivationBlocked):

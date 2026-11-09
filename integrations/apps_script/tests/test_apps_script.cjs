@@ -28,6 +28,8 @@ function message(id=MID, options={}) {
     payload: {
       headers: [
         {name:'From', value: options.from || 'B2B-Center <marketplace@b2b-center.ru>'},
+        {name:'Authentication-Results',
+         value: options.auth || 'mx.google.com; dkim=pass header.i=@b2b-center.ru; dmarc=pass header.from=b2b-center.ru'},
         {name:'Subject', value:'Новые закупки B2B-Center'}
       ],
       mimeType:'text/plain',
@@ -290,6 +292,15 @@ test('spoofed sender domain is rejected and not dispatched',()=>{
   const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'},
     message:message(MID,{from:'marketplace@b2b-center.ru.evil.test'})});
   const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.review_required,1);
+  assert.strictEqual(e.calls.dispatch.length,0);
+});
+
+test('spoofed Gmail authentication result cannot dispatch',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'},
+    message:message(MID,{auth:'mx.google.com; dkim=fail; dmarc=fail'})});
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.dispatched,0);
   assert.strictEqual(result.review_required,1);
   assert.strictEqual(e.calls.dispatch.length,0);
 });

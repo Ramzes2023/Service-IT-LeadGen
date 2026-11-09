@@ -169,6 +169,7 @@ def test_continuous_four_items_without_manual_restart(monkeypatch):
         yield object()
     monkeypatch.setattr(bridge, "db", fake_db)
     monkeypatch.setattr(bridge, "migrate", lambda conn: None)
+    monkeypatch.setattr(bridge, "statistics", lambda conn: {"PENDING": 2})
     monkeypatch.setattr(bridge, "preflight", lambda *args: None)
     monkeypatch.setattr(bridge, "ReadOnlyBitrix", lambda *a, **kw: object())
     monkeypatch.setattr(bridge, "secret_file", lambda *a: "synthetic")
@@ -184,6 +185,7 @@ def test_continuous_four_items_without_manual_restart(monkeypatch):
     assert result["batch_processed"] == 4
     assert result["new_holds"] == 3
     assert result["existing"] == 1
+    assert result["queue_counts"]["PENDING"] == 2
     result2 = bridge.worker_once({}, client=object())
     assert result2["new_holds"] == 1
     assert result2["batch_processed"] == 2
@@ -197,6 +199,7 @@ def test_rolling_throttle_only_defers_not_terminates_service(monkeypatch):
         yield object()
     monkeypatch.setattr(bridge, "db", fake_db)
     monkeypatch.setattr(bridge, "migrate", lambda conn: None)
+    monkeypatch.setattr(bridge, "statistics", lambda conn: {"PENDING": 2})
     monkeypatch.setattr(bridge, "preflight", lambda *args: None)
     monkeypatch.setattr(bridge, "ReadOnlyBitrix", lambda *a, **kw: object())
     monkeypatch.setattr(bridge, "secret_file", lambda *a: "synthetic")

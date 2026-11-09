@@ -242,3 +242,51 @@ def test_task_report_never_claims_manager_comment_as_bank_verified():
     assert "не являются банковским подтверждением" in text
     assert "ВЫПЛАТЫ НЕ РАЗРЕШЕНЫ" in text
     assert "600.00 ₽" in text
+
+
+def test_native_finance_deal_list_accepts_future_only_activation_filter():
+    """The cloud's fixed CUTOVER must not block the later VPS activation."""
+    from datetime import timedelta
+    selected=m.CUTOVER+timedelta(days=2)
+    calls=[]
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200,json={"result":[]})
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result=m.call(client,"https://serviseit.bitrix24.ru/rest/1/redacted",
+                      "crm.deal.list",{
+                          "filter":{"CATEGORY_ID":4,"STAGE_SEMANTIC_ID":"S",
+                                    ">=DATE_CREATE":selected.isoformat()},
+                          "select":["ID","CATEGORY_ID","STAGE_SEMANTIC_ID","DATE_CREATE"],
+                          "start":0,
+                      })
+    assert result["result"]==[] and len(calls)==1
+
+
+def test_native_finance_deal_list_rejects_historic_or_future_cutover():
+    from datetime import timedelta
+    values=[
+        (m.CUTOVER-timedelta(minutes=1)).isoformat(),
+        (datetime.now(timezone.utc)+timedelta(days=2)).isoformat(),
+        "2026-11-08T00:00:00",
+        "not-a-timestamp",
+    ]
+    for value in values:
+        with pytest.raises(m.FinanceWorkerBlocked,match="OUTSIDE_SCOPE"):
+            m.call(None,"","crm.deal.list",{
+                "filter":{"CATEGORY_ID":4,"STAGE_SEMANTIC_ID":"S",
+                          ">=DATE_CREATE":value},
+                "select":["ID","CATEGORY_ID","STAGE_SEMANTIC_ID","DATE_CREATE"],
+                "start":0,
+            })
+
+
+def test_native_finance_deal_list_rejects_extra_filter_keys():
+    value=(m.CUTOVER).isoformat()
+    with pytest.raises(m.FinanceWorkerBlocked,match="OUTSIDE_SCOPE"):
+        m.call(None,"","crm.deal.list",{
+            "filter":{"CATEGORY_ID":4,"STAGE_SEMANTIC_ID":"S",
+                      ">=DATE_CREATE":value,"COMPANY_ID":55},
+            "select":["ID","CATEGORY_ID","STAGE_SEMANTIC_ID","DATE_CREATE"],
+            "start":0,
+        })

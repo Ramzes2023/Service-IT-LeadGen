@@ -1,0 +1,325 @@
+name: ServiceIT VPS finance one-file patch (business only, finance stays OFF)
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type PATCH_VPS_BUSINESS_FINANCE_FILTER_ONLY_283"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-business-finance-enable-only
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.approval == 'PATCH_VPS_BUSINESS_FINANCE_FILTER_ONLY_283')
+        ||
+        (github.event_name == 'issue_comment' &&
+          github.event.issue.number == 283 &&
+          !github.event.issue.pull_request &&
+          github.event.comment.user.login == 'Ramzes2023' &&
+          github.event.comment.body == 'SVCIT_DEPLOY_FINANCE_FILTER_PATCH_ONLY_283')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify source and pinned non-root SSH access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile leadpilot/serviceit_finance_hybrid_live_worker.py
+          grep -F 'threshold_ok' leadpilot/serviceit_finance_hybrid_live_worker.py >/dev/null
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-finance-patch"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-finance-patch/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-finance-patch/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-finance-patch/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-finance-patch/known_hosts" >/dev/null
+      - name: Transfer only reviewed finance Python module (no secrets or customer files)
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="$VPS_USER@$VPS_HOST"
+          ssh -i "$RUNNER_TEMP/serviceit-finance-patch/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-finance-patch/known_hosts" \
+            -o BatchMode=yes "$remote" \
+            'umask 077; install -d -m 0700 "$HOME/serviceit/staging/finance-filter-only-20261109"'
+          scp -i "$RUNNER_TEMP/serviceit-finance-patch/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-finance-patch/known_hosts" \
+            -o BatchMode=yes leadpilot/serviceit_finance_hybrid_live_worker.py \
+            "$remote:serviceit/staging/finance-filter-only-20261109/worker.py"
+      - name: Build isolated original-image derivative, preserve postcall, finance stays OFF
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(sha256sum leadpilot/serviceit_finance_hybrid_live_worker.py | cut -d' ' -f1)"
+          ssh -T -i "$RUNNER_TEMP/serviceit-finance-patch/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-finance-patch/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "python3 - '$expected'" \
+            > "$RUNNER_TEMP/serviceit-finance-patch/status.txt" <<'PY'
+          import fcntl
+          import hashlib
+          import json
+          import os
+          import re
+          import stat
+          import subprocess
+          import tempfile
+          import time
+          from pathlib import Path
+
+          CORE="serviceit-leadgen-vps-coordinator-1"
+          BUSINESS="serviceit-leadgen-vps-business-1"
+          ALL=[CORE, BUSINESS,
+               "serviceit-leadgen-vps-auxiliaries-1",
+               "serviceit-leadgen-vps-observer-1",
+               "serviceit-leadgen-vps-fns-msp-1"]
+          HOME=Path.home()
+          ENV=HOME/"serviceit/config/vps.env"
+          PIN=ENV.parent/"postcall-business-pinned.compose.yml"
+          WORK=HOME/"serviceit/staging/finance-filter-only-20261109"
+          FILE=WORK/"worker.py"
+          LOCK=ENV.parent/".serviceit-finance-patch.lock"
+          EXPECTED=__import__("sys").argv[1]
+          BASE="serviceit-business-finance-base:fixed-20261109"
+          TAG="serviceit-business-finance:filter-fix-20261109"
+          RELEASES=(HOME/"serviceit/releases").resolve()
+          class Blocked(Exception): pass
+          def need(ok,code):
+              if not ok:raise Blocked(code)
+          def process(args,timeout=50):
+              try:
+                  return subprocess.run(args,stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL,text=True,timeout=timeout)
+              except (OSError,subprocess.TimeoutExpired):
+                  raise Blocked("REMOTE_COMMAND_TIMEOUT")
+          def out(args,timeout=50):
+              x=process(args,timeout)
+              need(x.returncode==0,"REMOTE_COMMAND_FAILED")
+              return x.stdout.strip()
+          def inspect(name,fmt):return out(["docker","inspect","-f",fmt,name])
+          def flag(name,key):return out(["docker","exec",name,"printenv",key])
+          def health(name):
+              try:
+                  return inspect(name,
+                    "{{.State.Running}}:{{.State.Health.Status}}")=="true:healthy"
+              except Blocked:return False
+          def current_image(name):
+              result=inspect(name,"{{.Image}}")
+              need(re.fullmatch(r"sha256:[a-f0-9]{64}",result) is not None,
+                   "ORIGINAL_IMAGE_DIGEST_UNVERIFIED")
+              return result
+          def private(path):
+              need(path.is_file() and not path.is_symlink(),"PRIVATE_CONFIG_MISSING")
+              s=path.stat()
+              need(s.st_uid==os.geteuid() and not(stat.S_IMODE(s.st_mode)&0o077),
+                   "PRIVATE_CONFIG_PERMISSIONS_UNVERIFIED")
+          def write_pin(raw):
+              fd,path=tempfile.mkstemp(prefix=".pin-finance-",dir=PIN.parent)
+              try:
+                  with os.fdopen(fd,"w",encoding="utf-8") as file:
+                      os.fchmod(file.fileno(),0o600)
+                      file.write(raw);file.flush();os.fsync(file.fileno())
+                  os.replace(path,PIN)
+              finally:
+                  try:os.unlink(path)
+                  except FileNotFoundError:pass
+          def command(compose,*args):
+              return ["docker","compose","--env-file",str(ENV),
+                      "-f",str(compose),"-f",str(PIN),*args]
+          original_pin=None
+          compose=None
+          modified=False
+          oldimage=None
+          try:
+              print("FINANCE_IMAGE_PATCH=START",flush=True)
+              need(os.geteuid()!=0,"ROOT_NOT_ALLOWED")
+              with LOCK.open("a") as f:
+                  os.chmod(LOCK,0o600)
+                  fcntl.flock(f.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                  need(re.fullmatch(r"[a-f0-9]{64}",EXPECTED) is not None,
+                       "SOURCE_DIGEST_INVALID")
+                  need(FILE.is_file() and not FILE.is_symlink()
+                       and FILE.stat().st_size<200000,
+                       "SOURCE_FILE_NOT_PRESENT")
+                  need(hashlib.sha256(FILE.read_bytes()).hexdigest()==EXPECTED,
+                       "SOURCE_DIGEST_NOT_VERIFIED")
+                  for name in ALL:
+                      need(health(name),"PRODUCTION_CONTAINER_UNHEALTHY")
+                  for k,v in (("SERVICEIT_VPS_WRITER_MODE","LIVE"),
+                               ("SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES"),
+                               ("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK","YES"),
+                               ("SERVICEIT_VPS_POLL_ENABLED","YES")):
+                      need(flag(CORE,k)==v,"NATIVE_CUTOVER_GATE_MISSING")
+                  need(flag(BUSINESS,"SERVICEIT_VPS_POSTCALL_ENABLED")=="YES"
+                       and flag(BUSINESS,"SERVICEIT_VPS_FINANCE_ENABLED")=="NO",
+                       "BUSINESS_POSTCALL_FINANCE_FLAGS_CHANGED")
+                  private(ENV);private(PIN)
+                  original_pin=PIN.read_text("utf8")
+                  oldimage=current_image(BUSINESS)
+                  need(original_pin=='services:\n  business:\n    image: "'+
+                       oldimage+'"\n    pull_policy: never\n',
+                       "EXISTING_BUSINESS_IMAGE_PIN_MISMATCH")
+                  refs=inspect(BUSINESS,
+                    '{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+                  paths=[Path(p.strip()) for p in refs.split(",") if p.strip()]
+                  need(len(paths)==2 and PIN in paths,"BUSINESS_COMPOSE_LABELS_DRIFT")
+                  candidates=[p for p in paths
+                              if p!=PIN and p.name=="serviceit-vps.compose.yml"]
+                  need(len(candidates)==1,"BUSINESS_RELEASE_UNVERIFIED")
+                  compose=candidates[0]
+                  need(compose.is_file() and not compose.is_symlink()
+                       and compose.resolve().is_relative_to(RELEASES),
+                       "BUSINESS_COMPOSE_OUTSIDE_PINNED_RELEASE")
+                  old_model=json.loads(out(command(compose,"config","--format","json")))
+                  service=old_model.get("services",{}).get("business",{})
+                  need(service.get("image")==oldimage,
+                       "BUSINESS_COMPOSE_IMAGE_NOT_ORIGINAL")
+                  env=service.get("environment",{})
+                  need(isinstance(env,dict)
+                       and env.get("SERVICEIT_VPS_POSTCALL_ENABLED")=="YES"
+                       and env.get("SERVICEIT_VPS_FINANCE_ENABLED")=="NO",
+                       "BUSINESS_COMPOSE_FLAGS_UNVERIFIED")
+                  need(out(["docker","image","inspect","-f","{{.Id}}",oldimage])
+                       ==oldimage,"LOCAL_BASE_IMAGE_MISSING")
+                  prior=process(["docker","image","inspect","-f","{{.Id}}",BASE])
+                  need(prior.returncode!=0 or prior.stdout.strip()==oldimage,
+                       "BASE_TAG_ALREADY_DIFFERENT")
+                  need(process(["docker","tag",oldimage,BASE]).returncode==0,
+                       "BASE_IMAGE_TAG_FAILED")
+                  Dockerfile=WORK/"Dockerfile.finance-fix"
+                  Dockerfile.write_text(
+                      "FROM "+BASE+"\n"+
+                      "COPY --chmod=0444 worker.py /app/leadpilot/serviceit_finance_hybrid_live_worker.py\n",
+                      encoding="utf8")
+                  need(process(["docker","build","--network","none","--pull=false",
+                                "--no-cache","-t",TAG,"-f",str(Dockerfile),
+                                str(WORK)],timeout=190).returncode==0,
+                       "FINANCE_DERIVED_IMAGE_BUILD_FAILED")
+                  newimage=out(["docker","image","inspect","-f","{{.Id}}",TAG])
+                  need(re.fullmatch(r"sha256:[a-f0-9]{64}",newimage) is not None
+                       and newimage != oldimage,"FINANCE_DERIVED_IMAGE_NOT_DISTINCT")
+                  test="""
+          import hashlib
+          from pathlib import Path
+          from datetime import timedelta
+          import httpx
+          from leadpilot.serviceit_finance_hybrid_live_worker import CUTOVER,call
+          path=Path('/app/leadpilot/serviceit_finance_hybrid_live_worker.py')
+          assert hashlib.sha256(path.read_bytes()).hexdigest()==__import__('sys').argv[1]
+          class Client:
+              def post(self,*args,**kw):return httpx.Response(200,json={'result':[]})
+          when=(CUTOVER+timedelta(days=2)).isoformat()
+          x=call(Client(),'https://invalid.example/rest/1/x','crm.deal.list',{
+              'filter':{'CATEGORY_ID':4,'STAGE_SEMANTIC_ID':'S','>=DATE_CREATE':when},
+              'select':['ID','CATEGORY_ID','STAGE_SEMANTIC_ID','DATE_CREATE'],
+              'start':0})
+          assert x['result']==[]
+          print('FINANCE_PATCH_ISOLATED_TEST=PASS')
+          """
+                  check=process(["docker","run","--rm","--network","none",
+                        "--read-only","--entrypoint","python",newimage,
+                        "-c",test,EXPECTED],timeout=90)
+                  need(check.returncode==0 and
+                       "FINANCE_PATCH_ISOLATED_TEST=PASS" in check.stdout,
+                       "FINANCE_PATCH_CONTAINER_SELFTEST_FAILED")
+                  print("FINANCE_PATCH_TEST=PASS",flush=True)
+                  newpin='services:\n  business:\n    image: "'+newimage+'"\n    pull_policy: never\n'
+                  write_pin(newpin)
+                  modified=True
+                  model=json.loads(out(command(compose,"config","--format","json")))
+                  b=model.get("services",{}).get("business",{})
+                  need(b.get("image")==newimage
+                       and b.get("environment",{}).get(
+                          "SERVICEIT_VPS_FINANCE_ENABLED")=="NO"
+                       and b.get("environment",{}).get(
+                          "SERVICEIT_VPS_POSTCALL_ENABLED")=="YES",
+                       "FINANCE_PATCH_COMPOSE_MODEL_UNVERIFIED")
+                  result=process(command(compose,"up","-d","--no-deps","--no-build",
+                                        "--pull","never","--force-recreate",
+                                        "business"),timeout=150)
+                  need(result.returncode==0,"FINANCE_PATCH_BUSINESS_RESTART_FAILED")
+                  for _ in range(24):
+                      if health(BUSINESS):break
+                      time.sleep(5)
+                  need(health(BUSINESS) and current_image(BUSINESS)==newimage,
+                       "FINANCE_PATCH_BUSINESS_NOT_HEALTHY")
+                  need(flag(BUSINESS,"SERVICEIT_VPS_POSTCALL_ENABLED")=="YES" and
+                       flag(BUSINESS,"SERVICEIT_VPS_FINANCE_ENABLED")=="NO",
+                       "FINANCE_PATCH_FLAGS_DRIFT")
+                  for name in ALL:
+                      need(health(name),"OTHER_PRODUCTION_CONTAINER_UNHEALTHY")
+                  print("FINANCE_IMAGE_PATCH=SUCCESS",flush=True)
+                  print("BUSINESS_CONTAINER_HEALTHY=YES;POSTCALL_STILL_ENABLED=YES",flush=True)
+                  print("FINANCE_WRITER_STILL_ENABLED=NO",flush=True)
+                  print("FINANCE_PATCH_CODE_INSTALLED=YES;IMAGE_DERIVED_FROM_PRIOR=YES",flush=True)
+                  print("SOURCES_CHANGED=NO;HISTORIC_DEALS_MODIFIED_BY_PATCH=0",flush=True)
+                  print("FINANCE_NEXT_STEP=SEPARATE_FLAG_ACTIVATION",flush=True)
+          except Exception as e:
+              code=str(e) if isinstance(e,Blocked) else "UNEXPECTED_FAILURE"
+              if not re.fullmatch(r"[A-Z0-9_]+",code):code="UNEXPECTED_FAILURE"
+              print("FINANCE_IMAGE_PATCH=BLOCKED_"+code,flush=True)
+              if modified and original_pin is not None:
+                  try:
+                      write_pin(original_pin)
+                      if compose is not None:
+                          restarted=process(command(compose,"up","-d","--no-deps",
+                              "--no-build","--pull","never",
+                              "--force-recreate","business"),timeout=150)
+                          need(restarted.returncode==0,"RESTART_ROLLBACK_FAILED")
+                      print("FINANCE_PATCH_ROLLBACK=PIN_RESTORED_BUSINESS_RECREATE_ATTEMPTED",flush=True)
+                  except Exception:
+                      print("FINANCE_PATCH_ROLLBACK=MANUAL_REVIEW_REQUIRED",flush=True)
+              raise SystemExit(2)
+          PY
+          grep -E '^(FINANCE_IMAGE_PATCH|FINANCE_PATCH_TEST|BUSINESS_CONTAINER_HEALTHY|FINANCE_WRITER_STILL_ENABLED|FINANCE_PATCH_CODE_INSTALLED|SOURCES_CHANGED|FINANCE_NEXT_STEP|FINANCE_PATCH_ROLLBACK)=' \
+            "$RUNNER_TEMP/serviceit-finance-patch/status.txt" || true
+          grep -qx 'FINANCE_IMAGE_PATCH=SUCCESS' \
+            "$RUNNER_TEMP/serviceit-finance-patch/status.txt"
+      - name: Post sanitized patch result to issue 283
+        if: always()
+        shell: bash
+        env:
+          REPO: "${{ github.repository }}"
+          RUN_ID: "${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/serviceit-finance-patch/status.txt"
+          if [[ -f "$file" ]]; then
+            summary="$(grep -E '^(FINANCE_IMAGE_PATCH|FINANCE_PATCH_TEST|BUSINESS_CONTAINER_HEALTHY|FINANCE_WRITER_STILL_ENABLED|FINANCE_PATCH_CODE_INSTALLED|FINANCE_PATCH_ROLLBACK)=' "$file" || true)"
+          else
+            summary="FINANCE_IMAGE_PATCH=UNVERIFIED"
+          fi
+          [[ -n "$summary" ]] || summary="FINANCE_IMAGE_PATCH=UNVERIFIED"
+          body="$(printf 'Исправление фильтра финансовой автоматизации на VPS:\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nПри исправлении финансовый модуль оставался выключенным; после успешной установки его нужно включить отдельно.' "$summary" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/283/comments" -X POST --raw-field "body=$body" >/dev/null

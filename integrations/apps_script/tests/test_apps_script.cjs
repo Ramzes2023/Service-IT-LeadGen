@@ -212,7 +212,7 @@ test('signed minimal tender dispatch is accepted once',()=>{
   assert.strictEqual(e.calls.dispatch.length,1);
 });
 
-test('two IT tenders from one email are dispatched across separate cycles, never burst',()=>{
+test('two IT tenders from one email are delivered automatically in a bounded VPS batch',()=>{
   const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
   e.setMessage(message(MID,{body:[
     'Организатор закупки: АО "СО ЕЭС"',
@@ -223,12 +223,8 @@ test('two IT tenders from one email are dispatched across separate cycles, never
     'https://www.b2b-center.ru/market/podderzhka-serverov/tender-1234568/'
   ].join('\n')}));
   const first=e.context.pollAndDispatchB2B();
-  assert.strictEqual(first.dispatched,1);
-  assert.strictEqual(first.pending_tenders_deferred,1);
-  assert.strictEqual(e.calls.dispatch.length,1);
-  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'PENDING');
-  const second=e.context.pollAndDispatchB2B();
-  assert.strictEqual(second.dispatched,1);
+  assert.strictEqual(first.dispatched,2);
+  assert.strictEqual(first.pending_tenders_deferred,0);
   assert.strictEqual(e.calls.dispatch.length,2);
   assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'DONE');
   assert.strictEqual(e.calls.dispatch[0].notice.tender_id,'1234567');

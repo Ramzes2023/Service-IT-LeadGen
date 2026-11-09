@@ -1,0 +1,123 @@
+name: ServiceIT VPS FNS-MSP release identity READONLY audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type AUDIT_FNS_WRITER_RELEASE_IDENTITY_1062_21'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-fns-writer-release-identity
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'AUDIT_FNS_WRITER_RELEASE_IDENTITY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Verify pinned nonroot SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[0-9a-zA-Z.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/fns-release-audit"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/fns-release-audit/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/fns-release-audit/known_hosts"
+          chmod 600 "$RUNNER_TEMP/fns-release-audit/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/fns-release-audit/known_hosts" >/dev/null
+      - name: Compare actual container release labels without printing private paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/fns-release-audit/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/fns-release-audit/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+          NAMES = {
+              "CORE":"serviceit-leadgen-vps-coordinator-1",
+              "AUX":"serviceit-leadgen-vps-auxiliaries-1",
+              "BIZ":"serviceit-leadgen-vps-business-1",
+              "OBS":"serviceit-leadgen-vps-observer-1",
+              "FNS":"serviceit-leadgen-vps-fns-msp-1",
+          }
+          def execute(*args):
+              try:
+                  x = subprocess.run(args, capture_output=True, text=True, timeout=20)
+                  return x.stdout.strip() if x.returncode == 0 else ""
+              except (OSError, subprocess.TimeoutExpired):
+                  return ""
+          def inspect(container, key):
+              return execute("docker","inspect","-f",key,container)
+          def config_paths(label):
+              return [v.strip() for v in label.split(",") if v.strip()]
+          def release_ids(paths):
+              result = []
+              for x in paths:
+                  m = re.fullmatch(
+                    r".*/releases/([0-9a-f]{40})/deploy/serviceit-vps\.compose\.yml",
+                    x
+                  )
+                  if m:
+                      result.append(m.group(1)[:12])
+              return result
+          def status(thing):
+              return "YES" if thing else "NO"
+          print("VPS_FNS_RELEASE_AUDIT=START")
+          data = {}
+          for label, name in NAMES.items():
+              details = {}
+              details["health"] = inspect(name,
+                "{{.State.Running}}:{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}")
+              details["project"] = inspect(name,
+                '{{index .Config.Labels "com.docker.compose.project"}}')
+              details["files"] = config_paths(inspect(name,
+                '{{index .Config.Labels "com.docker.compose.project.config_files"}}'))
+              details["image"] = inspect(name, "{{.Image}}")
+              data[label] = details
+              print("VPS_"+label+"_HEALTH="+(
+                "YES" if details["health"]=="true:healthy" else "NO"))
+              print("VPS_"+label+"_COMPOSE_CONFIG_FILES_COUNT="+str(min(10,len(details["files"]))))
+              print("VPS_"+label+"_KNOWN_RELEASE_IDS="+
+                    ",".join(release_ids(details["files"])[:3]) if details["files"] else
+                    "VPS_"+label+"_KNOWN_RELEASE_IDS=UNKNOWN")
+              print("VPS_"+label+"_HAS_COMPOSE_PROJECT="+
+                    status(details["project"]=="serviceit-leadgen-vps"))
+          core=data["CORE"]
+          aux=data["AUX"]
+          print("CORE_AUX_IDENTICAL_CONFIG_FILE_LABELS="+
+                status(core["files"]==aux["files"]))
+          print("CORE_AUX_SAME_IMAGE_DIGEST="+status(
+                bool(core["image"]) and core["image"]==aux["image"]))
+          print("CORE_AUX_SAME_COMPOSE_PROJECT="+status(
+                core["project"]==aux["project"]=="serviceit-leadgen-vps"))
+          for label,name,key in (
+              ("AUX_FNS_CRM_RESULT_FLAG","AUX","SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED"),
+              ("FNS_COLLECTOR_FLAG","FNS","SERVICEIT_VPS_FNS_MSP_ENABLED"),
+          ):
+              value=execute("docker","exec",NAMES[name],"printenv",key)
+              print(label+"="+(value if value in ("YES","NO") else "UNVERIFIED"))
+          print("CRM_WRITES_BY_AUDIT=0;CONFIG_CHANGES=0;RESTARTS=0;SOURCES_CHANGED=NO")
+          PY

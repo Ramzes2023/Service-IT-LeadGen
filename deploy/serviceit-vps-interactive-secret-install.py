@@ -24,6 +24,7 @@ AUTHORIZED = (
     "gh_ledger_key",
     "github_ledger_pat",
     "brave_api_key",
+    "b2b_ingest_hmac",
     "routerai_key",
     "gigachat_credentials",
 )
@@ -89,7 +90,10 @@ def put(dirfd: int, name: str) -> None:
     print(f"Enter the existing/issued value for {name} into this VPS terminal.")
     print("GitHub Actions secrets cannot be read back: obtain from issuer or")
     print("reissue at provider, then update the other party when applicable.")
-    print("Shared bridge/ledger keys MUST match the ones currently in GitHub.")
+    print("Shared keys MUST match their existing Apps Script / GitHub peer.")
+    if name == "b2b_ingest_hmac":
+        print("For B2B: use exactly SERVICEIT_PRIVATE_CONFIG.hmacSecret from the")
+        print("already-authorized Gmail Apps Script secrets.gs; do not invent a new one.")
     value = getpass.getpass(f"{name} (hidden): ")
     raw = value.encode("utf-8")
     if not (1 <= len(raw) <= MAX_BYTES) or b"\x00" in raw or b"\n" in raw or b"\r" in raw:

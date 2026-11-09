@@ -251,7 +251,7 @@ jobs:
           ))
           allowed=[h.strip().lower() for h in raw_hosts.split(",") if h.strip()]
           valid=(len(allowed)<=80 and all(
-              re.fullmatch(r"(?:[a-z0-9-]{1,63}\\.)+[a-z]{2,20}",h) is not None
+              re.fullmatch(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}",h) is not None
               for h in allowed))
           say("RESEARCH_PUBLIC_ALLOWLIST_VALID",yesno(valid))
           say("RESEARCH_PUBLIC_ALLOWLIST_COUNT",len(allowed) if valid else "UNVERIFIED")

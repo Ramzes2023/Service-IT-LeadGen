@@ -1,0 +1,296 @@
+name: ServiceIT VPS native FNS-MSP collector activation ONLY
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type ENABLE_NATIVE_FNS_MSP_COLLECTOR_ONLY_1062_21'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-fns-msp-collector-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'ENABLE_NATIVE_FNS_MSP_COLLECTOR_ONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Check pinned SSH and nonroot deploy identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[0-9a-zA-Z.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-fns-activate"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-fns-activate/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-fns-activate/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-fns-activate/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-fns-activate/known_hosts" >/dev/null
+
+      - name: Verify all FNS gates and activate ONLY the collector on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-fns-activate/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-fns-activate/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import stat
+          import subprocess
+          import tempfile
+          import time
+
+          CORE = "serviceit-leadgen-vps-coordinator-1"
+          AUX = "serviceit-leadgen-vps-auxiliaries-1"
+          MSP = "serviceit-leadgen-vps-fns-msp-1"
+          SCRATCH = Path("/var/lib/serviceit/fns-scratch")
+          ENV = Path.home() / "serviceit/config/vps.env"
+          TAG = "serviceit-leadgen-vps-fns-msp:latest"
+
+          class Blocked(Exception):
+              pass
+
+          def need(ok, error):
+              if not ok:
+                  raise Blocked(error)
+
+          def cmd(args, timeout=45):
+              try:
+                  p = subprocess.run(args, stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+              except (OSError, subprocess.TimeoutExpired):
+                  raise Blocked("SUBPROCESS_TIMEOUT_OR_FAILED")
+              return p
+
+          def out(args, timeout=45):
+              p=cmd(args,timeout)
+              need(p.returncode == 0,"PREREQUISITE_COMMAND_FAILED")
+              return p.stdout.strip()
+
+          def inspect(container, fmt):
+              return out(["docker","inspect","-f",fmt,container])
+
+          def env(container, key):
+              return out(["docker","exec",container,"printenv",key])
+
+          def check_alive():
+              for container in (CORE,AUX):
+                  need(inspect(container,"{{.State.Running}}:{{.State.Health.Status}}")
+                      == "true:healthy","LIVE_CORE_OR_AUX_UNHEALTHY")
+
+          def remote_python(container, program, timeout=60):
+              return out(["docker","exec",container,"python","-c",program],timeout)
+
+          def preflight_field():
+              program = """
+          import os
+          import httpx
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.serviceit_fns_msp_crm_result_writer import result_field_verified
+          try:
+              base = validate_webhook(secret_file(dict(os.environ), "SERVICEIT_BITRIX_WEBHOOK"))
+              with httpx.Client(trust_env=False, follow_redirects=False, timeout=25) as client:
+                  result_field_verified(client, base)
+              print("FNS_MSP_FIELD_READY")
+          except Exception:
+              print("FNS_MSP_FIELD_BLOCKED")
+          """
+              return remote_python(AUX,program,45) == "FNS_MSP_FIELD_READY"
+
+          def preflight_pg():
+              program = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
+                      cur.execute("SET TRANSACTION READ ONLY")
+                      cur.execute("SELECT to_regclass('public.serviceit_vps_msp_snapshot') IS NOT NULL")
+                      print("READY" if cur.fetchone()[0] else "MISSING")
+          """
+              return remote_python(CORE,program,45) == "READY"
+
+          def save_env(raw, old_mode):
+              need(ENV.is_file() and not ENV.is_symlink(),"CONFIG_REPLACED")
+              st=ENV.stat()
+              need(st.st_uid == os.geteuid() and not (stat.S_IMODE(st.st_mode)&0o077),
+                   "CONFIG_NOT_PRIVATE")
+              expression = r"(?m)^SERVICEIT_VPS_FNS_MSP_ENABLED=(?:YES|NO)$"
+              matches=list(re.finditer(expression,raw))
+              need(len(matches) <= 1, "DUPLICATE_FNS_FLAG")
+              if matches:
+                  current=matches[0].group().split("=",1)[1]
+                  need(current == old_mode,"FNS_FLAG_CHANGED")
+                  updated=re.sub(expression,"SERVICEIT_VPS_FNS_MSP_ENABLED=YES",raw)
+              else:
+                  need(old_mode == "NO","FNS_FLAG_UNEXPECTED")
+                  updated=raw.rstrip("\n")+"\nSERVICEIT_VPS_FNS_MSP_ENABLED=YES\n"
+              need(updated!=raw,"FNS_CONFIG_NO_CHANGE")
+              fd,name=tempfile.mkstemp(prefix=".msp-",dir=ENV.parent)
+              try:
+                  with os.fdopen(fd,"w",encoding="utf8") as f:
+                      os.fchmod(f.fileno(),0o600)
+                      f.write(updated)
+                      f.flush()
+                      os.fsync(f.fileno())
+                  os.replace(name,ENV)
+              finally:
+                  try: os.unlink(name)
+                  except FileNotFoundError: pass
+              return updated
+
+          def restore(raw):
+              fd,name=tempfile.mkstemp(prefix=".msp-rollback-",dir=ENV.parent)
+              try:
+                  with os.fdopen(fd,"w",encoding="utf8") as f:
+                      os.fchmod(f.fileno(),0o600)
+                      f.write(raw)
+                      f.flush()
+                      os.fsync(f.fileno())
+                  os.replace(name,ENV)
+              finally:
+                  try: os.unlink(name)
+                  except FileNotFoundError: pass
+
+          changed=False
+          original=None
+          compose=None
+          try:
+              print("FNS_COLLECTOR_ACTIVATION=START",flush=True)
+              need(os.geteuid()!=0,"ROOT_NOT_PERMITTED")
+              check_alive()
+              for key,required in (
+                  ("SERVICEIT_VPS_WRITER_MODE","LIVE"),
+                  ("SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES"),
+                  ("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK","YES"),
+                  ("SERVICEIT_VPS_POLL_ENABLED","YES"),
+              ):
+                  need(env(CORE,key)==required,"LIVE_CUTOVER_GATE_MISSING")
+              need(bool(env(CORE,"SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")),
+                   "NATIVE_CUTOVER_TIMESTAMP_MISSING")
+              for key,required in (
+                  ("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED","NO"),
+                  ("SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED","NO"),
+                  ("SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED","YES"),
+              ):
+                  need(env(AUX,key)==required,"CRM_WRITER_OR_SCORE_GATE_CHANGED")
+              need(inspect(CORE,'{{index .Config.Labels "com.docker.compose.project"}}')
+                   == "serviceit-leadgen-vps","COMPOSE_PROJECT_INVALID")
+              refs=inspect(CORE,'{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+              candidates=[Path(p.strip()) for p in refs.split(",")
+                   if p.strip().endswith("/deploy/serviceit-vps.compose.yml")]
+              need(len(candidates)==1,"PINNED_COMPOSE_PATH_UNVERIFIED")
+              compose=candidates[0]
+              root=(Path.home()/"serviceit/releases").resolve()
+              need(compose.is_file() and not compose.is_symlink()
+                   and compose.resolve().is_relative_to(root)
+                   and re.search(r"/releases/[0-9a-f]{40}/deploy/serviceit-vps.compose.yml$",
+                                 str(compose.resolve())) is not None,
+                   "PINNED_RELEASE_INVALID")
+              need(ENV.is_file() and not ENV.is_symlink(),"PRIVATE_CONFIG_MISSING")
+              st=ENV.stat()
+              need(st.st_uid==os.geteuid() and not(stat.S_IMODE(st.st_mode)&0o077),
+                   "PRIVATE_CONFIG_PERMISSIONS_INVALID")
+              original=ENV.read_text(encoding="utf8")
+              flags=re.findall(r"(?m)^SERVICEIT_VPS_FNS_MSP_ENABLED=(.+)$",original)
+              need(len(flags)<=1 and (not flags or flags[0]=="NO"),
+                   "FNS_CONFIG_ALREADY_ENABLED_OR_INVALID")
+              path=re.findall(r"(?m)^SERVICEIT_VPS_FNS_SCRATCH_DIR=(.+)$",original)
+              need(len(path)<=1 and (not path or path[0]==str(SCRATCH)),
+                   "FNS_SCRATCH_CONFIG_DIFFERS")
+              need(inspect(CORE,"{{.State.Running}}")=="true",
+                   "CORE_NOT_RUNNING")
+              p=cmd(["docker","inspect","-f","{{.State.Running}}",MSP])
+              need(p.returncode!=0 or p.stdout.strip()=="false",
+                   "FNS_CONTAINER_ALREADY_STARTED")
+              need(not SCRATCH.is_symlink() and SCRATCH.is_dir(),
+                   "FNS_SCRATCH_NOT_PRESENT")
+              st=SCRATCH.stat()
+              need(st.st_uid==10001 and st.st_gid==10001
+                   and stat.S_IMODE(st.st_mode)==0o700,
+                   "FNS_SCRATCH_PERMISSIONS_INVALID")
+              v=os.statvfs(SCRATCH)
+              need(v.f_bavail*v.f_frsize >=25*1024**3,
+                   "FNS_SCRATCH_FREE_SPACE_BELOW_25GB")
+              need(preflight_pg(),"FNS_PG_SCHEMA_NOT_READY")
+              print("FNS_MSP_PG_SCHEMA=READY",flush=True)
+              need(preflight_field(),"SERVER_BITRIX_FIELD_NOT_VERIFIED")
+              print("FNS_MSP_SERVER_BITRIX_FIELD=READY",flush=True)
+              need(remote_python(CORE,
+                  "import importlib.util;print('YES' if importlib.util.find_spec('leadpilot.serviceit_vps_native_msp') else 'NO')"
+                  )=="YES","FNS_MODULE_NOT_IN_LIVE_IMAGE")
+              image=inspect(CORE,"{{.Image}}")
+              need(re.fullmatch(r"sha256:[0-9a-f]{64}",image) is not None,
+                   "LIVE_IMAGE_SHA_INVALID")
+              p=cmd(["docker","image","inspect","-f","{{.Id}}",TAG])
+              need(p.returncode!=0 or p.stdout.strip()==image,
+                   "DIFFERENT_FNS_IMAGE_ALREADY_TAGGED")
+              need(cmd(["docker","tag",image,TAG]).returncode==0,
+                   "LOCAL_IMAGE_TAG_FAILED")
+              args=["docker","compose","--env-file",str(ENV),"-f",str(compose),
+                    "--profile","msp"]
+              need(cmd(args+["config","--quiet"],timeout=30).returncode==0,
+                   "COMPOSE_CONFIG_INVALID")
+              save_env(original,"NO")
+              changed=True
+              need(cmd(args+["up","-d","--no-deps","--no-build","fns-msp"],
+                       timeout=135).returncode==0,"FNS_COMPOSE_START_FAILED")
+              good=False
+              for attempt in range(20):
+                  p=cmd(["docker","inspect","-f",
+                         "{{.State.Running}}:{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+                         MSP],timeout=15)
+                  if p.returncode==0 and p.stdout.strip()=="true:healthy":
+                      good=True
+                      break
+                  time.sleep(5)
+              need(good,"FNS_COLLECTOR_NOT_HEALTHY")
+              need(env(MSP,"SERVICEIT_VPS_FNS_MSP_ENABLED")=="YES",
+                   "FNS_COLLECTOR_NOT_ENABLED")
+              need(env(AUX,"SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED")=="NO",
+                   "UNEXPECTED_AUX_WRITER_CHANGE")
+              check_alive()
+              print("FNS_COLLECTOR_CONTAINER=HEALTHY",flush=True)
+              print("FNS_COLLECTOR_POLL=DAILY_WITH_ELIGIBLE_NEW_CARDS_ONLY",flush=True)
+              print("FNS_CRM_WRITER_ENABLED=NO;FREE_MSP_SCORE_ENABLED=NO",flush=True)
+              print("CRM_WRITES_BY_ACTIVATION=0;SOURCES_CHANGED=NO;EXISTING_SERVICES_RESTARTED=0",flush=True)
+              print("FNS_END_TO_END_NEW_CARD=NOT_YET_TESTED",flush=True)
+          except Exception as error:
+              message=str(error) if isinstance(error,Blocked) else "UNEXPECTED_FAILURE"
+              if not re.fullmatch(r"[A-Z0-9_]+",message):
+                  message="UNEXPECTED_FAILURE"
+              print("FNS_COLLECTOR_ACTIVATION=BLOCKED_"+message,flush=True)
+              if changed and original is not None:
+                  try:
+                      p=cmd(["docker","compose","--env-file",str(ENV),
+                             "-f",str(compose),"--profile","msp",
+                             "stop","fns-msp"],timeout=35)
+                      restore(original)
+                      print("FNS_COLLECTOR_ROLLBACK=CONFIG_RESTORED_STOP_ATTEMPTED",
+                            flush=True)
+                  except Exception:
+                      print("FNS_COLLECTOR_ROLLBACK=MANUAL_REVIEW_REQUIRED",flush=True)
+              raise SystemExit(2)
+          PY

@@ -24,7 +24,7 @@ from .serviceit_bitrix_poll_fallback import (
 from .serviceit_bitrix_batch_worker import list_only
 from .bitrix_metadata_audit import validate_webhook
 
-INTERVAL_SECONDS = 600
+INTERVAL_SECONDS = 300
 MAX_CARDS = 6
 FLAGS = {
     "own_stop": "SERVICEIT_VPS_OWN_STOP_ENABLED",
@@ -260,13 +260,15 @@ def main(argv=None) -> int:
                               "crm_writes": 0}, sort_keys=True))
             return 0
         while True:
+            cycle_started = time.monotonic()
             with httpx.Client(trust_env=False, follow_redirects=False) as client:
                 with db(env) as connection:
                     result = run_once(env, client=client, connection=connection)
             print(json.dumps(result, sort_keys=True), flush=True)
             if args.once:
                 return 0
-            time.sleep(INTERVAL_SECONDS)
+            # Aim for 5-minute start-to-start, without parallel workers.
+            time.sleep(max(0.0, INTERVAL_SECONDS - (time.monotonic() - cycle_started)))
     except Exception:
         print(json.dumps({"status": "NATIVE_AUX_BLOCKED",
                           "crm_writes": "UNVERIFIED",

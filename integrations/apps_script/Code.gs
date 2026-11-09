@@ -9,7 +9,8 @@
  * The VPS worker creates a guarded 1062/21 HOLD card and queues RouterAI.
  * No Score, outreach, contact, stage move or qualified-lead status is created.
  *
- * Keep the existing private owner-only secrets.gs with the shared HMAC key.
+ * Shared HMAC may be provided either by the existing owner-only secrets.gs
+ * or, for standalone Gmail V8 scripts, by Script Properties only.
  * No GitHub credential is required by this direct-to-VPS source path.
  */
 const SERVICEIT_CONFIG = Object.freeze({
@@ -36,17 +37,33 @@ const SERVICEIT_CONFIG = Object.freeze({
 });
 
 function privateConfig_() {
-  if (typeof SERVICEIT_PRIVATE_CONFIG === "undefined" ||
-      !SERVICEIT_PRIVATE_CONFIG ||
-      SERVICEIT_PRIVATE_CONFIG.ownerApproval !== "YES" ||
-      SERVICEIT_PRIVATE_CONFIG.expectedMailbox !== SERVICEIT_CONFIG.mailbox ||
-      typeof SERVICEIT_PRIVATE_CONFIG.hmacSecret !== "string" ||
-      SERVICEIT_PRIVATE_CONFIG.hmacSecret.length < 32 ||
-      !Number.isFinite(Number(SERVICEIT_PRIVATE_CONFIG.cutoverMs)) ||
-      Number(SERVICEIT_PRIVATE_CONFIG.cutoverMs) <= 0) {
+  // Preserve an existing owner-only secrets.gs if it is installed.
+  // Standalone Gmail V8 projects may have ONLY Code.gs, so permit a NEW,
+  // scoped Script Property. Never store HMAC in committed source code.
+  if (typeof SERVICEIT_PRIVATE_CONFIG !== "undefined" &&
+      SERVICEIT_PRIVATE_CONFIG &&
+      SERVICEIT_PRIVATE_CONFIG.ownerApproval === "YES" &&
+      SERVICEIT_PRIVATE_CONFIG.expectedMailbox === SERVICEIT_CONFIG.mailbox &&
+      typeof SERVICEIT_PRIVATE_CONFIG.hmacSecret === "string" &&
+      SERVICEIT_PRIVATE_CONFIG.hmacSecret.length >= 32 &&
+      Number.isFinite(Number(SERVICEIT_PRIVATE_CONFIG.cutoverMs)) &&
+      Number(SERVICEIT_PRIVATE_CONFIG.cutoverMs) > 0) {
+    return SERVICEIT_PRIVATE_CONFIG;
+  }
+  const props = scriptProperties_();
+  const shared = props.getProperty("SERVICEIT_B2B_HMAC_SECRET") || "";
+  if (props.getProperty("SERVICEIT_B2B_OWNER_APPROVAL") !== "YES" ||
+      !/^[0-9a-f]{64}$/.test(shared)) {
     throw new Error("SERVICEIT_PRIVATE_CONFIG_BLOCKED");
   }
-  return SERVICEIT_PRIVATE_CONFIG;
+  // The real no-backfill timestamp is set by activateVpsB2BCenter().
+  // Until its signed HTTPS probe passes, normal dispatch stays OFF.
+  return {
+    ownerApproval: "YES",
+    expectedMailbox: SERVICEIT_CONFIG.mailbox,
+    hmacSecret: shared,
+    cutoverMs: 1
+  };
 }
 
 function scriptProperties_() {

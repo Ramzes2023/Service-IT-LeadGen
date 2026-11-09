@@ -6,7 +6,7 @@ const crypto = require('crypto');
 
 const source = fs.readFileSync(__dirname + '/../Code.gs', 'utf8');
 const EMAIL = 'ramzesisayev444@gmail.com';
-const SECRET = 'synthetic-serviceit-hmac-secret-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SECRET = 'a'.repeat(64); // synthetic 256-bit hex; never production
 const TOKEN = 'synthetic-github-token-not-valid';
 const MID = '1a19b7630301bafb';
 const CUTOVER = Date.now() - 60 * 60 * 1000;
@@ -409,6 +409,29 @@ test('one-time VPS activation creates fresh-cutover trigger',()=>{
   // Existing mail is older than fresh activation; must NEVER backfill.
   e.context.pollAndDispatchB2B();
   assert.strictEqual(e.calls.dispatch.length,0);
+});
+
+
+test('existing standalone Gmail V8 project can use owner-approved Script Properties HMAC',()=>{
+  const e=environment({properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    SERVICEIT_B2B_HMAC_SECRET:SECRET,
+    SERVICEIT_B2B_OWNER_APPROVAL:'YES'
+  }});
+  delete e.context.SERVICEIT_PRIVATE_CONFIG;
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('standalone V8 refuses missing owner approval or invalid HMAC',()=>{
+  const e=environment({properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    SERVICEIT_B2B_HMAC_SECRET:SECRET
+  }});
+  delete e.context.SERVICEIT_PRIVATE_CONFIG;
+  assert.throws(()=>e.context.pollAndDispatchB2B(),
+    /SERVICEIT_PRIVATE_CONFIG_BLOCKED/);
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

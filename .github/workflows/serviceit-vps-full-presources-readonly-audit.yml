@@ -1,0 +1,542 @@
+name: ServiceIT VPS + Bitrix pre-sources FULL READONLY acceptance 2026-11-09
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type AUDIT_VPS_BITRIX_PRESOURCES_FULL_1062_21'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-full-pre-sources-readonly
+  cancel-in-progress: false
+
+jobs:
+  deep-audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'AUDIT_VPS_BITRIX_PRESOURCES_FULL_1062_21')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.action == 'created' &&
+         github.event.issue.number == 290 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_FULL_VPS_BITRIX_READONLY_AUDIT_290')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPOSITORY_NAME: "${{ github.repository }}"
+      ACTION_RUN_ID: "${{ github.run_id }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare known main module SHA256 manifests without printing file contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import hashlib
+          from pathlib import Path
+          files = {
+              "core":{
+                  "leadpilot.serviceit_vps_worker":"leadpilot/serviceit_vps_worker.py",
+                  "leadpilot.serviceit_bitrix_dispatch_worker":"leadpilot/serviceit_bitrix_dispatch_worker.py",
+                  "leadpilot.serviceit_vps_pg_queue":"leadpilot/serviceit_vps_pg_queue.py",
+              },
+              "aux":{
+                  "leadpilot.serviceit_vps_native_aux":"leadpilot/serviceit_vps_native_aux.py",
+                  "leadpilot.serviceit_leadgen_free_msp_score":"leadpilot/serviceit_leadgen_free_msp_score.py",
+                  "leadpilot.serviceit_vps_native_msp_result":"leadpilot/serviceit_vps_native_msp_result.py",
+                  "leadpilot.serviceit_own_signal_stop":"leadpilot/serviceit_own_signal_stop.py",
+              },
+              "business":{
+                  "leadpilot.serviceit_vps_native_business":"leadpilot/serviceit_vps_native_business.py",
+                  "leadpilot.serviceit_postcall_live_worker":"leadpilot/serviceit_postcall_live_worker.py",
+                  "leadpilot.serviceit_finance_hybrid_live_worker":"leadpilot/serviceit_finance_hybrid_live_worker.py",
+              },
+              "fns":{
+                  "leadpilot.serviceit_vps_native_msp":"leadpilot/serviceit_vps_native_msp.py",
+              },
+              "observer":{
+                  "leadpilot.serviceit_vps_native_observer":"leadpilot/serviceit_vps_native_observer.py",
+              },
+          }
+          expected={}
+          for group,items in files.items():
+              expected[group]={module:hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                               for module,path in items.items()}
+          Path("/tmp/serviceit-expected-modules.json").write_text(
+              json.dumps(expected,sort_keys=True),encoding="utf8")
+          PY
+
+      - name: Verify owner-only pinned deploy access and full read-only production evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[0-9a-zA-Z.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-full-audit"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-full-audit/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-full-audit/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-full-audit/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-full-audit/known_hosts" >/dev/null
+          expected="$(base64 -w0 /tmp/serviceit-expected-modules.json)"
+          ssh -T -i "$RUNNER_TEMP/serviceit-full-audit/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-full-audit/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "python3 - '$expected'" \
+            > "$RUNNER_TEMP/serviceit-full-audit/report.txt" <<'PY'
+          import base64
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+
+          MANIFEST=json.loads(base64.b64decode(sys.argv[1],validate=True))
+          PREFIX="serviceit-leadgen-vps-"
+          CONTAINERS={
+              "core":PREFIX+"coordinator-1",
+              "aux":PREFIX+"auxiliaries-1",
+              "business":PREFIX+"business-1",
+              "observer":PREFIX+"observer-1",
+              "fns":PREFIX+"fns-msp-1",
+              "ingress":PREFIX+"ingress-1",
+              "browser":"serviceit-public-browser-vps-browser-1",
+              "egress":"serviceit-public-browser-vps-egress-1",
+          }
+          def execute(args,timeout=35):
+              try:
+                  p=subprocess.run(args, stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL,text=True,timeout=timeout)
+                  return p.stdout.strip() if p.returncode==0 else None
+              except (OSError,subprocess.TimeoutExpired):
+                  return None
+          def say(key,value):
+              if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}",key):
+                  return
+              value=str(value).upper() if isinstance(value,bool) else str(value)
+              if not re.fullmatch(r"[A-Za-z0-9_,:+.-]{1,120}",value):
+                  value="UNVERIFIED"
+              print("AUDIT_"+key+"="+value,flush=True)
+          def yesno(value):
+              return "YES" if value is True else "NO" if value is False else "UNVERIFIED"
+          def state(container):
+              value=execute(["docker","inspect","-f",
+                  "{{.State.Running}}:{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+                  container])
+              return ("HEALTHY" if value=="true:healthy" else
+                      "RUNNING_NO_HEALTHCHECK" if value=="true:none" else
+                      "NOT_HEALTHY" if value is not None else "UNVERIFIED")
+          def flag(group,key):
+              value=execute(["docker","exec",CONTAINERS[group],"printenv",key])
+              return value if value is not None else ""
+          def digest_report(group):
+              code="""
+          import importlib.util,hashlib,json,sys
+          modules=json.loads(sys.argv[1])
+          result={}
+          for mod in modules:
+              try:
+                  spec=importlib.util.find_spec(mod)
+                  if spec is None or not spec.origin:
+                      result[mod]='MISSING'
+                      continue
+                  with open(spec.origin,'rb') as handle:
+                      result[mod]=hashlib.sha256(handle.read()).hexdigest()
+              except Exception:
+                  result[mod]='UNVERIFIED'
+          print(json.dumps(result,sort_keys=True))
+          """
+              wanted=MANIFEST.get(group,{})
+              raw=execute(["docker","exec",CONTAINERS[group],"python","-c",
+                           code,json.dumps(list(wanted))],55)
+              try:
+                  actual=json.loads(raw or "")
+                  if not isinstance(actual,dict) or set(actual)!=set(wanted):
+                      return "UNVERIFIED"
+                  return "MATCH" if all(actual[k]==v for k,v in wanted.items()) else "DRIFT"
+              except (ValueError,TypeError):
+                  return "UNVERIFIED"
+          def logs(group,since):
+              raw=execute(["docker","logs","--since",since,"--tail","400",
+                           CONTAINERS[group]],30)
+              rows=[]
+              for line in (raw or "").splitlines()[-400:]:
+                  if len(line)>2600:continue
+                  try:
+                      value=json.loads(line)
+                      if isinstance(value,dict) and isinstance(value.get("status"),str):
+                          rows.append(value)
+                  except (ValueError,TypeError):
+                      pass
+              return rows
+          def log_counter(group,since,good,bad):
+              rows=logs(group,since)
+              valid=sum(r.get("status") in good for r in rows)
+              blocks=sum(r.get("status") in bad for r in rows)
+              say(group.upper()+"_CYCLES",valid)
+              say(group.upper()+"_BLOCKS",blocks)
+              say(group.upper()+"_LOG_EVIDENCE",yesno(bool(rows)))
+              return rows
+          def bounded_positive(n):
+              return str(n) if isinstance(n,int) and 0<=n<=1000000 else "UNVERIFIED"
+          def docker_report(group,key,code,timeout=70):
+              raw=execute(["docker","exec",CONTAINERS[group],"python","-c",code],timeout)
+              try:
+                  x=json.loads(raw or "")
+                  if not isinstance(x,dict):
+                      return {}
+                  return x
+              except (ValueError,TypeError):
+                  return {}
+          say("MODE","PRESOURCES_READONLY")
+          for group in CONTAINERS:
+              say("CONTAINER_"+group.upper(),state(CONTAINERS[group]))
+          core_flags={
+              "VPS_WRITER":"SERVICEIT_VPS_WRITER_MODE",
+              "VPS_CUTOVER":"SERVICEIT_VPS_CUTOVER_AUTHORIZED",
+              "VPS_LEGACY_GH_DISABLED_ACK":"SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK",
+              "VPS_10MIN_POLL":"SERVICEIT_VPS_POLL_ENABLED",
+              "VPS_AI_PROVIDER":"SERVICEIT_AI_PROVIDER",
+              "VPS_ROUTERAI_PRIVACY":"SERVICEIT_ROUTERAI_PRIVACY_APPROVED",
+              "VPS_WORKER_MODEL_PRIVACY":"SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED",
+              "VPS_BROWSER_RESEARCH":"SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED",
+              "VPS_BROWSER_PROXY_VERIFIED":"SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED",
+              "VPS_INTAKE":"SERVICEIT_VPS_INTAKE_ENABLED",
+          }
+          for name,key in core_flags.items():
+              value=flag("core",key)
+              if name=="VPS_AI_PROVIDER":
+                  result="ROUTERAI" if value=="routerai" else "OTHER_OR_UNVERIFIED"
+              elif name=="VPS_ROUTERAI_PRIVACY":
+                  result="YES" if value=="YES_1062_21" else "NO_OR_UNVERIFIED"
+              elif name=="VPS_WRITER":
+                  result="LIVE" if value=="LIVE" else "NOT_LIVE"
+              else:
+                  result=yesno(value=="YES") if value in ("YES","NO") else "UNVERIFIED"
+              say(name,result)
+          aux_flags={
+              "OWN_STOP":"SERVICEIT_VPS_OWN_STOP_ENABLED",
+              "CRM_DUPLICATES":"SERVICEIT_VPS_CRM_DUPLICATE_ENABLED",
+              "KANBAN_TITLE":"SERVICEIT_VPS_KANBAN_TITLE_ENABLED",
+              "MANAGER_TASK":"SERVICEIT_VPS_MANAGER_TASK_ENABLED",
+              "FNS_RESULT_CRM":"SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED",
+              "PRELIM_SCORE":"SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED",
+              "FINAL_MSP_SCORE":"SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED",
+          }
+          for name,key in aux_flags.items():
+              v=flag("aux",key)
+              say("VPS_"+name,v if v in ("YES","NO") else "UNVERIFIED")
+          v=flag("aux","SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED")
+          say("VPS_MANAGER_TASK_APPROVED",yesno(v=="YES_1062_21_INTERNAL_MANAGER"))
+          say("VPS_MANAGER_ASSIGNEE_605",yesno(flag("aux","SERVICEIT_VPS_TASK_ASSIGNEE_ID")=="605"))
+          for name,key,group in (
+              ("VPS_POSTCALL","SERVICEIT_VPS_POSTCALL_ENABLED","business"),
+              ("VPS_FINANCE","SERVICEIT_VPS_FINANCE_ENABLED","business"),
+              ("VPS_FNS_COLLECTOR","SERVICEIT_VPS_FNS_MSP_ENABLED","fns"),
+          ):
+              v=flag(group,key)
+              say(name,v if v in ("YES","NO") else "UNVERIFIED")
+          for group in MANIFEST:
+              say("CODE_"+group.upper()+"_VS_MAIN",digest_report(group))
+          # No customer/secret URL is ever shown.
+          for name,argv in (
+              ("HOST_DOCKER_SERVICE",["systemctl","is-active","docker"]),
+              ("HOST_CADDY_SERVICE",["systemctl","is-active","caddy"]),
+              ("HOST_POSTGRES_SERVICE",["systemctl","is-active","postgresql"]),
+          ):
+              result=execute(argv,12)
+              say(name,"ACTIVE" if result=="active" else
+                  "NOT_ACTIVE" if result is not None else "UNVERIFIED")
+          say("HOST_PG_ISREADY",yesno(execute(["pg_isready","-h","127.0.0.1",
+              "-p","5432","-d","leadgen"],10) is not None))
+          import urllib.request
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:18780/health",
+                                          timeout=6) as r:
+                  data=json.loads(r.read(10000))
+                  say("INGRESS_LOCAL_HEALTH",yesno(r.status==200 and
+                      isinstance(data,dict)))
+          except Exception:
+              say("INGRESS_LOCAL_HEALTH","UNVERIFIED")
+          backup=Path("/var/backups/serviceit")
+          try:
+              files=[x for x in backup.iterdir() if x.is_file() and x.stat().st_size>0]
+              if files:
+                  latest=max(x.stat().st_mtime for x in files)
+                  hours=max(0,int((dt.datetime.now(dt.timezone.utc).timestamp()-latest)//3600))
+                  say("BACKUP_FILES_PRESENT","YES")
+                  say("BACKUP_LAST_AGE_HOURS",min(hours,999999))
+              else:
+                  say("BACKUP_FILES_PRESENT","NO")
+          except (OSError,PermissionError):
+              say("BACKUP_FILES_PRESENT","UNVERIFIED")
+          say("BACKUP_RESTORE_TEST","NOT_PROVEN")
+
+          # Fixed allowlisted summaries from production logs; never output raw records.
+          core_rows=log_counter("core","120m",{"VPS_LIVE_CYCLE_COMPLETE"},
+              {"VPS_CYCLE_BLOCKED_OR_UNVERIFIED"})
+          aux_rows=log_counter("aux","120m",{"NATIVE_AUX_CYCLE"},
+              {"NATIVE_AUX_BLOCKED"})
+          business_rows=log_counter("business","120m",{"NATIVE_BUSINESS_CYCLE"},
+              {"NATIVE_BUSINESS_HOLD"})
+          obs_rows=log_counter("observer","180m",{"NATIVE_OBSERVER_READONLY"},
+              {"NATIVE_OBSERVER_UNVERIFIED"})
+          fns_rows=log_counter("fns","72h",{
+              "NATIVE_FNS_NO_NEW_CARDS",
+              "NATIVE_FNS_NO_VALID_INNS",
+              "NATIVE_FNS_SNAPSHOT_SAVED_PG_HOLD_ONLY",
+              "NATIVE_FNS_ALL_RECEIPTS_PRESENT",
+              "NATIVE_FNS_DISABLED"},{
+              "NATIVE_FNS_RUNTIME_HOLD",
+              "NATIVE_FNS_UNVERIFIED",
+          })
+          if core_rows:
+              last=[x for x in core_rows if x.get("status")=="VPS_LIVE_CYCLE_COMPLETE"]
+              if last:
+                  say("CORE_RECENT_QUEUE_HANDLED",
+                      bounded_positive(last[-1].get("handled")))
+                  say("CORE_RECENT_QUEUE_REVIEW",
+                      bounded_positive(last[-1].get("review")))
+          if business_rows:
+              last=[x for x in business_rows if x.get("status")=="NATIVE_BUSINESS_CYCLE"]
+              if last:
+                  r=last[-1]
+                  for alias,key in (
+                      ("BUSINESS_RECENT_POSTCALL","postcall_processed"),
+                      ("BUSINESS_RECENT_POSTCALL_REVIEW","postcall_needs_review"),
+                      ("BUSINESS_RECENT_FINANCE_SCANNED","finance_deals_scanned"),
+                      ("BUSINESS_RECENT_FINANCE_REVIEW","finance_needs_review"),
+                  ):
+                      say(alias,bounded_positive(r.get(key)))
+          if obs_rows:
+              valid=[x for x in obs_rows if x.get("status")=="NATIVE_OBSERVER_READONLY"]
+              if valid:
+                  x=valid[-1]
+                  for alias,key in (
+                      ("OBSERVER_CRM_NEW_CARDS","visible_new_cards"),
+                      ("OBSERVER_NINE_AI_COMPLETE","ai_nine_complete"),
+                      ("OBSERVER_AI_PARTIAL","ai_partial"),
+                      ("OBSERVER_AI_ABSENT","ai_absent"),
+                      ("OBSERVER_LINKED_TASKS","linked_task_visible"),
+                      ("OBSERVER_TASKS_VISIBILITY_UNKNOWN","task_visibility_unknown"),
+                      ("OBSERVER_SCORE_FIELDS","provisional_score_fields_visible"),
+                      ("OBSERVER_QUALIFIED_LEADS","qualified_leads"),
+                  ):
+                      say(alias,bounded_positive(x.get(key)))
+                  say("OBSERVER_SALES_FUNNEL_VISIBLE",
+                      yesno(x.get("separate_sales_funnel_visible")))
+          if fns_rows:
+              successes=[x for x in fns_rows
+                         if x.get("status","").startswith("NATIVE_FNS_")]
+              if successes:
+                  status=successes[-1].get("status")
+                  allowed={
+                      "NATIVE_FNS_NO_NEW_CARDS":"NO_NEW_CARDS",
+                      "NATIVE_FNS_NO_VALID_INNS":"NO_VALID_INNS",
+                      "NATIVE_FNS_SNAPSHOT_SAVED_PG_HOLD_ONLY":"SAVED_SNAPSHOT",
+                      "NATIVE_FNS_ALL_RECEIPTS_PRESENT":"ALREADY_CHECKED",
+                      "NATIVE_FNS_DISABLED":"DISABLED",
+                  }
+                  say("FNS_LAST_STATUS",allowed.get(status,"OTHER_OR_UNVERIFIED"))
+                  say("FNS_LAST_RECEIPTS_ADDED",
+                      bounded_positive(successes[-1].get("receipts_inserted")))
+
+          # Native database SELECT ONLY; no card IDs or INN copied.
+          pg_script="""
+          import json,os
+          from leadpilot.serviceit_vps_pg_queue import db
+          result={}
+          known=['PENDING','RUNNING','DONE','REVIEW','UNCERTAIN']
+          ns=['AI_NINE_V1','OWN_STOP_V1','CRM_DUP_V1','KANBAN_TITLE_V1',
+              'TASK_V1','FNS_CRM_V1','PROVISIONAL_SCORE_V1','FREE_MSP_SCORE_V1']
+          try:
+              with db(dict(os.environ)) as conn:
+                  with conn.transaction():
+                      with conn.cursor() as cur:
+                          cur.execute('SET TRANSACTION READ ONLY')
+                          def present(name):
+                              cur.execute('SELECT to_regclass(%s) IS NOT NULL',('public.'+name,))
+                              return bool(cur.fetchone()[0])
+                          for name in ['serviceit_vps_new_cards','serviceit_vps_native_receipts',
+                              'serviceit_vps_native_actions','serviceit_vps_msp_snapshot',
+                              'serviceit_vps_poll_state']:
+                              result['table_'+name]=present(name)
+                          if result['table_serviceit_vps_new_cards']:
+                              cur.execute('SELECT status,count(*) FROM serviceit_vps_new_cards GROUP BY status')
+                              statuses=dict(cur.fetchall())
+                              for key in known:
+                                  result['queue_'+key]=int(statuses.get(key,0))
+                          if result['table_serviceit_vps_native_receipts']:
+                              cur.execute('SELECT namespace,status,count(*) FROM serviceit_vps_native_receipts GROUP BY namespace,status')
+                              rows=cur.fetchall()
+                              for name in ns:
+                                  result['receipt_'+name]=sum(int(n) for a,b,n in rows if a==name)
+                                  result['receipt_verified_'+name]=sum(int(n) for a,b,n in rows if a==name and b=='VERIFIED')
+                          if result['table_serviceit_vps_native_actions']:
+                              cur.execute('SELECT operation,status,count(*) FROM serviceit_vps_native_actions GROUP BY operation,status')
+                              rows=cur.fetchall()
+                              for name in ('POSTCALL','FINANCE_REQUEST_ADD','FINANCE_REPORT_ADD',
+                                           'FINANCE_REPORT_UPDATE','FINANCE_REQUEST_UPDATE'):
+                                  result['action_'+name]=sum(int(n) for a,b,n in rows if a==name)
+                                  result['action_verified_'+name]=sum(int(n) for a,b,n in rows if a==name and b=='VERIFIED')
+                          if result['table_serviceit_vps_msp_snapshot']:
+                              cur.execute('SELECT count(*) FROM serviceit_vps_msp_snapshot')
+                              result['msp_receipts']=int(cur.fetchone()[0])
+                          if result['table_serviceit_vps_poll_state']:
+                              cur.execute('SELECT EXTRACT(EPOCH FROM(now()-last_success_at))::bigint FROM serviceit_vps_poll_state WHERE singleton=1')
+                              row=cur.fetchone()
+                              result['poll_age_seconds']=max(0,int(row[0])) if row else None
+              result['database']='PASS'
+          except Exception:
+              result={'database':'BLOCKED'}
+          print(json.dumps(result))
+          """
+          pg=docker_report("core","PG",pg_script,65)
+          say("PG_READONLY",pg.get("database","UNVERIFIED"))
+          for key,value in pg.items():
+              if key.startswith("table_"):
+                  say("PG_"+key.upper(),yesno(value))
+              if key.startswith(("queue_","receipt_","action_")) or key=="msp_receipts":
+                  say("PG_"+key.upper(),bounded_positive(value))
+          age=pg.get("poll_age_seconds")
+          say("POLL_LAST_SUCCESS_AGE_SEC",
+              bounded_positive(age) if age is not None else "UNVERIFIED")
+          # Count own STOP rules only. Do not disclose actual entries.
+          stop_code="""
+          import json
+          try:
+              from leadpilot.serviceit_own_signal_stop import read_rules
+              rules=read_rules()
+              print(json.dumps({'ready':True,'count':len(rules)}))
+          except Exception:
+              print(json.dumps({'ready':False}))
+          """
+          stop=docker_report("aux","STOP",stop_code,25)
+          say("OWN_STOP_CONFIG_READY",yesno(stop.get("ready")))
+          say("OWN_STOP_RULES_COUNT",bounded_positive(stop.get("count")))
+
+          # Bitrix metadata and recent CRM card count, only REST READ methods.
+          crm_code="""
+          import os,json,datetime as dt
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS
+          from leadpilot.serviceit_kanban_presentation import SCORE_FIELD,VERSION_FIELD,BADGE_FIELD
+          from leadpilot.serviceit_fns_msp_crm_result_writer import FIELD as MSP_FIELD
+          from leadpilot.serviceit_postcall_live_worker import REVIEW,NEXT_ACTION
+          result={}
+          try:
+              base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as c:
+                  def get(method,data):
+                      response=c.post(base+'/'+method+'.json',json=data,
+                                      follow_redirects=False,timeout=25)
+                      if response.status_code!=200:
+                          return None
+                      body=response.json()
+                      return body.get('result') if isinstance(body,dict) and not body.get('error') else None
+                  scope=get('scope',{})
+                  result['scope_crm']=isinstance(scope,list) and 'crm' in scope
+                  result['scope_task']=isinstance(scope,list) and 'task' in scope
+                  data=get('crm.item.fields',{'entityTypeId':1062,'useOriginalUfNames':'Y'})
+                  fields=data.get('fields') if isinstance(data,dict) else None
+                  if isinstance(fields,dict):
+                      result['nine_ai_fields']=AI_FIELDS.issubset(fields)
+                      result['score_3_fields']=all(s in fields for s in (SCORE_FIELD,VERSION_FIELD,BADGE_FIELD))
+                      result['msp_field']=MSP_FIELD in fields
+                      result['postcall_2_fields']=REVIEW in fields and NEXT_ACTION in fields
+                  cats=get('crm.category.list',{'entityTypeId':1062})
+                  categories=cats.get('categories') if isinstance(cats,dict) else None
+                  result['spa_category21']=isinstance(categories,list) and any(
+                      isinstance(x,dict) and str(x.get('id'))=='21' for x in categories)
+                  result['metadata']='PASS' if isinstance(fields,dict) else 'BLOCKED'
+                  # A real future card E2E is checked only through bounded REST readback.
+                  from leadpilot.serviceit_bitrix_poll_fallback import discover,calibrate_known_card,after_activation
+                  from leadpilot.serviceit_bitrix_batch_worker import list_only
+                  now=dt.datetime.now(dt.timezone.utc)
+                  runtime=dict(os.environ)
+                  runtime['SERVICEIT_BITRIX_POLL_START_UTC']=runtime.get('SERVICEIT_VPS_NATIVE_ACTIVATION_UTC','')
+                  start=after_activation(runtime,now)
+                  rd=lambda method,params: list_only(c,base,method,params)
+                  calibrate_known_card(rd)
+                  cards=discover(rd,start,now)
+                  result['new_card_count']=len(cards)
+                  result['crm_card_scan']='PASS'
+          except Exception:
+              result.setdefault('metadata','BLOCKED')
+              result.setdefault('crm_card_scan','BLOCKED')
+          print(json.dumps(result))
+          """
+          crm=docker_report("core","CRM",crm_code,150)
+          say("BITRIX_METADATA",crm.get("metadata","UNVERIFIED"))
+          for key in ("scope_crm","scope_task","nine_ai_fields","score_3_fields",
+                      "msp_field","postcall_2_fields","spa_category21"):
+              say("BITRIX_"+key.upper(),yesno(crm.get(key)))
+          say("BITRIX_NEW_CARD_READONLY_SCAN",crm.get("crm_card_scan","UNVERIFIED"))
+          say("BITRIX_FUTURE_CARD_COUNT",
+              bounded_positive(crm.get("new_card_count")))
+
+          # Non-approval of outreach is intentional: not even visible-dedup
+          # and free MSP status prove full corporate stop/customer clearance.
+          say("FULL_CORPORATE_STOP_CLEARANCE","NOT_VERIFIED")
+          say("EXTERNAL_SOURCES","OFF_BY_OWNER_REQUEST")
+          say("REAL_CARD_NINE_AI_E2E","UNPROVEN" if not pg.get("receipt_AI_NINE_V1") else "RECEIPT_EXISTS_CHECK_BITRIX")
+          say("REAL_POSTCALL_E2E","UNPROVEN" if not pg.get("action_verified_POSTCALL") else "RECEIPT_EXISTS")
+          say("REAL_FINANCE_E2E","UNPROVEN" if not any(pg.get("action_verified_"+x,0) for x in
+              ("FINANCE_REQUEST_ADD","FINANCE_REPORT_ADD","FINANCE_REPORT_UPDATE","FINANCE_REQUEST_UPDATE")) else "RECEIPT_EXISTS")
+          say("READONLY_AUDIT_COMPLETE","YES")
+          PY
+          # Only known prefixed, bounded machine statuses are printed.
+          grep -E '^AUDIT_[A-Z0-9_]{3,80}=[A-Za-z0-9_,:+.-]{1,120}$' \
+            "$RUNNER_TEMP/serviceit-full-audit/report.txt" \
+            > "$RUNNER_TEMP/serviceit-full-audit/safe.txt" || true
+          cat "$RUNNER_TEMP/serviceit-full-audit/safe.txt"
+          grep -q '^AUDIT_READONLY_AUDIT_COMPLETE=YES$' \
+            "$RUNNER_TEMP/serviceit-full-audit/safe.txt"
+
+      - name: Post sanitized full audit summary in Issue 290
+        if: always()
+        shell: bash
+        env:
+          REPO: "__REPO__"
+          RUN_ID: "__RUN_ID__"
+        run: |
+          set -euo pipefail
+          path="$RUNNER_TEMP/serviceit-full-audit/safe.txt"
+          if [[ -f "$path" ]]; then
+            report="$(grep -E '^AUDIT_[A-Z0-9_]{3,80}=[A-Za-z0-9_,:+.-]{1,120}$' "$path" | head -140 || true)"
+          else
+            report="AUDIT_READONLY_AUDIT_COMPLETE=UNVERIFIED"
+          fi
+          [[ -n "$report" ]] || report="AUDIT_READONLY_AUDIT_COMPLETE=UNVERIFIED"
+          body="$(printf 'Полный аудит VPS и Битрикс перед подключением источников (ТОЛЬКО ЧТЕНИЕ):\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nЭтот запуск НЕ включал источники, НЕ создавал карточки и задачи, НЕ писал в CRM или PostgreSQL, НЕ перезапускал контейнеры. UNKNOWN/UNVERIFIED не означает успех.' "$report" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$body" >/dev/null

@@ -87,6 +87,24 @@ jobs:
           emit('HOST_BACKUP_USER_ACCESS','YES' if os.access(ROOT,os.R_OK|os.X_OK) else 'NO')
           emit('LOCAL_POSTGRES_IMAGE','YES' if proc(['docker','image','inspect','-f','{{.Id}}',
                                                    'postgres:16-alpine']) else 'NO')
+          import shutil
+          for label,name in (
+              ('INITDB_BIN','initdb'),('PG_CTL_BIN','pg_ctl'),
+              ('CRONTAB_BIN','crontab'),
+          ):
+              exists=bool(shutil.which(name))
+              if name in ('initdb','pg_ctl'):
+                  exists=exists or any(Path('/usr/lib/postgresql/'+v+'/bin/'+name).is_file()
+                                       for v in ('16','17','18'))
+              emit(label,'YES' if exists else 'NO')
+          emit('USER_SYSTEMD_MANAGER','YES'
+               if proc(['systemctl','--user','show','--property=Version']) else 'NO')
+          linger=proc(['loginctl','show-user',os.environ.get('USER','serviceitdeploy'),
+                       '--property=Linger'])
+          emit('LOGIN_LINGER_ENABLED','YES' if linger and 'Linger=yes' in linger
+               else 'NO_OR_UNVERIFIED')
+          emit('SUDO_NONINTERACTIVE','YES' if proc(['sudo','-n','true'],5) is not None
+               else 'NO')
           cap=proc(['docker','inspect','-f','{{.Image}}',
                     'serviceit-leadgen-vps-coordinator-1'])
           emit('COORDINATOR_IMAGE_PRESENT','YES' if cap and
@@ -157,6 +175,55 @@ jobs:
                    else 'NO_OR_UNVERIFIED')
           else:
               emit('OFFLINE_PG_RESTORE_TOC','NOT_TESTABLE')
+          # Pipe at most 50 MiB of archive data from a network-isolated,
+          # read-only Docker mount directly into host pg_restore stdin.
+          # Never print or persist customer data, SQL or archive filenames.
+          if cap and ROOT.is_dir() and shutil.which('pg_restore'):
+              code_stream = r'''
+          import sys
+          from pathlib import Path
+          p=Path('/backup')
+          files=[x for x in p.iterdir() if x.is_file() and not x.is_symlink()
+                 and x.suffix.lower() in ('.dump','.backup','.pgdump','.custom')]
+          if not files:
+              raise SystemExit(2)
+          latest=max(files,key=lambda x:x.stat().st_mtime)
+          if not (5<=latest.stat().st_size<=50*1024*1024):
+              raise SystemExit(2)
+          with latest.open('rb') as stream:
+              while True:
+                  chunk=stream.read(1024*1024)
+                  if not chunk:break
+                  sys.stdout.buffer.write(chunk)
+          '''
+              command=['docker','run','--rm','--pull','never','--network','none',
+                       '--read-only','--user','0:0','--pids-limit','64',
+                       '--memory','256m','--cap-drop','ALL','--cap-add','DAC_OVERRIDE',
+                       '--mount','type=bind,source=/var/backups/serviceit,target=/backup,readonly',
+                       '--entrypoint','python',cap,'-c',code_stream]
+              try:
+                  archive=subprocess.run(command,stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL,timeout=75)
+                  if archive.returncode==0 and 5<=len(archive.stdout)<=50*1024*1024:
+                      toc=subprocess.run(['pg_restore','--list'],
+                              input=archive.stdout,stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL,timeout=75)
+                      unpack=subprocess.run(['pg_restore','--file','/dev/null'],
+                              input=archive.stdout,stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL,timeout=75)
+                      emit('LOCAL_ARCHIVE_TOC_DECODED',
+                           'YES' if toc.returncode==0 else 'NO')
+                      emit('LOCAL_ARCHIVE_FULL_DECODED',
+                           'YES' if unpack.returncode==0 else 'NO')
+                  else:
+                      emit('LOCAL_ARCHIVE_TOC_DECODED','UNVERIFIED')
+                      emit('LOCAL_ARCHIVE_FULL_DECODED','UNVERIFIED')
+              except (OSError,subprocess.TimeoutExpired):
+                  emit('LOCAL_ARCHIVE_TOC_DECODED','UNVERIFIED')
+                  emit('LOCAL_ARCHIVE_FULL_DECODED','UNVERIFIED')
+          else:
+              emit('LOCAL_ARCHIVE_TOC_DECODED','UNVERIFIED')
+              emit('LOCAL_ARCHIVE_FULL_DECODED','UNVERIFIED')
           for kind in ('serviceit-backup.timer','serviceit-postgres-backup.timer'):
               res=proc(['systemctl','is-enabled',kind])
               emit('TIMER_'+('A' if kind.endswith('backup.timer') and 'postgres' not in kind else 'B'),

@@ -1,0 +1,73 @@
+# Optional, isolated first B2B-Center source. Do NOT deploy or enable
+# until Gmail OAuth secret files, source activation and verified CRM dedupe
+# are available. Does not change existing coordinator/aux/business/observer.
+name: serviceit-b2b-source-vps
+
+services:
+  b2b-source:
+    build:
+      context: ..
+      dockerfile: Dockerfile.serviceit-vps
+    image: "${SERVICEIT_B2B_SOURCE_IMAGE:-serviceit-vps-b2b-source:pilot}"
+    restart: unless-stopped
+    network_mode: host
+    user: "10001:10001"
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 350m
+    command: ["python", "-m", "leadpilot.serviceit_vps_b2b_source"]
+    environment:
+      SERVICEIT_PG_HOST: "127.0.0.1"
+      SERVICEIT_PG_PORT: "5432"
+      SERVICEIT_PG_DB: "leadgen"
+      SERVICEIT_PG_USER: "leadgen"
+      SERVICEIT_PG_PASSWORD_FILE: /run/secrets/serviceit_pg_password
+      SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
+      SERVICEIT_B2B_GMAIL_CLIENT_ID_FILE: /run/secrets/serviceit_b2b_client_id
+      SERVICEIT_B2B_GMAIL_CLIENT_SECRET_FILE: /run/secrets/serviceit_b2b_client_secret
+      SERVICEIT_B2B_GMAIL_REFRESH_TOKEN_FILE: /run/secrets/serviceit_b2b_refresh_token
+      SERVICEIT_VPS_B2B_GMAIL_ACCOUNT: "${SERVICEIT_VPS_B2B_GMAIL_ACCOUNT:-}"
+      SERVICEIT_VPS_B2B_ACTIVATION_UTC: "${SERVICEIT_VPS_B2B_ACTIVATION_UTC:-}"
+      # 2 flags must be independently authorized; safe default OFF.
+      SERVICEIT_VPS_B2B_SOURCE_ENABLED: "${SERVICEIT_VPS_B2B_SOURCE_ENABLED:-NO}"
+      SERVICEIT_VPS_B2B_CRM_WRITE_ENABLED: "${SERVICEIT_VPS_B2B_CRM_WRITE_ENABLED:-NO}"
+      SERVICEIT_VPS_B2B_LEGACY_WRITERS_DISABLED: "${SERVICEIT_VPS_B2B_LEGACY_WRITERS_DISABLED:-NO}"
+      SERVICEIT_VPS_WRITER_MODE: "${SERVICEIT_VPS_WRITER_MODE:-READONLY}"
+      SERVICEIT_VPS_CUTOVER_AUTHORIZED: "${SERVICEIT_VPS_CUTOVER_AUTHORIZED:-NO}"
+      SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
+      SERVICEIT_VPS_POLL_ENABLED: "${SERVICEIT_VPS_POLL_ENABLED:-NO}"
+      SERVICEIT_VPS_INTAKE_ENABLED: "NO"
+      SERVICEIT_AI_PROVIDER: "routerai"
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
+      SERVICEIT_ROUTERAI_PRIVACY_APPROVED: "${SERVICEIT_ROUTERAI_PRIVACY_APPROVED:-NO}"
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+      - serviceit_b2b_client_id
+      - serviceit_b2b_client_secret
+      - serviceit_b2b_refresh_token
+    healthcheck:
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_b2b_source as s; assert s.INTERVAL_SECONDS == 300"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+secrets:
+  serviceit_pg_password:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Required}/pg_password"
+  serviceit_bitrix_webhook:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Required}/bitrix_webhook"
+  serviceit_b2b_client_id:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Required}/b2b_gmail_client_id"
+  serviceit_b2b_client_secret:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Required}/b2b_gmail_client_secret"
+  serviceit_b2b_refresh_token:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Required}/b2b_gmail_refresh_token"

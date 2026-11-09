@@ -1,0 +1,230 @@
+name: ServiceIT VPS daily private PostgreSQL backup + isolated restore acceptance
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type ACTIVATE_VPS_PRIVATE_PG_BACKUP_DRILL_290'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-private-pg-backup-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'ACTIVATE_VPS_PRIVATE_PG_BACKUP_DRILL_290')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.action == 'created' &&
+         github.event.issue.number == 290 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_INSTALL_PRIVATE_DAILY_PG_BACKUP_AND_RESTORE_DRILL_290')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Review local source and pinned SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_pg_backup.py
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-backup-activate"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-backup-activate/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-backup-activate/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-backup-activate/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-backup-activate/known_hosts" >/dev/null
+      - name: Securely stage public-code-only backup program
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$RUNNER_TEMP/serviceit-backup-activate/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-backup-activate/known_hosts" \
+            -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
+            'umask 077; install -d -m 0700 "$HOME/serviceit/staging/private-backup-activation"'
+          scp -i "$RUNNER_TEMP/serviceit-backup-activate/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-backup-activate/known_hosts" \
+            -o BatchMode=yes ops/serviceit_vps_pg_backup.py \
+            "$VPS_USER@$VPS_HOST:serviceit/staging/private-backup-activation/backup.py"
+      - name: One-time production backup and REAL restore to isolated PG; install daily private cron ONLY if test passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(sha256sum ops/serviceit_vps_pg_backup.py | cut -d' ' -f1)"
+          ssh -T -i "$RUNNER_TEMP/serviceit-backup-activate/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-backup-activate/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "python3 - '$sha'" \
+            > "$RUNNER_TEMP/serviceit-backup-activate/result.txt" <<'PY'
+          import fcntl
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import stat
+          import subprocess
+          import sys
+
+          sha=sys.argv[1]
+          HOME=Path.home()
+          OPS=HOME/"serviceit"/"ops"
+          STAGE=HOME/"serviceit"/"staging"/"private-backup-activation"/"backup.py"
+          PROGRAM=OPS/"serviceit_vps_pg_backup.py"
+          LOCK=HOME/"serviceit"/"config"/".serviceit-backup-activate.lock"
+          CORE="serviceit-leadgen-vps-coordinator-1"
+          MARKER="# SERVICEIT_NATIVE_PG_BACKUP_V1"
+          class Blocked(Exception): pass
+          def need(ok,why):
+              if not ok:raise Blocked(why)
+          def proc(args,timeout=40,stdin=None):
+              try:
+                  return subprocess.run(args,input=stdin,stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,timeout=timeout,text=True)
+              except (OSError,subprocess.TimeoutExpired):
+                  raise Blocked("LOCAL_EXEC_FAILED")
+          try:
+              print("PG_BACKUP_ACTIVATION=START",flush=True)
+              need(os.geteuid()!=0,"ROOT_NOT_ALLOWED")
+              need(re.fullmatch(r"[a-f0-9]{64}",sha)!=None,
+                   "SOURCE_HASH_INVALID")
+              need(STAGE.is_file() and not STAGE.is_symlink()
+                   and STAGE.stat().st_uid==os.geteuid()
+                   and hashlib.sha256(STAGE.read_bytes()).hexdigest()==sha,
+                   "STAGED_SOURCE_MISMATCH")
+              need(proc(["systemctl","is-active","cron"]).stdout.strip()=="active",
+                   "SYSTEM_CRON_NOT_ACTIVE")
+              need(proc(["docker","inspect","-f",
+                         "{{.State.Running}}:{{.State.Health.Status}}",CORE]).stdout.strip()
+                   =="true:healthy","CORE_NOT_HEALTHY")
+              def flag(n):
+                  result=proc(["docker","exec",CORE,"printenv",n])
+                  need(result.returncode==0,"NATIVE_CUTOVER_FLAG_UNAVAILABLE")
+                  return result.stdout.strip()
+              need(flag("SERVICEIT_VPS_CUTOVER_AUTHORIZED")=="YES" and
+                   flag("SERVICEIT_VPS_POLL_ENABLED")=="YES" and
+                   flag("SERVICEIT_VPS_INTAKE_ENABLED")=="NO",
+                   "NATIVE_CUTOVER_SCOPE_CHANGED")
+              lock=LOCK.open("a")
+              os.chmod(LOCK,0o600)
+              try:
+                  fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                  OPS.mkdir(mode=0o700,parents=True,exist_ok=True)
+                  need(OPS.is_dir() and not OPS.is_symlink()
+                       and OPS.stat().st_uid==os.geteuid() and
+                       not(stat.S_IMODE(OPS.stat().st_mode)&0o077),
+                       "OPS_DIR_NOT_PRIVATE")
+                  if PROGRAM.exists():
+                      need(not PROGRAM.is_symlink() and PROGRAM.is_file()
+                           and PROGRAM.stat().st_uid==os.geteuid()
+                           and hashlib.sha256(PROGRAM.read_bytes()).hexdigest()==sha,
+                           "EXISTING_BACKUP_PROGRAM_DIFFERS")
+                  else:
+                      with PROGRAM.open("xb") as out:
+                          out.write(STAGE.read_bytes())
+                          out.flush();os.fsync(out.fileno())
+                  os.chmod(PROGRAM,0o700)
+                  print("BACKUP_SCRIPT_INSTALLED=YES",flush=True)
+                  result=proc(["python3",str(PROGRAM),"--backup-and-drill"],timeout=480)
+                  for ln in result.stdout.splitlines():
+                      if re.fullmatch(r"SERVICEIT_[A-Z0-9_]+=(PASS|YES|SUCCESS|ZERO|[0-9]{1,3}|BLOCKED_[A-Z0-9_]+)",ln):
+                          print(ln,flush=True)
+                  need(result.returncode==0 and
+                       "SERVICEIT_ISOLATED_FULL_RESTORE=PASS" in result.stdout
+                       and "SERVICEIT_BACKUP=SUCCESS" in result.stdout,
+                       "ISOLATED_DATABASE_RESTORE_NOT_PROVEN")
+                  existing=proc(["crontab","-l"])
+                  if existing.returncode!=0:
+                      need("no crontab" in (existing.stdout or "").lower() or
+                           existing.returncode==1,
+                           "EXISTING_CRONTAB_UNREADABLE")
+                      prior=""
+                  else:
+                      prior=existing.stdout
+                  cron=( "17 2 * * * /usr/bin/python3 "+str(PROGRAM)+
+                        " --backup-only >> "+str(OPS/"backup-scheduler.log")+
+                        " 2>&1 "+MARKER )
+                  taglines=[x for x in prior.splitlines() if MARKER in x]
+                  need(not taglines or taglines==[cron],
+                       "CRON_TAG_EXISTS_WITH_DIFFERENT_CONFIG")
+                  log=OPS/"backup-scheduler.log"
+                  if not log.exists():
+                      fd=os.open(log,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+                      os.close(fd)
+                  need(log.is_file() and not log.is_symlink()
+                       and log.stat().st_uid==os.geteuid(),
+                       "BACKUP_CRON_LOG_NOT_PRIVATE")
+                  os.chmod(log,0o600)
+                  if not taglines:
+                      text=prior.rstrip("\n")+"\n"+cron+"\n"
+                      installed=proc(["crontab","-"],timeout=15,stdin=text)
+                      need(installed.returncode==0,"CRONTAB_INSTALL_FAILED")
+                  installed=proc(["crontab","-l"],timeout=15)
+                  need(installed.returncode==0 and
+                       installed.stdout.splitlines().count(cron)==1,
+                       "CRON_READBACK_FAILED")
+                  print("DAILY_PRIVATE_PG_BACKUP_CRON=ENABLED",flush=True)
+                  print("BACKUP_RETENTION=14_VALID_ARCHIVES",flush=True)
+                  print("PRODUCTION_DB_WRITES_BY_ACTIVATION=0",flush=True)
+                  print("CRM_WRITES_BY_ACTIVATION=0;SOURCES_CHANGED=NO",flush=True)
+                  print("PG_BACKUP_ACTIVATION=SUCCESS",flush=True)
+              finally:
+                  lock.close()
+          except Exception as err:
+              msg=str(err) if isinstance(err,Blocked) else "UNEXPECTED_FAILURE"
+              if not re.fullmatch(r"[A-Z][A-Z0-9_]+",msg):
+                  msg="UNEXPECTED_FAILURE"
+              print("PG_BACKUP_ACTIVATION=BLOCKED_"+msg,flush=True)
+              raise SystemExit(2)
+          PY
+          grep -E '^(PG_BACKUP_ACTIVATION|BACKUP_SCRIPT_INSTALLED|DAILY_PRIVATE_PG_BACKUP_CRON|SERVICEIT_|BACKUP_RETENTION|PRODUCTION_DB_WRITES_BY_ACTIVATION|CRM_WRITES_BY_ACTIVATION)=' \
+            "$RUNNER_TEMP/serviceit-backup-activate/result.txt" || true
+          grep -q '^PG_BACKUP_ACTIVATION=SUCCESS$' "$RUNNER_TEMP/serviceit-backup-activate/result.txt"
+
+      - name: Post sanitized activation to Issue 290
+        if: always()
+        shell: bash
+        env:
+          REPO: "${{ github.repository }}"
+          RUN_ID: "${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/serviceit-backup-activate/result.txt"
+          if [[ -f "$f" ]]; then
+            report="$(grep -E '^(PG_BACKUP_ACTIVATION|BACKUP_SCRIPT_INSTALLED|DAILY_PRIVATE_PG_BACKUP_CRON|SERVICEIT_ISOLATED_FULL_RESTORE|SERVICEIT_BACKUP|SERVICEIT_RESTORED_REQUIRED_SCHEMAS|BACKUP_RETENTION)=' "$f" || true)"
+          else
+            report="PG_BACKUP_ACTIVATION=UNVERIFIED"
+          fi
+          [[ -n "$report" ]] || report="PG_BACKUP_ACTIVATION=UNVERIFIED"
+          body="$(printf 'Ежедневные резервные копии и восстановление в изолированной базе VPS:\n\n%s\n\nGitHub Actions: https://github.com/%s/actions/runs/%s\n\nТолько локальный pg_dump, никакой передачи архива наружу. Восстановление, если успешно, проводилось во временной базе без TCP и без записи в production.' "$report" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$body" >/dev/null || true

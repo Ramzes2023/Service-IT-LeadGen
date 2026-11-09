@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only production VPS state for external GitHub health monitor.
+"""Read-only 5-minute production VPS state for external GitHub health monitor.
 
 Runs over pinned nonroot SSH, not in the production processing loop.
 Outputs only allowlisted Boolean and bounded numeric data. No CRM HTTP,

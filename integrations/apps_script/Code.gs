@@ -9,8 +9,8 @@
  * The VPS worker creates a guarded 1062/21 HOLD card and queues RouterAI.
  * No Score, outreach, contact, stage move or qualified-lead status is created.
  *
- * Secrets are injected into a private, owner-only secrets.gs by the one-time
- * PowerShell installer. No credentials belong in this tracked file.
+ * Keep the existing private owner-only secrets.gs with the shared HMAC key.
+ * No GitHub credential is required by this direct-to-VPS source path.
  */
 const SERVICEIT_CONFIG = Object.freeze({
   // GitHub is CODE/CI only. Direct signed source events go to VPS.
@@ -40,8 +40,6 @@ function privateConfig_() {
       !SERVICEIT_PRIVATE_CONFIG ||
       SERVICEIT_PRIVATE_CONFIG.ownerApproval !== "YES" ||
       SERVICEIT_PRIVATE_CONFIG.expectedMailbox !== SERVICEIT_CONFIG.mailbox ||
-      typeof SERVICEIT_PRIVATE_CONFIG.githubToken !== "string" ||
-      SERVICEIT_PRIVATE_CONFIG.githubToken.length < 20 ||
       typeof SERVICEIT_PRIVATE_CONFIG.hmacSecret !== "string" ||
       SERVICEIT_PRIVATE_CONFIG.hmacSecret.length < 32 ||
       !Number.isFinite(Number(SERVICEIT_PRIVATE_CONFIG.cutoverMs)) ||

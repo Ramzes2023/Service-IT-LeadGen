@@ -1,0 +1,241 @@
+"""VPS-only signed Apps Script B2B-Center -> PostgreSQL inbox + guarded HOLD delivery.
+
+No GitHub event transport, no Gmail OAuth on VPS and no source CRM write
+in the public ingress. All database changes precede any external CRM POST.
+Uncertain POST is NEVER retried automatically. Source is OFF by default.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from datetime import datetime, timezone
+
+import httpx
+
+from .serviceit_b2b_appsscript_ingest import (
+    validate_dispatch, IngestBlocked, EVENT_TYPE, REPO,
+)
+from .b2b_github_to_bitrix import (
+    notice_from_event, hold_payload, exact_duplicate, bitrix_call,
+    BridgeBlocked, SIGNAL,
+)
+from .b2b_bitrix_readiness import ReadOnlyBitrix, preflight
+from .serviceit_b2b_hold_ai_fields import AI_FIELDS
+from .serviceit_vps_pg_queue import db, insert_new, secret_file, VpsBlocked
+from .serviceit_vps_worker import live_permitted
+from .bitrix_metadata_audit import validate_webhook
+
+PATH = "/integrations/serviceit/b2b-center/notice"
+MAX_BODY = 6000
+MAX_PER_CYCLE = 1
+MAX_PER_24H = 3
+INTERVAL_SECONDS = 300
+DDL = """
+CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_inbox (
+ source_id TEXT PRIMARY KEY CHECK (source_id ~ '^B2B-CENTER-[0-9]{5,12}$'),
+ notice_json JSONB NOT NULL,
+ state TEXT NOT NULL DEFAULT 'PENDING'
+   CHECK(state IN ('PENDING','POST_UNCERTAIN','VERIFIED','EXISTING','REVIEW')),
+ card_id BIGINT CHECK(card_id BETWEEN 8 AND 2000000000),
+ received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ write_started_at TIMESTAMPTZ,
+ completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS serviceit_vps_b2b_inbox_pending_idx
+ ON serviceit_vps_b2b_inbox(state,received_at);
+"""
+
+
+class B2BBlocked(ValueError):
+    pass
+
+
+def must(condition, code):
+    if not condition:
+        raise B2BBlocked(code)
+
+
+def enabled(env: dict, *, writer=False) -> bool:
+    names = ("SERVICEIT_VPS_B2B_RECEIVER_ENABLED", "SERVICEIT_VPS_B2B_WRITER_ENABLED")
+    for key in names:
+        must(env.get(key, "NO") in ("NO", "YES"), "B2B_FLAG_INVALID")
+    if env.get("SERVICEIT_VPS_B2B_RECEIVER_ENABLED") != "YES":
+        return False
+    must(env.get("SERVICEIT_VPS_B2B_GH_WRITERS_DISABLED_ACK") == "YES",
+         "B2B_GH_WRITERS_MUST_BE_OFF")
+    if writer:
+        must(env.get("SERVICEIT_VPS_B2B_WRITER_ENABLED") == "YES",
+             "B2B_WRITER_NOT_AUTHORIZED")
+        must(live_permitted(env), "B2B_NATIVE_CUTOVER_NOT_LIVE")
+    return True
+
+
+def signed_notice(payload: dict, key: str, *, now: float | None = None):
+    """Reuse existing, tested Apps Script/GitHub envelope without Github IO."""
+    must(type(payload) is dict and set(payload) ==
+         {"timestamp", "payload_json", "signature"}, "B2B_ENVELOPE_INVALID")
+    event = {
+        "action": EVENT_TYPE,
+        "repository": {"full_name": REPO},
+        "client_payload": payload,
+    }
+    synthetic, dispatch_id = validate_dispatch(event, key, now=now)
+    notice, groups = notice_from_event(synthetic)
+    must(bool(groups), "B2B_SOURCE_RELEVANCE_REQUIRED")
+    return notice, groups, dispatch_id
+
+
+def migrate(connection):
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(DDL)
+
+
+def accept(connection, notice: dict, groups: list[str]) -> bool:
+    # Store only signed, already sanitized public tender fields.
+    source = "B2B-CENTER-" + notice["tender_id"]
+    safe = json.dumps(notice, ensure_ascii=False, separators=(",", ":"))
+    must(len(safe.encode("utf-8")) <= 3500, "B2B_NOTICE_TOO_LARGE")
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(
+                "INSERT INTO serviceit_vps_b2b_inbox(source_id,notice_json) "
+                "VALUES(%s,%s::jsonb) "
+                "ON CONFLICT(source_id) DO NOTHING RETURNING source_id",
+                (source, safe))
+            return cur.fetchone() is not None
+
+
+def statistics(connection) -> dict:
+    with connection.cursor() as cur:
+        cur.execute("SELECT state,count(*) FROM serviceit_vps_b2b_inbox GROUP BY state")
+        return {str(a): int(b) for a,b in cur.fetchall()}
+
+
+def read_candidate(connection):
+    """Read-only: work is only claimed after positive CRM controls have passed."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT source_id,notice_json FROM serviceit_vps_b2b_inbox "
+            "WHERE state='PENDING' ORDER BY received_at,source_id LIMIT 1"
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    data = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    return str(row[0]), data
+
+
+def set_existing(connection, source):
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE serviceit_vps_b2b_inbox SET state='EXISTING',completed_at=now() "
+                "WHERE source_id=%s AND state='PENDING' RETURNING source_id",
+                (source,))
+            return cur.fetchone() is not None
+
+
+def reserve_post(connection, source):
+    """Commit irreversible POST_UNCERTAIN before issuing external mutation."""
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE serviceit_vps_b2b_inbox SET state='POST_UNCERTAIN',"
+                "write_started_at=now() "
+                "WHERE source_id=%s AND state='PENDING' "
+                "RETURNING source_id", (source,))
+            return cur.fetchone() is not None
+
+
+def confirm(connection, source, card):
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE serviceit_vps_b2b_inbox SET state='VERIFIED',card_id=%s,"
+                "completed_at=now() WHERE source_id=%s AND state='POST_UNCERTAIN' "
+                "RETURNING source_id", (card, source))
+            must(cur.fetchone() is not None, "B2B_POST_ACK_STATE_UNVERIFIED")
+
+
+def attempted_24h(connection):
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM serviceit_vps_b2b_inbox "
+            "WHERE write_started_at > now()-INTERVAL '24 hours'")
+        return int(cur.fetchone()[0])
+
+
+def deliver_one(connection, client, webhook):
+    if attempted_24h(connection) >= MAX_PER_24H:
+        return "DAILY_LIMIT"
+    candidate = read_candidate(connection)
+    if candidate is None:
+        return "NO_PENDING"
+    source, notice = candidate
+    payload = hold_payload(notice, __import__(
+        "leadpilot.b2b_email_opportunity_bridge", fromlist=["classify_services"]
+    ).classify_services(notice["subject"]))
+    must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
+    base = validate_webhook(webhook)
+    # Existing known source MUST be visible (the portal once gave false empties).
+    must(len(exact_duplicate(client, base, "B2B-CENTER-4665948")) == 1,
+         "B2B_POSITIVE_CRM_DUPLICATE_CONTROL_FAILED")
+    if exact_duplicate(client, base, source):
+        return "EXISTING" if set_existing(connection, source) else "ALREADY_RESERVED"
+    must(reserve_post(connection, source), "B2B_SOURCE_RESERVED_ELSEWHERE")
+    for name in AI_FIELDS:
+        payload["fields"].pop(name)
+    # Irreversible external side effect: no automatic re-POST in any exception.
+    result = bitrix_call(client, base, "crm.item.add", payload)
+    obj = result["result"].get("item")
+    must(type(obj) is dict and type(obj.get("id")) is int and obj["id"] >= 8,
+         "B2B_CRM_ADD_UNCERTAIN")
+    card = obj["id"]
+    actual = bitrix_call(client, base, "crm.item.get", {
+        "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+    })["result"].get("item")
+    must(type(actual) is dict and str(actual.get("id")) == str(card)
+         and str(actual.get("entityTypeId")) == "1062"
+         and str(actual.get("categoryId")) == "21"
+         and all(actual.get(k) == v for k,v in payload["fields"].items()),
+         "B2B_CRM_READBACK_UNCERTAIN")
+    confirm(connection, source, card)
+    # The normal VPS coordinator polls new CRM cards every 5min as a fallback.
+    # Explicit new-card id bypasses any discovery timing uncertainty.
+    insert_new(connection, card)
+    return "ONE_REAL_HOLD_QUEUED"
+
+
+def worker_once(env: dict, *, client):
+    if not enabled(env, writer=True):
+        return {"status": "B2B_WRITER_DISABLED", "crm_writes": 0}
+    with db(env) as connection:
+        migrate(connection)
+        webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
+        preflight(ReadOnlyBitrix(webhook, client=client))
+        outcome = deliver_one(connection, client, webhook)
+        return {"status": "B2B_VPS_WORKER_CYCLE", "result": outcome,
+                "crm_writes": int(outcome == "ONE_REAL_HOLD_QUEUED"),
+                "qualified_leads": 0, "outbound_contacts": 0}
+
+
+def main():
+    env = dict(os.environ)
+    while True:
+        started = time.monotonic()
+        try:
+            with httpx.Client(trust_env=False, follow_redirects=False) as client:
+                print(json.dumps(worker_once(env, client=client),sort_keys=True),
+                      flush=True)
+        except Exception:
+            print(json.dumps({"status": "B2B_WORKER_BLOCKED_OR_UNCERTAIN",
+                              "no_blind_retry": True,
+                              "crm_writes": "UNVERIFIED"}), flush=True)
+        time.sleep(max(0, INTERVAL_SECONDS - (time.monotonic()-started)))
+
+
+if __name__ == "__main__":
+    main()

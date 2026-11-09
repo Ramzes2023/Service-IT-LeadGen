@@ -113,9 +113,21 @@ function environment(options={}) {
     },
     UrlFetchApp: {
       fetch:(url,config)=>{
-        if(url==='https://leadgen.serviseit.ru/health') {
+        if(url==='https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/health') {
           assert.strictEqual(config.method,'get');
-          return {getResponseCode:()=>200,getContentText:()=>''};
+          return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({
+            status:'B2B_INGRESS_ALIVE',source_enabled:true,crm_writes:0
+          })};
+        }
+        if(url==='https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/probe') {
+          assert.strictEqual(config.method,'post');
+          const payload=JSON.parse(config.payload);
+          const expected='sha256='+crypto.createHmac('sha256',SECRET)
+            .update('v1|b2b-probe|'+payload.timestamp+'|'+payload.nonce).digest('hex');
+          assert.strictEqual(payload.signature,expected);
+          return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({
+            status:'B2B_VPS_SIGNED_PROBE_PASS',crm_writes:0
+          })};
         }
         assert.strictEqual(url,
           'https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/notice');

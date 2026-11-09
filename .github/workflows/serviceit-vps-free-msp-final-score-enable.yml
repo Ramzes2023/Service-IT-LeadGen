@@ -1,0 +1,355 @@
+name: ServiceIT VPS free FNS-MSP FINAL INTERNAL Score cutover (no paid FNS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type ENABLE_VPS_FREE_MSP_FINAL_SCORE_ONLY_1062_21'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-fns-msp-writer-activation
+  cancel-in-progress: false
+
+jobs:
+  switch-internal-score:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'ENABLE_VPS_FREE_MSP_FINAL_SCORE_ONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Validate pinned non-root SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-score-cutover"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-score-cutover/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-score-cutover/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-score-cutover/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-score-cutover/known_hosts" >/dev/null
+
+      - name: Safely switch only two score flags on the existing VPS AUX image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-score-cutover/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-score-cutover/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          from pathlib import Path
+          import fcntl
+          import json
+          import os
+          import re
+          import stat
+          import subprocess
+          import tempfile
+          import time
+
+          PREFIX="serviceit-leadgen-vps-"
+          C=PREFIX+"coordinator-1"
+          A=PREFIX+"auxiliaries-1"
+          B=PREFIX+"business-1"
+          O=PREFIX+"observer-1"
+          F=PREFIX+"fns-msp-1"
+          ENV=Path.home()/"serviceit/config/vps.env"
+          PIN=ENV.parent/"fns-aux-image-pinned.compose.yml"
+          RELEASES=(Path.home()/"serviceit/releases").resolve()
+          PROVISIONAL="SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED"
+          FINAL="SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED"
+          RESULT="SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED"
+
+          class Blocked(Exception): pass
+          def need(ok, code):
+              if not ok: raise Blocked(code)
+          def run(args, timeout=45):
+              try:
+                  return subprocess.run(args, stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+              except (OSError, subprocess.TimeoutExpired):
+                  raise Blocked("REMOTE_COMMAND_UNVERIFIED")
+          def output(args, timeout=45):
+              p=run(args,timeout)
+              need(p.returncode==0,"REMOTE_COMMAND_FAILED")
+              return p.stdout.strip()
+          def docker_inspect(name, template):
+              return output(["docker","inspect","-f",template,name])
+          def flag(name, key):
+              return output(["docker","exec",name,"printenv",key])
+          def healthy(name):
+              try:
+                  return docker_inspect(name,
+                    "{{.State.Running}}:{{.State.Health.Status}}")=="true:healthy"
+              except Blocked:
+                  return False
+          def assert_health():
+              for name in (C,A,B,O,F):
+                  need(healthy(name),"NATIVE_SERVICE_UNHEALTHY")
+          def assert_private(path):
+              need(path.is_file() and not path.is_symlink(),"PRIVATE_FILE_MISSING_OR_LINK")
+              s=path.stat()
+              need(s.st_uid==os.geteuid() and not(stat.S_IMODE(s.st_mode)&0o077),
+                   "PRIVATE_FILE_PERMISSIONS_INVALID")
+          def parse(raw):
+              result={}
+              for row in raw.splitlines():
+                  if not row or row.lstrip().startswith("#"): continue
+                  m=re.fullmatch(r"([A-Z][A-Z0-9_]*)=(.*)",row)
+                  need(m is not None,"ENV_FORMAT_INVALID")
+                  need(m[1] not in result,"ENV_DUPLICATE_KEY")
+                  result[m[1]]=m[2]
+              return result
+          def atomic(raw):
+              fd,path=tempfile.mkstemp(prefix=".score-cutover-",dir=ENV.parent)
+              try:
+                  with os.fdopen(fd,"w",encoding="utf8") as fp:
+                      os.fchmod(fp.fileno(),0o600)
+                      fp.write(raw)
+                      fp.flush()
+                      os.fsync(fp.fileno())
+                  os.replace(path,ENV)
+              finally:
+                  try: os.unlink(path)
+                  except FileNotFoundError: pass
+          def compose_args(compose,*args):
+              return ["docker","compose","--env-file",str(ENV),
+                      "-f",str(compose),"-f",str(PIN),*args]
+          def update_only_two(original):
+              cfg=parse(original)
+              need(cfg.get(PROVISIONAL)=="YES" and cfg.get(FINAL,"NO")=="NO",
+                   "SCORE_FLAGS_ALREADY_CHANGED")
+              new=original
+              for key in (PROVISIONAL,FINAL):
+                  target="NO" if key==PROVISIONAL else "YES"
+                  expression=r"(?m)^"+re.escape(key)+r"=(?:YES|NO)$"
+                  matches=list(re.finditer(expression,new))
+                  need(len(matches)<=1,"SCORE_FLAG_REPEATED")
+                  if matches:
+                      new=re.sub(expression,key+"="+target,new)
+                  else:
+                      need(key==FINAL,"PROVISIONAL_EXPLICIT_FLAG_REQUIRED")
+                      new=new.rstrip("\n")+"\n"+key+"="+target+"\n"
+              expected={**cfg,PROVISIONAL:"NO",FINAL:"YES"}
+              need(parse(new)==expected,"SCORE_CONFIG_NON_TARGET_CHANGE")
+              return new
+          def preflight_code():
+              program = """
+          import os
+          from leadpilot.serviceit_vps_native_aux import enabled
+          from leadpilot.serviceit_preliminary_score_markers import (
+              provisional_payload,is_score_empty_or_ours)
+          from leadpilot.serviceit_leadgen_free_msp_score import (
+              VERSION,internal_payload,evaluate_one)
+          env=dict(os.environ)
+          env['SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED']='NO'
+          env['SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED']='YES'
+          flags=enabled(env)
+          assert flags['free_msp_score'] and not flags['provisional_score']
+          existing=provisional_payload(57,'НЕ ПРОВЕРЕНЫ')
+          assert is_score_empty_or_ours(existing)
+          assert VERSION=='svc-leadgen-free-msp-v1'
+          receipt={'msp_category':'SMALL','published':'2026-10-10',
+              'fns_egrul_verified':False,'formal_score_authorized':False}
+          out=internal_payload(57,receipt)
+          assert len(out)==3
+          assert callable(evaluate_one)
+          assert 'ВНУТРЕННИЙ ИТОГ' in str(out)
+          assert 'Контакт: нет' in str(out)
+          print('FINAL_SCORE_COMPATIBLE')
+          """
+              need(output(["docker","exec",A,"python","-c",program],45)
+                   =="FINAL_SCORE_COMPATIBLE","FINAL_SCORE_CODE_OR_UPGRADE_INVALID")
+          def preflight_readonly():
+              pg="""
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as con:
+              with con.transaction():
+                  with con.cursor() as c:
+                      c.execute('SET TRANSACTION READ ONLY')
+                      c.execute("SELECT to_regclass('public.serviceit_vps_msp_snapshot') IS NOT NULL, "
+                                "to_regclass('public.serviceit_vps_native_receipts') IS NOT NULL")
+                      print('READY' if all(c.fetchone()) else 'BLOCKED')
+          """
+              need(output(["docker","exec",C,"python","-c",pg],45)=="READY",
+                   "FNS_OR_SCORE_PG_SCHEMA_MISSING")
+              metadata="""
+          import os
+          import httpx
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.serviceit_fns_msp_crm_result_writer import result_field_verified
+          from leadpilot.serviceit_stage4_all_new_signed_score_writer import score_schema_ok
+          try:
+              base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as client:
+                  result_field_verified(client,base)
+                  score_schema_ok(client,base)
+              print('READY')
+          except Exception:
+              print('BLOCKED')
+          """
+              need(output(["docker","exec",A,"python","-c",metadata],60)=="READY",
+                   "CRM_SCORE_OR_FNS_FIELD_NOT_READY")
+          def image_id():
+              value=docker_inspect(A,"{{.Image}}")
+              need(re.fullmatch(r"sha256:[a-f0-9]{64}",value) is not None,
+                   "AUX_IMAGE_ID_INVALID")
+              return value
+
+          lock=ENV.parent/".serviceit-fns-result-activate.lock"
+          changed=False
+          original=None
+          compose=None
+          prior_image=None
+          try:
+              print("VPS_FINAL_MSP_SCORE_SWITCH=START",flush=True)
+              need(os.geteuid()!=0,"ROOT_NOT_ALLOWED")
+              with lock.open("a") as handle:
+                  os.chmod(lock,0o600)
+                  fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                  assert_health()
+                  for key,value in (
+                      ("SERVICEIT_VPS_WRITER_MODE","LIVE"),
+                      ("SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES"),
+                      ("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK","YES"),
+                      ("SERVICEIT_VPS_POLL_ENABLED","YES"),
+                  ):
+                      need(flag(C,key)==value,"GLOBAL_CUTOVER_GATE_INVALID")
+                  need(bool(flag(C,"SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")),
+                       "NATIVE_TIMESTAMP_ABSENT")
+                  need(flag(F,"SERVICEIT_VPS_FNS_MSP_ENABLED")=="YES",
+                       "FNS_COLLECTOR_DISABLED")
+                  for key,value in (
+                      ("SERVICEIT_VPS_OWN_STOP_ENABLED","YES"),
+                      ("SERVICEIT_VPS_CRM_DUPLICATE_ENABLED","YES"),
+                      ("SERVICEIT_VPS_KANBAN_TITLE_ENABLED","YES"),
+                      ("SERVICEIT_VPS_MANAGER_TASK_ENABLED","YES"),
+                      (RESULT,"YES"),
+                      (PROVISIONAL,"YES"),
+                      (FINAL,"NO"),
+                  ):
+                      need(flag(A,key)==value,"AUX_CURRENT_FLAG_CHANGED")
+                  assert_private(ENV)
+                  assert_private(PIN)
+                  original=ENV.read_text("utf8")
+                  cfg=parse(original)
+                  for key,value in (
+                      ("SERVICEIT_VPS_FNS_MSP_ENABLED","YES"),
+                      (RESULT,"YES"),
+                      ("SERVICEIT_VPS_POSTCALL_ENABLED","NO"),
+                      ("SERVICEIT_VPS_FINANCE_ENABLED","NO"),
+                      (PROVISIONAL,"YES"),
+                      (FINAL,"NO"),
+                  ):
+                      need(cfg.get(key,"NO")==value,"ENV_GATE_OR_FLAGS_CHANGED")
+                  labels=docker_inspect(A,
+                      '{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+                  paths=[Path(p.strip()) for p in labels.split(",") if p.strip()]
+                  need(len(paths)==2 and PIN in paths,"AUX_COMPOSE_LABEL_NOT_PINNED")
+                  candidates=[p for p in paths if p!=PIN and p.name=="serviceit-vps.compose.yml"]
+                  need(len(candidates)==1,"AUX_COMPOSE_RELEASE_MISSING")
+                  compose=candidates[0]
+                  need(compose.is_file() and not compose.is_symlink()
+                       and compose.resolve().is_relative_to(RELEASES)
+                       and re.search(r"/releases/[a-f0-9]{40}/deploy/serviceit-vps.compose.yml$",
+                                     str(compose.resolve())) is not None,
+                       "AUX_COMPOSE_RELEASE_UNVERIFIED")
+                  need(docker_inspect(A,
+                       '{{index .Config.Labels "com.docker.compose.project"}}')
+                       =="serviceit-leadgen-vps","AUX_PROJECT_CHANGED")
+                  prior_image=image_id()
+                  pin=PIN.read_text("utf8")
+                  expected_pin=('services:\n  auxiliaries:\n    image: "'+
+                        prior_image+'"\n    pull_policy: never\n')
+                  need(pin==expected_pin,"AUX_PIN_DOES_NOT_MATCH_RUNNING_IMAGE")
+                  preflight_code()
+                  preflight_readonly()
+                  model=json.loads(output(compose_args(compose,"config",
+                                                 "--format","json"),45))
+                  aux=model.get("services",{}).get("auxiliaries",{})
+                  need(aux.get("image")==prior_image,"AUX_IMAGE_NOT_PINNED")
+                  env=aux.get("environment",{})
+                  need(isinstance(env,dict) and env.get(PROVISIONAL)=="YES"
+                       and env.get(FINAL)=="NO" and env.get(RESULT)=="YES",
+                       "COMPOSE_ACTIVE_FLAGS_NOT_VERIFIED")
+                  # Do not implicitly turn on sources, outgoing contacts, or a
+                  # corporate verified-buyer state: only the internal scoring
+                  # subsystem is being switched.
+                  print("FINAL_SCORE_PREFLIGHT=PASS",flush=True)
+                  updated=update_only_two(original)
+                  atomic(updated)
+                  changed=True
+                  model=json.loads(output(compose_args(compose,"config",
+                                                    "--format","json"),45))
+                  aux=model.get("services",{}).get("auxiliaries",{})
+                  need(aux.get("image")==prior_image
+                       and aux.get("environment",{}).get(PROVISIONAL)=="NO"
+                       and aux.get("environment",{}).get(FINAL)=="YES"
+                       and aux.get("environment",{}).get(RESULT)=="YES",
+                       "COMPOSE_NEW_SCORE_FLAGS_INVALID")
+                  p=run(compose_args(compose,"up","-d","--no-deps","--no-build",
+                                     "--pull","never","--force-recreate",
+                                     "auxiliaries"),135)
+                  need(p.returncode==0,"AUX_RECREATE_FAILED")
+                  for _ in range(20):
+                      if healthy(A): break
+                      time.sleep(5)
+                  need(healthy(A),"AUX_AFTER_SWITCH_UNHEALTHY")
+                  need(image_id()==prior_image,"AUX_IMAGE_CHANGED")
+                  need(flag(A,PROVISIONAL)=="NO" and flag(A,FINAL)=="YES",
+                       "SCORE_FLAGS_NOT_RELOADED")
+                  need(flag(A,RESULT)=="YES","FNS_RESULT_WRITER_REGRESSED")
+                  for key in ("SERVICEIT_VPS_OWN_STOP_ENABLED",
+                              "SERVICEIT_VPS_CRM_DUPLICATE_ENABLED",
+                              "SERVICEIT_VPS_KANBAN_TITLE_ENABLED",
+                              "SERVICEIT_VPS_MANAGER_TASK_ENABLED"):
+                      need(flag(A,key)=="YES","EXISTING_AUX_FEATURE_DISABLED")
+                  assert_health()
+                  print("VPS_FINAL_MSP_SCORE_SWITCH=SUCCESS",flush=True)
+                  print("FINAL_INTERNAL_SCORE_ENABLED=YES",flush=True)
+                  print("PROVISIONAL_SCORE_WRITER_ENABLED=NO",flush=True)
+                  print("EXISTING_PROVISIONAL_VALUES_PROTECTED=YES",flush=True)
+                  print("FINAL_MSP_SCORE_REQUIRES_OFFICIAL_PG_RECEIPT=YES",flush=True)
+                  print("NO_RECEIPT_NO_FINAL_WRITE=YES",flush=True)
+                  print("FNS_CRM_RESULT_WRITER=YES;FNS_COLLECTOR=HEALTHY",flush=True)
+                  print("AUX_RECREATED_ONLY=YES;AUX_IMAGE_UNCHANGED=YES",flush=True)
+                  print("HISTORICAL_ITEMS_CHANGED_BY_ACTIVATION=0;SOURCES_CHANGED=NO",flush=True)
+                  print("REAL_NEW_CARD_E2E=NOT_YET_PROVEN",flush=True)
+          except Exception as error:
+              code=str(error) if isinstance(error,Blocked) else "UNEXPECTED_FAILURE"
+              if not re.fullmatch(r"[A-Z0-9_]+",code):
+                  code="UNEXPECTED_FAILURE"
+              print("VPS_FINAL_MSP_SCORE_SWITCH=BLOCKED_"+code,flush=True)
+              if changed and original is not None:
+                  try:
+                      atomic(original)
+                      if compose is not None:
+                          p=run(compose_args(compose,"up","-d","--no-deps",
+                                   "--no-build","--pull","never",
+                                   "--force-recreate","auxiliaries"),135)
+                          if p.returncode!=0:
+                              raise Blocked("ROLLBACK_RECREATE_FAILED")
+                      print("FINAL_SCORE_ROLLBACK=ORIGINAL_FLAGS_RESTORED_RECREATE_ATTEMPTED",
+                            flush=True)
+                  except Exception:
+                      print("FINAL_SCORE_ROLLBACK=MANUAL_INTERVENTION_REQUIRED",flush=True)
+              raise SystemExit(2)
+          PY

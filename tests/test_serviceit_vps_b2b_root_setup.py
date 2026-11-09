@@ -34,6 +34,28 @@ def test_caddy_injection_only_one_new_route_before_existing_catchall():
     assert "max_size 6KB" in after
 
 
+def test_caddy_valid_production_no_catchall_is_supported():
+    """Observed live VPS has no exact '    handle {' site catchall."""
+    old = (BASE / "deploy/serviceit-vps.caddy.example").read_text("utf-8")
+    old = old.replace('    handle {\n        respond "Not Found" 404\n    }\n', '')
+    after = render(old)
+    assert after != old
+    assert after.count("reverse_proxy 127.0.0.1:18781") == 1
+    assert after.count("reverse_proxy 127.0.0.1:18780") == 2
+    assert after.index("handle @serviceit_b2b_direct") < after.rindex("\n}")
+    assert render(after) == after
+
+
+def test_caddy_valid_tabs_or_two_space_catchall_is_supported():
+    old = (BASE / "deploy/serviceit-vps.caddy.example").read_text("utf-8")
+    old = old.replace('    handle {\n        respond "Not Found" 404\n    }',
+                      '\thandle {\n\t\trespond "Not Found" 404\n\t}')
+    after = render(old)
+    assert after.index("handle @serviceit_b2b_direct") < after.index(
+        '\thandle {\n\t\trespond "Not Found" 404'
+    )
+
+
 def test_caddy_fails_closed_on_unknown_site_or_missing_routes():
     old = (BASE / "deploy/serviceit-vps.caddy.example").read_text("utf-8")
     for bad in (

@@ -39,7 +39,7 @@ class ActivationBlocked(ValueError):
 
 
 def render(original: str) -> str:
-    """Only insert a fixed code-owned fragment before one existing catchall."""
+    """Insert a fixed fragment ahead of catchall or at the end of target site."""
     if not isinstance(original, str) or len(original) > 2_000_000:
         raise ActivationBlocked("CADDYFILE_UNEXPECTED")
     if ROUTE in original:
@@ -76,12 +76,18 @@ def render(original: str) -> str:
     if end < 0 or in_quote:
         raise ActivationBlocked("CADDY_SITE_UNBALANCED")
     inside = original[start:end]
-    markers = list(re.finditer(r"(?m)^    handle \{\s*$", inside))
-    if len(markers) != 1:
-        raise ActivationBlocked("CADDY_CATCHALL_NOT_UNIQUE")
-    pos = start + markers[0].start()
     if not ("/health" in inside and "/integrations/serviceit/bitrix24/new-card" in inside):
         raise ActivationBlocked("CADDY_EXISTING_ROUTES_UNVERIFIED")
+    # Production can have a valid Caddyfile WITHOUT an explicit catch-all
+    # 'handle {'; in that case insert before the site's closing brace.
+    # A matcher-specific 'handle @serviceit_b2b_direct' is then sorted by
+    # Caddy independently of the site's existing generic routes.
+    # If the site has a single direct catch-all, preserve its original
+    # ordering by inserting ahead of it as in the original installer.
+    markers = list(re.finditer(r"(?m)^[ \t]*handle[ \t]*\{[ \t]*(?:#.*)?$", inside))
+    if len(markers) > 1:
+        raise ActivationBlocked("CADDY_MULTIPLE_CATCHALLS_REVIEW")
+    pos = start + markers[0].start() if markers else end
     return original[:pos] + FRAGMENT + original[pos:]
 
 

@@ -1,0 +1,227 @@
+name: ServiceIT Bitrix FNS-MSP dedicated field - owner one-time setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type CREATE_BITRIX_FNS_MSP_FIELD_ONLY_1062_21"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-bitrix-fns-field-once
+  cancel-in-progress: false
+
+jobs:
+  setup-field:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'CREATE_BITRIX_FNS_MSP_FIELD_ONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Verify non-root pinned SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-msp-field"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-msp-field/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-msp-field/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-msp-field/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-msp-field/known_hosts" >/dev/null
+
+      - name: Approve exactly one CRM custom field after exact smart-process validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-msp-field/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-msp-field/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import json
+          import subprocess
+
+          AUX = "serviceit-leadgen-vps-auxiliaries-1"
+          CORE = "serviceit-leadgen-vps-coordinator-1"
+
+          def check(container, key, expected):
+              try:
+                  p = subprocess.run(
+                      ["docker", "exec", container, "printenv", key],
+                      capture_output=True, text=True, timeout=15)
+              except (OSError, subprocess.TimeoutExpired):
+                  raise SystemExit("MSP_FIELD_GATE_UNVERIFIED")
+              if p.returncode != 0 or p.stdout.strip() != expected:
+                  raise SystemExit("MSP_FIELD_GATE_BLOCKED")
+
+          for container in (CORE, AUX):
+              p = subprocess.run(
+                  ["docker", "inspect", "-f",
+                   "{{.State.Running}}:{{.State.Health.Status}}",container],
+                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                  text=True, timeout=15)
+              if p.returncode != 0 or p.stdout.strip() != "true:healthy":
+                  raise SystemExit("MSP_FIELD_VPS_HEALTH_BLOCKED")
+
+          check(CORE,"SERVICEIT_VPS_WRITER_MODE","LIVE")
+          check(CORE,"SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES")
+          check(AUX,"SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED","NO")
+          check(AUX,"SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED","NO")
+
+          # This creates ONLY a previously missing userfield metadata entry:
+          # no item update, no historical card changes, no source ingestion.
+          code = """
+          import json
+          import os
+          import time
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_fns_msp_crm_result_writer import FIELD, PORTAL
+
+          ENTITY_TYPE = 1062
+          EXPECTED_TYPE_ID = 13
+          ENTITY_ID = "CRM_13"
+          METHODS = {"crm.type.list", "crm.item.fields",
+                     "userfieldconfig.list", "userfieldconfig.add"}
+          result = {"status":"MSP_FIELD_BLOCKED_UNVERIFIED","writes":0,
+                    "crm_items_modified":0,"sources_changed":0}
+          class Blocked(Exception): pass
+
+          def request(client, base, method, params):
+              if method not in METHODS: raise Blocked("METHOD_NOT_ALLOWED")
+              try:
+                  r = client.post(base+"/"+method+".json",json=params,timeout=30,
+                                  follow_redirects=False)
+              except Exception:
+                  raise Blocked("NETWORK_UNCERTAIN_NO_RETRY")
+              if r.status_code in (401,403):
+                  raise Blocked("MISSING_REST_SCOPE_OR_ADMIN_PERMISSION")
+              if r.status_code != 200 or len(r.content) > 3000000:
+                  raise Blocked("BITRIX_HTTP_OR_RATE_LIMIT")
+              try: body = r.json()
+              except Exception: raise Blocked("BITRIX_JSON_UNVERIFIED")
+              if not isinstance(body,dict) or "error" in body or not isinstance(body.get("result"),dict):
+                  raise Blocked("BITRIX_SCOPE_OR_METHOD_REJECTED")
+              return body["result"]
+
+          def expected_schema(fields):
+              if not isinstance(fields,dict):
+                  raise Blocked("CRM_FIELDS_RESULT_INVALID")
+              value=fields.get(FIELD)
+              if value is None: return False
+              if (not isinstance(value,dict) or value.get("type")!="string"
+                  or value.get("isReadOnly") is not False
+                  or value.get("isMultiple") not in (False,None)):
+                  raise Blocked("EXISTING_FIELD_TYPE_OR_PERMISSIONS_CONFLICT")
+              return True
+
+          try:
+              base=validate_webhook(secret_file(dict(os.environ),"SERVICEIT_BITRIX_WEBHOOK"))
+              if not base.startswith("https://"+PORTAL+"/rest/"):
+                  raise Blocked("WRONG_CORPORATE_PORTAL")
+              with httpx.Client(trust_env=False,follow_redirects=False) as client:
+                  mapping=request(client,base,"crm.type.list",{
+                      "filter":{"entityTypeId":ENTITY_TYPE}
+                  }).get("types")
+                  if (not isinstance(mapping,list)
+                      or len(mapping)!=1
+                      or str(mapping[0].get("entityTypeId"))!=str(ENTITY_TYPE)
+                      or str(mapping[0].get("id"))!=str(EXPECTED_TYPE_ID)):
+                      raise Blocked("CRM_1062_TYPE_ID_13_NOT_CONFIRMED")
+                  print("MSP_FIELD_TYPE_MAPPING=CONFIRMED_CRM_13",flush=True)
+
+                  before=request(client,base,"crm.item.fields",{
+                      "entityTypeId":ENTITY_TYPE,"useOriginalUfNames":"Y"
+                  }).get("fields")
+                  if expected_schema(before):
+                      result["status"]="MSP_FIELD_ALREADY_READY"
+                  else:
+                      configs=request(client,base,"userfieldconfig.list",{
+                          "moduleId":"crm",
+                          "select":["id","entityId","fieldName","userTypeId","multiple"],
+                          "filter":{"fieldName":FIELD},"start":0
+                      }).get("fields")
+                      if not isinstance(configs,list):
+                          raise Blocked("FIELD_CONFIG_LIST_NOT_READABLE")
+                      if configs:
+                          raise Blocked("FIELD_CONFIG_EXISTS_BUT_CRM_SCHEMA_MISSING")
+                      # Exact single field, non-mandatory, no migration to old records.
+                      payload={"moduleId":"crm","field":{
+                          "entityId":ENTITY_ID,
+                          "fieldName":FIELD,
+                          "userTypeId":"string",
+                          "multiple":"N",
+                          "mandatory":"N",
+                          "showFilter":"N",
+                          "editFormLabel":{
+                              "ru":"ФНС-МСП: результат по официальному реестру",
+                              "en":"FNS-MSP official registry snapshot result"
+                          },
+                          "helpMessage":{
+                              "ru":"Не является подтверждением действующего статуса в ЕГРЮЛ/ЕГРИП или разрешением контакта.",
+                              "en":"Not proof of active legal status or authorization to contact."
+                          }
+                      }}
+                      # Exactly ONE POST create, never auto-retry an ambiguous response.
+                      added=request(client,base,"userfieldconfig.add",payload)
+                      obj=added.get("field")
+                      if (not isinstance(obj,dict) or obj.get("fieldName")!=FIELD
+                          or obj.get("entityId")!=ENTITY_ID):
+                          raise Blocked("CREATE_RESPONSE_UNCERTAIN_DO_NOT_RETRY")
+                      result["writes"]=1
+                      result["status"]="MSP_FIELD_CREATED_AWAITING_SCHEMA_READBACK"
+
+                  for _ in range(3):
+                      fields=request(client,base,"crm.item.fields",{
+                          "entityTypeId":ENTITY_TYPE,"useOriginalUfNames":"Y"
+                      }).get("fields")
+                      if expected_schema(fields):
+                          result["status"]="MSP_FIELD_READY_EXACT_READBACK"
+                          break
+                      time.sleep(2)
+                  if result["status"]!="MSP_FIELD_READY_EXACT_READBACK":
+                      raise Blocked("FIELD_READBACK_NOT_READY_NO_RETRY")
+          except Blocked as exc:
+              print("MSP_FIELD_STATUS="+str(exc),flush=True)
+              print("CRM_ITEMS_MODIFIED=0;SOURCE_INGESTION=0;NO_AUTO_RETRY=YES",flush=True)
+              raise SystemExit(2)
+          except Exception:
+              print("MSP_FIELD_STATUS=UNEXPECTED_BLOCKED_NO_RETRY",flush=True)
+              print("CRM_ITEMS_MODIFIED=0;SOURCE_INGESTION=0",flush=True)
+              raise SystemExit(2)
+          print("MSP_FIELD_STATUS="+result["status"],flush=True)
+          print("CUSTOM_FIELDS_CREATED="+str(result["writes"]),flush=True)
+          print("CRM_ITEMS_MODIFIED=0;SOURCE_INGESTION=0;FNS_WRITER_ENABLED=NO",flush=True)
+          """
+          try:
+              proc=subprocess.run(
+                  ["docker","exec",AUX,"python","-c",code],
+                  stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                  text=True,timeout=135)
+          except (OSError,subprocess.TimeoutExpired):
+              print("MSP_FIELD_REMOTE_RUN=UNVERIFIED_NO_AUTO_RETRY",flush=True)
+              raise SystemExit(2)
+          for line in proc.stdout.splitlines():
+              if line.startswith(("MSP_FIELD_STATUS=",
+                                  "MSP_FIELD_TYPE_MAPPING=",
+                                  "CUSTOM_FIELDS_CREATED=",
+                                  "CRM_ITEMS_MODIFIED=")):
+                  print(line,flush=True)
+          raise SystemExit(0 if proc.returncode == 0 else 2)
+          PY

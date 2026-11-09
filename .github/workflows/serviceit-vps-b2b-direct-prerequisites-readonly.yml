@@ -81,15 +81,20 @@ jobs:
                '{{.Server.Version}}'])[0]==0)
           rc,txt=cmd(['systemctl','is-active','caddy'])
           out('CADDY_ACTIVE',txt=='active' if rc in (0,3) else None)
+          def safe_is(path,kind):
+              try:
+                  return path.is_dir() if kind=='dir' else path.is_file()
+              except (OSError,PermissionError):
+                  return None
           p=pathlib.Path('/etc/serviceit/secrets')
-          out('SECRETS_DIRECTORY_VISIBLE',p.is_dir())
-          out('HMAC_FILE_VISIBLE',(p/'b2b_ingest_hmac').is_file())
+          out('SECRETS_DIRECTORY_VISIBLE',safe_is(p,'dir'))
+          out('HMAC_FILE_VISIBLE',safe_is(p/'b2b_ingest_hmac','file'))
           c=pathlib.Path('/etc/caddy/Caddyfile')
-          out('CADDYFILE_VISIBLE',c.is_file())
+          out('CADDYFILE_VISIBLE',safe_is(c,'file'))
           try:
               out('SOURCE_ROUTE_PRESENT','/integrations/serviceit/b2b-center/notice'
                   in c.read_text('utf-8'))
-          except (OSError,UnicodeError):
+          except (OSError,UnicodeError,PermissionError):
               out('SOURCE_ROUTE_PRESENT',None)
           out('SUDO_NONINTERACTIVE',cmd(['sudo','-n','true'])[0]==0)
           print('B2B_PREFLIGHT_DONE=YES')

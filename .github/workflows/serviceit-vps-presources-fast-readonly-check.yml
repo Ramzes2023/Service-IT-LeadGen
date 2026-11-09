@@ -1,0 +1,230 @@
+name: ServiceIT pre-sources FAST VPS operational no-write verification
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-presources-fast-readonly
+  cancel-in-progress: false
+
+jobs:
+  operational:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.action == 'created' &&
+      github.event.issue.number == 290 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SVCIT_PRE_SOURCES_FAST_READONLY_290'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
+    steps:
+      - name: Pinned non-root SSH verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[0-9a-zA-Z.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/pre-sources-fast"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/pre-sources-fast/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/pre-sources-fast/known_hosts"
+          chmod 600 "$RUNNER_TEMP/pre-sources-fast/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/pre-sources-fast/known_hosts" >/dev/null
+      - name: Read live VPS status without changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/pre-sources-fast/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/pre-sources-fast/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            > "$RUNNER_TEMP/pre-sources-fast/report.txt" <<'PY'
+          import json
+          import re
+          import subprocess
+
+          N={
+              "CORE":"serviceit-leadgen-vps-coordinator-1",
+              "AUX":"serviceit-leadgen-vps-auxiliaries-1",
+              "BIZ":"serviceit-leadgen-vps-business-1",
+              "OBS":"serviceit-leadgen-vps-observer-1",
+              "FNS":"serviceit-leadgen-vps-fns-msp-1",
+              "BROWSER":"serviceit-public-browser-vps-browser-1",
+              "EGRESS":"serviceit-public-browser-vps-egress-1",
+          }
+          def run(args,timeout=25):
+              try:
+                  res=subprocess.run(args,stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL,text=True,timeout=timeout)
+                  return res.stdout.strip() if res.returncode==0 else None
+              except (OSError,subprocess.TimeoutExpired):
+                  return None
+          def emit(key,val):
+              if not re.fullmatch(r"[A-Z][A-Z0-9_]+",key):return
+              val=str(val)
+              if not re.fullmatch(r"[A-Za-z0-9_.,:+-]{1,90}",val):
+                  val="UNVERIFIED"
+              print("FAST_"+key+"="+val,flush=True)
+          def flag(which,key):
+              return run(["docker","exec",N[which],"printenv",key])
+          for short,name in N.items():
+              s=run(["docker","inspect","-f",
+                  "{{.State.Running}}:{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",name])
+              emit(short+"_HEALTH","YES" if s=="true:healthy"
+                   or short=="EGRESS" and s in ("true:none","true:healthy")
+                   else "NO" if s is not None else "UNVERIFIED")
+          for name,service,var,expected in (
+              ("POLL_10MIN","CORE","SERVICEIT_VPS_POLL_ENABLED","YES"),
+              ("LIVE_MODE","CORE","SERVICEIT_VPS_WRITER_MODE","LIVE"),
+              ("NATIVE_CUTOVER","CORE","SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES"),
+              ("GH_WRITERS_DISABLED_ACK","CORE","SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK","YES"),
+              ("ROUTERAI","CORE","SERVICEIT_AI_PROVIDER","routerai"),
+              ("ROUTERAI_PRIVACY","CORE","SERVICEIT_ROUTERAI_PRIVACY_APPROVED","YES_1062_21"),
+              ("BROWSER_RESEARCH","CORE","SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED","YES"),
+              ("BROWSER_PROXY","CORE","SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED","YES"),
+              ("OWN_STOP","AUX","SERVICEIT_VPS_OWN_STOP_ENABLED","YES"),
+              ("CRM_DUP","AUX","SERVICEIT_VPS_CRM_DUPLICATE_ENABLED","YES"),
+              ("KANBAN","AUX","SERVICEIT_VPS_KANBAN_TITLE_ENABLED","YES"),
+              ("MANAGER_TASK","AUX","SERVICEIT_VPS_MANAGER_TASK_ENABLED","YES"),
+              ("FNS_RESULT","AUX","SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED","YES"),
+              ("FINAL_SCORE","AUX","SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED","YES"),
+              ("PRELIM_DISABLED","AUX","SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED","NO"),
+              ("POSTCALL","BIZ","SERVICEIT_VPS_POSTCALL_ENABLED","YES"),
+              ("FINANCE","BIZ","SERVICEIT_VPS_FINANCE_ENABLED","YES"),
+              ("FNS_COLLECTOR","FNS","SERVICEIT_VPS_FNS_MSP_ENABLED","YES"),
+          ):
+              actual=flag(service,var)
+              emit(name,"YES" if actual==expected else
+                   "NO" if actual is not None else "UNVERIFIED")
+          hosts=",".join(x or "" for x in (
+              flag("CORE","SERVICEIT_PRELIMINARY_PUBLIC_HOSTS"),
+              flag("CORE","SERVICEIT_PUBLIC_RESEARCH_COMPANY_HOSTS"),
+          ))
+          vals=[x.strip().lower() for x in hosts.split(",") if x.strip()]
+          good=0<len(vals)<=80 and all(re.fullmatch(
+              r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}",h) for h in vals)
+          emit("ALLOWED_PUBLIC_HOSTS_COUNT",len(vals) if len(vals)<=80 else "UNVERIFIED")
+          emit("ALLOWED_PUBLIC_HOSTS_READY","YES" if good else "NO")
+          mounts=(run(["docker","inspect","-f",
+              "{{range .Mounts}}{{println .Destination}}{{end}}",N["CORE"]]) or "").splitlines()
+          for label,key in (
+              ("BRAVE","SERVICEIT_BRAVE_SEARCH_API_KEY_FILE"),
+              ("ROUTERAI","SERVICEIT_ROUTERAI_API_KEY_FILE"),
+          ):
+              dest=flag("CORE",key)
+              emit(label+"_SECRET_MOUNTED","YES" if dest and
+                   dest.startswith("/run/secrets/") and dest in mounts
+                   else "NO")
+          for role,good_names,bad_names in (
+              ("CORE",{"VPS_LIVE_CYCLE_COMPLETE"},{"VPS_CYCLE_BLOCKED_OR_UNVERIFIED"}),
+              ("AUX",{"NATIVE_AUX_CYCLE"},{"NATIVE_AUX_BLOCKED"}),
+              ("BIZ",{"NATIVE_BUSINESS_CYCLE"},{"NATIVE_BUSINESS_HOLD"}),
+              ("OBS",{"NATIVE_OBSERVER_READONLY"},{"NATIVE_OBSERVER_UNVERIFIED"}),
+          ):
+              txt=run(["docker","logs","--since","75m","--tail","200",N[role]]) or ""
+              successes=blocks=0
+              for line in txt.splitlines():
+                  if len(line)>2600:continue
+                  try:
+                      item=json.loads(line)
+                      state=item.get("status") if isinstance(item,dict) else None
+                      successes+=int(state in good_names)
+                      blocks+=int(state in bad_names)
+                  except (ValueError,TypeError):
+                      continue
+              emit(role+"_RECENT_CYCLES",successes)
+              emit(role+"_RECENT_BLOCKS",blocks)
+          pg = """
+          import json,os
+          from leadpilot.serviceit_vps_pg_queue import db
+          result={'ready':'UNVERIFIED'}
+          try:
+              with db(dict(os.environ)) as con:
+                  with con.transaction():
+                      with con.cursor() as c:
+                          c.execute('SET TRANSACTION READ ONLY')
+                          c.execute('SELECT EXTRACT(EPOCH FROM(now()-last_success_at))::bigint FROM serviceit_vps_poll_state WHERE singleton=1')
+                          row=c.fetchone()
+                          result['age_sec']=max(0,int(row[0])) if row else None
+                          c.execute('SELECT status,count(*) FROM serviceit_vps_new_cards GROUP BY status')
+                          rows=dict(c.fetchall())
+                          result['queued_pending']=int(rows.get('PENDING',0))
+                          result['queued_review']=int(rows.get('REVIEW',0))
+                          result['queued_uncertain']=int(rows.get('UNCERTAIN',0))
+                          c.execute('SELECT count(*) FROM serviceit_vps_native_receipts WHERE namespace=%s AND status=%s',('AI_NINE_V1','VERIFIED'))
+                          result['nine_ai_verified']=int(c.fetchone()[0])
+                          c.execute('SELECT count(*) FROM serviceit_vps_msp_snapshot')
+                          result['msp_receipts']=int(c.fetchone()[0])
+              result['ready']='YES'
+          except Exception:
+              pass
+          print(json.dumps(result))
+          """
+          data=run(["docker","exec",N["CORE"],"python","-c",pg],60)
+          try:
+              report=json.loads(data or "")
+              emit("PG_READONLY",report.get("ready","UNVERIFIED"))
+              for key in ("age_sec","queued_pending","queued_review","queued_uncertain",
+                          "nine_ai_verified","msp_receipts"):
+                  value=report.get(key)
+                  emit("PG_"+key.upper(),value if isinstance(value,int)
+                       and 0<=value<=1000000 else "UNVERIFIED")
+          except (TypeError,ValueError):
+              emit("PG_READONLY","UNVERIFIED")
+          stop = """
+          import json
+          try:
+              from leadpilot.serviceit_own_signal_stop import read_rules
+              print(json.dumps({'count':len(read_rules())}))
+          except Exception:
+              print(json.dumps({'count':None}))
+          """
+          val=run(["docker","exec",N["AUX"],"python","-c",stop],30)
+          try:
+              count=json.loads(val or "").get("count")
+              emit("OWN_STOP_RULES",count if isinstance(count,int)
+                   and 0<=count<=5000 else "UNVERIFIED")
+          except (ValueError,TypeError):
+              emit("OWN_STOP_RULES","UNVERIFIED")
+          emit("CORPORATE_GLOBAL_STOP_CLEARANCE","NOT_VERIFIED")
+          emit("SOURCE_INTAKE","OFF_BY_OWNER_REQUEST")
+          emit("FAST_AUDIT_DONE","YES")
+          PY
+          grep -E '^FAST_[A-Z0-9_]+=[A-Za-z0-9_.,:+-]{1,90}$' \
+            "$RUNNER_TEMP/pre-sources-fast/report.txt" \
+            > "$RUNNER_TEMP/pre-sources-fast/safe.txt" || true
+          cat "$RUNNER_TEMP/pre-sources-fast/safe.txt"
+          grep -q '^FAST_FAST_AUDIT_DONE=YES$' "$RUNNER_TEMP/pre-sources-fast/safe.txt"
+
+      - name: Post sanitized operational summary to Issue 290
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          p="$RUNNER_TEMP/pre-sources-fast/safe.txt"
+          if [[ -f "$p" ]]; then
+            out="$(grep -E '^FAST_[A-Z0-9_]+=[A-Za-z0-9_.,:+-]{1,90}$' "$p" | head -100 || true)"
+          else
+            out="FAST_FAST_AUDIT_DONE=UNVERIFIED"
+          fi
+          [[ -n "$out" ]] || out="FAST_FAST_AUDIT_DONE=UNVERIFIED"
+          msg="$(printf 'Оперативная проверка VPS перед источниками (только чтение):\n\n%s\n\nGitHub Actions: https://github.com/%s/actions/runs/%s\n\nCRM/DB writes=0; Restarts=0; Sources changed=NO. E2E на реальной карточке отдельно.' "$out" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$msg" >/dev/null

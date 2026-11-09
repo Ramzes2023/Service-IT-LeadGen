@@ -156,6 +156,54 @@ def test_post_timeout_is_ambiguous_never_automatically_retried(monkeypatch):
         bridge.deliver_one(object(),None,"secret")
     assert called == ["RESERVE", "POST"]
     assert bridge.INTERVAL_SECONDS == 300
-    assert bridge.MAX_PER_CYCLE == 1
-    assert bridge.MAX_PER_24H == 3
+    assert bridge.MAX_PER_CYCLE == 4
+    assert bridge.MAX_PER_24H == 240
 
+
+
+
+def test_continuous_four_items_without_manual_restart(monkeypatch):
+    from contextlib import contextmanager
+    @contextmanager
+    def fake_db(env):
+        yield object()
+    monkeypatch.setattr(bridge, "db", fake_db)
+    monkeypatch.setattr(bridge, "migrate", lambda conn: None)
+    monkeypatch.setattr(bridge, "preflight", lambda *args: None)
+    monkeypatch.setattr(bridge, "ReadOnlyBitrix", lambda *a, **kw: object())
+    monkeypatch.setattr(bridge, "secret_file", lambda *a: "synthetic")
+    monkeypatch.setattr(bridge, "enabled", lambda *a, **kw: True)
+    seq = iter([
+        "ONE_REAL_HOLD_QUEUED", "EXISTING",
+        "ONE_REAL_HOLD_QUEUED", "ONE_REAL_HOLD_QUEUED",
+        "ONE_REAL_HOLD_QUEUED", "NO_PENDING",
+    ])
+    monkeypatch.setattr(bridge, "deliver_one", lambda *a: next(seq))
+    result = bridge.worker_once({}, client=object())
+    assert result["status"] == "B2B_VPS_CONTINUOUS_CYCLE"
+    assert result["batch_processed"] == 4
+    assert result["new_holds"] == 3
+    assert result["existing"] == 1
+    result2 = bridge.worker_once({}, client=object())
+    assert result2["new_holds"] == 1
+    assert result2["batch_processed"] == 2
+    assert not result2["backlog_throttled"]
+
+
+def test_rolling_throttle_only_defers_not_terminates_service(monkeypatch):
+    from contextlib import contextmanager
+    @contextmanager
+    def fake_db(env):
+        yield object()
+    monkeypatch.setattr(bridge, "db", fake_db)
+    monkeypatch.setattr(bridge, "migrate", lambda conn: None)
+    monkeypatch.setattr(bridge, "preflight", lambda *args: None)
+    monkeypatch.setattr(bridge, "ReadOnlyBitrix", lambda *a, **kw: object())
+    monkeypatch.setattr(bridge, "secret_file", lambda *a: "synthetic")
+    monkeypatch.setattr(bridge, "enabled", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "deliver_one",
+                        lambda *a: "DAILY_BUDGET_THROTTLED")
+    result = bridge.worker_once({}, client=object())
+    assert result["batch_processed"] == 1
+    assert result["new_holds"] == 0
+    assert result["backlog_throttled"] is True

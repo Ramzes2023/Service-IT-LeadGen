@@ -16,7 +16,7 @@ import httpx
 
 from .serviceit_vps_pg_queue import db, secret_file, VpsBlocked
 
-INTERVAL_SECONDS = 600
+INTERVAL_SECONDS = 300
 FLAGS = {
     "postcall": "SERVICEIT_VPS_POSTCALL_ENABLED",
     "finance": "SERVICEIT_VPS_FINANCE_ENABLED",
@@ -102,6 +102,7 @@ def main(argv=None):
             print(json.dumps({"status": "NATIVE_BUSINESS_FLAGS_INVALID"}))
             return 2
     while True:
+        cycle_started = time.monotonic()
         try:
             with httpx.Client(trust_env=False, follow_redirects=False) as client:
                 with db(env) as connection:
@@ -116,7 +117,8 @@ def main(argv=None):
                   flush=True)
             if args.once:
                 return 2
-        time.sleep(INTERVAL_SECONDS)
+        # Five-minute start-to-start with a single sequential loop.
+        time.sleep(max(0.0, INTERVAL_SECONDS - (time.monotonic() - cycle_started)))
 
 
 if __name__ == "__main__":

@@ -22,10 +22,10 @@ const SERVICEIT_CONFIG = Object.freeze({
   maxPages: 10,
   pageSize: 100,
   maxMessagesPerCycle: 20,
-  // GitHub Actions allows at most one running and one pending run in a
-  // concurrency group. Bursting many dispatches can silently cancel runs.
-  // Pace events; keep other tenders pending in script properties until later.
-  maxDispatchesPerCycle: 1,
+  // Direct signed VPS receives batches; GitHub Actions is NOT an event
+  // transport. Keep a bounded per-trigger budget; any remaining tenders
+  // stay PENDING for the next automatic five-minute execution.
+  maxDispatchesPerCycle: 4,
   maxTendersPerEmail: 80,
   maxEmailText: 256000,
   triggerMinutes: 5,
@@ -404,8 +404,8 @@ function processMessage_(messageId, remainingDispatchBudget) {
       continue;
     }
     const dispatchId = Utilities.getUuid();
-    // Reserve before the external dispatch. Ambiguous dispatches are never
-    // blindly replayed, because the GitHub workflow may have started.
+    // Reserve before the external VPS POST. Ambiguous sends are never
+    // blindly replayed: the VPS may already have persisted the notice.
     props.setProperty(sourceKey, "RESERVED:" + dispatchId);
     try {
       dispatchNotice_(notice, dispatchId);

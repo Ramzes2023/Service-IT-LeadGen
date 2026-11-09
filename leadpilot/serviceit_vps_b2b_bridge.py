@@ -32,8 +32,8 @@ from .bitrix_metadata_audit import validate_webhook
 
 PATH = "/integrations/serviceit/b2b-center/notice"
 MAX_BODY = 6000
-MAX_PER_CYCLE = 1
-MAX_PER_24H = 3
+MAX_PER_CYCLE = 4
+MAX_PER_24H = 240
 INTERVAL_SECONDS = 300
 DDL = """
 CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_inbox (
@@ -165,6 +165,17 @@ def set_existing(connection, source):
             return cur.fetchone() is not None
 
 
+def set_review(connection, source):
+    """Terminal safety hold for unparseable notice, not an external CRM action."""
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE serviceit_vps_b2b_inbox SET state='REVIEW', completed_at=now() "
+                "WHERE source_id=%s AND state='PENDING' RETURNING source_id",
+                (source,))
+            return cur.fetchone() is not None
+
+
 def reserve_post(connection, source):
     """Commit irreversible POST_UNCERTAIN before issuing external mutation."""
     with connection.transaction():
@@ -197,13 +208,16 @@ def attempted_24h(connection):
 
 def deliver_one(connection, client, webhook):
     if attempted_24h(connection) >= MAX_PER_24H:
-        return "DAILY_LIMIT"
+        return "DAILY_BUDGET_THROTTLED"
     candidate = read_candidate(connection)
     if candidate is None:
         return "NO_PENDING"
     source, notice = candidate
-    payload = hold_payload(notice, classify_services(notice["subject"]))
-    must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
+    try:
+        payload = hold_payload(notice, classify_services(notice["subject"]))
+        must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
+    except (BridgeBlocked, B2BBlocked, KeyError, TypeError, ValueError):
+        return "REVIEW" if set_review(connection, source) else "ALREADY_RESERVED"
     base = validate_webhook(webhook)
     # Existing known source MUST be visible (the portal once gave false empties).
     must(len(exact_duplicate(client, base, "B2B-CENTER-4665948")) == 1,
@@ -235,17 +249,33 @@ def deliver_one(connection, client, webhook):
 
 
 def worker_once(env: dict, *, client):
+    """Drain a bounded batch every five minutes; PENDING resumes automatically.
+
+    Not a one-time trial: all future signed notices remain in the queue.
+    A rolling protective budget prevents runaway API/model charges.
+    """
     if not enabled(env, writer=True):
         return {"status": "B2B_WRITER_DISABLED", "crm_writes": 0}
     with db(env) as connection:
         migrate(connection)
         webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
         preflight(ReadOnlyBitrix(webhook, client=client))
-        outcome = deliver_one(connection, client, webhook)
-        return {"status": "B2B_VPS_WORKER_CYCLE", "result": outcome,
-                "crm_writes": int(outcome == "ONE_REAL_HOLD_QUEUED"),
-                "qualified_leads": 0, "outbound_contacts": 0}
-
+        outcomes = []
+        for _ in range(MAX_PER_CYCLE):
+            outcome = deliver_one(connection, client, webhook)
+            outcomes.append(outcome)
+            if outcome in ("NO_PENDING", "DAILY_BUDGET_THROTTLED"):
+                break
+        return {
+            "status": "B2B_VPS_CONTINUOUS_CYCLE",
+            "batch_processed": len(outcomes),
+            "new_holds": outcomes.count("ONE_REAL_HOLD_QUEUED"),
+            "existing": outcomes.count("EXISTING"),
+            "review": outcomes.count("REVIEW"),
+            "backlog_throttled": "DAILY_BUDGET_THROTTLED" in outcomes,
+            "qualified_leads": 0,
+            "outbound_contacts": 0,
+        }
 
 def main():
     env = dict(os.environ)

@@ -28,6 +28,7 @@ on:
       - 'Dockerfile.serviceit-vps'
       - 'deploy/serviceit-vps-native-shadow-install.sh'
       - 'deploy/serviceit-vps.compose.yml'
+      - 'deploy/serviceit-vps-b2b-direct.compose.yml'
       - '.github/workflows/serviceit-vps-postgres-tests.yml'
 
 permissions:
@@ -64,7 +65,7 @@ jobs:
       - name: Install server-only requirements
         run: python -m pip install -r requirements-vps.txt
       - name: Verify real disposable PostgreSQL queue transaction safety
-        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_pg_cutover.py tests/test_serviceit_vps_routerai_only.py tests/test_serviceit_vps_poll_readonly_probe.py tests/test_serviceit_vps_native_fence.py tests/test_serviceit_vps_native_aux.py tests/test_serviceit_vps_native_actions.py tests/test_serviceit_vps_poll_checkpoint.py tests/test_serviceit_vps_shadow_install_flow.py tests/test_serviceit_vps_routerai_readonly_prepare.py tests/test_serviceit_vps_cloud_writer_cutover_fence.py tests/test_serviceit_vps_olga_605_readonly_prepare.py tests/test_serviceit_vps_final_readonly_audit.py tests/test_serviceit_vps_source_ai_handoff.py tests/test_serviceit_vps_deep_research_readiness.py tests/test_serviceit_vps_public_browser.py tests/test_serviceit_vps_live_core_cutover.py tests/test_serviceit_vps_browser_stage.py
+        run: python -m pytest -q tests/test_serviceit_vps_pg_integration.py tests/test_serviceit_vps_b2b_pg_integration.py tests/test_serviceit_vps_pg_cutover.py tests/test_serviceit_vps_routerai_only.py tests/test_serviceit_vps_poll_readonly_probe.py tests/test_serviceit_vps_native_fence.py tests/test_serviceit_vps_native_aux.py tests/test_serviceit_vps_native_actions.py tests/test_serviceit_vps_poll_checkpoint.py tests/test_serviceit_vps_shadow_install_flow.py tests/test_serviceit_vps_routerai_readonly_prepare.py tests/test_serviceit_vps_cloud_writer_cutover_fence.py tests/test_serviceit_vps_olga_605_readonly_prepare.py tests/test_serviceit_vps_final_readonly_audit.py tests/test_serviceit_vps_source_ai_handoff.py tests/test_serviceit_vps_deep_research_readiness.py tests/test_serviceit_vps_public_browser.py tests/test_serviceit_vps_live_core_cutover.py tests/test_serviceit_vps_browser_stage.py
       - name: Verify native shadow installer shell syntax
         run: bash -n deploy/serviceit-vps-native-shadow-install.sh
       - name: Validate Compose structure using ONLY synthetic local placeholders
@@ -72,12 +73,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ci-vps-secrets"
-          for filename in pg_password bitrix_webhook routerai_key; do
+          for filename in pg_password bitrix_webhook routerai_key b2b_ingest_hmac; do
             printf 'SYNTHETIC_NOT_REAL\n' > "$RUNNER_TEMP/ci-vps-secrets/$filename"
           done
           export SERVICEIT_VPS_SECRETS_DIR="$RUNNER_TEMP/ci-vps-secrets"
           docker compose -f deploy/serviceit-vps.compose.yml config --quiet
-          echo "VPS_COMPOSE_STRUCTURE_VALIDATED_WITH_SYNTHETIC_SECRET_FILES"
+          docker compose -f deploy/serviceit-vps-b2b-direct.compose.yml config --quiet
+          echo "VPS_COMPOSE_AND_B2B_STRUCTURE_VALIDATED_WITH_SYNTHETIC_SECRET_FILES"
 
   nonroot-image-smoke:
     runs-on: ubuntu-latest
@@ -106,7 +108,7 @@ jobs:
           docker run --rm --network none --read-only \
             --tmpfs /tmp:size=32m,mode=1777 \
             --entrypoint python serviceit-native-nonroot:ci -c \
-            "import os; assert os.geteuid() == 10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer, leadpilot.serviceit_vps_poll_checkpoint; print('SERVICEIT_NONROOT_PYTHON_IMPORTS=PASS;CRM_WRITES=0')"
+            "import os; assert os.geteuid() == 10001; import leadpilot.serviceit_vps_worker, leadpilot.serviceit_vps_native_aux, leadpilot.serviceit_vps_native_business, leadpilot.serviceit_vps_native_observer, leadpilot.serviceit_vps_poll_checkpoint, leadpilot.serviceit_vps_b2b_bridge, leadpilot.serviceit_vps_b2b_ingress; print('SERVICEIT_NONROOT_PYTHON_IMPORTS=PASS;CRM_WRITES=0')"
 
   powershell-cutover-parse-only:
     runs-on: windows-latest

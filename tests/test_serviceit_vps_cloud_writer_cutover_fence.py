@@ -52,17 +52,40 @@ def test_legacy_poll_live_branch_fenced_but_readonly_diagnostics_survive():
     assert "run: python -m leadpilot.serviceit_bitrix_poll_fallback --probe" in text
 
 
-@pytest.mark.parametrize("name", [
+# Source connectors must now hand off through VPS-native admission. Old GitHub
+# direct-to-CRM B2B paths are intentionally blocked during VPS LIVE.
+LEGACY_B2B_WRITERS = [
     "serviceit-b2b-appsscript-ingest.yml",
     "serviceit-b2b-direct-id-new-notice.yml",
     "b2b-gmail-to-bitrix-hold.yml",
+    "serviceit-b2b-single-hold-pilot.yml",
+]
+
+
+@pytest.mark.parametrize("name", LEGACY_B2B_WRITERS)
+def test_legacy_github_b2b_hold_writers_fail_closed_after_vps_cutover(name):
+    text = (BASE / name).read_text(encoding="utf8")
+    job_conditions = text.split("    runs-on:", 1)[0]
+    # Exact 'NO' is deliberate: absence of variable must NOT enable old CRM
+    # writes. Future source intake belongs to VPS, not a GitHub job.
+    assert "vars.SERVICEIT_VPS_CUTOVER_ACTIVE == 'NO'" in job_conditions
+    assert "vars.SERVICEIT_VPS_CUTOVER_ACTIVE != 'YES'" not in job_conditions
+
+
+@pytest.mark.parametrize("name", [
     "serviceit-cloud-reliability-watchdog.yml",
     "serviceit-live-new-card-reconciliation.yml",
     "serviceit-vps-native-shadow-deploy.yml",
 ])
-def test_sources_watchdogs_and_shadow_are_not_blocked(name):
+def test_readonly_watchdogs_and_shadow_are_not_fenced_by_vps_cutover(name):
     text = (BASE / name).read_text(encoding="utf8")
-    # Source AI env may be fenced after native cutover, but the SOURCE JOB
-    # itself must remain able to import/create a new HOLD card.
     job_conditions = text.split("    env:", 1)[0]
     assert "vars.SERVICEIT_VPS_CUTOVER_ACTIVE" not in job_conditions
+
+
+def test_legacy_official_github_msp_snapshot_has_no_live_job_or_schedule():
+    text = (BASE / "serviceit-fns-msp-official-live.yml").read_text(encoding="utf8")
+    assert "  schedule:" not in text
+    assert "  issue_comment:" not in text
+    assert "    if: ${{ false }}" in text
+    assert "  contents: read" in text

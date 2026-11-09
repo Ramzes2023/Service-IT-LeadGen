@@ -1,19 +1,19 @@
 /**
- * Service IT — free independent Gmail -> GitHub Actions -> Bitrix24 automation.
+ * Service IT — existing Gmail Apps Script -> signed VPS PostgreSQL source ingress.
  *
  * Reads only B2B-Center vendor notification metadata from the owner's Gmail.
- * Sends a minimal tender notice (subject, organizer, source URL, tender ID,
- * Gmail message ID) to a signed repository_dispatch. Raw email/MIME, contacts,
+ * Sends a minimal signed tender notice (subject, organizer, URL, tender ID,
+ * Gmail message ID) directly to VPS. Raw email/MIME, contacts,
  * phone numbers, INN and attachments are NEVER transmitted.
  *
- * The Python action creates a guarded 1062/21 HOLD card, optionally calls
- * GigaChat on the tender subject only, and exact-reads the created item.
+ * The VPS worker creates a guarded 1062/21 HOLD card and queues RouterAI.
  * No Score, outreach, contact, stage move or qualified-lead status is created.
  *
  * Secrets are injected into a private, owner-only secrets.gs by the one-time
  * PowerShell installer. No credentials belong in this tracked file.
  */
 const SERVICEIT_CONFIG = Object.freeze({
+  // GitHub is CODE/CI only. Direct signed source events go to VPS.
   repository: "Ramzes2023/Service-IT-LeadGen",
   eventType: "serviceit_b2b_notice",
   mailbox: "ramzesisayev444@gmail.com",
@@ -325,6 +325,14 @@ function parseEmailMessage_(message, messageId) {
 
 function dispatchNotice_(notice, dispatchId) {
   const config = privateConfig_();
+  const props = scriptProperties_();
+  if (props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") !== "YES") {
+    throw new Error("SERVICEIT_VPS_B2B_DIRECT_NOT_APPROVED");
+  }
+  const activation = Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0);
+  if (!Number.isFinite(activation) || activation <= Number(config.cutoverMs)) {
+    throw new Error("SERVICEIT_VPS_B2B_ACTIVATION_MISSING");
+  }
   const timestamp = String(Math.floor(Date.now() / 1000));
   const payloadJson = JSON.stringify({
     version: 1,
@@ -334,32 +342,20 @@ function dispatchNotice_(notice, dispatchId) {
     notice: notice
   });
   const signature = "sha256=" + hmacHex_(timestamp + "." + payloadJson, config.hmacSecret);
-  const body = {
-    event_type: SERVICEIT_CONFIG.eventType,
-    client_payload: {
-      timestamp: timestamp,
-      payload_json: payloadJson,
-      signature: signature
-    }
-  };
-  const response = UrlFetchApp.fetch(
-    "https://api.github.com/repos/" + SERVICEIT_CONFIG.repository + "/dispatches",
-    {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(body),
-      followRedirects: false,
-      validateHttpsCertificates: true,
-      muteHttpExceptions: true,
-      headers: {
-        Authorization: "Bearer " + config.githubToken,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
-      }
-    }
-  );
-  if (!response || response.getResponseCode() !== 204) {
-    throw new Error("SERVICEIT_GITHUB_DISPATCH_NOT_ACKNOWLEDGED");
+  // Reuses EXISTING Apps Script HMAC. No GitHub dispatch, token or CRM REST.
+  const destination = "https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/notice";
+  const response = UrlFetchApp.fetch(destination, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({
+      timestamp: timestamp, payload_json: payloadJson, signature: signature
+    }),
+    followRedirects: false,
+    validateHttpsCertificates: true,
+    muteHttpExceptions: true,
+  });
+  if (!response || ![200, 202].includes(response.getResponseCode())) {
+    throw new Error("SERVICEIT_VPS_NOTICE_ACK_UNVERIFIED");
   }
   return dispatchId;
 }
@@ -375,7 +371,11 @@ function processMessage_(messageId, remainingDispatchBudget) {
     throw new Error("SERVICEIT_GMAIL_READBACK_ID_MISMATCH");
   }
   const parsed = parseEmailMessage_(message, messageId);
-  const cutoverMs = Number(privateConfig_().cutoverMs);
+  const cutoverMs = Math.max(Number(privateConfig_().cutoverMs),
+    Number(props.getProperty('SERVICEIT_VPS_B2B_ACTIVATION_MS') || 0));
+  if (!Number.isFinite(cutoverMs) || cutoverMs <= 0) {
+    throw new Error('SERVICEIT_VPS_B2B_ACTIVATION_MISSING');
+  }
   if (parsed.internalDate <= cutoverMs) {
     props.setProperty(emailKey, "BASELINE");
     return {sent: 0, skipped: 1};
@@ -429,6 +429,10 @@ function pollAndDispatchB2B() {
   const props = scriptProperties_();
   if (props.getProperty("SERVICEIT_AUTOMATION_ENABLED") !== "YES") {
     throw new Error("SERVICEIT_AUTOMATION_DISABLED");
+  }
+  // Do not reserve an old tender or call GitHub when VPS handoff is OFF.
+  if (props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") !== "YES") {
+    return {status:"SERVICEIT_VPS_B2B_SOURCE_DISABLED",dispatched:0,crm_writes:0};
   }
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) return {status: "LOCK_BUSY"};
@@ -494,6 +498,28 @@ function checkB2BCenter() {
   return summary;
 }
 
+function activateVpsB2BCenter() {
+  // One-time, owner-run from authenticated Apps Script. Requires the VPS
+  // receiver HEALTH and signed end-to-end read-only preflight first.
+  privateConfig_();
+  assertMailbox_();
+  const props = scriptProperties_();
+  if (props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") === "YES") {
+    return {status:"ALREADY_ACTIVATED",crm_writes:0};
+  }
+  const check = UrlFetchApp.fetch("https://leadgen.serviseit.ru/health", {
+    method:"get",followRedirects:false,validateHttpsCertificates:true,
+    muteHttpExceptions:true
+  });
+  if (!check || check.getResponseCode() !== 200) {
+    throw new Error("SERVICEIT_VPS_HEALTH_UNVERIFIED");
+  }
+  // Deliberately start from the activation moment, NEVER mail backlog.
+  props.setProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS", String(Date.now()));
+  props.setProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED", "YES");
+  return installPollingTrigger();
+}
+
 function installPollingTrigger() {
   const config = privateConfig_();
   assertMailbox_();
@@ -537,6 +563,7 @@ function stopPollingTrigger() {
     }
   });
   props.setProperty("SERVICEIT_AUTOMATION_ENABLED", "NO");
+  props.setProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED", "NO");
   return {status: "SERVICEIT_AUTOMATION_STOPPED", crm_writes: 0};
 }
 

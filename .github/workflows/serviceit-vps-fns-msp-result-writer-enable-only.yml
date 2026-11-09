@@ -91,7 +91,10 @@ jobs:
           def flag(container,name):
               return output(["docker","exec",container,"printenv",name])
           def health(container):
-              return inspect(container,"{{.State.Running}}:{{.State.Health.Status}}")=="true:healthy"
+              try:
+                  return inspect(container,"{{.State.Running}}:{{.State.Health.Status}}")=="true:healthy"
+              except Blocked:
+                  return False
           def assert_other_health():
               for c in (CORE,BIZ,OBS,FNS):
                   need(health(c),"EXISTING_SERVICE_NOT_HEALTHY")

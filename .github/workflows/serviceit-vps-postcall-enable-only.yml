@@ -1,0 +1,409 @@
+name: ServiceIT VPS enable ONLY post-call manager-confirmed automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type ENABLE_VPS_POSTCALL_ONLY_1062_21'
+        required: true
+        type: string
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: serviceit-vps-business-postcall-enable-only
+  cancel-in-progress: false
+
+jobs:
+  activate-postcall:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.approval == 'ENABLE_VPS_POSTCALL_ONLY_1062_21')
+        ||
+        (github.event_name == 'issue_comment' &&
+          github.event.action == 'created' &&
+          github.event.issue.number == 280 &&
+          !github.event.issue.pull_request &&
+          github.event.comment.user.login == 'Ramzes2023' &&
+          github.event.comment.body == 'SVCIT_ENABLE_POSTCALL_ONLY_ONCE_280_20261109')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+
+    steps:
+      - name: Verify owner-only pinned non-root SSH access
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-postcall-enable"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-postcall-enable/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-postcall-enable/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-postcall-enable/id" \
+            "$RUNNER_TEMP/serviceit-postcall-enable/known_hosts"
+          ssh-keygen -F "$VPS_HOST" \
+            -f "$RUNNER_TEMP/serviceit-postcall-enable/known_hosts" >/dev/null
+
+      - name: Live guarded single-container postcall cutover (finance remains OFF)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-postcall-enable/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-postcall-enable/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          from pathlib import Path
+          import fcntl
+          import json
+          import os
+          import re
+          import stat
+          import subprocess
+          import tempfile
+          import time
+
+          PROJECT = "serviceit-leadgen-vps"
+          BASE = PROJECT + "-"
+          CORE = BASE+"coordinator-1"
+          AUX = BASE+"auxiliaries-1"
+          BUSINESS = BASE+"business-1"
+          OBSERVER = BASE+"observer-1"
+          FNS = BASE+"fns-msp-1"
+          CONFIG = Path.home()/"serviceit/config/vps.env"
+          PIN = CONFIG.parent/"postcall-business-pinned.compose.yml"
+          RELEASES = (Path.home()/"serviceit/releases").resolve()
+          POSTCALL = "SERVICEIT_VPS_POSTCALL_ENABLED"
+          FINANCE = "SERVICEIT_VPS_FINANCE_ENABLED"
+
+          class Blocked(Exception):
+              pass
+
+          def need(ok, code):
+              if not ok:
+                  raise Blocked(code)
+
+          def call(args, timeout=45):
+              try:
+                  return subprocess.run(args, stdout=subprocess.PIPE,
+                      stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+              except (OSError,subprocess.TimeoutExpired):
+                  raise Blocked("SUBPROCESS_TIMEOUT_OR_FAILURE")
+
+          def out(args, timeout=45):
+              response=call(args, timeout)
+              need(response.returncode==0,"READ_COMMAND_FAILED")
+              return response.stdout.strip()
+
+          def inspect(container, fmt):
+              return out(["docker","inspect","-f",fmt,container])
+
+          def flag(container, name):
+              return out(["docker","exec",container,"printenv",name])
+
+          def healthy(container):
+              try:
+                  return inspect(container,
+                    "{{.State.Running}}:{{.State.Health.Status}}")=="true:healthy"
+              except Blocked:
+                  return False
+
+          def verify_alive():
+              for container in (CORE,AUX,BUSINESS,OBSERVER,FNS):
+                  need(healthy(container),"PRODUCTION_CONTAINER_NOT_HEALTHY")
+
+          def private_file(path):
+              need(path.is_file() and not path.is_symlink(),"PRIVATE_CONFIG_UNVERIFIED")
+              st=path.stat()
+              need(st.st_uid==os.geteuid() and
+                   not (stat.S_IMODE(st.st_mode)&0o077),
+                   "PRIVATE_CONFIG_OWNER_OR_PERMISSIONS_INVALID")
+
+          def parse_env(raw):
+              found={}
+              for line in raw.splitlines():
+                  if not line or line.lstrip().startswith("#"):
+                      continue
+                  match=re.fullmatch(r"([A-Z][A-Z0-9_]*)=(.*)",line)
+                  need(match is not None and match[1] not in found,
+                       "ENV_LINE_INVALID_OR_DUPLICATED")
+                  found[match[1]]=match[2]
+              return found
+
+          def atomic_config(raw):
+              fd,path=tempfile.mkstemp(prefix=".postcall-",dir=CONFIG.parent)
+              try:
+                  with os.fdopen(fd,"w",encoding="utf-8") as f:
+                      os.fchmod(f.fileno(),0o600)
+                      f.write(raw)
+                      f.flush()
+                      os.fsync(f.fileno())
+                  os.replace(path,CONFIG)
+              finally:
+                  try: os.unlink(path)
+                  except FileNotFoundError: pass
+
+          def compose_cmd(compose,*args):
+              return ["docker","compose","--env-file",str(CONFIG),
+                      "-f",str(compose),"-f",str(PIN),*args]
+
+          def business_model(compose):
+              data=json.loads(out(compose_cmd(compose,"config","--format","json"),60))
+              service=data.get("services",{}).get("business")
+              need(isinstance(service,dict),"BUSINESS_COMPOSE_MODEL_MISSING")
+              return service
+
+          def bitrix_readonly_preflight():
+              program = """
+          import os
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_postcall_live_worker import (
+              field_preflight, _binding, _card_ids, parse_date)
+          base=validate_webhook(secret_file(dict(os.environ),"SERVICEIT_BITRIX_WEBHOOK"))
+          try:
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as c:
+                  field_preflight(c,base)
+                  owner=_binding(c,base)
+                  assert isinstance(owner,str) and owner.startswith("T")
+                  response=c.post(base+"/scope.json",json={},
+                                  follow_redirects=False,timeout=25)
+                  assert response.status_code==200
+                  scopes=response.json().get("result")
+                  assert isinstance(scopes,list) and "crm" in scopes and "task" in scopes
+                  native=parse_date(os.environ["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"])
+                  ids=_card_ids(c,base,native_after=native)
+                  assert isinstance(ids,list)
+              print("POSTCALL_BITRIX_READONLY_PREFLIGHT=PASS")
+              print("POSTCALL_MANAGER_APPROVED_CANDIDATE_COUNT="+str(min(len(ids),150)))
+          except Exception:
+              print("POSTCALL_BITRIX_READONLY_PREFLIGHT=BLOCKED")
+          """
+              text=out(["docker","exec",BUSINESS,"python","-c",program],150)
+              lines=text.splitlines()
+              need("POSTCALL_BITRIX_READONLY_PREFLIGHT=PASS" in lines,
+                   "BITRIX_MANAGER_ACTIVITY_BINDING_OR_SCOPE_BLOCKED")
+              for line in lines:
+                  if line.startswith("POSTCALL_MANAGER_APPROVED_CANDIDATE_COUNT="):
+                      v=line.split("=",1)[1]
+                      need(v.isdecimal() and 0<=int(v)<=150,
+                           "POSTCALL_CANDIDATES_UNVERIFIED")
+                      print(line,flush=True)
+
+          def pg_readonly_preflight():
+              code = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_vps_native_actions import PostgresActionFence
+          assert callable(PostgresActionFence)
+          try:
+              with db(dict(os.environ)) as con:
+                  with con.transaction():
+                      with con.cursor() as cur:
+                          cur.execute("SET TRANSACTION READ ONLY")
+                          cur.execute("SELECT to_regclass('public.serviceit_vps_native_actions') IS NOT NULL")
+                          assert cur.fetchone()[0] is True
+                          cur.execute("SELECT count(*) FROM serviceit_vps_native_actions WHERE operation='POSTCALL'")
+                          assert int(cur.fetchone()[0]) >= 0
+              print("POSTCALL_PG_PREFLIGHT=PASS")
+          except Exception:
+              print("POSTCALL_PG_PREFLIGHT=BLOCKED")
+          """
+              need(out(["docker","exec",BUSINESS,"python","-c",code],60)
+                   =="POSTCALL_PG_PREFLIGHT=PASS","PG_ACTION_FENCE_MISSING")
+
+          def code_readonly_preflight():
+              code = """
+          import os
+          from leadpilot.serviceit_vps_native_business import enabled
+          from leadpilot.serviceit_postcall_live_worker import (
+              MODE_WRITE, run, _write_one)
+          env=dict(os.environ)
+          env["SERVICEIT_VPS_POSTCALL_ENABLED"]="YES"
+          env["SERVICEIT_VPS_FINANCE_ENABLED"]="NO"
+          x=enabled(env)
+          assert x=={"postcall":True,"finance":False}
+          assert MODE_WRITE=="SERVICEIT_POSTCALL_MANAGER_APPROVED_AUTO"
+          assert callable(run) and callable(_write_one)
+          print("POSTCALL_NATIVE_CODE_PREFLIGHT=PASS")
+          """
+              need(out(["docker","exec",BUSINESS,"python","-c",code],45)
+                   =="POSTCALL_NATIVE_CODE_PREFLIGHT=PASS",
+                   "BUSINESS_POSTCALL_CODE_MISSING")
+
+          def image_id(container):
+              value=inspect(container,"{{.Image}}")
+              need(re.fullmatch(r"sha256:[a-f0-9]{64}",value) is not None,
+                   "IMAGE_DIGEST_INVALID")
+              return value
+
+          def pinned_image(compose, image):
+              need(not PIN.is_symlink(),"BUSINESS_IMAGE_PIN_IS_SYMLINK")
+              content=("services:\n  business:\n    image: \""+image+
+                       "\"\n    pull_policy: never\n")
+              if PIN.exists():
+                  private_file(PIN)
+                  need(PIN.read_text("utf8")==content,
+                       "BUSINESS_IMAGE_PIN_ALREADY_DIFFERENT")
+              else:
+                  fd=os.open(PIN,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+                  with os.fdopen(fd,"w",encoding="utf8") as fp:
+                      fp.write(content)
+                      fp.flush()
+                      os.fsync(fp.fileno())
+              need(business_model(compose).get("image")==image,
+                   "BUSINESS_IMAGE_NOT_PINNED")
+
+          def update_exactly_one(raw):
+              cfg=parse_env(raw)
+              need(cfg.get(POSTCALL,"NO")=="NO","POSTCALL_ALREADY_ON_OR_INVALID")
+              need(cfg.get(FINANCE,"NO")=="NO","FINANCE_WRITER_MUST_STAY_OFF")
+              expr=r"(?m)^"+POSTCALL+r"=(?:NO|YES)$"
+              matches=list(re.finditer(expr,raw))
+              need(len(matches)<=1,"POSTCALL_FLAG_DUPLICATE")
+              if matches:
+                  updated=re.sub(expr,POSTCALL+"=YES",raw)
+              else:
+                  updated=raw.rstrip("\n")+"\n"+POSTCALL+"=YES\n"
+              expected={**cfg,POSTCALL:"YES"}
+              need(parse_env(updated)==expected,
+                   "CONFIG_DIFF_EXCEEDS_POSTCALL_FLAG")
+              return updated
+
+          changed=False
+          original=None
+          compose=None
+          prior_image=None
+          other_images=None
+          lockfile=CONFIG.parent/".serviceit-postcall-enable.lock"
+          try:
+              print("POSTCALL_CUTOVER=START",flush=True)
+              need(os.geteuid()!=0,"ROOT_NOT_ALLOWED")
+              with lockfile.open("a") as handle:
+                  os.chmod(lockfile,0o600)
+                  fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                  verify_alive()
+                  for name,value in (
+                      ("SERVICEIT_VPS_WRITER_MODE","LIVE"),
+                      ("SERVICEIT_VPS_CUTOVER_AUTHORIZED","YES"),
+                      ("SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK","YES"),
+                      ("SERVICEIT_VPS_POLL_ENABLED","YES"),
+                  ):
+                      need(flag(CORE,name)==value,"GLOBAL_NATIVE_CUTOVER_GATE_INVALID")
+                  need(bool(flag(CORE,"SERVICEIT_VPS_NATIVE_ACTIVATION_UTC")),
+                       "NATIVE_ACTIVATION_TIME_MISSING")
+                  need(flag(BUSINESS,POSTCALL)=="NO" and
+                       flag(BUSINESS,FINANCE)=="NO",
+                       "BUSINESS_FLAGS_CHANGED")
+                  private_file(CONFIG)
+                  original=CONFIG.read_text("utf8")
+                  cfg=parse_env(original)
+                  need(cfg.get(POSTCALL,"NO")=="NO" and
+                       cfg.get(FINANCE,"NO")=="NO",
+                       "ENV_POSTCALL_OR_FINANCE_UNEXPECTED")
+                  lab=inspect(BUSINESS,
+                      '{{index .Config.Labels "com.docker.compose.project.config_files"}}')
+                  files=[Path(p.strip()) for p in lab.split(",") if p.strip()]
+                  need(len(files)==1 and files[0].name=="serviceit-vps.compose.yml",
+                       "BUSINESS_COMPOSE_LABELS_UNEXPECTED")
+                  compose=files[0]
+                  need(compose.is_file() and not compose.is_symlink()
+                       and compose.resolve().is_relative_to(RELEASES)
+                       and re.fullmatch(
+                         r".*/releases/[a-f0-9]{40}/deploy/serviceit-vps\.compose\.yml",
+                         str(compose.resolve())) is not None,
+                       "BUSINESS_PINNED_RELEASE_INVALID")
+                  need(inspect(BUSINESS,
+                       '{{index .Config.Labels "com.docker.compose.project"}}')
+                       ==PROJECT,"BUSINESS_PROJECT_CHANGED")
+                  prior_image=image_id(BUSINESS)
+                  other_images={k:image_id(k) for k in (CORE,AUX,OBSERVER,FNS)}
+                  need(out(["docker","image","inspect","-f","{{.Id}}",prior_image])
+                       ==prior_image,"BUSINESS_IMAGE_NOT_PRESENT")
+                  code_readonly_preflight()
+                  pg_readonly_preflight()
+                  bitrix_readonly_preflight()
+                  pinned_image(compose,prior_image)
+                  current=business_model(compose)
+                  need(isinstance(current.get("environment"),dict),
+                       "BUSINESS_COMPOSE_ENV_INVALID")
+                  expected=current["environment"]
+                  actual=json.loads(inspect(BUSINESS,"{{json .Config.Env}}"))
+                  need(isinstance(actual,list) and
+                       all(isinstance(s,str) and "=" in s for s in actual),
+                       "BUSINESS_LIVE_ENV_UNREADABLE")
+                  actual=dict(s.split("=",1) for s in actual)
+                  need(all(str(v)==actual.get(k) for k,v in expected.items()),
+                       "BUSINESS_COMPOSE_ENV_DRIFT_UNVERIFIED")
+                  need(expected.get(POSTCALL)=="NO" and expected.get(FINANCE)=="NO",
+                       "BUSINESS_CURRENT_COMPOSE_FLAGS_CHANGED")
+                  print("POSTCALL_PREFLIGHT=PASS",flush=True)
+                  updated=update_exactly_one(original)
+                  atomic_config(updated)
+                  changed=True
+                  next_model=business_model(compose)
+                  changed_env=next_model.get("environment",{})
+                  need(next_model.get("image")==prior_image
+                       and changed_env.get(POSTCALL)=="YES"
+                       and changed_env.get(FINANCE)=="NO"
+                       and all(str(v)==str(changed_env.get(k)) for k,v in expected.items()
+                               if k!=POSTCALL),
+                       "BUSINESS_PROPOSED_CONFIG_DIFF_UNVERIFIED")
+                  step=call(compose_cmd(compose,"up","-d","--no-deps","--no-build",
+                             "--pull","never","--force-recreate","business"),150)
+                  need(step.returncode==0,"BUSINESS_SINGLE_RESTART_FAILED")
+                  for _ in range(24):
+                      if healthy(BUSINESS):
+                          break
+                      time.sleep(5)
+                  need(healthy(BUSINESS),"BUSINESS_NOT_HEALTHY_AFTER_RESTART")
+                  need(image_id(BUSINESS)==prior_image,
+                       "BUSINESS_IMAGE_CHANGED_ON_RECREATE")
+                  need(flag(BUSINESS,POSTCALL)=="YES" and flag(BUSINESS,FINANCE)=="NO",
+                       "BUSINESS_NEW_FLAGS_NOT_VERIFIED")
+                  for k,v in other_images.items():
+                      need(healthy(k) and image_id(k)==v,
+                           "OTHER_LIVE_CONTAINER_CHANGED")
+                  print("POSTCALL_CUTOVER=SUCCESS",flush=True)
+                  print("POSTCALL_WRITER_ENABLED=YES;FINANCE_WRITER_ENABLED=NO",flush=True)
+                  print("BUSINESS_CONTAINER=HEALTHY;BUSINESS_IMAGE_UNCHANGED=YES",flush=True)
+                  print("OTHER_SERVICE_IMAGES_UNCHANGED=YES",flush=True)
+                  print("POSTCALL_SCOPE=MANAGER_CONFIRMED_COMPLETED_CALLS_ON_FUTURE_1062_21_ONLY",flush=True)
+                  print("EXTERNAL_OUTREACH=NO;AUTOMATED_CLIENT_CALLS=NO",flush=True)
+                  print("SOURCES_CHANGED=NO;HISTORICAL_CARDS_MODIFIED_BY_ACTIVATION=0",flush=True)
+                  print("POSTCALL_REAL_CALL_E2E=AWAITING_ELIGIBLE_MANAGER_CONFIRMATION",flush=True)
+          except Exception as ex:
+              reason=str(ex) if isinstance(ex,Blocked) else "UNEXPECTED_FAILURE"
+              if re.fullmatch(r"[A-Z0-9_]+",reason) is None:
+                  reason="UNEXPECTED_FAILURE"
+              print("POSTCALL_CUTOVER=BLOCKED_"+reason,flush=True)
+              if changed and original is not None:
+                  try:
+                      atomic_config(original)
+                      if compose is not None:
+                          step=call(compose_cmd(compose,"up","-d","--no-deps",
+                              "--no-build","--pull","never",
+                              "--force-recreate","business"),150)
+                          need(step.returncode==0,"BUSINESS_ROLLBACK_RECREATE_FAILED")
+                      print("POSTCALL_ROLLBACK=PREVIOUS_ENV_RESTORED_RECREATE_ATTEMPTED",flush=True)
+                  except Exception:
+                      print("POSTCALL_ROLLBACK=MANUAL_REVIEW_REQUIRED",flush=True)
+              raise SystemExit(2)
+          PY

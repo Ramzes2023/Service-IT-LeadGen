@@ -1,27 +1,20 @@
 name: ServiceIT Cloud Reliability Watchdog (alerts, no CRM writes)
 
+# External watchdog only: live 10-minute CRM automation now runs on VPS.
 on:
-  workflow_run:
-    workflows:
-      - "ServiceIT Bitrix24 new-card polling fallback (no outgoing webhook)"
-      - "ServiceIT all-new 1062/21 AI batch catch-up (real CRM, no demo)"
-      - "ServiceIT stage3 auto internal review task for ALL future 1062/21 cards"
-      - "ServiceIT provisional Lead Score for every NEW 1062/21 card"
-      - "ServiceIT manager-confirmed call outcome and next action (CRM only)"
-      - "ServiceIT hourly real new-card AI / task / Score readback (READ ONLY)"
-      - "ServiceIT hybrid finance auto / manager fallback for NEW won LeadGen deals"
-      - "ServiceIT new Bitrix card to AI manager (free event)"
-    types: [completed]
-  # Scheduled jobs can be dropped; add workflow-run-completion trigger as backup.
   schedule:
     - cron: '23,53 * * * *'
   workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type AUDIT_NATIVE_VPS_WATCHDOG_221'
+        required: true
+        type: string
   issue_comment:
     types: [created]
 
 permissions:
   contents: read
-  actions: read
   issues: write
 
 concurrency:
@@ -33,37 +26,170 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'schedule' ||
-       (github.event_name == 'workflow_dispatch' &&
-        github.actor == 'Ramzes2023') ||
-       (github.event_name == 'issue_comment' &&
-        github.actor == 'Ramzes2023' &&
-        github.event.issue.number == 221 &&
-        !github.event.issue.pull_request &&
-        github.event.comment.body == 'SERVICEIT_CLOUD_WATCHDOG_RUN_READONLY_V1') ||
-       (github.event_name == 'workflow_run' &&
-        github.event.action == 'completed' &&
-        github.event.workflow_run.head_branch == 'main' &&
-        github.event.workflow_run.head_repository.full_name == 'Ramzes2023/Service-IT-LeadGen' &&
-        (github.event.workflow_run.event == 'schedule' ||
-         github.event.workflow_run.event == 'repository_dispatch' ||
-         github.event.workflow_run.event == 'workflow_dispatch')))
+      (
+        github.event_name == 'schedule' ||
+        (github.event_name == 'workflow_dispatch' &&
+         github.actor == 'Ramzes2023' &&
+         inputs.approval == 'AUDIT_NATIVE_VPS_WATCHDOG_221') ||
+        (github.event_name == 'issue_comment' &&
+         github.actor == 'Ramzes2023' &&
+         github.event.issue.number == 221 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_NATIVE_VPS_WATCHDOG_RUN_221')
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 7
+    environment: serviceit-vps-readonly
     env:
-      GITHUB_REPOSITORY: ${{ github.repository }}
-      GITHUB_REF: ${{ github.ref }}
-      GITHUB_EVENT_NAME: ${{ github.event_name }}
-      GITHUB_ACTOR: ${{ github.actor }}
-      GH_WATCHDOG_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Keep runner-provided GITHUB_EVENT_PATH unchanged.
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Measure scheduled freshness and alert on failures without CRM access
-        # No project dependencies needed; only Python standard library.
-        run: python -m leadpilot.serviceit_cloud_reliability_watchdog
+      - name: Verify source code and SSH known-host pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_ops_watchdog.py
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-watchdog"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-watchdog/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-watchdog/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-watchdog/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-watchdog/known_hosts" >/dev/null
+      - name: Fetch sanitized native VPS status (no CRM access, no writes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-watchdog/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-watchdog/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            < ops/serviceit_vps_ops_watchdog.py \
+            > "$RUNNER_TEMP/serviceit-watchdog/snapshot.json"
+      - name: Compare alerts and update Issue 221 only on change
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from datetime import datetime,timezone
+          import hashlib,json,os
+          p=Path(os.environ['RUNNER_TEMP'])/'serviceit-watchdog'
+          data=json.loads((p/'snapshot.json').read_text('utf8'))
+          if not isinstance(data,dict) or not all(
+              isinstance(data.get(k),dict)
+              for k in ('health','flags','cycles','pg','backup')):
+              raise SystemExit('WATCHDOG_SNAPSHOT_SCHEMA_INVALID')
+          faults=[]
+          for name,value in data['health'].items():
+              if value is not True:
+                  faults.append('HEALTH_'+name)
+          for name,value in data['flags'].items():
+              if value is not True:
+                  faults.append('FLAG_'+name)
+          pg=data['pg']
+          age=pg.get('poll_age_sec')
+          if pg.get('ready') is not True:
+              faults.append('POSTGRES_UNVERIFIED')
+          if type(age) is not int or age>1200 or age<0:
+              faults.append('POLL_OVER_20_MIN')
+          for key in ('pending','review','uncertain'):
+              if type(pg.get(key)) is not int:
+                  faults.append('PG_'+key+'_UNKNOWN')
+          if type(pg.get('pending')) is int and pg['pending']>20:
+              faults.append('QUEUE_PENDING_TOO_LARGE')
+          if type(pg.get('review')) is int and pg['review']>0:
+              faults.append('QUEUE_REVIEW_REQUIRED')
+          if type(pg.get('uncertain')) is int and pg['uncertain']>0:
+              faults.append('QUEUE_UNCERTAIN_REQUIRES_MANUAL_CHECK')
+          thresholds={'CORE':2,'AUX':2,'BUSINESS':2,'OBSERVER':1}
+          for name,n in thresholds.items():
+              cycles=data['cycles'].get(name,{})
+              if type(cycles.get('ok')) is not int or cycles['ok']<n:
+                  faults.append('NO_CYCLES_'+name)
+              if type(cycles.get('blocked')) is not int or cycles['blocked']>0:
+                  faults.append('BLOCKS_'+name)
+          backup=data['backup']
+          newest=backup.get('newest_age_hours')
+          if backup.get('ready') is not True or backup.get('cron') is not True:
+              faults.append('DAILY_BACKUP_NOT_ENABLED')
+          if type(newest) is not int or newest>36 or newest<0:
+              faults.append('BACKUP_STALE')
+          critical=any(x.startswith(('HEALTH_','FLAG_','POSTGRES_','POLL_',
+                         'QUEUE_UNCERTAIN','DAILY_BACKUP_NOT_ENABLED'))
+                         for x in faults)
+          status='BLOCKED' if critical else 'WARN' if faults else 'OK'
+          signature=json.dumps({'status':status,'faults':sorted(set(faults))},
+                               sort_keys=True,separators=(',',':'))
+          digest=hashlib.sha256(signature.encode()).hexdigest()
+          print('VPS_WATCHDOG_STATUS='+status)
+          print('VPS_WATCHDOG_PROBLEMS='+str(len(set(faults))))
+          (p/'signature.txt').write_text(digest,'utf8')
+          def yn(v):
+              return 'YES' if v is True else 'NO'
+          def safe_num(v):
+              return str(v) if type(v) is int and 0<=v<=1000000 else 'UNKNOWN'
+          lines=[
+              '# Сервис ИТ — Cloud Reliability (VPS)',
+              '',
+              '**Состояние: '+status+'**',
+              'Контрольная сводка при последней смене статуса: '+
+                 datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')+'.',
+              '',
+              'Это внешнее наблюдение через GitHub; реальные AI/CRM задачи обрабатывает VPS.',
+              '',
+              '| Контроль | Результат |',
+              '|---|---|',
+              '| 5 основных контейнеров + Chromium + шлюз | '+
+                  yn(all(data['health'].values()))+' |',
+              '| Действующие переключатели VPS | '+
+                  yn(all(data['flags'].values()))+' |',
+              '| Последний опрос CRM | '+safe_num(age)+' сек назад |',
+              '| Очередь PENDING / REVIEW / UNCERTAIN | '+
+                  ' / '.join(safe_num(pg.get(k)) for k in
+                    ('pending','review','uncertain'))+' |',
+              '| Циклы core / aux / business / observer (85 мин) | '+
+                  ' / '.join(safe_num(data['cycles'].get(k,{}).get('ok'))
+                      for k in ('CORE','AUX','BUSINESS','OBSERVER'))+' |',
+              '| Ошибки циклов (85 мин) | '+
+                  ' / '.join(safe_num(data['cycles'].get(k,{}).get('blocked'))
+                      for k in ('CORE','AUX','BUSINESS','OBSERVER'))+' |',
+              '| Ежедневная локальная копия PostgreSQL | '+
+                  yn(backup.get('ready'))+' |',
+              '| Возраст последнего архива | '+safe_num(newest)+' часов |',
+              '',
+              'Требуют внимания: '+(', '.join(sorted(set(faults)))
+                   if faults else 'нет выявленных проблем')+'.',
+              '',
+              '**Ограничения:** источники лидов отключены; нет реальной новой карточки для E2E. '
+              'Глобальный корпоративный STOP не считается подтверждённым, '
+              'автоматический контакт с клиентами запрещён.',
+              '',
+              'Запуск мониторинга: https://github.com/'+os.environ['REPO']+
+                  '/actions/runs/'+os.environ['RUN_ID'],
+              '',
+              '<!-- SERVICEIT_VPS_WATCHDOG_STATE_SHA256:'+digest+' -->',
+              ''
+          ]
+          (p/'issue.md').write_text('\n'.join(lines),'utf8')
+          PY
+          old="$(gh api "repos/$REPO/issues/221" --jq '.body')"
+          fingerprint="$(cat "$RUNNER_TEMP/serviceit-watchdog/signature.txt")"
+          if [[ "$old" == *"SERVICEIT_VPS_WATCHDOG_STATE_SHA256:$fingerprint"* ]]; then
+            echo 'VPS_WATCHDOG_ISSUE221=NO_STATE_CHANGE'
+          else
+            body="$(cat "$RUNNER_TEMP/serviceit-watchdog/issue.md")"
+            gh api "repos/$REPO/issues/221" -X PATCH --raw-field "body=$body" >/dev/null
+            echo 'VPS_WATCHDOG_ISSUE221=UPDATED_TO_VPS'
+          fi

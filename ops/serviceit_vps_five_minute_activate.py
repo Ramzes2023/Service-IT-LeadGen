@@ -51,7 +51,7 @@ ROLE = {
 }
 ALL = [BASE + "-" + x + "-1" for x in
        ("coordinator", "auxiliaries", "business", "observer", "fns-msp")]
-UNMODIFIED = [BASE + "-" + x + "-1" for x in ("observer", "fns-msp", "ingress")]
+UNMODIFIED = [BASE + "-" + x + "-1" for x in ("observer", "fns-msp")]
 MODIFIED_ROLES = ("core", "aux", "business")
 
 

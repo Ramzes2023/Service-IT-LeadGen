@@ -219,7 +219,7 @@ def reservation(connection, source_id) -> bool:
 def day_budget(connection) -> int:
     with connection.cursor() as cur:
         cur.execute("SELECT count(*) FROM serviceit_vps_b2b_deliveries "
-                    "WHERE first_seen > now()-INTERVAL '24 hours'")
+                    "WHERE state!='EXISTING_IN_CRM' AND first_seen > now()-INTERVAL '24 hours'")
         return int(cur.fetchone()[0])
 
 
@@ -290,10 +290,18 @@ def run_once(env, *, client):
             return {"status": "B2B_DAILY_BUDGET_REACHED", "crm_writes": 0}
         base = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
         preflight(ReadOnlyBitrix(base, client=client))
-        candidates = source[:MAX_PER_CYCLE]
         output = {"status": "B2B_VPS_LIVE_CYCLE", "new_holds": 0,
                   "already_seen": 0, "crm_writes": 0}
-        for row in candidates:
+        # Do not let an already-reserved newest tender starve older distinct
+        # notices. Limit actual new CRM writes, not scanned messages.
+        for row in source:
+            if output["new_holds"] >= MAX_PER_CYCLE:
+                break
+            # Invalid or risky vendor descriptions are skipped, not coerced.
+            try:
+                hold_payload(notice_for(row), row["source_service_groups"])
+            except (BridgeBlocked, ValueError, TypeError):
+                continue
             kind = write_hold(client, connection, base, row)
             output["new_holds"] += int(kind == "HOLD_VERIFIED_NATIVE_QUEUE")
             output["already_seen"] += int(kind != "HOLD_VERIFIED_NATIVE_QUEUE")

@@ -1,0 +1,87 @@
+name: ServiceIT external HTTPS gateway readiness READONLY (pre-sources)
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type AUDIT_PUBLIC_HTTPS_290'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  external-health:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'AUDIT_PUBLIC_HTTPS_290') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.number == 290 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_VPS_PUBLIC_HTTPS_READONLY_290')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
+    steps:
+      - name: Validate external TLS/HTTPS gateway without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' > "$RUNNER_TEMP/serviceit-https-status.txt"
+          import json
+          import ssl
+          import urllib.request
+          from urllib.error import HTTPError, URLError
+          host='https://leadgen.serviseit.ru/health'
+          result='UNVERIFIED'
+          try:
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self,*args,**kwargs):
+                      return None
+              opener=urllib.request.build_opener(
+                  urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+                  NoRedirect())
+              request=urllib.request.Request(host,headers={'Accept':'application/json'})
+              with opener.open(request,timeout=12) as response:
+                  payload=response.read(8192)
+                  value=json.loads(payload)
+                  if (response.status==200
+                      and isinstance(value,dict)
+                      and value.get('status')=='SERVICEIT_GATEWAY_RUNNING'
+                      and value.get('crm_writer_enabled') is False):
+                      result='PASS'
+                  else:
+                      result='WRONG_HEALTH_SCHEMA'
+          except Exception:
+              result='TLS_NETWORK_OR_ENDPOINT_UNVERIFIED'
+          print('EXTERNAL_HTTPS_GATEWAY='+result)
+          print('EXTERNAL_HTTPS_CRM_WRITES=ZERO')
+          print('EXTERNAL_HTTPS_TEST_COMPLETE=YES')
+          PY
+          cat "$RUNNER_TEMP/serviceit-https-status.txt"
+      - name: Post external-only probe summary to issue 290
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/serviceit-https-status.txt"
+          if [[ -f "$f" ]]; then
+            result="$(grep -E '^EXTERNAL_HTTPS_[A-Z_]+=[A-Z_]+$' "$f" || true)"
+          else
+            result='EXTERNAL_HTTPS_GATEWAY=UNVERIFIED'
+          fi
+          body="$(printf 'Внешняя HTTPS/TLS проверка облачного шлюза без доступа к Bitrix или VPS SSH:\n\n%s\n\nGitHub Actions: https://github.com/%s/actions/runs/%s\n\nНет записей CRM, PG или источников.' "$result" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$body" >/dev/null || true

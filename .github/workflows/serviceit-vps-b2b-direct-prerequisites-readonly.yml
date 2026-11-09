@@ -1,0 +1,107 @@
+name: ServiceIT B2B VPS source READONLY prerequisites
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-prerequisites
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_VPS_PREREQUISITES_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      B2B_HMAC: "${{ secrets.SERVICEIT_B2B_INGEST_HMAC_KEY }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
+    steps:
+      - name: Pin SSH and check existing B2B shared key presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-audit"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-audit/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-audit/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-audit/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-audit/known_hosts" >/dev/null
+          [[ -n "$B2B_HMAC" ]] && echo B2B_GH_HMAC=YES > "$RUNNER_TEMP/b2b-audit/status" ||
+            echo B2B_GH_HMAC=NO > "$RUNNER_TEMP/b2b-audit/status"
+      - name: Check production VPS only, no writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-audit/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-audit/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            >> "$RUNNER_TEMP/b2b-audit/status" <<'PY'
+          import pathlib,subprocess
+          def cmd(args):
+              try:
+                  p=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                      stdin=subprocess.DEVNULL,text=True,timeout=12)
+                  return p.returncode,p.stdout.strip()
+              except (OSError,subprocess.TimeoutExpired):
+                  return 255,''
+          def out(key,ok):
+              print('B2B_'+key+'='+('YES' if ok is True else
+                  'NO' if ok is False else 'UNVERIFIED'))
+          for key,name in [('CORE','coordinator'),('AUX','auxiliaries'),('BUSINESS','business')]:
+              rc,txt=cmd(['docker','inspect','-f','{{.State.Running}}',
+                   'serviceit-leadgen-vps-'+name+'-1'])
+              out(key+'_RUNNING',txt=='true' if rc==0 else None)
+          n='serviceit-leadgen-vps-coordinator-1'
+          for key,var,expected in [
+              ('NATIVE_CUTOVER','SERVICEIT_VPS_CUTOVER_AUTHORIZED','YES'),
+              ('NATIVE_POLL','SERVICEIT_VPS_POLL_ENABLED','YES'),
+              ('GH_WRITERS_DISABLED','SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK','YES'),
+              ('AI_PROVIDER','SERVICEIT_AI_PROVIDER','routerai')]:
+              rc,txt=cmd(['docker','exec',n,'printenv',var])
+              out(key,txt==expected if rc==0 else None)
+          out('DOCKER_ACCESS',cmd(['docker','version','--format',
+               '{{.Server.Version}}'])[0]==0)
+          rc,txt=cmd(['systemctl','is-active','caddy'])
+          out('CADDY_ACTIVE',txt=='active' if rc in (0,3) else None)
+          p=pathlib.Path('/etc/serviceit/secrets')
+          out('SECRETS_DIRECTORY_VISIBLE',p.is_dir())
+          out('HMAC_FILE_VISIBLE',(p/'b2b_ingest_hmac').is_file())
+          c=pathlib.Path('/etc/caddy/Caddyfile')
+          out('CADDYFILE_VISIBLE',c.is_file())
+          try:
+              out('SOURCE_ROUTE_PRESENT','/integrations/serviceit/b2b-center/notice'
+                  in c.read_text('utf-8'))
+          except (OSError,UnicodeError):
+              out('SOURCE_ROUTE_PRESENT',None)
+          out('SUDO_NONINTERACTIVE',cmd(['sudo','-n','true'])[0]==0)
+          print('B2B_PREFLIGHT_DONE=YES')
+          PY
+          grep -E '^B2B_[A-Z0-9_]+=(YES|NO|UNVERIFIED)$' "$RUNNER_TEMP/b2b-audit/status"
+          grep -qx 'B2B_PREFLIGHT_DONE=YES' "$RUNNER_TEMP/b2b-audit/status"
+      - name: Publish only sanitized statuses to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          summary="$(grep -E '^B2B_[A-Z0-9_]+=(YES|NO|UNVERIFIED)$' "$RUNNER_TEMP/b2b-audit/status" | head -35 || true)"
+          [[ -n "$summary" ]] || summary="B2B_PREFLIGHT_DONE=UNVERIFIED"
+          msg="$(printf 'B2B VPS source prerequisites, ONLY READ:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nVPS writes=0, CRM writes=0, source toggles unchanged.' "$summary" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

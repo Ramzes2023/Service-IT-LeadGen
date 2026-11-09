@@ -1,0 +1,74 @@
+# Separate B2B source receiver / worker; do not alter running core services.
+# Default flags NO. Only after reviewed source deployment enable receiver
+# and explicit single-HOLD canary writer.
+name: serviceit-b2b-vps
+x-base: &base
+  build:
+    context: ..
+    dockerfile: Dockerfile.serviceit-vps
+  image: serviceit-vps-b2b-direct:20261109-pilot
+  user: "10001:10001"
+  restart: unless-stopped
+  read_only: true
+  network_mode: host
+  init: true
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  mem_limit: 400m
+  environment: &common_env
+    SERVICEIT_PG_HOST: "127.0.0.1"
+    SERVICEIT_PG_PORT: "5432"
+    SERVICEIT_PG_DB: leadgen
+    SERVICEIT_PG_USER: leadgen
+    SERVICEIT_PG_PASSWORD_FILE: /run/secrets/serviceit_pg_password
+    SERVICEIT_VPS_B2B_RECEIVER_ENABLED: "${SERVICEIT_VPS_B2B_RECEIVER_ENABLED:-NO}"
+    SERVICEIT_VPS_B2B_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_B2B_GH_WRITERS_DISABLED_ACK:-NO}"
+    SERVICEIT_VPS_INTAKE_ENABLED: "NO"
+
+services:
+  receiver:
+    <<: *base
+    command: ["python", "-m", "uvicorn", "leadpilot.serviceit_vps_b2b_ingress:app", "--host", "127.0.0.1", "--port", "18781", "--workers", "1", "--no-access-log"]
+    environment:
+      <<: *common_env
+      SERVICEIT_VPS_B2B_HMAC_KEY_FILE: /run/secrets/serviceit_b2b_hmac
+    secrets: [serviceit_pg_password, serviceit_b2b_hmac]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://127.0.0.1:18781/health',timeout=3); assert r.status_code==200 and r.json()['crm_writes'}==0"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  writer:
+    <<: *base
+    command: ["python", "-m", "leadpilot.serviceit_vps_b2b_bridge"]
+    environment:
+      <<: *common_env
+      SERVICEIT_BITRIX_WEBHOOK_FILE: /run/secrets/serviceit_bitrix_webhook
+      SERVICEIT_VPS_B2B_WRITER_ENABLED: "${SERVICEIT_VPS_B2B_WRITER_ENABLED:-NO}"
+      SERVICEIT_VPS_WRITER_MODE: "${SERVICEIT_VPS_WRITER_MODE:-READONLY}"
+      SERVICEIT_VPS_CUTOVER_AUTHORIZED: "${SERVICEIT_VPS_CUTOVER_AUTHORIZED:-NO}"
+      SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK: "${SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK:-NO}"
+      SERVICEIT_VPS_POLL_ENABLED: "${SERVICEIT_VPS_POLL_ENABLED:-NO}"
+      SERVICEIT_AI_PROVIDER: routerai
+      SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED: "${SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED:-NO}"
+      SERVICEIT_ROUTERAI_PRIVACY_APPROVED: "${SERVICEIT_ROUTERAI_PRIVACY_APPROVED:-NO}"
+    secrets: [serviceit_pg_password, serviceit_bitrix_webhook]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import leadpilot.serviceit_vps_b2b_bridge as s; assert s.INTERVAL_SECONDS == 300"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+secrets:
+  serviceit_pg_password:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Production secret directory required}/pg_password"
+  serviceit_bitrix_webhook:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Production secret directory required}/bitrix_webhook"
+  serviceit_b2b_hmac:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?Production secret directory required}/b2b_ingest_hmac"

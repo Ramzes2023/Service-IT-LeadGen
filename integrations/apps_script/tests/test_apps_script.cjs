@@ -1,4 +1,4 @@
-/* Offline V8 tests. No Google account, real email, GitHub API or Bitrix writes. */
+/* Offline Apps Script->VPS tests; no Google account, network or CRM writes. */
 const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert');
@@ -28,6 +28,8 @@ function message(id=MID, options={}) {
     payload: {
       headers: [
         {name:'From', value: options.from || 'B2B-Center <marketplace@b2b-center.ru>'},
+        {name:'Authentication-Results',
+         value: options.auth || 'mx.google.com; dkim=pass header.i=@b2b-center.ru; dmarc=pass header.from=b2b-center.ru'},
         {name:'Subject', value:'Новые закупки B2B-Center'}
       ],
       mimeType:'text/plain',
@@ -37,11 +39,14 @@ function message(id=MID, options={}) {
 }
 
 function environment(options={}) {
-  const properties = Object.assign({}, options.properties || {});
+  const properties = Object.assign({
+    SERVICEIT_VPS_B2B_DIRECT_ENABLED:'YES',
+    SERVICEIT_VPS_B2B_ACTIVATION_MS:String(CUTOVER+500)
+  }, options.properties || {});
   const calls = {list:0,get:0,dispatch:[],logs:[],triggers:[]};
   let account = options.account || EMAIL;
   let currentMessage = options.message || message();
-  let responseCode = options.responseCode || 204;
+  let responseCode = options.responseCode || 202;
   let uuid = 0;
   const context = {
     SERVICEIT_PRIVATE_CONFIG: {
@@ -110,14 +115,31 @@ function environment(options={}) {
     },
     UrlFetchApp: {
       fetch:(url,config)=>{
-        assert.strictEqual(url,'https://api.github.com/repos/Ramzes2023/Service-IT-LeadGen/dispatches');
+        if(url==='https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/health') {
+          assert.strictEqual(config.method,'get');
+          return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({
+            status:'B2B_INGRESS_ALIVE',source_enabled:true,crm_writes:0
+          })};
+        }
+        if(url==='https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/probe') {
+          assert.strictEqual(config.method,'post');
+          const payload=JSON.parse(config.payload);
+          const expected='sha256='+crypto.createHmac('sha256',SECRET)
+            .update('v1|b2b-probe|'+payload.timestamp+'|'+payload.nonce).digest('hex');
+          assert.strictEqual(payload.signature,expected);
+          return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({
+            status:'B2B_VPS_SIGNED_PROBE_PASS',crm_writes:0
+          })};
+        }
+        assert.strictEqual(url,
+          'https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/notice');
         assert.strictEqual(config.method,'post');
         assert.strictEqual(config.followRedirects,false);
         assert.strictEqual(config.validateHttpsCertificates,true);
         assert.strictEqual(config.muteHttpExceptions,true);
-        const req=JSON.parse(config.payload);
-        assert.strictEqual(req.event_type,'serviceit_b2b_notice');
-        const cp=req.client_payload;
+        const cp=JSON.parse(config.payload);
+        assert.deepStrictEqual(Object.keys(cp).sort(),
+          ['timestamp','payload_json','signature'].sort());
         const expected='sha256='+crypto.createHmac('sha256',SECRET)
           .update(cp.timestamp+'.'+cp.payload_json).digest('hex');
         assert.strictEqual(cp.signature,expected);
@@ -274,6 +296,15 @@ test('spoofed sender domain is rejected and not dispatched',()=>{
   assert.strictEqual(e.calls.dispatch.length,0);
 });
 
+test('spoofed Gmail authentication result cannot dispatch',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'},
+    message:message(MID,{auth:'mx.google.com; dkim=fail; dmarc=fail'})});
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.dispatched,0);
+  assert.strictEqual(result.review_required,1);
+  assert.strictEqual(e.calls.dispatch.length,0);
+});
+
 test('non-official source URL is rejected and not dispatched',()=>{
   const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'},
     message:message(MID,{body:[
@@ -306,14 +337,14 @@ test('baseline email older than cutover is not dispatched',()=>{
   assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'BASELINE');
 });
 
-test('GitHub 503 fences source and never blindly retries',()=>{
+test('VPS 503 fences source and never blindly retries',()=>{
   const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'},responseCode:503});
   const result=e.context.pollAndDispatchB2B();
   assert.strictEqual(result.review_required,0);
   assert.strictEqual(result.uncertain_dispatches,1);
   assert.strictEqual(e.calls.dispatch.length,1);
   assert.match(e.properties.SERVICEIT_SOURCE_1234567,/DISPATCH_UNCERTAIN/);
-  e.setResponseCode(204);
+  e.setResponseCode(202);
   e.context.pollAndDispatchB2B();
   assert.strictEqual(e.calls.dispatch.length,1);
 });
@@ -351,6 +382,29 @@ test('dispatch payload never contains raw email body or private contact data',()
   ].sort());
   assert(!JSON.stringify(notice).includes('person@example.org'));
   assert(!JSON.stringify(notice).includes('+7 999'));
+});
+
+test('old GitHub route stays OFF until explicit VPS activation',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES',
+    SERVICEIT_VPS_B2B_DIRECT_ENABLED:'NO'}});
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.status,'SERVICEIT_VPS_B2B_SOURCE_DISABLED');
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(e.calls.get,0);
+});
+
+test('one-time VPS activation creates fresh-cutover trigger',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'NO',
+    SERVICEIT_VPS_B2B_DIRECT_ENABLED:'NO'}});
+  const result=e.context.activateVpsB2BCenter();
+  assert.strictEqual(result.status,'SERVICEIT_AUTOMATION_TRIGGER_INSTALLED');
+  assert.strictEqual(e.calls.triggers.length,1);
+  assert.strictEqual(e.properties.SERVICEIT_VPS_B2B_DIRECT_ENABLED,'YES');
+  assert(Number(e.properties.SERVICEIT_VPS_B2B_ACTIVATION_MS) > CUTOVER);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  // Existing mail is older than fresh activation; must NEVER backfill.
+  e.context.pollAndDispatchB2B();
+  assert.strictEqual(e.calls.dispatch.length,0);
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

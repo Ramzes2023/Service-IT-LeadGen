@@ -1,0 +1,149 @@
+name: ServiceIT VPS finance CRM exact blocker READONLY diagnostic
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type AUDIT_VPS_FINANCE_CRM_BLOCKER_ONLY_283"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-finance-crm-blocker-audit
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'AUDIT_VPS_FINANCE_CRM_BLOCKER_ONLY_283')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.number == 283 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SVCIT_FINANCE_CRM_BLOCKER_READONLY_283')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+    steps:
+      - name: Validate pinned SSH key and non-root account
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/svcit-finance-diagnostic"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/svcit-finance-diagnostic/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/svcit-finance-diagnostic/known_hosts"
+          chmod 600 "$RUNNER_TEMP/svcit-finance-diagnostic/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/svcit-finance-diagnostic/known_hosts" >/dev/null
+
+      - name: Determine exact Bitrix REST finance blocker (READONLY)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/svcit-finance-diagnostic/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/svcit-finance-diagnostic/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'docker exec serviceit-leadgen-vps-business-1 python -' \
+            > "$RUNNER_TEMP/svcit-finance-diagnostic/status.txt" <<'PY'
+          import os
+          import re
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_finance_hybrid_live_worker import (
+              exact_category,deal_schema,task_schema,list_won,current_employee)
+          from leadpilot.serviceit_bitrix_poll_fallback import date_value
+
+          def clean_error(error):
+              value=str(error)
+              return value if re.fullmatch(r'[A-Z][A-Z0-9_]{1,100}',value) else 'UNVERIFIED_ERROR'
+
+          print('FINANCE_DIAG_START=YES',flush=True)
+          try:
+              base=validate_webhook(secret_file(dict(os.environ),
+                  'SERVICEIT_BITRIX_WEBHOOK'))
+          except Exception:
+              print('FINANCE_DIAG_WEBHOOK=INVALID',flush=True)
+              raise SystemExit(0)
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as client:
+              try:
+                  r=client.post(base+'/scope.json',json={},
+                                follow_redirects=False,timeout=25)
+                  scope=r.json().get('result') if r.status_code==200 else None
+                  valid=isinstance(scope,list) and 'crm' in scope and 'task' in scope
+                  print('FINANCE_DIAG_CRM_TASK_SCOPE='+('YES' if valid else 'NO'),flush=True)
+              except Exception:
+                  print('FINANCE_DIAG_CRM_TASK_SCOPE=UNKNOWN',flush=True)
+              try:
+                  cat=exact_category(client,base)
+                  print('FINANCE_DIAG_LEADGEN_DEAL_CATEGORY='+
+                        ('VISIBLE' if cat is not None else 'NOT_VISIBLE'),flush=True)
+              except Exception as exc:
+                  cat=None
+                  print('FINANCE_DIAG_LEADGEN_DEAL_CATEGORY=BLOCKED_'+clean_error(exc),flush=True)
+              for label,fn in (
+                  ('DEAL_SCHEMA',deal_schema),
+                  ('TASK_SCHEMA',task_schema),
+                  ('USER_CURRENT',current_employee),
+              ):
+                  try:
+                      fn(client,base)
+                      print('FINANCE_DIAG_'+label+'=PASS',flush=True)
+                  except Exception as exc:
+                      print('FINANCE_DIAG_'+label+'=BLOCKED_'+clean_error(exc),flush=True)
+              if cat is not None:
+                  try:
+                      native=date_value(os.environ['SERVICEIT_VPS_NATIVE_ACTIVATION_UTC'])
+                      deals=list_won(client,base,cat,native_after=native)
+                      print('FINANCE_DIAG_NEW_WON_LIST=PASS',flush=True)
+                      print('FINANCE_DIAG_NEW_WON_COUNT='+str(len(deals)),flush=True)
+                  except Exception as exc:
+                      print('FINANCE_DIAG_NEW_WON_LIST=BLOCKED_'+clean_error(exc),flush=True)
+              else:
+                  print('FINANCE_DIAG_NEW_WON_LIST=SKIPPED_NO_CATEGORY',flush=True)
+          print('FINANCE_DIAG_CRM_WRITES=0;TASKS_CREATED=0;PG_WRITES=0;RESTARTS=0',flush=True)
+          PY
+          grep -E '^FINANCE_DIAG_[A-Z_]+=(YES|NO|UNKNOWN|VISIBLE|NOT_VISIBLE|PASS|INVALID|SKIPPED_NO_CATEGORY|BLOCKED_[A-Z0-9_]+|[0-9]{1,3})$' \
+            "$RUNNER_TEMP/svcit-finance-diagnostic/status.txt" || true
+          grep -F 'FINANCE_DIAG_CRM_WRITES=0;TASKS_CREATED=0;PG_WRITES=0;RESTARTS=0' \
+            "$RUNNER_TEMP/svcit-finance-diagnostic/status.txt" || true
+
+      - name: Post allowlisted diagnostic summary to issue 283
+        if: always()
+        shell: bash
+        env:
+          REPO: "${{ github.repository }}"
+          RUN_ID: "${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          path="$RUNNER_TEMP/svcit-finance-diagnostic/status.txt"
+          if [[ -f "$path" ]]; then
+            summary="$(grep -E '^FINANCE_DIAG_(START|WEBHOOK|CRM_TASK_SCOPE|LEADGEN_DEAL_CATEGORY|DEAL_SCHEMA|TASK_SCHEMA|USER_CURRENT|NEW_WON_LIST|NEW_WON_COUNT)=(YES|NO|UNKNOWN|VISIBLE|NOT_VISIBLE|PASS|INVALID|SKIPPED_NO_CATEGORY|BLOCKED_[A-Z0-9_]+|[0-9]{1,3})$' "$path" || true)"
+          else
+            summary="FINANCE_DIAG_START=UNKNOWN"
+          fi
+          [[ -n "$summary" ]] || summary="FINANCE_DIAG_START=UNKNOWN"
+          body="$(printf 'Диагностика блокировки финансовой автоматизации (только чтение):\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nБез изменения Битрикс24 и VPS.' "$summary" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/283/comments" -X POST --raw-field "body=$body" >/dev/null

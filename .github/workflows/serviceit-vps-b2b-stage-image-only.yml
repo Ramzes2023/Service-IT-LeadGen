@@ -50,7 +50,9 @@ jobs:
             Dockerfile.serviceit-vps requirements.txt requirements-vps.txt \
             leadpilot certificates config/serviceit_own_signal_stop.json \
             deploy/serviceit-vps-b2b-direct.compose.yml \
-            deploy/serviceit-vps-b2b.caddy.fragment
+            deploy/serviceit-vps-b2b.caddy.fragment \
+            deploy/serviceit-vps-interactive-secret-install.py \
+            deploy/serviceit-vps-b2b-caddy-root-enable.py
           sha256sum "$RUNNER_TEMP/b2b-image-stage/release.tar.gz" |
             cut -d ' ' -f1 > "$RUNNER_TEMP/b2b-image-stage/archive.sha256"
       - name: Stage B2B-only image on dedicated VPS without running it

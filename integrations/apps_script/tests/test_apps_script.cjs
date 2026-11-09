@@ -358,6 +358,14 @@ test('trigger install is idempotent and seeds known source IDs',()=>{
   assert.strictEqual(e.properties.SERVICEIT_AUTOMATION_ENABLED,'NO');
 });
 
+test('direct VPS source does not require legacy GitHub PAT',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  delete e.context.SERVICEIT_PRIVATE_CONFIG.githubToken;
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
 test('missing owner config cannot install a trigger',()=>{
   const e=environment();
   delete e.context.SERVICEIT_PRIVATE_CONFIG;

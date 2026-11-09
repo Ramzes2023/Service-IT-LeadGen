@@ -272,6 +272,7 @@ def worker_once(env: dict, *, client):
             "new_holds": outcomes.count("ONE_REAL_HOLD_QUEUED"),
             "existing": outcomes.count("EXISTING"),
             "review": outcomes.count("REVIEW"),
+            "queue_counts": statistics(connection),
             "backlog_throttled": "DAILY_BUDGET_THROTTLED" in outcomes,
             "qualified_leads": 0,
             "outbound_contacts": 0,

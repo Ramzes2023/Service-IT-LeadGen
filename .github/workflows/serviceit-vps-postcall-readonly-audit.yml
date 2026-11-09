@@ -1,0 +1,186 @@
+name: ServiceIT VPS post-call automation READONLY acceptance audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type AUDIT_VPS_POSTCALL_READONLY_1062_21"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serviceit-vps-postcall-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      inputs.approval == 'AUDIT_VPS_POSTCALL_READONLY_1062_21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+
+    steps:
+      - name: Validate pinned non-root SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-postcall-audit"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-postcall-audit/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-postcall-audit/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-postcall-audit/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-postcall-audit/known_hosts" >/dev/null
+
+      - name: Inspect live business flags, post-call CRM fields and native PG receipts (NO WRITES)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-postcall-audit/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-postcall-audit/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import json
+          import subprocess
+
+          BUSINESS = "serviceit-leadgen-vps-business-1"
+          CORE = "serviceit-leadgen-vps-coordinator-1"
+          def invoke(args, timeout=30):
+              try:
+                  result = subprocess.run(
+                      args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                      text=True, timeout=timeout)
+                  return result.stdout.strip() if result.returncode == 0 else ""
+              except (OSError, subprocess.TimeoutExpired):
+                  return ""
+          def docker_exec(container, *args, timeout=45):
+              return invoke(["docker", "exec", container, *args],timeout)
+          def flag(name):
+              value=docker_exec(BUSINESS,"printenv",name)
+              return value if value in ("YES", "NO") else "UNKNOWN"
+          def healthy(container):
+              return invoke(["docker","inspect","-f",
+                  "{{.State.Running}}:{{.State.Health.Status}}",
+                  container])=="true:healthy"
+          print("POSTCALL_VPS_AUDIT=START",flush=True)
+          print("BUSINESS_CONTAINER_HEALTHY="+("YES" if healthy(BUSINESS) else "NO"),flush=True)
+          print("CORE_CONTAINER_HEALTHY="+("YES" if healthy(CORE) else "NO"),flush=True)
+          print("POSTCALL_WRITER_ENABLED="+flag("SERVICEIT_VPS_POSTCALL_ENABLED"),flush=True)
+          print("FINANCE_WRITER_ENABLED="+flag("SERVICEIT_VPS_FINANCE_ENABLED"),flush=True)
+          print("NATIVE_GLOBAL_CUTOVER="+("YES" if docker_exec(
+              BUSINESS,"printenv","SERVICEIT_VPS_CUTOVER_AUTHORIZED")=="YES" else "NO"),flush=True)
+
+          pg_script = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          try:
+              with db(dict(os.environ)) as con:
+                  with con.transaction():
+                      with con.cursor() as c:
+                          c.execute('SET TRANSACTION READ ONLY')
+                          c.execute("SELECT to_regclass('public.serviceit_vps_native_actions') IS NOT NULL")
+                          exists=c.fetchone()[0]
+                          print('POSTCALL_PG_ACTIONS_SCHEMA='+('READY' if exists else 'MISSING'))
+                          if exists:
+                              c.execute("SELECT status,count(*) FROM serviceit_vps_native_actions "
+                                        "WHERE operation='POSTCALL' GROUP BY status")
+                              rows=dict(c.fetchall())
+                              allowed=('VERIFIED','RESERVED','HOLD','UNCERTAIN','NEEDS_REVIEW')
+                              for name in allowed:
+                                  count=rows.get(name,0)
+                                  print('POSTCALL_PG_'+name+'='+str(count if type(count)==int and
+                                      0<=count<=1000000 else 'UNVERIFIED'))
+          except Exception:
+              print('POSTCALL_PG_ACTIONS_SCHEMA=UNVERIFIED')
+          """
+          pg = docker_exec(BUSINESS, "python","-c",pg_script,timeout=60)
+          if not pg:
+              print("POSTCALL_PG_ACTIONS_SCHEMA=UNVERIFIED",flush=True)
+          else:
+              for row in pg.splitlines():
+                  if row.startswith("POSTCALL_PG_") and len(row)<100:
+                      print(row,flush=True)
+
+          crm_script = """
+          import os
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_postcall_live_worker import (
+              field_preflight, _card_ids, parse_date, PostCallLiveBlocked)
+          try:
+              base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as client:
+                  try:
+                      field_preflight(client,base)
+                      print('POSTCALL_BITRIX_MANAGER_FIELDS=READY')
+                  except Exception:
+                      print('POSTCALL_BITRIX_MANAGER_FIELDS=BLOCKED_OR_UNVERIFIED')
+                  try:
+                      response=client.post(base+'/scope.json',json={},
+                          follow_redirects=False,timeout=25)
+                      body=response.json()
+                      scope=body.get('result') if type(body)==dict else None
+                      print('POSTCALL_BITRIX_TASKS_SCOPE='+(
+                          'YES' if type(scope)==list and 'task' in scope else
+                          'NO' if type(scope)==list else 'UNVERIFIED'))
+                  except Exception:
+                      print('POSTCALL_BITRIX_TASKS_SCOPE=UNVERIFIED')
+                  try:
+                      timestamp=os.environ.get('SERVICEIT_VPS_NATIVE_ACTIVATION_UTC','')
+                      ids=_card_ids(client,base,native_after=parse_date(timestamp))
+                      print('POSTCALL_NEW_MANAGER_CONFIRMED_CANDIDATES='+str(len(ids)))
+                  except Exception:
+                      print('POSTCALL_NEW_MANAGER_CONFIRMED_CANDIDATES=UNVERIFIED')
+          except Exception:
+              print('POSTCALL_BITRIX_MANAGER_FIELDS=UNVERIFIED')
+              print('POSTCALL_BITRIX_TASKS_SCOPE=UNVERIFIED')
+              print('POSTCALL_NEW_MANAGER_CONFIRMED_CANDIDATES=UNVERIFIED')
+          """
+          crm = docker_exec(BUSINESS,"python","-c",crm_script,timeout=140)
+          if not crm:
+              print("POSTCALL_CRM_READONLY=UNVERIFIED",flush=True)
+          else:
+              printed=[]
+              for row in crm.splitlines():
+                  if (row.startswith("POSTCALL_BITRIX_MANAGER_FIELDS=") or
+                      row.startswith("POSTCALL_BITRIX_TASKS_SCOPE=") or
+                      row.startswith("POSTCALL_NEW_MANAGER_CONFIRMED_CANDIDATES=")):
+                      if len(row)<120:
+                          print(row,flush=True)
+                          printed.append(row.split("=",1)[0])
+              if "POSTCALL_BITRIX_MANAGER_FIELDS" not in printed:
+                  print("POSTCALL_BITRIX_MANAGER_FIELDS=UNVERIFIED",flush=True)
+
+          # Business loop status only, never print raw logs/notes, item IDs, or task text.
+          recent=invoke(["docker","logs","--since","90m","--tail","150",BUSINESS],timeout=30)
+          totals={"DISABLED":0,"CYCLE":0,"HOLD":0}
+          for row in recent.splitlines():
+              if len(row)>1500: continue
+              try: event=json.loads(row)
+              except Exception: continue
+              if type(event)!=dict: continue
+              kind=event.get("status")
+              if kind=="NATIVE_BUSINESS_DISABLED":totals["DISABLED"]+=1
+              elif kind=="NATIVE_BUSINESS_CYCLE":totals["CYCLE"]+=1
+              elif kind=="NATIVE_BUSINESS_HOLD":totals["HOLD"]+=1
+          for key,number in totals.items():
+              print("POSTCALL_BUSINESS_LOG_"+key+"_90M="+str(min(number,150)),flush=True)
+          print("CRM_WRITES_BY_AUDIT=0;TASKS_CREATED_BY_AUDIT=0;PG_WRITES_BY_AUDIT=0",flush=True)
+          print("CONTAINERS_RESTARTED_BY_AUDIT=0;SOURCES_CHANGED=NO",flush=True)
+          print("POSTCALL_VPS_AUDIT=END",flush=True)
+          PY

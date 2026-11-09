@@ -13,7 +13,9 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' &&
-      vars.SERVICEIT_VPS_HEALTH_ENABLED == 'YES'
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.actor == 'Ramzes2023'))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

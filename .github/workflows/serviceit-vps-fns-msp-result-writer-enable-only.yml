@@ -55,6 +55,7 @@ jobs:
             "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
           from pathlib import Path
           import fcntl
+          import json
           import os
           import re
           import stat
@@ -72,6 +73,8 @@ jobs:
           RELEASES = (Path.home()/"serviceit/releases").resolve()
           KEY = "SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED"
           FNS_SWITCH = "SERVICEIT_VPS_FNS_MSP_ENABLED"
+          # Stable private override avoids retagging or upgrading existing images.
+          PIN = CONFIG.parent / "fns-aux-image-pinned.compose.yml"
 
           class Blocked(Exception): pass
           def need(state, code):
@@ -163,9 +166,91 @@ jobs:
               p=output(["docker","exec",AUX,"python","-c",module],45)
               need(p=="READY","NATIVE_FNS_WRITER_CODE_MISSING")
 
+          def compose_args(compose,*arguments):
+              return ["docker","compose","--env-file",str(CONFIG),
+                      "-f",str(compose),"-f",str(PIN),*arguments]
           def compose_call(compose,*args,timeout=90):
-              return run(["docker","compose","--env-file",str(CONFIG),
-                          "-f",str(compose),*args],timeout=timeout)
+              return run(compose_args(compose,*args),timeout=timeout)
+
+          def verify_running_module_identity():
+              modules = [
+                  "leadpilot.serviceit_vps_native_aux",
+                  "leadpilot.serviceit_vps_native_msp_result",
+                  "leadpilot.serviceit_vps_native_fence",
+                  "leadpilot.serviceit_fns_msp_crm_result_writer",
+                  "leadpilot.serviceit_vps_pg_queue",
+              ]
+              program = """
+          import hashlib
+          import importlib.util
+          import json
+          from pathlib import Path
+          names = """ + repr(modules) + """
+          checks = {}
+          for name in names:
+              spec = importlib.util.find_spec(name)
+              if spec is None or not spec.origin:
+                  raise SystemExit(2)
+              path = Path(spec.origin)
+              if not path.is_file() or path.is_symlink():
+                  raise SystemExit(2)
+              checks[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+          print(json.dumps(checks,sort_keys=True))
+          """
+              def hashes(container):
+                  raw = output(["docker","exec",container,"python","-c",program],45)
+                  data = json.loads(raw)
+                  need(isinstance(data,dict) and set(data)==set(modules)
+                       and all(isinstance(v,str) and re.fullmatch(r"[0-9a-f]{64}",v)
+                               for v in data.values()),
+                       "RUNTIME_MODULE_DIGEST_UNVERIFIED")
+                  return data
+              need(hashes(CORE)==hashes(AUX),
+                   "RUNTIME_AUX_CORE_MODULE_DIGEST_MISMATCH")
+
+          def pin_existing_aux_image(compose):
+              image=inspect(AUX,"{{.Image}}")
+              need(re.fullmatch(r"sha256:[0-9a-f]{64}",image) is not None,
+                   "AUX_IMAGE_ID_NOT_VALID")
+              need(output(["docker","image","inspect","-f","{{.Id}}",image])
+                   ==image,"AUX_IMAGE_NOT_PRESENT_LOCALLY")
+              want=("services:\n  auxiliaries:\n    image: \""+
+                    image+"\"\n    pull_policy: never\n")
+              if PIN.is_symlink():
+                  raise Blocked("PIN_FILE_SYMLINK_DENIED")
+              if PIN.exists():
+                  need(PIN.is_file() and PIN.stat().st_uid==os.geteuid()
+                       and not(stat.S_IMODE(PIN.stat().st_mode)&0o077)
+                       and PIN.read_text("utf8")==want,
+                       "PIN_FILE_ALREADY_EXISTS_DIFFERENT")
+              else:
+                  # Stable file is kept because Docker Compose persists its path
+                  # in the resulting container's config_files label.
+                  fd = os.open(PIN, os.O_CREAT|os.O_EXCL|os.O_WRONLY, 0o600)
+                  with os.fdopen(fd,"w",encoding="utf8") as stream:
+                      stream.write(want)
+                      stream.flush()
+                      os.fsync(stream.fileno())
+              model_raw=output(compose_args(compose,"config","--format","json"),45)
+              model=json.loads(model_raw)
+              service=model.get("services",{}).get("auxiliaries",{})
+              need(service.get("image")==image,
+                   "COMPOSE_DID_NOT_PIN_EXISTING_AUX_IMAGE")
+              expected=service.get("environment",{})
+              need(isinstance(expected,dict),"COMPOSE_AUX_ENV_INVALID")
+              actual=json.loads(inspect(AUX,"{{json .Config.Env}}"))
+              need(isinstance(actual,list) and
+                   all(isinstance(x,str) and "=" in x for x in actual),
+                   "AUX_ENV_SNAPSHOT_INVALID")
+              actual=dict(x.split("=",1) for x in actual)
+              need(all(str(v)==actual.get(k) for k,v in expected.items()),
+                   "COMPOSE_EXISTING_ENV_DIFFERS_FROM_LIVE_AUX")
+              need(expected.get(KEY)=="NO","COMPOSE_FNS_WRITER_NOT_OFF")
+              return image
+
+          def assert_pinned_image_after_restart(image):
+              need(inspect(AUX,"{{.Image}}")==image,
+                   "AUX_IMAGE_CHANGED_ON_RECREATE")
           def assert_original_flags():
               for name,want in (
                   ("SERVICEIT_VPS_OWN_STOP_ENABLED","YES"),
@@ -211,8 +296,17 @@ jobs:
                        and re.search(r"/releases/[a-f0-9]{40}/deploy/serviceit-vps.compose.yml$",
                                      str(compose.resolve())) is not None,
                        "PINNED_RELEASE_PATH_INVALID")
-                  other=inspect(CORE,'{{index .Config.Labels "com.docker.compose.project.config_files"}}')
-                  need(str(compose) in other.split(","),"AUX_AND_CORE_RELEASE_MISMATCH")
+                  need(inspect(CORE,'{{index .Config.Labels "com.docker.compose.project"}}')
+                       == "serviceit-leadgen-vps"
+                       and inspect(AUX,'{{index .Config.Labels "com.docker.compose.project"}}')
+                       == "serviceit-leadgen-vps",
+                       "CORE_AUX_COMPOSE_PROJECT_MISMATCH")
+                  # The two previously deployed releases have the same FNS
+                  # source modules but different Compose files/image digests.
+                  # Verify actual running module bytes before using AUX's
+                  # own immutable image and pinned Compose release.
+                  verify_running_module_identity()
+                  print("AUX_CORE_FNS_RUNTIME_MODULES_IDENTICAL=YES",flush=True)
                   original=private_config()
                   cfg=parsed_config(original)
                   need(cfg.get(FNS_SWITCH)=="YES","FNS_ENV_CONFIG_NOT_ENABLED")
@@ -224,9 +318,10 @@ jobs:
                       ("SERVICEIT_VPS_FINANCE_ENABLED","NO"),
                   ):
                       need(cfg.get(name,"NO")==expected,"UNEXPECTED_BUSINESS_FLAG_"+name)
-                  need(compose_call(compose,"config","--quiet",timeout=30).returncode==0,
-                       "COMPOSE_INVALID_BEFORE_CHANGE")
                   verifier()
+                  old_aux_image=pin_existing_aux_image(compose)
+                  need(compose_call(compose,"config","--quiet",timeout=30).returncode==0,
+                       "COMPOSE_PINNED_CONFIG_INVALID_BEFORE_CHANGE")
                   print("FNS_MSP_FIELD_AND_DB_PREFLIGHT=PASS",flush=True)
                   old=cfg.copy()
                   cfg[KEY]="YES"
@@ -244,14 +339,22 @@ jobs:
                   need(parsed_config(updated)==cfg,"FLAG_ONLY_CHANGE_INVARIANT_FAILED")
                   atomic_write(updated)
                   changed=True
-                  # This explicitly RECREATES ONLY auxiliaries, not core/observer/business/MSP.
+                  new_model=json.loads(output(
+                      compose_args(compose,"config","--format","json"),45))
+                  need(new_model.get("services",{}).get("auxiliaries",{})
+                       .get("environment",{}).get(KEY)=="YES",
+                       "COMPOSE_FNS_WRITER_FLAG_NOT_RENDERED")
+                  # Recreate ONLY auxiliaries from the identical prior image ID.
+                  # --pull never + --no-build prevents silent upgrades.
                   p=compose_call(compose,"up","-d","--no-deps","--no-build",
-                                 "--force-recreate","auxiliaries",timeout=135)
+                                 "--pull","never","--force-recreate",
+                                 "auxiliaries",timeout=135)
                   need(p.returncode==0,"AUX_ONLY_RECREATE_FAILED")
                   for _ in range(20):
                       if health(AUX): break
                       time.sleep(5)
                   need(health(AUX),"AUX_RESULT_WRITER_RELOAD_NOT_HEALTHY")
+                  assert_pinned_image_after_restart(old_aux_image)
                   need(flag(AUX,KEY)=="YES","FNS_RESULT_NEW_FLAG_NOT_VISIBLE")
                   for name,want in (
                       ("SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED","YES"),
@@ -265,6 +368,8 @@ jobs:
                   print("FNS_COLLECTOR_CONTAINER=HEALTHY",flush=True)
                   print("AUXILIARIES_CONTAINER=HEALTHY",flush=True)
                   print("RESTARTED_ONLY_AUXILIARIES=YES",flush=True)
+                  print("AUX_IMAGE_ID_UNCHANGED=YES",flush=True)
+                  print("AUX_RELEASE_PINNED=YES;CORE_BROWSER_OVERRIDE_UNCHANGED=YES",flush=True)
                   print("FNS_RESULT_SCOPE=FUTURE_CARDS_WITH_VERIFIED_PG_RECEIPTS_ONLY",flush=True)
                   print("FREE_MSP_SCORE_ENABLED=NO;PROVISIONAL_SCORE_ENABLED=YES",flush=True)
                   print("SOURCES_CHANGED=NO;HISTORICAL_CARDS_MODIFIED_BY_ACTIVATION=0",flush=True)
@@ -278,7 +383,8 @@ jobs:
                       atomic_write(original)
                       if compose is not None:
                           compose_call(compose,"up","-d","--no-deps","--no-build",
-                                      "--force-recreate","auxiliaries",timeout=135)
+                                      "--pull","never","--force-recreate",
+                                      "auxiliaries",timeout=135)
                       print("FNS_RESULT_ROLLBACK=PREVIOUS_CONFIG_RESTORED_RECREATE_ATTEMPTED",
                             flush=True)
                   except Exception:

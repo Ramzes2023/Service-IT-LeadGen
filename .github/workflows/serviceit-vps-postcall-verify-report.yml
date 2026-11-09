@@ -137,7 +137,7 @@ jobs:
                 valid.get("POSTCALL_VERIFIED_COUNT","UNVERIFIED"))
           ready=(health["BUSINESS"]=="YES" and
                  run(["docker","exec",business,"printenv","SERVICEIT_VPS_POSTCALL_ENABLED"])=="YES" and
-                 run(["docker","exec",business,"printenv","SERVICEIT_VPS_FINANCE_ENABLED"])=="NO" and
+                 run(["docker","exec",business,"printenv","SERVICEIT_VPS_FINANCE_ENABLED"])=="YES" and
                  valid.get("PG_READY")=="YES")
           print("POSTCALL_VERIFY_ACTIVATION_CONFIRMED="+("YES" if ready else "NO"))
           print("POSTCALL_VERIFY_CRM_WRITES=0;TASKS_CREATED=0;RESTARTS=0")

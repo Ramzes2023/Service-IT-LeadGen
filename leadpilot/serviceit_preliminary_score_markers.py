@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from .serviceit_kanban_presentation import (
-    SCORE_FIELD, VERSION_FIELD, BADGE_FIELD,
+    SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, score_color,
 )
 
 VERSION = "svc-prelim-v1-FNS-UNVERIFIED"
@@ -22,7 +22,7 @@ def provisional_payload(score, duplicate_status):
     if duplicate_status not in DUP_STATUSES:
         raise ValueError("PROVISIONAL_DUPLICATE_STATUS_INVALID")
     text = (
-        f"🔎 {score}/100 · ПРЕДВАРИТЕЛЬНО · "
+        f"{score_color(score)} {score}/100 · ПРЕДВАРИТЕЛЬНО · "
         f"ФНС: НЕ ПРОВЕРЕНА · Дубли: {duplicate_status} · "
         "STOP: СВОЙ СПИСОК · Контакт: НЕ РАЗРЕШЁН"
     )
@@ -46,13 +46,20 @@ def is_exact_own_provisional(item):
         return False
     badge = item.get(BADGE_FIELD)
     # Historical old-labelled provisional cards stay safely upgradable.
+    def aliases(kind):
+        colored = provisional_payload(score, kind)[BADGE_FIELD]
+        # V1 already exists on live cards with a neutral magnifying-glass
+        # icon. Keep exact legacy recognition for future safe upgrades,
+        # but display priority colors on every NEW provisional score.
+        legacy = colored.replace(score_color(score), "🔎", 1)
+        return (
+            colored,
+            colored.replace("STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),
+            legacy,
+            legacy.replace("STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),
+        )
     return (type(badge) is str and any(
-        badge in (
-            provisional_payload(score, kind)[BADGE_FIELD],
-            provisional_payload(score, kind)[BADGE_FIELD].replace(
-                "STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),
-        ) for kind in DUP_STATUSES
-    ))
+        badge in aliases(kind) for kind in DUP_STATUSES))
 
 
 def is_score_empty_or_ours(item):

@@ -40,3 +40,23 @@ def test_missing_field_not_assumed_empty():
 def test_bad_provisional_score_cannot_be_recorded(bad):
     with pytest.raises(ValueError,match="PROVISIONAL_NUMBER_INVALID"):
         provisional_payload(bad,"ИНН НЕТ")
+
+
+@pytest.mark.parametrize("score,color",[(0,"🔴"),(59,"🔴"),(60,"🟡"),(79,"🟡"),(80,"🟢"),(100,"🟢")])
+def test_preliminary_priority_color_without_fns_data(score,color):
+    label=provisional_payload(score,"ИНН НЕТ")[BADGE_FIELD]
+    assert label.startswith(f"{color} {score}/100")
+    assert "ПРЕДВАРИТЕЛЬНО" in label
+    assert "Контакт: НЕ РАЗРЕШЁН" in label
+    assert is_exact_own_provisional(provisional_payload(score,"ИНН НЕТ"))
+
+
+def test_historical_neutral_preliminary_labels_remain_exactly_recognized():
+    for value in (10,60,90):
+        prior=provisional_payload(value,"НЕ ПРОВЕРЕНЫ")
+        prior[BADGE_FIELD]=prior[BADGE_FIELD].replace(
+            "🔴" if value < 60 else "🟡" if value < 80 else "🟢","🔎",1)
+        assert is_exact_own_provisional(prior)
+        tampered=dict(prior)
+        tampered[BADGE_FIELD]=tampered[BADGE_FIELD].replace("Контакт: НЕ РАЗРЕШЁН","Контакт: РАЗРЕШЁН")
+        assert not is_exact_own_provisional(tampered)

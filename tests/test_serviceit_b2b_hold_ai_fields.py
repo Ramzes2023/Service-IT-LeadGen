@@ -26,7 +26,7 @@ def test_all_nine_existing_fields_present_on_new_b2b_hold():
     assert "дедлайн" in fields["UF_CRM_13_SVCIT_AI_MANAGER_BRIEF"]
     assert "подрядчику" not in fields["UF_CRM_13_SVCIT_AI_NEXT_ACTION"]
 
-    assert "AI-провайдер: NOT_RUN" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
+    assert "AI-провайдер: RouterAI (исследование ещё не выполнено)" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
     assert "НЕ РАССЧИТАН" in fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
     assert "контакт" in fields["UF_CRM_13_SVCIT_AI_LIMITATIONS"]
     assert "Поддержка 1С:ЗУП" in fields["UF_CRM_13_SVCIT_AI_QUOTE"]

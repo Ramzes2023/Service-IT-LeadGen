@@ -207,6 +207,76 @@ def attempted_24h(connection):
         return int(cur.fetchone()[0])
 
 
+def initial_readback_matches(actual, card, expected_fields):
+    """Verify the immutable source proof, allowing native Kanban title decoration.
+
+    Production 1062/21 rewrites the card title after crm.item.add. The unique
+    source ID, idempotency, URL, stage, category and every other initial field
+    MUST still match. No relaxed source, buyer or evidence checks.
+    """
+    title = actual.get("title") if isinstance(actual, dict) else None
+    return (
+        isinstance(actual, dict)
+        and str(actual.get("id")) == str(card)
+        and str(actual.get("entityTypeId")) == "1062"
+        and str(actual.get("categoryId")) == "21"
+        and isinstance(title, str) and 0 < len(title.strip()) <= 500
+        and isinstance(expected_fields, dict)
+        and isinstance(expected_fields.get(SIGNAL), str)
+        and all(actual.get(key) == value
+                for key, value in expected_fields.items() if key != "title")
+    )
+
+
+def read_uncertain(connection):
+    """Read-only list of fenced POSTs; NEVER re-POST these source IDs."""
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT source_id,notice_json FROM serviceit_vps_b2b_inbox "
+            "WHERE state='POST_UNCERTAIN' "
+            "ORDER BY write_started_at,source_id LIMIT %s",
+            (MAX_PER_CYCLE,))
+        rows = cur.fetchall()
+    return [(str(source), notice if isinstance(notice, dict)
+             else json.loads(notice)) for source, notice in rows]
+
+
+def reconcile_uncertain(connection, client, webhook):
+    """Automatically confirm only existing, independently verified Bitrix cards.
+
+    No crm.item.add, even when the exact source is absent in Bitrix.
+    Insert the already-created card in the native queue BEFORE marking the
+    one-use receipt VERIFIED: failures are retriable as read-only lookups.
+    """
+    uncertain = read_uncertain(connection)
+    if not uncertain:
+        return 0
+    base = validate_webhook(webhook)
+    must(positive_duplicate_control(client, base),
+         "B2B_POSITIVE_CRM_DUPLICATE_CONTROL_FAILED")
+    recovered = 0
+    for source, notice in uncertain:
+        payload = hold_payload(notice, classify_services(notice["subject"]))
+        must(payload["fields"][SIGNAL] == source, "B2B_SOURCE_ID_CHANGED")
+        for name in AI_FIELDS:
+            payload["fields"].pop(name)
+        found = exact_duplicate(client, base, source)
+        if len(found) != 1:
+            # Zero or multiple exact items: maintain the immutable uncertainty
+            # fence, without a new CRM POST or any PG state transition.
+            continue
+        card = found[0]["id"]
+        actual = bitrix_call(client, base, "crm.item.get", {
+            "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+        })["result"].get("item")
+        if not initial_readback_matches(actual, card, payload["fields"]):
+            continue
+        insert_new(connection, card)
+        confirm(connection, source, card)
+        recovered += 1
+    return recovered
+
+
 def deliver_one(connection, client, webhook):
     if attempted_24h(connection) >= MAX_PER_24H:
         return "DAILY_BUDGET_THROTTLED"
@@ -238,15 +308,12 @@ def deliver_one(connection, client, webhook):
     actual = bitrix_call(client, base, "crm.item.get", {
         "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
     })["result"].get("item")
-    must(type(actual) is dict and str(actual.get("id")) == str(card)
-         and str(actual.get("entityTypeId")) == "1062"
-         and str(actual.get("categoryId")) == "21"
-         and all(actual.get(k) == v for k,v in payload["fields"].items()),
+    must(initial_readback_matches(actual, card, payload["fields"]),
          "B2B_CRM_READBACK_UNCERTAIN")
-    confirm(connection, source, card)
-    # The normal VPS coordinator polls new CRM cards every 5min as a fallback.
-    # Explicit new-card id bypasses any discovery timing uncertainty.
+    # Enqueue before final receipt: failure remains POST_UNCERTAIN and the
+    # read-only reconciler can safely recover on the next five-minute cycle.
     insert_new(connection, card)
+    confirm(connection, source, card)
     return "ONE_REAL_HOLD_QUEUED"
 
 
@@ -262,6 +329,7 @@ def worker_once(env: dict, *, client):
         migrate(connection)
         webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
         preflight(ReadOnlyBitrix(webhook, client=client))
+        uncertain_recovered = reconcile_uncertain(connection, client, webhook)
         outcomes = []
         for _ in range(MAX_PER_CYCLE):
             outcome = deliver_one(connection, client, webhook)
@@ -272,6 +340,7 @@ def worker_once(env: dict, *, client):
             "status": "B2B_VPS_CONTINUOUS_CYCLE",
             "batch_processed": len(outcomes),
             "new_holds": outcomes.count("ONE_REAL_HOLD_QUEUED"),
+            "uncertain_recovered": uncertain_recovered,
             "existing": outcomes.count("EXISTING"),
             "review": outcomes.count("REVIEW"),
             "queue_counts": statistics(connection),

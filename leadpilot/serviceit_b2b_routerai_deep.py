@@ -280,7 +280,10 @@ def source_only_investigation(findings: dict):
 
 
 def investigate_routerai(client: httpx.Client, config, findings: dict) -> dict:
-    """Exactly one inference request; caller holds durable receipt beforehand."""
+    """Single paid RouterAI attempt. Fixed reason codes, no payload logging.
+
+    The caller commits a versioned PostgreSQL receipt BEFORE POST. No retries.
+    """
     if (not isinstance(client, httpx.Client)
             or getattr(config, "provider", None) != "routerai"
             or getattr(config, "url", None) != "https://routerai.ru/api/v1/chat/completions"
@@ -289,39 +292,73 @@ def investigate_routerai(client: httpx.Client, config, findings: dict) -> dict:
     docs = public_documents(findings)
     if not docs:
         raise DeepEvidenceError("NO_SAFE_PUBLIC_DOCUMENTS")
-    # Pass content with stable local document numbers and NO URLs/contacts.
-    # URLs are reattached only from our own fetched evidence after validation.
     prompt = json.dumps({
-        "task": "Разобрать публичную ИТ-закупку по цитируемым фактам",
+        "task": "Верни только один JSON объект. Максимум 8 facts с короткими цитатами, "
+                "никакого дополнительного текста до или после JSON",
         "documents": [{"source_id": row["source_id"], "text": row["text"]}
                       for row in docs],
         "requested_checks": QUESTION_SECTIONS,
+        "example_shape": {
+            "overview": "коротко",
+            "service_fit": "возможная ИТ-услуга",
+            "likely_need": "помеченная гипотеза",
+            "facts": [{"category": "TECHNOLOGY", "source_id": 1,
+                       "quote": "точная цитата", "finding": "короткий вывод"}],
+            "missing": ["бюджет и условия оплаты"],
+            "manager_questions": ["Что нужно подтвердить?"],
+        },
     }, ensure_ascii=False)
     try:
-        response = client.post(config.url,
+        response = client.post(
+            config.url,
             json={"model": config.model,
                   "messages": [{"role": "system", "content": _SYSTEM},
                                {"role": "user", "content": prompt}],
                   "response_format": {"type": "json_object"},
-                  "temperature": 0, "max_tokens": 2900},
+                  "temperature": 0, "max_tokens": 4200},
             headers={"Authorization": "Bearer " + config.key,
                      "Accept": "application/json"},
-            follow_redirects=False, timeout=45.0)
-        if (response.status_code != 200
-                or not 0 < len(response.content) <= 48000):
-            raise DeepEvidenceError("ROUTERAI_RESPONSE_UNVERIFIED")
+            follow_redirects=False, timeout=85.0)
+    except httpx.TimeoutException:
+        raise DeepEvidenceError("ROUTERAI_TIMEOUT") from None
+    except httpx.HTTPError:
+        raise DeepEvidenceError("ROUTERAI_TRANSPORT_ERROR") from None
+    if response.status_code != 200:
+        raise DeepEvidenceError("ROUTERAI_HTTP_NOT_OK")
+    if not 0 < len(response.content) <= 64000:
+        raise DeepEvidenceError("ROUTERAI_RESPONSE_SIZE_INVALID")
+    try:
         data = response.json()
-        if type(data) is not dict:
-            raise DeepEvidenceError("ROUTERAI_JSON_UNVERIFIED")
-        raw = data.get("choices", [{}])[0].get("message", {}).get("content")
-        if type(raw) is not str or len(raw) > 30000:
-            raise DeepEvidenceError("ROUTERAI_CONTENT_INVALID")
+    except (ValueError, TypeError):
+        raise DeepEvidenceError("ROUTERAI_ENVELOPE_NOT_JSON") from None
+    if type(data) is not dict:
+        raise DeepEvidenceError("ROUTERAI_ENVELOPE_INVALID")
+    choices = data.get("choices")
+    if type(choices) is not list or len(choices) == 0 or type(choices[0]) is not dict:
+        raise DeepEvidenceError("ROUTERAI_CHOICES_MISSING")
+    choice = choices[0]
+    finish = choice.get("finish_reason")
+    if finish == "length":
+        raise DeepEvidenceError("ROUTERAI_OUTPUT_TRUNCATED")
+    if finish not in (None, "stop"):
+        raise DeepEvidenceError("ROUTERAI_NONSTANDARD_FINISH")
+    message = choice.get("message")
+    if type(message) is not dict:
+        raise DeepEvidenceError("ROUTERAI_MESSAGE_MISSING")
+    raw = message.get("content")
+    if type(raw) is not str or not raw.strip() or len(raw) > 40000:
+        raise DeepEvidenceError("ROUTERAI_CONTENT_EMPTY_OR_OVERSIZED")
+    raw = raw.strip()
+    fence = chr(96) * 3
+    if raw.startswith(fence + "json") and raw.endswith(fence):
+        raw = raw[7:-3].strip()
+    elif raw.startswith(fence) and raw.endswith(fence):
+        raw = raw[3:-3].strip()
+    try:
         parsed = json.loads(raw)
-        return validate_inference(parsed, docs)
-    except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError):
-        # No URL, text, key or HTTP body is logged or attached to an error.
-        raise DeepEvidenceError("ROUTERAI_DEEP_INFERENCE_UNVERIFIED") from None
-
+    except (TypeError, ValueError):
+        raise DeepEvidenceError("ROUTERAI_MODEL_JSON_INVALID") from None
+    return validate_inference(parsed, docs)
 
 def cited_fields(base: dict, findings: dict, investigation: dict) -> dict:
     """Write a real research report in 9 existing CRM fields. HOLD unchanged."""

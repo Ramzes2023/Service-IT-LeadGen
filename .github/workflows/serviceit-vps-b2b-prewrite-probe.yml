@@ -52,7 +52,7 @@ jobs:
           compose=source/"deploy/serviceit-vps-b2b-direct.compose.yml"
           assert compose.is_file() and (source/"leadpilot/serviceit_b2b_positive_control.py").is_file()
           env=dict(os.environ, SERVICEIT_VPS_SECRETS_DIR="/etc/serviceit/secrets")
-          code="\\n".join([
+          code="\n".join([
               "import os,httpx",
               "from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control",
               "from leadpilot.serviceit_vps_pg_queue import secret_file",

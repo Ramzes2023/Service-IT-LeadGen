@@ -270,7 +270,11 @@ print('CORE_SMOKE_OK')
             print("B2B_AI_CORE_ACTIVATED=YES", flush=True)
             print("B2B_AI_CORE_ROLLBACK=NOT_NEEDED", flush=True)
             return 0
-        except Exception:
+        except Exception as error:
+            code = str(error) if isinstance(error, Blocked) else "UNEXPECTED_EXCEPTION"
+            if re.fullmatch(r"[A-Z0-9_]{3,100}", code) is None:
+                code = "UNEXPECTED_EXCEPTION"
+            print("B2B_AI_CORE_BLOCKED_" + code + "=YES", flush=True)
             if pin_modified and former_id is not None:
                 try:
                     safe_write(PIN, image_pin(former_id))

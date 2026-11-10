@@ -301,7 +301,7 @@ function classifyServices_(title) {
   const patterns = {
     "1C": new RegExp("(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:", "iu"),
     "IT_SUPPORT": new RegExp(
-      "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
+      "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:специалист" + suffix + "|аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
       "|(?:технич" + suffix + "|сервисн" + suffix + ")\\s+(?:поддержк" + suffix + "|обслуживан" + suffix + ").{0,80}(?:сервер" + suffix + "|сетев" + suffix + "|компьютер" + suffix + "|информационн" + suffix + "\\s+систем" + suffix + "|(?:ит|it)[\\s-]*инфраструктур" + suffix + ")" +
       "|(?:технич" + suffix + "|сервисн" + suffix + ")\\s+(?:обслуживан" + suffix + "|поддержк" + suffix + ")\\s+(?:баз" + suffix + "\\s+данн" + suffix + "|субд)",
       "iu"
@@ -319,7 +319,9 @@ function classifyServices_(title) {
       "сервер" + suffix + "|сетев" + suffix + "\\s+оборудован" + suffix +
       "|коммутатор" + suffix + "|маршрутизатор" + suffix + "|ноутбук" + suffix +
       "|компьютер" + suffix + "|рабоч" + suffix + "\\s+станци" + suffix +
-      "|монитор(?:ы|ов|ам|ами|е|а)?",
+      "|монитор(?:ы|ов|ам|ами|е|а)?" +
+      "|источник" + suffix + "\\s+бесперебойн" + suffix + "\\s+питан" + suffix +
+      "|(?<!" + WORD + ")ибп(?!" + WORD + ")",
       "iu"
     )
   };
@@ -602,6 +604,70 @@ function checkB2BCenter() {
  * subjects, sender addresses, HMAC secrets, inbox mutations or VPS POSTs.
  * REVIEW_REQUIRED and source dedup state remain unchanged.
  */
+/**
+ * One-time, owner-run recovery ONLY for the two verified Nov 10 B2B vendor
+ * bulletins. This does NOT POST, write CRM, touch unrelated emails, or replay
+ * any source whose dispatch receipt already exists.
+ * After validation, regular five-minute polling delivers PENDING naturally.
+ */
+function recoverNov10B2BCenterAfterFix() {
+  privateConfig_();
+  assertMailbox_();
+  const props = scriptProperties_();
+  if (props.getProperty("SERVICEIT_AUTOMATION_ENABLED") !== "YES" ||
+      props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") !== "YES") {
+    throw new Error("SERVICEIT_B2B_RECOVERY_AUTOMATION_NOT_ACTIVE");
+  }
+  const activation = Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0);
+  if (!Number.isFinite(activation) || activation <= 0) {
+    throw new Error("SERVICEIT_B2B_RECOVERY_ACTIVATION_MISSING");
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) throw new Error("SERVICEIT_B2B_RECOVERY_LOCK_BUSY");
+  try {
+    // From the owner's actual Gmail Nov 10 10:07 MSK search-template and
+    // profile digests. No other historical or later Gmail ID is eligible.
+    const targets = ["1a1c44a89c79ccd6", "1a1c449c537d5613"];
+    const prepared = [];
+    let recognized = 0;
+    for (const id of targets) {
+      const state = props.getProperty("SERVICEIT_EMAIL_" + id) || "";
+      if (state !== "REVIEW_REQUIRED") continue;
+      const message = Gmail.Users.Messages.get("me", id, {format: "full"});
+      if (!message || message.id !== id) {
+        throw new Error("SERVICEIT_B2B_RECOVERY_GMAIL_MISMATCH");
+      }
+      const parsed = parseEmailMessage_(message, id);
+      if (parsed.internalDate <= activation || !parsed.observations.length) {
+        throw new Error("SERVICEIT_B2B_RECOVERY_INELIGIBLE");
+      }
+      for (const row of parsed.observations) {
+        if (props.getProperty("SERVICEIT_SOURCE_" + row.notice.tender_id)) {
+          throw new Error("SERVICEIT_B2B_RECOVERY_EXISTING_RECEIPT");
+        }
+      }
+      recognized += parsed.observations.length;
+      prepared.push(id);
+    }
+    // Only now release the *two exact reviewed* Gmail markers. New dispatch
+    // is handled independently by the existing recurring trigger.
+    prepared.forEach(function (id) {
+      props.setProperty("SERVICEIT_EMAIL_" + id, "PENDING");
+    });
+    const result = {
+      status: "SERVICEIT_B2B_EXACT_RECOVERY_QUEUED",
+      messages_released: prepared.length,
+      observed_it_tenders: recognized,
+      vps_posts_during_recovery: 0,
+      crm_writes_during_recovery: 0
+    };
+    console.log(JSON.stringify(result));
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function diagnoseB2BCenterReadOnly() {
   assertMailbox_();
   const props = scriptProperties_();

@@ -24,7 +24,7 @@ def test_v8_release_is_two_file_only_and_attested():
     assert 'SERVICEIT_B2B_EVIDENCE_V8_RELEASE_368' in workflow
     assert 'e8afe5439609a342c9e43a01cc389acd8857bebce4fe074318d7ec32d0a07b81' in workflow
     assert '54690407408513d3430ac9ea57b90eb4bb7cd9a6eac390e8d869fed68a7f07c3' in workflow
-    assert 'git diff --quiet 9997c78bad8594d82def78ea688e7930e0fc5e72 HEAD' in workflow
+    assert 'git diff --quiet 0655587324289efdede8860fdf69e07a25bf5477 HEAD' in workflow
     assert 'github.actor == \'Ramzes2023\'' in workflow
     assert 'if: always()' in workflow
     assert 'persist-credentials: false' in workflow

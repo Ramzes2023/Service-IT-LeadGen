@@ -55,7 +55,7 @@ class CRM:
 @pytest.fixture
 def fast_schema(monkeypatch):
     import leadpilot.serviceit_windows_autofill as module
-    monkeypatch.setattr(module, "schema_limits", lambda rest: {k: 12000 for k in FIELDS})
+    monkeypatch.setattr(module, "preliminary_schema_limits", lambda rest: {k: 12000 for k in AI_FIELDS})
 
 
 def test_unverified_card_gets_all_nine_honest_report_fields():
@@ -155,3 +155,63 @@ def test_source_metadata_and_stage_untouched(tmp_path, fast_schema):
     store.enqueue(101)
     assert preliminary_once(store, crm, 101) == "HOLD_9_WRITTEN"
     assert {k: v for k, v in crm.item.items() if k not in FIELDS} == before
+
+
+def test_preliminary_metadata_contract_works_without_userfieldconfig_permission():
+    from leadpilot.serviceit_enrichment_worker import alias
+    from leadpilot.serviceit_windows_autofill import preliminary_schema_limits
+    typ = {"id": 13, "entityTypeId": 1062,
+           "isAutomationEnabled": False, "isBizProcEnabled": False}
+    original = {key: {"type": "string", "isReadOnly": False,
+                       "isImmutable": False, "isMultiple": False}
+                for key in AI_FIELDS}
+    formatted = {alias(key): dict(value) for key, value in original.items()}
+    calls = []
+    def rest(method, params):
+        calls.append(method)
+        if method == "crm.type.getByEntityTypeId":
+            return {"type": typ}
+        if method == "crm.item.fields":
+            return {"fields": original if params["useOriginalUfNames"] == "Y" else formatted}
+        pytest.fail("userfieldconfig must NOT be called with CRM-only webhook")
+    limits = preliminary_schema_limits(rest)
+    assert set(limits) == AI_FIELDS
+    assert limits[PREFIX + "AI_FULL_REPORT"] == 12000
+    assert all(value == 4096 for key, value in limits.items()
+               if key != PREFIX + "AI_FULL_REPORT")
+    assert calls == ["crm.type.getByEntityTypeId", "crm.item.fields", "crm.item.fields"]
+
+
+def test_preliminary_metadata_contract_fails_closed_on_readonly_or_alias_drift():
+    from leadpilot.serviceit_enrichment_worker import alias
+    from leadpilot.serviceit_windows_autofill import preliminary_schema_limits
+    typ = {"id": 13, "entityTypeId": 1062,
+           "isAutomationEnabled": False, "isBizProcEnabled": False}
+    original = {key: {"type": "string", "isReadOnly": False}
+                for key in AI_FIELDS}
+    altered = {alias(key): dict(value) for key, value in original.items()}
+    key = next(iter(AI_FIELDS))
+    altered[alias(key)]["isReadOnly"] = True
+    def rest(method, params):
+        if method == "crm.type.getByEntityTypeId":
+            return {"type": typ}
+        if method == "crm.item.fields":
+            return {"fields": original if params["useOriginalUfNames"] == "Y" else altered}
+        pytest.fail("unexpected settings access")
+    with pytest.raises(AutoFillBlocked, match="PRELIM_FIELD_ALIASES_UNVERIFIED"):
+        preliminary_schema_limits(rest)
+    altered[alias(key)]["isReadOnly"] = False
+    original[key]["isReadOnly"] = True
+    altered[alias(key)]["isReadOnly"] = True
+    with pytest.raises(AutoFillBlocked, match="PRELIM_FIELD_NOT_WRITABLE_STRING"):
+        preliminary_schema_limits(rest)
+
+
+def test_preliminary_metadata_contract_rejects_automation_scope_drift():
+    from leadpilot.serviceit_windows_autofill import preliminary_schema_limits
+    def rest(method, params):
+        assert method == "crm.type.getByEntityTypeId"
+        return {"type": {"id": 13, "entityTypeId": 1062,
+                         "isAutomationEnabled": True, "isBizProcEnabled": False}}
+    with pytest.raises(AutoFillBlocked, match="PRELIM_AUTOMATION_UNVERIFIED"):
+        preliminary_schema_limits(rest)

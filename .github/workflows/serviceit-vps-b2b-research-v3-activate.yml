@@ -6,7 +6,7 @@ permissions:
   contents: read
   issues: write
 concurrency:
-  group: serviceit-vps-native-shadow-readonly
+  group: serviceit-b2b-routerai-v3-live-release
   cancel-in-progress: false
 jobs:
   deploy:

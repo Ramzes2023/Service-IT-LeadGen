@@ -256,3 +256,58 @@ def test_card_assignee_takes_precedence_over_configured_fallback(monkeypatch):
         assert auto.process_card(client,e,120,now=NOW)=="INTERNAL_REVIEW_TASK_READBACK_VERIFIED"
     assert ids==[42]
     assert Fence.count==1
+
+
+def test_exact_b2b_preliminary_hold_can_create_private_review_task(monkeypatch):
+    from leadpilot.serviceit_enrichment_worker import PREFIX
+    calls=prepare(monkeypatch)
+    item={
+        "id":120,"entityTypeId":1062,"categoryId":21,
+        "createdTime":NOW.isoformat(),"assignedById":42,
+        "stageId":"DT1062_21:NEW",
+        "title":"Закупка услуг 1С",
+        PREFIX+"SIGNAL_KIND":"tender-opportunity",
+        PREFIX+"SIGNAL_ID":"B2B-CENTER-4673595",
+        PREFIX+"SIGNAL_SOURCE":"B2B-Center email subscription",
+        PREFIX+"SIGNAL_URL":"https://www.b2b-center.ru/market/view.html?id=4673595",
+        PREFIX+"EVIDENCE_STATUS":
+          "HOLD: письмо; оригинал, статус, ИНН, ФНС и регион не проверены",
+        PREFIX+"STOP_REASON":"Не квалифицированный B2B-лид",
+    }
+    monkeypatch.setattr(auto,"card_read",
+        lambda client,base,card,now:dict(item))
+    assert auto.b2b_preliminary_hold_allows_internal_review(item)
+    with httpx.Client() as client:
+        actual=auto.process_card(client,ENV,120,now=NOW)
+    assert actual=="INTERNAL_REVIEW_TASK_READBACK_VERIFIED"
+    assert sum(x[0]=="tasks.task.add" for x in calls if isinstance(x,tuple))==1
+
+
+def test_b2b_provisional_hold_exemption_never_bypasses_other_stop(monkeypatch):
+    from leadpilot.serviceit_enrichment_worker import PREFIX
+    calls=prepare(monkeypatch)
+    item={
+        "id":120,"entityTypeId":1062,"categoryId":21,
+        "createdTime":NOW.isoformat(),"assignedById":42,
+        "stageId":"DT1062_21:NEW",
+        PREFIX+"SIGNAL_KIND":"tender-opportunity",
+        PREFIX+"SIGNAL_ID":"B2B-CENTER-4673595",
+        PREFIX+"SIGNAL_SOURCE":"B2B-Center email subscription",
+        PREFIX+"SIGNAL_URL":"https://www.b2b-center.ru/market/view.html?id=4673595",
+        PREFIX+"EVIDENCE_STATUS":
+          "HOLD: письмо; оригинал, статус, ИНН, ФНС и регион не проверены",
+        PREFIX+"STOP_REASON":"Не квалифицированный B2B-лид",
+    }
+    for change in (
+        {PREFIX+"STOP_REASON":"Корпоративный STOP"},
+        {PREFIX+"SIGNAL_ID":"B2B-CENTER-OTHER"},
+        {PREFIX+"SIGNAL_URL":"https://evil.example.com/market/view.html"},
+        {PREFIX+"EVIDENCE_STATUS":"VERIFIED"},
+    ):
+        modified={**item,**change}
+        assert not auto.b2b_preliminary_hold_allows_internal_review(modified)
+        monkeypatch.setattr(auto,"card_read",
+            lambda client,base,card,now,item=modified:dict(item))
+        with httpx.Client() as client:
+            assert auto.process_card(client,ENV,120,now=NOW)=="CARD_STOP_REASON_HOLD_NO_TASK"
+    assert not any(isinstance(x,tuple) and x[0]=="tasks.task.add" for x in calls)

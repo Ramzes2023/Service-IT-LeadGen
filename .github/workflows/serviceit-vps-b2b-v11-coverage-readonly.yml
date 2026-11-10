@@ -1,0 +1,117 @@
+name: ServiceIT B2B V11 live factual dossier coverage READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v11-coverage-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V11_COVERAGE_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Read factual coverage counts from existing CRM only
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v11-qa"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v11-qa/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v11-qa/hosts"
+          chmod 0600 "$RUNNER_TEMP/v11-qa/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v11-qa/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/v11-qa/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v11-qa/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/v11-qa/status" <<'PY'
+          import os,re
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX,AI_FIELDS
+          from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity
+          from leadpilot.serviceit_vps_b2b_dossier_v11_worker import verify_all
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          counts={key:0 for key in (
+            'public_deadline','buyer','public_inn','contact','participation',
+            'payment','guarantee','documents','selection','source_facts',
+            'well_formatted')}
+          cards=0
+          with db(dict(os.environ)) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT to_regclass('public.serviceit_vps_b2b_dossier_v11_receipts')")
+                  has=cur.fetchone()[0] is not None
+                  if has:
+                      cur.execute("SELECT card_id FROM serviceit_vps_b2b_dossier_v11_receipts WHERE status='VERIFIED' ORDER BY card_id")
+                      ids=[int(row[0]) for row in cur.fetchall()][:4]
+                  else:
+                      ids=[]
+              with httpx.Client(trust_env=False,follow_redirects=False,timeout=23) as client:
+                  verified=False
+                  if ids:
+                      try:
+                          checked=verify_all(dict(os.environ),client,conn)
+                          verified=checked.get('status')=='V11_VERIFIED_READBACK'
+                      except Exception:
+                          verified=False
+                  rest=Rest(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'),client)
+                  for card in ids:
+                      try:
+                          item=normalized(rest('crm.item.get',{'entityTypeId':1062,
+                                'id':card,'useOriginalUfNames':'Y'})['item'])
+                          validate_identity(item,card)
+                          report=item.get(PREFIX+'AI_FULL_REPORT','')
+                          brief=item.get(PREFIX+'AI_MANAGER_BRIEF','')
+                          if not all(type(item.get(k)) is str and item[k] for k in AI_FIELDS):
+                              continue
+                          cards+=1
+                          checks={
+                              'well_formatted': all(tag in report for tag in
+                                ('01  ПАСПОРТ ЗАКУПКИ','03  ДОПУСК И КОММЕРЧЕСКИЕ УСЛОВИЯ',
+                                 '05  НАПРАВЛЕНИЕ И ЗАДАЧИ ДЛЯ МЕНЕДЖЕРА')),
+                              'public_deadline':'Срок подачи: «' in report,
+                              'buyer':'Заказчик: ' in report and
+                                'Заказчик: не установлен' not in report,
+                              'public_inn':'ИНН: ' in report and
+                                'ИНН: нет подтверждённой связки' not in report,
+                              'contact':bool(re.search(r'(?m)^(?:email|телефон): ',report)),
+                              'participation':'Требования' in report and
+                                bool(re.search(r'Требования.*«',report)),
+                              'payment':bool(re.search(r'Оплата / расчёты: «',report)),
+                              'guarantee':bool(re.search(r'Обеспечение / гарантии: «',report)),
+                              'documents':bool(re.search(r'Документы участника: «',report)),
+                              'selection':bool(re.search(r'Критерии отбора: «',report)),
+                              'source_facts':bool(re.search(r'(?m)^0[1-9]\. [^\n]+ \[\d+\]$',report)),
+                          }
+                          for key,ok in checks.items():
+                              counts[key]+=bool(ok)
+                      except Exception:
+                          continue
+          print('V11_QA_CARD_FIELDS_READ='+str(cards),flush=True)
+          print('V11_QA_CRM_DIGEST_READBACK='+('YES' if verified else 'NO'),flush=True)
+          for key,val in sorted(counts.items()):
+              print('V11_QA_'+key.upper()+'='+str(val),flush=True)
+          PY
+          grep -E '^V11_QA_[A-Z0-9_]+=(YES|NO|[0-4])$' \
+            "$RUNNER_TEMP/v11-qa/status" | head -20

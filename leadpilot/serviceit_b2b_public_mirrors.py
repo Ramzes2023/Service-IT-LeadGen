@@ -18,7 +18,10 @@ from .serviceit_public_evidence_research import (
     _host, _robots, _get, VisibleText, ResearchBlocked, _safe_model_excerpt,
 )
 
-MIRRORS = frozenset(("tendem.ru",))
+# Additional public mirrors are discovery candidates only. Actual evidence
+# requires a fresh HTTPS GET, robots permission, exact B2B number AND
+# matching procurement-title terms. A blocked origin is skipped, never bypassed.
+MIRRORS = frozenset(("tendem.ru", "zakupki.kontur.ru", "synapsenet.ru"))
 MAX_CANDIDATES = 5
 ID_RX = r"(?<!\d){id}(?!\d)"
 

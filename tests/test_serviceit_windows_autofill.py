@@ -158,13 +158,14 @@ def test_source_metadata_and_stage_untouched(tmp_path, fast_schema):
 
 
 def test_preliminary_metadata_contract_works_without_userfieldconfig_permission():
-    from leadpilot.serviceit_enrichment_worker import alias
+    from leadpilot.serviceit_enrichment_worker import alias, Blocked, SCORE_FIELD
     from leadpilot.serviceit_windows_autofill import preliminary_schema_limits
     typ = {"id": 13, "entityTypeId": 1062,
            "isAutomationEnabled": False, "isBizProcEnabled": False}
-    original = {key: {"type": "string", "isReadOnly": False,
-                       "isImmutable": False, "isMultiple": False}
-                for key in AI_FIELDS}
+    original = {key: {"type": "integer" if key == SCORE_FIELD else "string",
+                       "isReadOnly": False, "isImmutable": False,
+                       "isMultiple": False}
+                for key in FIELDS}
     formatted = {alias(key): dict(value) for key, value in original.items()}
     calls = []
     def rest(method, params):
@@ -173,13 +174,17 @@ def test_preliminary_metadata_contract_works_without_userfieldconfig_permission(
             return {"type": typ}
         if method == "crm.item.fields":
             return {"fields": original if params["useOriginalUfNames"] == "Y" else formatted}
-        pytest.fail("userfieldconfig must NOT be called with CRM-only webhook")
+        if method == "userfieldconfig.list":
+            raise Blocked("REST_HTTP_UNVERIFIED")
+        pytest.fail("Unexpected method or attempt to get inaccessible configuration")
     limits = preliminary_schema_limits(rest)
     assert set(limits) == AI_FIELDS
     assert limits[PREFIX + "AI_FULL_REPORT"] == 12000
     assert all(value == 4096 for key, value in limits.items()
                if key != PREFIX + "AI_FULL_REPORT")
-    assert calls == ["crm.type.getByEntityTypeId", "crm.item.fields", "crm.item.fields"]
+    assert calls == ["crm.type.getByEntityTypeId", "crm.item.fields", "crm.item.fields",
+                     "userfieldconfig.list", "crm.type.getByEntityTypeId",
+                     "crm.item.fields", "crm.item.fields"]
 
 
 def test_preliminary_metadata_contract_fails_closed_on_readonly_or_alias_drift():
@@ -198,12 +203,12 @@ def test_preliminary_metadata_contract_fails_closed_on_readonly_or_alias_drift()
         if method == "crm.item.fields":
             return {"fields": original if params["useOriginalUfNames"] == "Y" else altered}
         pytest.fail("unexpected settings access")
-    with pytest.raises(AutoFillBlocked, match="PRELIM_FIELD_ALIASES_UNVERIFIED"):
+    with pytest.raises(AutoFillBlocked, match="PRELIM_FULL_SCHEMA_FAILED_NOT_PERMISSION"):
         preliminary_schema_limits(rest)
     altered[alias(key)]["isReadOnly"] = False
     original[key]["isReadOnly"] = True
     altered[alias(key)]["isReadOnly"] = True
-    with pytest.raises(AutoFillBlocked, match="PRELIM_FIELD_NOT_WRITABLE_STRING"):
+    with pytest.raises(AutoFillBlocked, match="PRELIM_FULL_SCHEMA_FAILED_NOT_PERMISSION"):
         preliminary_schema_limits(rest)
 
 
@@ -213,5 +218,5 @@ def test_preliminary_metadata_contract_rejects_automation_scope_drift():
         assert method == "crm.type.getByEntityTypeId"
         return {"type": {"id": 13, "entityTypeId": 1062,
                          "isAutomationEnabled": True, "isBizProcEnabled": False}}
-    with pytest.raises(AutoFillBlocked, match="PRELIM_AUTOMATION_UNVERIFIED"):
+    with pytest.raises(AutoFillBlocked, match="PRELIM_FULL_SCHEMA_FAILED_NOT_PERMISSION"):
         preliminary_schema_limits(rest)

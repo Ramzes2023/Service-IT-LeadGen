@@ -310,6 +310,9 @@ def inspect_public_documents(client, findings, tender_id):
                 "url": row["url"], "kind": kind, "text": content,
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "bytes": len(payload),
+                # Ephemeral bytes are used only to attach approved public files
+                # to the same fenced CRM comment; never persisted in PG/logs.
+                "payload": payload,
             })
         except (TenderDocumentBlocked, ResearchBlocked, ValueError) as exc:
             code = str(exc)

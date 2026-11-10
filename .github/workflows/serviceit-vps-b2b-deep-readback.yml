@@ -159,6 +159,16 @@ jobs:
                   print('DEEP_CARD_'+str(seen)+'_V4_RECEIPT='+v4label)
                   print('DEEP_CARD_'+str(seen)+'_NINE='+('YES' if all(
                       isinstance(v,str) and v.strip() for v in data.values()) else 'NO'))
+                  print('DEEP_CARD_'+str(seen)+'_REPORT_CHARS='+str(min(len(report),12000)))
+                  print('DEEP_CARD_'+str(seen)+'_CITED_QUOTE_COUNT='+str(min(report.count('Дословно на странице:'),20)))
+                  print('DEEP_CARD_'+str(seen)+'_SOURCE_LINK_COUNT='+str(min(report.count('Публичный источник: https://'),20)))
+                  print('DEEP_CARD_'+str(seen)+'_ACTIONS_NONEMPTY='+(
+                      'YES' if isinstance(data.get(prefix+'AI_NEXT_ACTION'),str)
+                      and len(data[prefix+'AI_NEXT_ACTION'].strip())>30 else 'NO'))
+                  obsolete=any(
+                      any(v in val.casefold() for v in ('gigachat','гигачат','гига чат'))
+                      for val in data.values() if isinstance(val,str))
+                  print('DEEP_CARD_'+str(seen)+'_OBSOLETE_AI_NAME='+('YES' if obsolete else 'NO'))
           for key,value in (
               ('DEEP_CRM_EXACT',seen),('DEEP_NINE_FIELDS_FULL',full),
               ('DEEP_CITED_MODEL_CARDS',cited),('DEEP_CITED_CONTENT_READBACK',readback),

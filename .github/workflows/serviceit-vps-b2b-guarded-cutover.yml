@@ -1,0 +1,93 @@
+name: ServiceIT B2B VPS live two-service guarded cutover
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-native-guarded-cutover
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_DEPLOY_GUARDED_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact deployment script and SSH host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile deploy/serviceit-vps-b2b-guarded-cutover.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-live"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-live/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-live/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-live/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-live/known_hosts" >/dev/null
+          sha256sum deploy/serviceit-vps-b2b-guarded-cutover.py | cut -d ' ' -f1 > "$RUNNER_TEMP/b2b-live/sha"
+      - name: Deliver script without secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-live/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          dest="$VPS_USER@$VPS_HOST"
+          ssh -T -i "$RUNNER_TEMP/b2b-live/id" "${opts[@]}" "$dest" \
+            "umask 077; install -d -m 0700 serviceit/staging/b2b-guarded-$GITHUB_RUN_ID"
+          scp -i "$RUNNER_TEMP/b2b-live/id" "${opts[@]}" \
+            deploy/serviceit-vps-b2b-guarded-cutover.py \
+            "$dest:serviceit/staging/b2b-guarded-$GITHUB_RUN_ID/promote.py"
+      - name: Guarded replace receiver/writer only with old containers preserved
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-live/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          sha="$(cat "$RUNNER_TEMP/b2b-live/sha")"
+          ssh -T -i "$RUNNER_TEMP/b2b-live/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_RUN_ID' '$sha'" \
+            > "$RUNNER_TEMP/b2b-live/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ ]]
+          path="$HOME/serviceit/staging/b2b-guarded-$id/promote.py"
+          [[ -f "$path" && ! -L "$path" ]]
+          printf '%s  %s\n' "$sha" "$path" | sha256sum --check --status
+          SERVICEIT_B2B_DEPLOY_RUN_ID="$id" python3 "$path"
+          REMOTE
+          grep -E '^B2BLIVE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' \
+            "$RUNNER_TEMP/b2b-live/status" | head -25
+          grep -qx 'B2BLIVE_NEW_CONTAINERS=YES' "$RUNNER_TEMP/b2b-live/status"
+      - name: Publish sanitized rollout result to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-live/status"
+          summary="$(grep -E '^B2BLIVE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' "$f" 2>/dev/null | head -25 || true)"
+          [[ -n "$summary" ]] || summary="B2BLIVE_DEPLOY_BLOCKED=YES"
+          msg="$(printf 'B2B production cutover status (receiver/writer ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOld containers and snapshots are preserved on a successful cutover; core services untouched. CRM writes only by normal native worker.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

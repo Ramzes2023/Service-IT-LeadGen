@@ -1,0 +1,89 @@
+name: ServiceIT VPS B2B public-research provisional score AUX-only guarded release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-vps-b2b-score-research-status-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_VPS_B2B_SCORE_RESEARCH_STATUS_DEPLOY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify pinned SHA and host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/score-research"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/score-research/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/score-research/hosts"
+          chmod 600 "$RUNNER_TEMP/score-research/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/score-research/hosts" >/dev/null
+          git cat-file -e aadb075a5014d465c8526fecbb5bfa094ddb0f50^{commit}
+          git cat-file -e 26938349f0bc938490578ad3fa367e693367cc01^{commit}
+          git diff --quiet 26938349f0bc938490578ad3fa367e693367cc01 HEAD -- leadpilot/serviceit_stage4_provisional_score_live.py
+          python -m py_compile leadpilot/serviceit_stage4_provisional_score_live.py ops/serviceit_vps_b2b_score_research_activate.py
+          git show aadb075a5014d465c8526fecbb5bfa094ddb0f50:leadpilot/serviceit_stage4_provisional_score_live.py | sha256sum | cut -d' ' -f1 > "$RUNNER_TEMP/score-research/oldsha"
+          sha256sum leadpilot/serviceit_stage4_provisional_score_live.py | cut -d' ' -f1 > "$RUNNER_TEMP/score-research/newsha"
+      - name: Stage single reviewed module and activator
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$VPS_USER@$VPS_HOST"
+          options=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/score-research/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          folder="serviceit/staging/score-research-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/score-research/key" "${options[@]}" "$target" "umask 077; install -d -m 0700 '$folder'"
+          scp -i "$RUNNER_TEMP/score-research/key" "${options[@]}" leadpilot/serviceit_stage4_provisional_score_live.py "$target:$folder/serviceit_stage4_provisional_score_live.py"
+          scp -i "$RUNNER_TEMP/score-research/key" "${options[@]}" ops/serviceit_vps_b2b_score_research_activate.py "$target:$folder/activate.py"
+      - name: Release only AUX score module, retaining FNS-optional flags with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          options=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/score-research/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          old="$(cat "$RUNNER_TEMP/score-research/oldsha")"
+          new="$(cat "$RUNNER_TEMP/score-research/newsha")"
+          sha="$(sha256sum ops/serviceit_vps_b2b_score_research_activate.py | cut -d' ' -f1)"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/score-research/key" "${options[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_RUN_ID' '$old' '$new' '$sha'" > "$RUNNER_TEMP/score-research/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; old="$2"; new="$3"; sha="$4"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          for check in "$old" "$new" "$sha"; do
+            [[ "$check" =~ ^[a-f0-9]{64}$ ]]
+          done
+          f="$HOME/serviceit/staging/score-research-$id/activate.py"
+          [[ -f "$f" && ! -L "$f" ]]
+          printf '%s  %s\n' "$sha" "$f" | sha256sum --check --status
+          python3 "$f" "$id" "$old" "$new"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^SCORE_RESEARCH_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' "$RUNNER_TEMP/score-research/status" | head -30 || true
+          [[ "$rc" -eq 0 ]] || exit "$rc"
+          for item in SCORE_RESEARCH_AUX_ACTIVATED=YES SCORE_RESEARCH_FNS_REQUIRED=NO SCORE_RESEARCH_FREE_MSP_SCORE=NO SCORE_RESEARCH_PROVISIONAL_SCORE=YES SCORE_RESEARCH_INN_WORKER_UNCHANGED=YES SCORE_RESEARCH_OTHER_IMAGES_UNCHANGED=YES; do
+            grep -qx "$item" "$RUNNER_TEMP/score-research/status"
+          done

@@ -439,19 +439,22 @@ def cited_manager_fields(item, findings, report):
         fields, findings, signal_kind=item.get(PREFIX + "SIGNAL_KIND", ""))
     public_inn = published_buyer_inn_evidence(findings)
     if public_inn:
-        fields[PREFIX + "AI_FULL_REPORT"] += (
-            "\n\nРЕКВИЗИТЫ, НАПЕЧАТАННЫЕ В ПУБЛИЧНОМ ИСТОЧНИКЕ (НЕ ФНС)\n"
+        inn_header, _, inn_rest = fields[PREFIX + "AI_FULL_REPORT"].partition("\n")
+        fields[PREFIX + "AI_FULL_REPORT"] = (
+            inn_header + "\n\nРЕКВИЗИТЫ, НАПЕЧАТАННЫЕ В ПУБЛИЧНОМ ИСТОЧНИКЕ (НЕ ФНС)\n"
             + "Заказчик по тексту страницы: " + public_inn["buyer_name"]
             + "\nИНН-кандидат (контрольная сумма корректна): "
             + public_inn["inn"]
             + "\nИсточник: " + public_inn["public_source"]
             + "\nЮридическая идентичность и статус ЕГРЮЛ/ЕГРИП/МСП НЕ "
               "проверены. Не переносить в подтверждённый COMPANY_INN и "
-              "не разрешать исходящий контакт без независимой сверки."
+              "не разрешать исходящий контакт без независимой сверки.\n\n"
+            + inn_rest
         )
-        fields[PREFIX + "AI_MANAGER_BRIEF"] += (
-            "\nИНН-кандидат из открытого текста: " + public_inn["inn"]
-            + "; ФНС/право контакта ещё не подтверждены."
+        fields[PREFIX + "AI_MANAGER_BRIEF"] = (
+            "ИНН-кандидат из открытого текста: " + public_inn["inn"]
+            + "; ФНС/право контакта ещё не подтверждены.\n"
+            + fields[PREFIX + "AI_MANAGER_BRIEF"]
         )
     # Contact/evidence appendices may exceed the tested Bitrix text limits.
     # Normalize supplementary emoji and enforce the per-field CRM contract

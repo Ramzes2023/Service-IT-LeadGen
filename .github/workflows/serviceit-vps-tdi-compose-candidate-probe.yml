@@ -17,7 +17,7 @@ jobs:
       github.event.issue.number == 368 &&
       !github.event.issue.pull_request &&
       github.event.comment.user.login == 'Ramzes2023' &&
-      github.event.comment.body == 'SERVICEIT_TDI_COMPOSE_PROBE_368'
+      github.event.comment.body == 'SERVICEIT_TDI_COMPOSE_DRIFT_READONLY_368'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment: serviceit-vps-readonly
@@ -51,7 +51,7 @@ jobs:
           root=home/'serviceit'
           env=root/'config/vps.env'
           pin=root/'config/native-five-minute-core-image.compose.yml'
-          stage=root/'staging/b2b-tdi-release-42907858637/preflight.compose.yml'
+          stage=root/'staging/b2b-tdi-release-42913785157/preflight.compose.yml'
           print('TDI_COMPOSE_CANDIDATE_EXISTS='+('YES' if stage.is_file() else 'NO'),flush=True)
           if not stage.is_file() or stage.is_symlink():
               raise SystemExit(0)
@@ -115,5 +115,33 @@ jobs:
               expected['SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED']='YES'
               print('TDI_COMPOSE_ENV_ONLY_ADD='+('YES' if new.get('environment')==expected else 'NO'))
               print('TDI_COMPOSE_NEW_IMAGE='+('YES' if new.get('image')!=old.get('image') else 'NO'))
+              exclude={'image','environment'}
+              rest_old={k:v for k,v in old.items() if k not in exclude}
+              rest_new={k:v for k,v in new.items() if k not in exclude}
+              print('TDI_COMPOSE_NON_IMAGE_ENV_SAME='+('YES' if rest_old==rest_new else 'NO'))
+              fields=sorted(k for k in set(rest_old)|set(rest_new)
+                  if rest_old.get(k)!=rest_new.get(k))
+              # Never dump env values, volumes, mount paths or tokens.
+              safe=('pull_policy','restart','healthcheck','depends_on',
+                    'network_mode','privileged','read_only','user','logging',
+                    'init','stop_signal','stop_grace_period','profiles',
+                    'deploy','networks','volumes','working_dir','entrypoint',
+                    'command','labels')
+              print('TDI_COMPOSE_DRIFT_FIELD_COUNT='+str(min(20,len(fields))))
+              for key in safe:
+                  if key in fields:
+                      print('TDI_COMPOSE_DRIFT_'+key.upper()+'=YES')
+              if any(key not in safe for key in fields):
+                  print('TDI_COMPOSE_DRIFT_OTHER=YES')
+              print('TDI_COMPOSE_ADJACENT_SAME='+('YES' if
+                  all(json.loads(current.stdout)['services'][n]==value
+                      for n,value in json.loads(current.stdout)['services'].items()
+                      if n!='coordinator' and
+                      n in json.loads(candidate.stdout)['services'] and
+                      json.loads(candidate.stdout)['services'][n]==value)
+                  else 'NO'))
+
           PY
           grep -E '^TDI_COMPOSE_[A-Z_]+=(YES|NO|OK|PERMISSION|MISSING_FILE|YAML_PARSE|INTERPOLATION|INVALID_TYPE|UNSUPPORTED_KEY|INVALID_SERVICE|DUPLICATE|OTHER|IMAGE_NOT_FOUND)$' "$RUNNER_TEMP/tdi-compose/result"
+          grep -E '^TDI_COMPOSE_DRIFT_FIELD_COUNT=[0-9]{1,2}$' "$RUNNER_TEMP/tdi-compose/result"
+          grep -E '^TDI_COMPOSE_DRIFT_[A-Z_]+=(YES|NO)$' "$RUNNER_TEMP/tdi-compose/result"

@@ -49,6 +49,14 @@ AUDITED_OLD_SHAS = (
 WHEEL = "pypdf-6.21.4-py3-none-any.whl"
 WHEEL_SHA256 = "33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c"
 TDI_FLAG = "SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED"
+# These exact three existing env overrides were removed by the earlier
+# minimal pin, proven by VPS READONLY #42914921843 (2026-11-10).
+# Preserve only their currently resolved values, never secrets/unreviewed keys.
+PRESERVE_CORE_FLAGS = (
+    "SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED",
+    "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED",
+    "SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED",
+)
 
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
@@ -169,14 +177,13 @@ def compose_json(paths):
     return json.loads(output(compose(paths, "config", "--format", "json")))
 
 
-def pin_image(content, expected_old, target):
-    """Canonical self-contained Compose override; never append to old content.
+def pin_image(content, expected_old, target, preserved_env):
+    """Self-contained image pin preserving *exact* live feature toggles.
 
-    The previous appended environment stanza failed live docker compose
-    config parsing (#42908404218); the canonical minimal variant passed
-    independently (#42908770020). Existing live settings are compared
-    structurally before the pin is ever changed, and the original pin is
-    archived for rollback.
+    Live READONLY #42914921843 confirmed the earlier canonical minimal pin
+    unexpectedly removed precisely the three flags in PRESERVE_CORE_FLAGS.
+    Use old resolved values, never copy or print secrets; preserve all other
+    fields under the strict pre-write structural model equality preflight.
     """
     require(isinstance(content, str)
             and 'services:\n  coordinator:\n' in content
@@ -190,17 +197,22 @@ def pin_image(content, expected_old, target):
     _, count = re.subn(pattern, '', content)
     require(count == 1, "IMMUTABLE_PIN_IMAGE_CONFLICT")
     require(TDI_FLAG not in content, "TDI_FLAG_ALREADY_IN_PIN")
-    # Preserve old Compose runtime semantics via the separate model-diff
-    # preflight, not by concatenating YAML to an unknown trailing section.
+    require(type(preserved_env) is dict
+            and set(preserved_env) == set(PRESERVE_CORE_FLAGS)
+            and all(type(preserved_env[key]) is str
+                    and preserved_env[key] in ("YES", "NO")
+                    for key in PRESERVE_CORE_FLAGS),
+            "TDI_PRESERVED_FLAGS_NOT_BOOLEAN")
+    flags = ''.join('      ' + key + ': "' + preserved_env[key] + '"\n'
+                    for key in PRESERVE_CORE_FLAGS)
     return (
         'services:\n'
         '  coordinator:\n'
         '    image: "' + target + '"\n'
         '    pull_policy: never\n'
-        '    environment:\n'
+        '    environment:\n' + flags +
         '      ' + TDI_FLAG + ': "YES"\n'
     )
-
 
 def atomic_write(path, data):
     fd, tmp = tempfile.mkstemp(prefix=".tdi-pinned-", dir=str(path.parent))
@@ -403,7 +415,14 @@ print('TDI_OFFLINE_SMOKE_PASS')
             require(res.stdout.strip() == "TDI_OFFLINE_SMOKE_PASS",
                     "TDI_OFFLINE_SMOKE_OUTPUT_FAILED")
             print("TDI_RELEASE_OFFLINE_SMOKE=YES", flush=True)
-            next_pin = pin_image(old_pin, old_image, next_image)
+            # Strict carry-forward of exactly the live toggles our previous
+            # canonical override removed; no arbitrary env/secret copying.
+            core_env = core_before.get("environment", {})
+            require(type(core_env) is dict
+                    and all(key in core_env for key in PRESERVE_CORE_FLAGS),
+                    "TDI_ORIGINAL_FLAG_MISSING")
+            carry = {key: core_env[key] for key in PRESERVE_CORE_FLAGS}
+            next_pin = pin_image(old_pin, old_image, next_image, carry)
             preflight = stage / "preflight.compose.yml"
             preflight.write_text(next_pin, "utf8")
             trial = compose_json([p for p in paths if p != PIN] + [preflight])

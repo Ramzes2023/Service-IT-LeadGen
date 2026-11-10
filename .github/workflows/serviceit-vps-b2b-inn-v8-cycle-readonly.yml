@@ -1,0 +1,122 @@
+name: ServiceIT B2B V8 actual V8 INN cycle retry evidence READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-v8-inn-cycle-readonly
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_V8_INN_CYCLES_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pinned VPS SSH, aggregate only fixed worker status codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[0-9A-Za-z.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v8-cycles"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v8-cycles/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v8-cycles/hosts"
+          chmod 0600 "$RUNNER_TEMP/v8-cycles/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v8-cycles/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/v8-cycles/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v8-cycles/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import json, re, subprocess
+          from collections import Counter
+          C="serviceit-leadgen-vps-coordinator-1"
+          run=subprocess.run(["docker","logs","--tail","250",C],
+                             text=True,capture_output=True,timeout=22,check=False)
+          counts=Counter()
+          total=0
+          last=[]
+          if run.returncode==0:
+              for line in (run.stdout+"\n"+run.stderr).splitlines():
+                  try:
+                      record=json.loads(line)
+                  except (ValueError,TypeError):
+                      continue
+                  if record.get("status")!="VPS_LIVE_CYCLE_COMPLETE":
+                      continue
+                  total+=1
+                  inn=record.get("b2b_public_inn", {})
+                  code=inn.get("status") if isinstance(inn,dict) else None
+                  code=code if isinstance(code,str) and re.fullmatch(r"[A-Z0-9_]{4,100}",code) else "NOT_REPORTED"
+                  counts[code]+=1
+                  last.append(code)
+          print("V8_CORE_CYCLES="+str(min(total,999)))
+          print("V8_CORE_LOG_ACCESS="+("YES" if run.returncode==0 else "NO"))
+          for key,value in sorted(counts.items()):
+              print("V8_REASON_"+key+"="+str(min(value,999)))
+          for i,code in enumerate(last[-4:],1):
+              print("V8_LAST_"+str(i)+"="+code)
+          check = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
+                      cur.execute('SET TRANSACTION READ ONLY')
+                      cur.execute("SELECT status,COUNT(*) FROM serviceit_vps_native_receipts WHERE namespace='B2B_PUBLIC_INN_V2' GROUP BY status")
+                      for status,n in cur.fetchall():
+                          if status in ('RESERVED','WRITE_INTENT','HOLD','UNCERTAIN','VERIFIED','NEEDS_REVIEW'):
+                              print('V8_RECEIPT_'+status+'='+str(min(n,999)))
+          """
+          cp=subprocess.run(["docker","exec",C,"python","-B","-c",check],
+                            text=True,capture_output=True,timeout=30,check=False)
+          if cp.returncode==0:
+              print(cp.stdout.strip())
+              print("V8_RECEIPT_READONLY=YES")
+          else:
+              print("V8_RECEIPT_READONLY=UNVERIFIED")
+          retry = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
+                      cur.execute('SET TRANSACTION READ ONLY')
+                      cur.execute("SELECT to_regclass('public.serviceit_vps_b2b_public_inn_retry') IS NOT NULL")
+                      if not cur.fetchone()[0]:
+                          print('V8_RETRY_SCHEMA=NO')
+                      else:
+                          print('V8_RETRY_SCHEMA=YES')
+                          cur.execute("SELECT count(*),count(*) FILTER (WHERE next_attempt_at<=now()),coalesce(max(attempts),0) FROM serviceit_vps_b2b_public_inn_retry")
+                          total,due,maximum=cur.fetchone()
+                          print('V8_RETRY_CARDS='+str(min(total,999)))
+                          print('V8_RETRY_DUE='+str(min(due,999)))
+                          print('V8_MAX_SOURCE_ATTEMPTS='+str(min(maximum,999)))
+          """
+          rs=subprocess.run(["docker","exec",C,"python","-B","-c",retry],
+                           text=True,capture_output=True,timeout=30,check=False)
+          if rs.returncode==0:
+              print(rs.stdout.strip())
+              print("V8_RETRY_READONLY=YES")
+          else:
+              print("V8_RETRY_READONLY=UNVERIFIED")
+          code="import os;print('V8_FLAG='+('YES' if os.getenv('SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED')=='YES' else 'NO'))"
+          checkflag=subprocess.run(["docker","exec",C,"python","-B","-c",code],
+                                 text=True,capture_output=True,timeout=10,check=False)
+          print(checkflag.stdout.strip() if checkflag.returncode==0 else "V8_FLAG=UNVERIFIED")
+          print("V8_ALL_READONLY=YES")
+          PY

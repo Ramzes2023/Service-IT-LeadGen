@@ -1,0 +1,96 @@
+name: ServiceIT B2B V10 four real CRM dossiers READONLY acceptance
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v10-four-readback
+  cancel-in-progress: false
+jobs:
+  acceptance:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V10_FOUR_READBACK_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Protected read of four existing PG receipts and Bitrix exact fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v10-readback"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v10-readback/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v10-readback/hosts"
+          chmod 0600 "$RUNNER_TEMP/v10-readback/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v10-readback/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/v10-readback/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v10-readback/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/v10-readback/status" <<'PY'
+          import os, json, hashlib
+          from pathlib import Path
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db
+          env = dict(os.environ)
+          expected = (
+              'serviceit_b2b_dossier_v10.py',
+              'serviceit_vps_b2b_dossier_v10_worker.py',
+          )
+          ready = all((Path('/app/leadpilot') / f).is_file() for f in expected)
+          print('V10_ACCEPT_SOURCE=' + ('YES' if ready else 'NO'), flush=True)
+          print('V10_ACCEPT_CYCLE_300=' + (
+              'YES' if os.environ.get('SERVICEIT_VPS_POLL_ENABLED')=='YES' else 'NO'), flush=True)
+          counts = {}
+          verified_old = 0
+          with db(env) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_dossier_v9_receipts WHERE status='VERIFIED'")
+                  verified_old = int(cur.fetchone()[0])
+                  cur.execute("SELECT to_regclass('public.serviceit_vps_b2b_dossier_v10_receipts')")
+                  table_exists = cur.fetchone()[0] is not None
+                  if table_exists:
+                      cur.execute("SELECT status,count(*) FROM serviceit_vps_b2b_dossier_v10_receipts GROUP BY status")
+                      counts = {k:int(v) for k,v in cur.fetchall()}
+              print('V10_ACCEPT_PREVIOUS_FOUR=' + ('YES' if verified_old==4 else 'NO'),flush=True)
+              print('V10_ACCEPT_VERIFIED_COUNT=' + str(min(counts.get('VERIFIED',0),999)),flush=True)
+              print('V10_ACCEPT_UNCERTAIN_COUNT=' + str(min(counts.get('UNCERTAIN',0),999)),flush=True)
+              print('V10_ACCEPT_CONFLICT_COUNT=' + str(min(counts.get('CONFLICT',0),999)),flush=True)
+              print('V10_ACCEPT_WRITE_INTENT_COUNT=' + str(min(counts.get('WRITE_INTENT',0),999)),flush=True)
+              if counts.get('VERIFIED',0):
+                  try:
+                      from leadpilot.serviceit_vps_b2b_dossier_v10_worker import verify_all
+                      with httpx.Client(trust_env=False,follow_redirects=False,timeout=23) as client:
+                          result = verify_all(env, client, conn)
+                      valid = result.get('cards_verified') == counts.get('VERIFIED')
+                  except Exception:
+                      valid = False
+              else:
+                  valid = False
+              print('V10_ACCEPT_EXACT_CRM_READBACK=' + ('YES' if valid else 'NO'), flush=True)
+              print('V10_ACCEPT_ALL_FOUR=' + (
+                'YES' if verified_old==4 and valid
+                and counts.get('VERIFIED')==4 and
+                counts.get('UNCERTAIN',0)==0 and
+                counts.get('CONFLICT',0)==0 else 'NO'), flush=True)
+          PY
+          grep -E '^V10_ACCEPT_[A-Z0-9_]+=(YES|NO|[0-9]{1,3})$' \
+            "$RUNNER_TEMP/v10-readback/status" | head -24

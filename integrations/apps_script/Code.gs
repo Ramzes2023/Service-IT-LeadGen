@@ -301,7 +301,7 @@ function classifyServices_(title) {
   const patterns = {
     "1C": new RegExp("(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:", "iu"),
     "IT_SUPPORT": new RegExp(
-      "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:специалист" + suffix + "|аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
+      "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
       "|(?:технич" + suffix + "|сервисн" + suffix + ")\\s+(?:поддержк" + suffix + "|обслуживан" + suffix + ").{0,80}(?:сервер" + suffix + "|сетев" + suffix + "|компьютер" + suffix + "|информационн" + suffix + "\\s+систем" + suffix + "|(?:ит|it)[\\s-]*инфраструктур" + suffix + ")" +
       "|(?:технич" + suffix + "|сервисн" + suffix + ")\\s+(?:обслуживан" + suffix + "|поддержк" + suffix + ")\\s+(?:баз" + suffix + "\\s+данн" + suffix + "|субд)",
       "iu"
@@ -319,9 +319,7 @@ function classifyServices_(title) {
       "сервер" + suffix + "|сетев" + suffix + "\\s+оборудован" + suffix +
       "|коммутатор" + suffix + "|маршрутизатор" + suffix + "|ноутбук" + suffix +
       "|компьютер" + suffix + "|рабоч" + suffix + "\\s+станци" + suffix +
-      "|монитор(?:ы|ов|ам|ами|е|а)?" +
-      "|источник" + suffix + "\\s+бесперебойн" + suffix + "\\s+питан" + suffix +
-      "|(?<!" + WORD + ")ибп(?!" + WORD + ")",
+      "|монитор(?:ы|ов|ам|ами|е|а)?",
       "iu"
     )
   };

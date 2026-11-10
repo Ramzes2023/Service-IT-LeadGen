@@ -35,9 +35,6 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
             or type(subject) is not str or not 10 <= len(subject) <= 240):
         return ""
     text = " ".join(text.split())
-    # A general index snippet is never an independently identified B2B lot.
-    if "b2b-center" not in text.casefold():
-        return ""
     tokens = re.findall(r"[^\W_]{3,}", subject.casefold())
     stops = {"закупка", "предоставление", "предоставлению",
              "предоставления", "оказание", "оказанию", "включая",

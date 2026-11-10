@@ -137,3 +137,26 @@ def test_no_generic_integration_false_positive_in_actual_email_previews():
     assert report["buyer_inn_verified"] == 0
     assert report["fns_micro_small_77_50"] == 0
     assert report["crm_writes"] == 0
+
+
+def test_it_specialist_staffing_tender_4673595_is_service_opportunity_not_qualified():
+    title = "Оказание услуг по предоставлению ИТ-специалистов"
+    assert "IT_STAFFING" in classify_services(title)
+    assert "IT_STAFFING" in classify_services(
+        "Привлечение IT-специалистов для проектов 1С и DevOps")
+    report = build_bitrix_preview([mail(bulletin(number="4673595", title=title))])
+    assert report["it_opportunity_previews"] == 1
+    assert report["qualified_real_leads"] == 0
+    assert report["crm_writes"] == 0
+    assert report["cards_not_sent"][0]["source_tender_id"] == "4673595"
+
+
+@pytest.mark.parametrize("title", [
+    "Вакансия IT-специалиста",
+    "Услуги по подбору персонала для охраны и клининга",
+    "Предоставление рабочих для строительства",
+    "Поставка офисной мебели",
+])
+def test_generic_jobs_and_unrelated_staffing_are_not_it_procurement(title):
+    assert classify_services(title) == []
+

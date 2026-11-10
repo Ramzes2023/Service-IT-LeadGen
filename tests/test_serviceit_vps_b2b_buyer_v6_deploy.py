@@ -34,3 +34,11 @@ def test_v6_owner_only_workflow_pins_precisely_two_code_revisions():
                   "secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY"):
         assert token in content
     assert '[[ "${#shas[@]}" == 1 ]]' in content
+
+def test_v6_failed_remote_preflight_prints_only_sanitized_fixed_codes():
+    content=(ROOT/".github/workflows/serviceit-vps-b2b-buyer-v6-deploy.yml").read_text("utf8")
+    assert "set +e" in content and "remote_rc=$?" in content
+    assert "B2B_BUYER_V6_REMOTE_STATUS_ABSENT=YES" in content
+    assert "exit 1" in content
+    assert "safe=\"$(grep -E '^B2B_BUYER_V6_" in content
+    assert 'cat "$RUNNER_TEMP/serviceit-contacts/status"' not in content

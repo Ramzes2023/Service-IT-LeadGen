@@ -368,11 +368,11 @@ for name,value in zip(files,shas):
 from pypdf import PdfReader
 from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS
 from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
-from leadpilot.serviceit_vps_b2b_document_worker import worker_once, build_report
+from leadpilot.serviceit_vps_b2b_document_worker import run_once, build_report
 from leadpilot.serviceit_vps_b2b_dossier_v11_worker import verify_all
 assert INTERVAL_SECONDS==300
 assert all(callable(x) for x in
-    (PdfReader,inspect_public_documents,worker_once,build_report,verify_all))
+    (PdfReader,inspect_public_documents,run_once,build_report,verify_all))
 print('TDI_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",

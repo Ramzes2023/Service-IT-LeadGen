@@ -121,8 +121,7 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None):
         response = client.get(
             SEARCH_URL,
             params={"q": "site:b2b-center.ru " + tender_id,
-                    "count": 5, "country": "RU",
-                    "search_lang": "ru", "safesearch": "strict"},
+                    "count": 5},
             headers={"X-Subscription-Token": key,
                      "Accept": "application/json",
                      "Cache-Control": "no-cache"},
@@ -210,6 +209,17 @@ def source_findings(item, notice, env, client):
         return {"status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
                 "pages": [], "contacts": [], "model_excerpt": "",
                 "checked_at": datetime.now(timezone.utc).isoformat()}
+    # Even when original publication can be read, Brave can independently
+    # discover a richer PUBLIC mirror/detail page with the exact same ID.
+    # Count at most one extra independently fetched page; never trust snippets.
+    extra = brave_notice_page(client, notice["tender_id"], hosts, key, browser)
+    if extra is not None:
+        existing = {row.get("url") for row in results.get("pages", [])}
+        fresh = [p for p in extra["pages"] if p.get("url") not in existing]
+        if fresh:
+            results = dict(results)
+            results["pages"] = (results.get("pages") or [])[:2] + fresh[:1]
+            results["brave_exact_id_independent_page"] = True
     return results
 
 
@@ -340,9 +350,27 @@ def run_once(env, client, connection):
             # One bounded RouterAI call, with separately read PUBLIC excerpts
             # only. No vendor-email subject, CRM note, contact, INN or URLs.
             model_invoked = True
-            report = investigate_routerai(client, cfg, findings)
-            fields = cited_fields(
-                {key: item[key] for key in AI_FIELDS}, findings, report)
+            try:
+                report = investigate_routerai(client, cfg, findings)
+            except Exception:
+                # If the one-use model request returned an unverified result,
+                # preserve independently read page evidence instead of losing
+                # all work. Never repeat the potentially billed request.
+                report = None
+            if report is not None:
+                fields = cited_fields(
+                    {key: item[key] for key in AI_FIELDS}, findings, report)
+            else:
+                fields = draft_fields(item, findings)
+                fields[PREFIX + "AI_STATUS"] = "PUBLIC_PAGES_ROUTERAI_UNVERIFIED"
+                fields[PREFIX + "AI_SUMMARY"] = (
+                    "Открытые страницы проверены и приложены к отчёту; "
+                    "RouterAI не вернул пригодный для проверки ответ. "
+                    "Факты не приписываются модели; коммерческий HOLD сохранён.")
+                fields[PREFIX + "AI_FULL_REPORT"] = (
+                    fields[PREFIX + "AI_FULL_REPORT"] +
+                    "\n\nRouterAI: результат не подтверждён, повторный платный "
+                    "вызов без отдельной версии не разрешён.")[:12000]
         else:
             fields = draft_fields(item, findings)
             fields[PREFIX + "AI_STATUS"] = "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT"
@@ -389,7 +417,7 @@ def run_once(env, client, connection):
         return {"status": "B2B_RESEARCH_NINE_FIELDS_VERIFIED",
                 "research": 1, "routerai_invoked": model_invoked,
                 "source_pages": min(len(findings.get("pages") or []), MAX_PAGES),
-                "cited_facts": len(report.get("facts", [])) if model_invoked else 0,
+                "cited_facts": len(report.get("facts", [])) if model_invoked and report else 0,
                 "customer_contacts_sent": 0, "lead_qualified": False}
     except Exception:
         # RESERVATION may precede paid model request and CRM write. Once

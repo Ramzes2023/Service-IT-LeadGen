@@ -84,6 +84,7 @@ jobs:
           newa="$(sed -n '1p' "$RUNNER_TEMP/fns-two/new")"
           newm="$(sed -n '2p' "$RUNNER_TEMP/fns-two/new")"
           scriptsha="$(sha256sum ops/serviceit_vps_fns_calibration_two_images_activate.py | cut -d' ' -f1)"
+          set +e
           ssh -T -i "$RUNNER_TEMP/fns-two/id" "${opts[@]}" \
             "$VPS_USER@$VPS_HOST" \
             "bash -s -- '$GITHUB_RUN_ID' '$olda' '$oldm' '$newa' '$newm' '$scriptsha'" \
@@ -99,8 +100,19 @@ jobs:
           printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
           python3 "$script" "$id" "$olda" "$oldm" "$newa" "$newm"
           REMOTE
-          grep -E '^FNS_ONLY_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' \
-            "$RUNNER_TEMP/fns-two/summary" | head -30
+          remote_rc=$?
+          set -e
+          # Only predeclared fixed machine status codes, never raw stderr,
+          # secrets, buyer records, configuration or arbitrary exceptions.
+          if [[ -f "$RUNNER_TEMP/fns-two/summary" ]]; then
+            grep -E '^FNS_ONLY_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED) "$RUNNER_TEMP/fns-two/summary"
+          grep -qx 'FNS_ONLY_FNS_MSP_PATCH=YES' "$RUNNER_TEMP/fns-two/summary"
+          grep -qx 'FNS_ONLY_OTHER_IMAGES_UNCHANGED=YES' "$RUNNER_TEMP/fns-two/summary"
+          grep -qx 'FNS_ONLY_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/fns-two/summary"
+ \
+              "$RUNNER_TEMP/fns-two/summary" | head -30 || true
+          fi
+          [[ "$remote_rc" -eq 0 ]] || exit "$remote_rc"
           grep -qx 'FNS_ONLY_AUXILIARIES_PATCH=YES' "$RUNNER_TEMP/fns-two/summary"
           grep -qx 'FNS_ONLY_FNS_MSP_PATCH=YES' "$RUNNER_TEMP/fns-two/summary"
           grep -qx 'FNS_ONLY_OTHER_IMAGES_UNCHANGED=YES' "$RUNNER_TEMP/fns-two/summary"

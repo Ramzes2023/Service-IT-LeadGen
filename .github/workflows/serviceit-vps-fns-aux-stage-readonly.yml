@@ -1,0 +1,118 @@
+name: ServiceIT FNS-only auxiliary safe stage diagnosis READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-fns-aux-stage-readonly
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_FNS_AUX_STAGES_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: SSH into existing containers for read-only FNS startup stage probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/fns-stages"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/fns-stages/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/fns-stages/known"
+          chmod 600 "$RUNNER_TEMP/fns-stages/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/fns-stages/known" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/fns-stages/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/fns-stages/known" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import subprocess,time
+          containers={'CORE':'serviceit-leadgen-vps-coordinator-1',
+                      'AUX':'serviceit-leadgen-vps-auxiliaries-1'}
+          stages={
+            'FLAGS': """
+import os
+from leadpilot.serviceit_vps_native_aux import enabled,global_gate
+env=dict(os.environ)
+enabled(env);global_gate(env)
+print('PASS')
+""",
+            'DB': """
+import os
+from leadpilot.serviceit_vps_pg_queue import db
+with db(dict(os.environ)) as conn:
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute('SET TRANSACTION READ ONLY')
+            cur.execute('SELECT 1')
+            assert cur.fetchone()[0]==1
+print('PASS')
+""",
+            'SECRET': """
+import os
+from leadpilot.serviceit_vps_pg_queue import secret_file
+from leadpilot.bitrix_metadata_audit import validate_webhook
+assert validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+print('PASS')
+""",
+            'CRM_LIST': """
+import os
+import httpx
+from datetime import datetime,timezone
+from leadpilot.serviceit_vps_pg_queue import secret_file
+from leadpilot.bitrix_metadata_audit import validate_webhook
+from leadpilot.serviceit_vps_native_aux import eligible_cards
+with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:
+    base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+    cards=eligible_cards(client,dict(os.environ),base,datetime.now(timezone.utc))
+    assert isinstance(cards,list)
+print('PASS')
+""",
+            'FNS_FIELD': """
+import os,httpx
+from leadpilot.serviceit_vps_pg_queue import secret_file
+from leadpilot.bitrix_metadata_audit import validate_webhook
+from leadpilot.serviceit_fns_msp_crm_result_writer import result_field_verified
+with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:
+    base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+    result_field_verified(client,base)
+print('PASS')
+""",
+          }
+          for label,container in containers.items():
+              for name in ('FLAGS','DB','SECRET','CRM_LIST','FNS_FIELD'):
+                  outcome='UNVERIFIED'
+                  for attempt in range(2 if label=='AUX' else 1):
+                      try:
+                          z=subprocess.run(['docker','exec','-i',container,'python',
+                            '-B','-c',stages[name]],input='',
+                            capture_output=True,text=True,timeout=35,check=False)
+                          if z.returncode==0 and z.stdout.strip()=='PASS':
+                              outcome='PASS'
+                          elif z.returncode==0:
+                              outcome='UNVERIFIED'
+                          else:
+                              outcome='FAILED_OR_NOT_RUNNING'
+                      except (OSError,subprocess.TimeoutExpired):
+                          outcome='UNVERIFIED'
+                      if outcome=='PASS' or label=='CORE': break
+                      time.sleep(2)
+                  print('FNS_STAGE_'+label+'_'+name+'='+outcome,flush=True)
+          print('FNS_STAGE_READONLY=YES',flush=True)
+          PY

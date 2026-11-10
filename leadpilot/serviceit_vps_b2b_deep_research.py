@@ -114,7 +114,7 @@ def host_allowlist(env):
 
 
 
-def brave_notice_page(client, tender_id, allowed, key, browser=None):
+def brave_notice_page(client, tender_id, allowed, key, browser=None, *, subject=""):
     """One search for a public tender ID, independently validate indexed links.
 
     Search titles and snippets are never accepted as evidence and never sent
@@ -162,8 +162,30 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None):
             if not isinstance(page, dict):
                 continue
             body = page.get("text", "")
-            if (not isinstance(body, str) or
-                    re.search(r"(?<!\d)" + tender_id + r"(?!\d)", body) is None):
+            if not isinstance(body, str):
+                continue
+            exact = re.compile(r"(?<!\d)" + tender_id + r"(?!\d)")
+            if exact.search(body) is None and subject:
+                # The standard HTML extractor keeps only its FIRST 7K chars.
+                # Search/category pages can contain the exact published lot
+                # further down. Read the same robots-approved page in full,
+                # never a search snippet, and require BOTH exact ID and
+                # at least two distinctive procurement-title words nearby.
+                from .serviceit_b2b_public_mirrors import matched_excerpt
+                from .serviceit_public_evidence_research import (
+                    _robots, _get, VisibleText,
+                )
+                _robots(client, candidate, allowed)
+                raw = _get(client, candidate, allowed)
+                parser = VisibleText()
+                parser.feed(raw)
+                body = matched_excerpt(" ".join(parser.parts), tender_id, subject)
+            elif exact.search(body) is None:
+                continue
+            elif subject:
+                from .serviceit_b2b_public_mirrors import matched_excerpt
+                body = matched_excerpt(body, tender_id, subject)
+            if not body or exact.search(body) is None:
                 continue
             return {
                 "status": "PUBLIC_PAGES_INSPECTED",
@@ -415,7 +437,8 @@ def source_findings(item, notice, env, client):
         client, notice["tender_id"], notice["subject"], key)
     if not page_proof:
         candidate = brave_notice_page(
-            client, notice["tender_id"], hosts, key, browser)
+            client, notice["tender_id"], hosts, key, browser,
+            subject=notice["subject"])
         if candidate is not None:
             if mirror is not None:
                 candidate = dict(candidate)
@@ -429,7 +452,9 @@ def source_findings(item, notice, env, client):
     # Even when original publication can be read, Brave can independently
     # discover a richer PUBLIC mirror/detail page with the exact same ID.
     # Count at most one extra independently fetched page; never trust snippets.
-    extra = brave_notice_page(client, notice["tender_id"], hosts, key, browser)
+    extra = brave_notice_page(
+        client, notice["tender_id"], hosts, key, browser,
+        subject=notice["subject"])
     if extra is not None:
         existing = {row.get("url") for row in results.get("pages", [])}
         fresh = [p for p in extra["pages"] if p.get("url") not in existing]

@@ -79,7 +79,17 @@ jobs:
           with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
               rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
               try:
-                  limits=schema_limits(rest)
+                  class TraceRest:
+                      def __call__(self, method, params):
+                          safe_method=method.replace('.','_').upper()
+                          try:
+                              result=rest(method,params)
+                              print('B2B_REASONS_ENDPOINT_'+safe_method+'_PASS=YES',flush=True)
+                              return result
+                          except Exception:
+                              print('B2B_REASONS_ENDPOINT_'+safe_method+'_FAILED=YES',flush=True)
+                              raise
+                  limits=schema_limits(TraceRest())
                   print('B2B_REASONS_SCHEMA=YES',flush=True)
               except Exception as exc:
                   s=str(exc.args[0]) if exc.args else ''

@@ -200,7 +200,7 @@ def test_new_card_worker_writes_three_type_badges_into_existing_nine_fields_only
     assert fields[PREFIX+"AI_MANAGER_BRIEF"].startswith("▣ ТЕНДЕР")
     assert "Задача в Bitrix ещё НЕ создана" in fields[PREFIX+"AI_MANAGER_BRIEF"]
     assert "Lead Score: НЕ РАССЧИТАН" in fields[PREFIX+"AI_FULL_REPORT"]
-    assert "GigaChat: NOT_RUN" in fields[PREFIX+"AI_FULL_REPORT"]
+    assert "RouterAI: NOT_RUN" in fields[PREFIX+"AI_FULL_REPORT"]
     assert "не проверены" in fields[PREFIX+"AI_MANAGER_BRIEF"]
     assert all(isinstance(x,str) and len(x)<12000 for x in fields.values())
     base["title"]="Вакансия: программист 1С"

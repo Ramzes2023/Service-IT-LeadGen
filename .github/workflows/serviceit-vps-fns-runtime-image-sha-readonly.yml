@@ -1,0 +1,92 @@
+name: ServiceIT FNS-only AUX MSP image/compose baseline READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-fns-sha-preflight
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_FNS_AUX_IMAGE_SHA_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Attest trusted source files and pinned SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/fns-identity"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/fns-identity/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/fns-identity/hosts"
+          chmod 600 "$RUNNER_TEMP/fns-identity/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/fns-identity/hosts" >/dev/null
+          for file in serviceit_vps_native_aux.py serviceit_vps_native_msp.py; do
+            git show e081445429856bfd988a6fc9ad3c94a9592476c0:leadpilot/"$file" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/fns-identity/old"
+            sha256sum leadpilot/"$file" | cut -d' ' -f1 >> "$RUNNER_TEMP/fns-identity/new"
+          done
+      - name: Examine stored immutable image layer and compose labels, no writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/fns-identity/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          aux_old="$(sed -n '1p' "$RUNNER_TEMP/fns-identity/old")"
+          msp_old="$(sed -n '2p' "$RUNNER_TEMP/fns-identity/old")"
+          ssh -T -i "$RUNNER_TEMP/fns-identity/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "python3 - '$aux_old' '$msp_old'" <<'PY'
+          import sys,tarfile,io,hashlib,subprocess,json,re,os
+          aux_old,msp_old=sys.argv[1:]
+          services={'AUX':'serviceit-leadgen-vps-auxiliaries-1',
+                    'MSP':'serviceit-leadgen-vps-fns-msp-1'}
+          def cmd(*args):
+              try:
+                  return subprocess.run(args,stdin=subprocess.DEVNULL,
+                      capture_output=True,timeout=35,check=False)
+              except (OSError,subprocess.TimeoutExpired):
+                  return None
+          def say(n,v):print('FNS_SHA_'+n+'='+str(v),flush=True)
+          for name,container in services.items():
+              image=cmd('docker','inspect','-f','{{.Image}}',container)
+              image_value=image.stdout.decode().strip() if image and image.returncode==0 else ''
+              say(name+'_IMAGE_PRESENT','YES' if re.fullmatch('sha256:[0-9a-f]{64}',image_value) else 'NO')
+              labels=cmd('docker','inspect','-f','{{index .Config.Labels "com.docker.compose.project.config_files"}}',container)
+              paths=labels.stdout.decode().strip().split(',') if labels and labels.returncode==0 else []
+              say(name+'_COMPOSE_FILES',str(min(len(paths),99)))
+              say(name+'_RELEASE_COMPOSE','YES' if any(re.search(r'/releases/[a-f0-9]{40}/deploy/serviceit-vps.compose.yml$',x.strip()) for x in paths) else 'NO')
+              for module,expected in (('serviceit_vps_native_aux.py',aux_old),
+                                      ('serviceit_vps_native_msp.py',msp_old)):
+                  tar=cmd('docker','cp',container+':/app/leadpilot/'+module,'-')
+                  sha=''
+                  if tar and tar.returncode==0:
+                      try:
+                          stream=tarfile.open(fileobj=io.BytesIO(tar.stdout),mode='r:')
+                          members=[m for m in stream.getmembers() if m.isfile() and m.name.split('/')[-1]==module]
+                          if len(members)==1:
+                              raw=stream.extractfile(members[0]).read()
+                              sha=hashlib.sha256(raw).hexdigest()
+                      except (tarfile.TarError,ValueError,AttributeError):pass
+                  say(name+'_'+module[:-3].upper()+'_BASELINE','MATCH' if sha==expected else ('DIFF' if sha else 'UNVERIFIED'))
+          say('ALL_READONLY','YES')
+          PY

@@ -1,0 +1,88 @@
+name: ServiceIT B2B staged image real Bitrix duplicate prewrite READ ONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-production-prewrite
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_STAGED_PREWRITE_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pinned SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ && "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          install -d -m 0700 "$RUNNER_TEMP/prewrite"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/prewrite/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/prewrite/known_hosts"
+          chmod 600 "$RUNNER_TEMP/prewrite/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/prewrite/known_hosts" >/dev/null
+      - name: Execute isolated new-image source identity proof without CRM writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/prewrite/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/prewrite/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > "$RUNNER_TEMP/prewrite/status" <<'PY'
+          import os,subprocess,pathlib
+          source=pathlib.Path.home()/"serviceit/staging/b2b-direct-image-42791235235/source"
+          compose=source/"deploy/serviceit-vps-b2b-direct.compose.yml"
+          assert compose.is_file() and (source/"leadpilot/serviceit_b2b_positive_control.py").is_file()
+          env=dict(os.environ, SERVICEIT_VPS_SECRETS_DIR="/etc/serviceit/secrets")
+          code='''import os,httpx
+          from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          webhook=secret_file(dict(os.environ),"SERVICEIT_BITRIX_WEBHOOK")
+          base=validate_webhook(webhook)
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
+              assert positive_duplicate_control(client,base)
+          print("B2B_PREWRITE_STAGED_EXACT_SOURCE=PASS")
+          '''
+          p=subprocess.run(["docker","compose","-f",str(compose),
+               "run","--no-deps","--rm","-T","--no-build",
+               "writer","python","-c",code],env=env,
+               stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+               text=True,timeout=90,stdin=subprocess.DEVNULL)
+          if p.returncode==0 and "B2B_PREWRITE_STAGED_EXACT_SOURCE=PASS" in p.stdout:
+              print("B2B_PREWRITE_STAGED_EXACT_SOURCE=YES")
+          else:
+              print("B2B_PREWRITE_STAGED_EXACT_SOURCE=NO")
+              raise SystemExit(2)
+          print("B2B_PREWRITE_CRM_WRITES=ZERO")
+          PY
+          grep -E '^B2B_PREWRITE_[A-Z0-9_]+=(YES|NO|ZERO)$' "$RUNNER_TEMP/prewrite/status"
+          grep -qx 'B2B_PREWRITE_STAGED_EXACT_SOURCE=YES' "$RUNNER_TEMP/prewrite/status"
+      - name: Publish sanitized result to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/prewrite/status"
+          summary="$(grep -E '^B2B_PREWRITE_[A-Z0-9_]+=(YES|NO|ZERO)$' "$f" 2>/dev/null | head -10 || true)"
+          [[ -n "$summary" ]] || summary="B2B_PREWRITE_STAGED_EXACT_SOURCE=UNVERIFIED"
+          msg="$(printf 'B2B new-image Bitrix positive/negative source checks BEFORE WRITES:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo live container replacement, no Bitrix mutations.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

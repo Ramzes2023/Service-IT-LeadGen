@@ -184,7 +184,7 @@ def pin_image(content, expected_old, target):
 
 
 def atomic_write(path, data):
-    fd, tmp = tempfile.mkstemp(prefix=".v11-pinned-", dir=str(path.parent))
+    fd, tmp = tempfile.mkstemp(prefix=".tdi-pinned-", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf8") as stream:
             os.fchmod(fd, 0o600)
@@ -236,7 +236,7 @@ with db(dict(os.environ)) as conn:
         print(int(cur.fetchone()[0]))
 """
     v11_count = output(["docker","exec",CORE,"python","-B","-c",v11])
-    require(v11_count.isdigit(), "V11_INFLIGHT_UNVERIFIED")
+    require(v11_count.isdigit(), "TDI_V11_INFLIGHT_UNVERIFIED")
     return count + int(old_count) + int(v11_count)
 
 
@@ -305,7 +305,7 @@ def run(run_id, new_hashes):
             old_image = image(CORE)
             actual_env = env_of(CORE)
             require(all(actual_env.get(k) == v for k, v in GATES.items()),
-                    "V11_PRIVACY_OR_RESEARCH_GATES_MISSING")
+                    "TDI_PRIVACY_OR_RESEARCH_GATES_MISSING")
             paths = inspect_compose_paths()
             old_pin = PIN.read_text("utf8")
             require(TDI_FLAG not in old_pin,
@@ -392,7 +392,7 @@ print('TDI_OFFLINE_SMOKE_PASS')
             require(all(trial["services"][name] == value
                         for name, value in before["services"].items()
                         if name != "coordinator"),
-                    "V11_ADJACENT_COMPOSE_DRIFT")
+                    "TDI_ADJACENT_COMPOSE_DRIFT")
             atomic_write(PIN, next_pin)
             altered = True
             call(compose(paths, "up", "-d", "--no-deps", "--no-build",
@@ -402,7 +402,7 @@ print('TDI_OFFLINE_SMOKE_PASS')
             require(all(image(n) == before_id and
                         (not neighbor_healthy[n] or healthy(n))
                         for n, before_id in neighbor_images.items()),
-                    "V11_ADJACENT_CONTAINER_CHANGED")
+                    "TDI_ADJACENT_CONTAINER_CHANGED")
             print("TDI_RELEASE_VPS_LIVE_ENABLED=YES", flush=True)
             print("TDI_RELEASE_CRM_WRITES_BY_INSTALLER=NO", flush=True)
             print("TDI_RELEASE_ROLLBACK=NOT_NEEDED", flush=True)

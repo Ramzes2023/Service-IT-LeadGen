@@ -1,0 +1,98 @@
+name: ServiceIT B2B research V2 exact four cards one-time acceptance
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-vps-native-shadow-readonly
+  cancel-in-progress: false
+jobs:
+  accept:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V2_FOUR_CARDS_ONESHOT_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 19
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pinned nonroot SSH preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/accept-v2"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/accept-v2/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/accept-v2/hosts"
+          chmod 0600 "$RUNNER_TEMP/accept-v2/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/accept-v2/hosts" >/dev/null
+      - name: Process at most four exact existing B2B PG receipts using approved native code
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/accept-v2/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/accept-v2/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/accept-v2/status" <<'PY'
+          import os,re
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_vps_worker import live_permitted,exact_environment,INTERVAL_SECONDS
+          from leadpilot.serviceit_vps_b2b_deep_research import run_once,RECEIPT
+          env=dict(os.environ)
+          assert live_permitted(env)
+          assert env.get('SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED')=='YES'
+          assert RECEIPT=='B2B_RESEARCH_V2' and INTERVAL_SECONDS==300
+          print('ONESHOT_V2_GATE_CONFIRMED=YES',flush=True)
+          exact=exact_environment(env)
+          with db(env) as connection:
+            with httpx.Client(trust_env=False,follow_redirects=False,timeout=18) as client:
+              for i in range(1,5):
+                try:
+                  out=run_once(exact,client,connection)
+                  status=out.get('status','UNKNOWN')
+                  if not isinstance(status,str) or not re.fullmatch(r'[A-Z0-9_]{4,100}',status):
+                    status='UNVERIFIED'
+                  print('ONESHOT_V2_CARD_'+str(i)+'_OUTCOME='+status,flush=True)
+                  if status in ('B2B_RESEARCH_IDLE',
+                                'B2B_RESEARCH_UNCERTAIN_NO_REPLAY',
+                                'B2B_RESEARCH_ALREADY_RESERVED'):
+                    break
+                except Exception:
+                  print('ONESHOT_V2_UNVERIFIED_NO_RETRY=YES',flush=True)
+                  break
+          print('ONESHOT_V2_CRM_ITEM_CREATES=0',flush=True)
+          print('ONESHOT_V2_TASK_CREATES=0',flush=True)
+          print('ONESHOT_V2_DONE=YES',flush=True)
+          PY
+          grep -E '^ONESHOT_V2_[A-Z0-9_]+=(YES|NO|[0-9]+|[A-Z0-9_]{4,100})$' \
+            "$RUNNER_TEMP/accept-v2/status" | head -25
+          grep -qx 'ONESHOT_V2_DONE=YES' "$RUNNER_TEMP/accept-v2/status"
+      - name: Publish fixed outcome codes only
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/accept-v2/status"
+          report="$(grep -E '^ONESHOT_V2_[A-Z0-9_]+=(YES|NO|[0-9]+|[A-Z0-9_]{4,100})$' "$f" 2>/dev/null | head -25 || true)"
+          [[ -n "$report" ]] || report='ONESHOT_V2_FAILED_TO_CONFIRM=YES'
+          body="$(printf 'B2B one-time V2 native catch-up (max 4 already verified source cards):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNative PG receipts only, no blind retries; no new CRM cards, tasks, contacts, outreach, secrets, actual customer details, AI outputs or source IDs in logs.' "$report" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$body" >/dev/null || true

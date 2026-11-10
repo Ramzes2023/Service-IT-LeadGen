@@ -119,6 +119,30 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
             or not allow_mirrors <= MIRRORS):
         return None
     from .serviceit_independent_company_research import SEARCH_URL
+    # One already independently verified public mirror URL is a hint, NOT
+    # trusted content: the same DNS, HTTPS, robots and exact-ID/title checks
+    # always run again. All other procurement IDs use Brave discovery.
+    known = {"4673595": "https://tendem.ru/tenders/16548471"}
+    if "tendem.ru" in allow_mirrors and tender_id in known:
+        try:
+            page = from_public_page(
+                client, known[tender_id], tender_id, subject)
+            if page:
+                return {
+                    "status": "PUBLIC_PAGES_INSPECTED",
+                    "pages": [{"url": page["url"],
+                               "excerpt": page["excerpt"][:3500]}],
+                    "contacts": [], "model_excerpt": _safe_model_excerpt(
+                        page["excerpt"]),
+                    "checked_at": page["checked_at"],
+                    "company_site_candidate": "",
+                    "employer_named_in_source": "",
+                    "browser_rendered_unverified": False,
+                    "independent_company_research": None,
+                    "discovery": "INDEPENDENT_PUBLIC_MIRROR_REVERIFIED",
+                }
+        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+            pass
     for mirror in sorted(allow_mirrors):
         try:
             res = client.get(
@@ -152,7 +176,7 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
                 return {
                     "status": "PUBLIC_PAGES_INSPECTED",
                     "pages": [{"url": item["url"],
-                               "excerpt": item["excerpt"][:2400]}],
+                               "excerpt": item["excerpt"][:3500]}],
                     "contacts": [], "model_excerpt": _safe_model_excerpt(
                         item["excerpt"]),
                     "checked_at": item["checked_at"],

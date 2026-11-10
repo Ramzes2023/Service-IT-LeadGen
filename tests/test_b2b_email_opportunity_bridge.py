@@ -160,3 +160,19 @@ def test_it_specialist_staffing_tender_4673595_is_service_opportunity_not_qualif
 def test_generic_jobs_and_unrelated_staffing_are_not_it_procurement(title):
     assert classify_services(title) == []
 
+
+
+@pytest.mark.parametrize("label", [
+    "Окончание подачи заявок", "Окончание приёма заявок",
+    "Срок подачи заявок", "Приём предложений до",
+    "Окончание приема предложений", "Дата окончания подачи заявок",
+])
+def test_explicit_b2b_vendor_email_deadline_labels_stay_unverified(label):
+    html = ('<div>Организатор закупки: АО «Тестовый заказчик»'
+            '<p>Предмет закупки: Внедрение 1С ERP</p>'
+            f'<p>{label}: 19.11.2026 13:00</p>'
+            f'<a href="{href("4672802")}">Процедура №4672802</a></div>')
+    entries = parse_email(mail(html))["observations"]
+    assert len(entries) == 1
+    assert entries[0]["deadline_as_stated_in_email"] == "19.11.2026 13:00"
+    assert entries[0]["deadline_verified_from_original"] is False

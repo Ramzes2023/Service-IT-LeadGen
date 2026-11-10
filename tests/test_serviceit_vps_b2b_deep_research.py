@@ -54,7 +54,7 @@ def test_public_subject_in_signed_receipt_is_used_not_generic_kanban_title():
         NOTICE, 105, "B2B-CENTER-4673595", data)
     assert title == NOTICE["subject"]
     assert title != data["title"]
-    assert "B2B_RESEARCH_V2" in NATIVE_NAMESPACES
+    assert "B2B_RESEARCH_V3" in NATIVE_NAMESPACES
 
 
 @pytest.mark.parametrize("field, replacement", [
@@ -220,7 +220,7 @@ def test_live_one_card_uses_separate_fence_and_exact_nine_readback(monkeypatch):
     monkeypatch.setattr(research, "investigate_routerai", deep_model)
     class Fence:
         def __init__(self, _, namespace):
-            assert namespace == "B2B_RESEARCH_V2"
+            assert namespace == "B2B_RESEARCH_V3"
         def reserve(self, card):
             calls.append("pg.reserve")
             return "RESERVED"

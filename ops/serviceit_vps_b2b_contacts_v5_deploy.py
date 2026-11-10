@@ -37,7 +37,7 @@ OTHER = (
 )
 FILES = ("serviceit_vps_b2b_deep_research.py",)
 # Enforce pinned previous SHA passed by GitHub owner workflow.
-FLAG = "SERVICEIT_VPS_B2B_CONTACTS_RESEARCH_ENABLED"
+FLAG = "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED"
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
     "SERVICEIT_VPS_CUTOVER_AUTHORIZED": "YES",

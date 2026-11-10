@@ -230,7 +230,7 @@ def model_safe_source_title(title, findings):
     # the public page. This is an inference gate, not proof of buyer identity.
     if len(meaningful & public) >= 2:
         return title
-    return excerpt
+    return plain(excerpt[:240], 240)
 
 
 def draft_fields(item, findings, *, ai=None, safe_title=""):

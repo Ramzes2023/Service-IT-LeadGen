@@ -1,0 +1,141 @@
+name: ServiceIT B2B TDI four original Bitrix cards guarded document batch
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-tdi-four-batch
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_TDI_FOUR_BATCH_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pinned SSH and exact existing four source-V11 cards
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/tdi-four"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tdi-four/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tdi-four/hosts"
+          chmod 0600 "$RUNNER_TEMP/tdi-four/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tdi-four/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/tdi-four/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tdi-four/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/tdi-four/preflight" <<'PY'
+          import os
+          from pypdf import PdfReader
+          from leadpilot.serviceit_vps_worker import live_permitted
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_vps_b2b_document_worker import ENABLED,run_once
+          env=dict(os.environ)
+          assert live_permitted(env) and env.get(ENABLED)=='YES'
+          assert callable(PdfReader) and callable(run_once)
+          with db(env) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL")
+                  assert int(cur.fetchone()[0])==4, "SOURCE_FOUR_ONLY"
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_dossier_v11_receipts WHERE status='VERIFIED'")
+                  assert int(cur.fetchone()[0])==4, "V11_FOUR_VERIFIED_REQUIRED"
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_dossier_v11_receipts WHERE status IN ('RESERVED','WRITE_INTENT','UNCERTAIN','CONFLICT')")
+                  assert int(cur.fetchone()[0])==0, "V11_UNCERTAIN_BLOCK"
+          print("TDI_FOUR_PREFLIGHT=YES",flush=True)
+          PY
+          grep -qx 'TDI_FOUR_PREFLIGHT=YES' "$RUNNER_TEMP/tdi-four/preflight"
+      - name: Process only exact four source-backed notices; use one-use PG receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          ssh -T -i "$RUNNER_TEMP/tdi-four/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tdi-four/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -m leadpilot.serviceit_vps_b2b_document_worker --batch-four' \
+            > "$RUNNER_TEMP/tdi-four/outcome"
+          rc=$?
+          set -e
+          python - "$RUNNER_TEMP/tdi-four/outcome" <<'PY'
+          import json,sys
+          obj=json.load(open(sys.argv[1],encoding='utf8'))
+          rows=obj.get('results',[])
+          assert obj.get('status')=='TDI_FOUR_BATCH' and len(rows)==4
+          allowed={'TDI_COMMENT_VERIFIED','TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H',
+                   'TDI_NO_ELIGIBLE_CARDS','TDI_ANOTHER_WORKER_RUNNING',
+                   'TDI_ALREADY_RESERVED_NO_RETRY'}
+          assert all(r.get('status') in allowed for r in rows)
+          print("TDI_FOUR_SAFE_OUTCOME=YES",flush=True)
+          print("TDI_FOUR_ADDED="+str(sum(r['status']=='TDI_COMMENT_VERIFIED' for r in rows)),flush=True)
+          print("TDI_FOUR_NO_PUBLIC_FILES="+str(sum(r['status']=='TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H' for r in rows)),flush=True)
+          print("TDI_FOUR_SKIPPED="+str(sum(r['status'] in {'TDI_NO_ELIGIBLE_CARDS','TDI_ANOTHER_WORKER_RUNNING','TDI_ALREADY_RESERVED_NO_RETRY'} for r in rows)),flush=True)
+          PY
+          [[ "$rc" == 0 ]]
+      - name: Independent PostgreSQL and exact Bitrix timeline readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/tdi-four/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tdi-four/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/tdi-four/readback" <<'PY'
+          import hashlib,os,secrets
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.serviceit_vps_b2b_document_worker import _timeline_call
+          env=dict(os.environ)
+          with db(env) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("""SELECT card_id,status,comment_id,salt,digest
+                                FROM serviceit_vps_b2b_tender_doc_receipts
+                                ORDER BY card_id""")
+                  rows=cur.fetchall()
+          assert len(rows)<=4
+          verified=0
+          with httpx.Client(trust_env=False,follow_redirects=False) as client:
+              webhook=secret_file(env,'SERVICEIT_BITRIX_WEBHOOK')
+              for card,status,cid,salt,digest in rows:
+                  if status!='VERIFIED':
+                      continue
+                  item=_timeline_call(client,webhook,'crm.timeline.comment.get',
+                                      {'id':int(cid)})
+                  content=item.get('COMMENT')
+                  assert (item.get('ENTITY_TYPE','').casefold()=='dynamic_1062'
+                          and int(item.get('ENTITY_ID',0))==card
+                          and isinstance(content,str)
+                          and secrets.compare_digest(
+                            hashlib.sha256(bytes(salt)+content.encode()).digest(),
+                            bytes(digest)))
+                  verified+=1
+          print('TDI_FOUR_READBACK_ROWS='+str(len(rows)),flush=True)
+          print('TDI_FOUR_READBACK_VERIFIED='+str(verified),flush=True)
+          print('TDI_FOUR_READBACK_NO_DOCS='+str(sum(x[1]=='SCANNED_NO_DOCS' for x in rows)),flush=True)
+          print('TDI_FOUR_READBACK_UNCERTAIN='+str(sum(x[1] in ('UNCERTAIN','CONFLICT','RESERVED','AI_INTENT','WRITE_INTENT') for x in rows)),flush=True)
+          PY
+          grep -E '^TDI_FOUR_READBACK_(ROWS|VERIFIED|NO_DOCS|UNCERTAIN)=[0-4]$' "$RUNNER_TEMP/tdi-four/readback"

@@ -87,9 +87,22 @@ jobs:
           if p.returncode:
               raise SystemExit(0)
           code=(
-            "from pypdf import PdfReader\n"
-            "from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents\n"
-            "from leadpilot.serviceit_vps_b2b_document_worker import worker_once\n"
+            "import importlib\n"
+            "names=('pypdf','leadpilot.serviceit_b2b_tender_documents',"
+            "'leadpilot.serviceit_vps_b2b_document_worker',"
+            "'leadpilot.serviceit_vps_b2b_dossier_v11_worker',"
+            "'leadpilot.serviceit_vps_worker')\n"
+            "for i,name in enumerate(names,1):\n"
+            "  try:\n"
+            "    importlib.import_module(name)\n"
+            "    print('TDI_DIAG_IMPORT_'+str(i)+'=YES',flush=True)\n"
+            "  except Exception as exc:\n"
+            "    print('TDI_DIAG_IMPORT_'+str(i)+'=NO',flush=True)\n"
+            "    print('TDI_DIAG_IMPORT_REASON_'+str(i)+'='+"
+            "      ('MODULE_NOT_FOUND' if isinstance(exc,ModuleNotFoundError) else"
+            "       'IMPORT' if isinstance(exc,ImportError) else"
+            "       'OTHER'),flush=True)\n"
+            "    raise SystemExit(2)\n"
             "print('TDI_DIAG_SMOKE=YES')\n"
           )
           smoke=subprocess.run([
@@ -98,7 +111,11 @@ jobs:
               '--entrypoint','python','serviceit-tdi-diagnostic:42903193440',
               '-B','-c',code],capture_output=True,text=True,timeout=65,check=False)
           print('TDI_DIAG_SMOKE='+('YES' if smoke.returncode==0 and 'TDI_DIAG_SMOKE=YES' in smoke.stdout else 'NO'),flush=True)
+          for line in smoke.stdout.splitlines():
+              if re.fullmatch(r'TDI_DIAG_IMPORT_[1-5]=(YES|NO)',line) or re.fullmatch(r'TDI_DIAG_IMPORT_REASON_[1-5]=(MODULE_NOT_FOUND|IMPORT|OTHER)',line):
+                  print(line,flush=True)
           if smoke.returncode:
               print('TDI_DIAG_SMOKE_REASON='+categorize(smoke.stderr),flush=True)
           PY
-          grep -E '^TDI_DIAG_[A-Z_]+=(YES|NO|UNVERIFIED|OK|OTHER|NO_SPACE|FILE_NOT_FOUND|BASE_IMAGE_MISSING|PERMISSION|PIP_REJECTED|PIP_INSTALL_FAILED|BUILD_SOLVE_FAILED|NETWORK|ARCH)$' "$RUNNER_TEMP/tdi-debug/probe"
+          grep -E '^TDI_DIAG_([A-Z_]+|IMPORT_[1-5]|IMPORT_REASON_[1-5])=(YES|NO|UNVERIFIED|OK|OTHER|NO_SPACE|FILE_NOT_FOUND|BASE_IMAGE_MISSING|PERMISSION|PIP_REJECTED|PIP_INSTALL_FAILED|BUILD_SOLVE_FAILED|NETWORK|ARCH|MODULE_NOT_FOUND|IMPORT) "$RUNNER_TEMP/tdi-debug/probe"
+ "$RUNNER_TEMP/tdi-debug/probe"

@@ -170,17 +170,36 @@ def compose_json(paths):
 
 
 def pin_image(content, expected_old, target):
+    """Canonical self-contained Compose override; never append to old content.
+
+    The previous appended environment stanza failed live docker compose
+    config parsing (#42908404218); the canonical minimal variant passed
+    independently (#42908770020). Existing live settings are compared
+    structurally before the pin is ever changed, and the original pin is
+    archived for rollback.
+    """
     require(isinstance(content, str)
             and 'services:\n  coordinator:\n' in content
             and '    pull_policy: never\n' in content,
             "IMMUTABLE_PIN_FORMAT_CHANGED")
+    require(re.fullmatch(r"sha256:[0-9a-f]{64}", expected_old)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", target)
+            and expected_old != target,
+            "IMMUTABLE_PIN_IMAGE_INVALID")
     pattern = r'(?m)^    image: "' + re.escape(expected_old) + r'"$'
-    result, count = re.subn(pattern, '    image: "' + target + '"', content)
-    require(count == 1 and result != content,
-            "IMMUTABLE_PIN_IMAGE_CONFLICT")
-    require(TDI_FLAG not in result,
-            "TDI_FLAG_ALREADY_IN_PIN")
-    return result + '    environment:\n      ' + TDI_FLAG + ': "YES"\n'
+    _, count = re.subn(pattern, '', content)
+    require(count == 1, "IMMUTABLE_PIN_IMAGE_CONFLICT")
+    require(TDI_FLAG not in content, "TDI_FLAG_ALREADY_IN_PIN")
+    # Preserve old Compose runtime semantics via the separate model-diff
+    # preflight, not by concatenating YAML to an unknown trailing section.
+    return (
+        'services:\n'
+        '  coordinator:\n'
+        '    image: "' + target + '"\n'
+        '    pull_policy: never\n'
+        '    environment:\n'
+        '      ' + TDI_FLAG + ': "YES"\n'
+    )
 
 
 def atomic_write(path, data):

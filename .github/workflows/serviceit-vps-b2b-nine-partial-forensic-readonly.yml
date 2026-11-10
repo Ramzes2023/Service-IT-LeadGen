@@ -52,7 +52,7 @@ jobs:
           import subprocess,re
           code = """
           print('B2B_NINE_STARTED=YES',flush=True)
-          import os,httpx
+          import os,httpx,re
           from leadpilot.serviceit_vps_pg_queue import db,secret_file
           from leadpilot.serviceit_enrichment_worker import normalized,AI_FIELDS,PREFIX,Rest,validate_identity
           from leadpilot.serviceit_windows_autofill import preliminary_fields
@@ -74,6 +74,16 @@ jobs:
           with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
               rest=Rest(base,client)
               print('B2B_NINE_REST_READY=YES',flush=True)
+              field_metadata=rest('crm.item.fields',{'entityTypeId':1062,'useOriginalUfNames':'Y'})['fields']
+              for key in keys:
+                  meta=field_metadata.get(key,{})
+                  suffix=key.removeprefix(PREFIX)
+                  if isinstance(meta,dict):
+                      is_text=meta.get('type')=='string'
+                      is_write=meta.get('isReadOnly') is False
+                      print('B2B_NINE_META_'+suffix+'_STRING='+('YES' if is_text else 'NO'),flush=True)
+                      print('B2B_NINE_META_'+suffix+'_WRITABLE='+('YES' if is_write else 'NO'),flush=True)
+              print('B2B_NINE_METADATA_DONE=YES',flush=True)
               for position,(card,source,queue,native,names,salt,digest) in enumerate(rows,1):
                   item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':int(card),'useOriginalUfNames':'Y'})['item'])
                   validate_identity(item,int(card))
@@ -87,6 +97,10 @@ jobs:
                       print('B2B_NINE_CARD_'+str(position)+'_'+suffix+'_'+state+'=YES',flush=True)
                       if state=='FILLED':
                           print('B2B_NINE_CARD_'+str(position)+'_'+suffix+'_LEN='+str(len(val)),flush=True)
+                  generated=preliminary_fields(item)
+                  for key in keys:
+                      suffix=key.removeprefix(PREFIX)
+                      print('B2B_NINE_CARD_'+str(position)+'_'+suffix+'_GENERATED_LEN='+str(len(generated[key])),flush=True)
                   if isinstance(names,list) and len(names)==9 and salt is not None and digest is not None:
                       observed={name:item.get(name) for name in names}
                       exact=digested(observed,bytes(salt))==bytes(digest)

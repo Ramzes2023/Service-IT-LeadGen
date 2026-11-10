@@ -77,7 +77,10 @@ def run():
         raw = message.get("content")
         finish = choice.get("finish_reason")
         usage = envelope.get("usage", {})
-        line("FINISH", finish if isinstance(finish,str) else "UNSET")
+        normalized_finish = (
+            finish.upper().replace("-", "_")[:55]
+            if isinstance(finish, str) else "UNSET")
+        line("FINISH", normalized_finish)
         line("MESSAGE_CONTENT", "TEXT" if isinstance(raw,str) and raw.strip()
              else "EMPTY_OR_NON_TEXT")
         line("REASONING_PRESENT", "YES" if bool(message.get("reasoning_content"))
@@ -95,8 +98,13 @@ def run():
             result = validate_inference(parsed, docs)
             line("INFERENCE_SCHEMA", "VALID")
             line("FACTS", min(12,len(result["facts"])))
-        except ValueError:
+        except ValueError as exc:
+            # The decoder's fixed internal error code is safe; never expose
+            # raw model answer, response body or customer text.
+            code = str(exc)
             line("INFERENCE_SCHEMA", "INVALID")
+            line("SCHEMA_REASON", code if re.fullmatch(r"[A-Z0-9_]{4,50}", code)
+                 else "OTHER")
     except (ValueError,TypeError,KeyError,IndexError,AttributeError):
         line("ENVELOPE", "INVALID")
     line("COMPLETED", "YES")

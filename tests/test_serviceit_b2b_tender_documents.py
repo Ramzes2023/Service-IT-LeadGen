@@ -201,3 +201,91 @@ def test_fact_first_document_dossier_skips_repeated_empty_sections():
     assert "Не найдено подтверждённых цитат" not in report
     assert document_url in report
     assert "достоверный ИНН документами не установлены" in report
+
+
+def test_public_document_bytes_are_prepared_as_exact_bitrix_files():
+    import base64
+    import hashlib
+    payload = make_docx()
+    item = {"url": ATT, "kind": ".docx", "text": "Текст из документа",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload), "payload": payload}
+    files, manifest = worker.prepare_public_attachments([item], TENDER)
+    assert files == [["b2b-4673595-document-1.docx",
+                      base64.b64encode(payload).decode("ascii")]]
+    assert manifest == [{"name": "b2b-4673595-document-1.docx",
+                         "size": len(payload)}]
+    assert worker.verify_timeline_attachments(
+        {"FILES": {"739": {"id": 739, "name": manifest[0]["name"],
+                           "size": len(payload)}}}, manifest) == 1
+
+
+def test_attachment_hash_size_missing_data_and_bitrix_partial_readback_block():
+    import hashlib
+    raw = b"%PDF-" + b"public educational tender" * 8
+    record = {"url": "https://www.b2b-center.ru/files/terms.pdf",
+              "kind": ".pdf", "bytes": len(raw), "payload": raw,
+              "sha256": hashlib.sha256(raw).hexdigest()}
+    files, manifest = worker.prepare_public_attachments([record], TENDER)
+    assert files and manifest
+    for broken in (
+        {**record, "payload": raw + b"evil"},
+        {**record, "bytes": len(raw) + 1},
+        {**record, "sha256": "a" * 64},
+        {**record, "payload": None},
+    ):
+        with pytest.raises(worker.DocumentWorkerBlocked):
+            worker.prepare_public_attachments([broken], TENDER)
+    with pytest.raises(worker.DocumentWorkerBlocked):
+        worker.verify_timeline_attachments({"FILES": {}}, manifest)
+    with pytest.raises(worker.DocumentWorkerBlocked):
+        worker.verify_timeline_attachments(
+            {"FILES": {"1": {"id": 1, "name": manifest[0]["name"],
+                             "size": len(raw) + 1}}}, manifest)
+    with pytest.raises(worker.DocumentWorkerBlocked):
+        worker.verify_timeline_attachments(
+            {"FILES": {"1": {"id": 1, "name": "wrong.pdf",
+                             "size": len(raw)}}}, manifest)
+
+
+def test_zip_and_large_files_not_uploaded_and_no_untrusted_filenames():
+    import hashlib
+    raw = b"ZIP" * 15
+    huge = b"large" * 610_000
+    def row(content, ext):
+        return {"url": "https://www.b2b-center.ru/files/unsafe-name" + ext,
+                "kind": ext, "bytes": len(content), "payload": content,
+                "sha256": hashlib.sha256(content).hexdigest()}
+    pairs, manifest = worker.prepare_public_attachments(
+        [row(raw, ".zip"), row(huge, ".pdf"), row(raw, ".txt")], TENDER)
+    assert len(pairs) == len(manifest) == 1
+    assert pairs[0][0] == "b2b-4673595-document-3.txt"
+    assert "unsafe-name" not in pairs[0][0]
+    with pytest.raises(worker.DocumentWorkerBlocked):
+        worker.prepare_public_attachments([row(raw, ".txt")], "../4673595")
+
+
+def test_reader_keeps_payload_for_valid_fenced_bitrix_attachment(monkeypatch):
+    import hashlib
+    monkeypatch.setattr(research, "_public_dns", lambda host: True)
+    monkeypatch.setattr(docs, "_public_dns", lambda host: True)
+    monkeypatch.setattr(docs, "_robots", lambda *args: None)
+    payload = make_docx()
+    def endpoint(request):
+        if request.url.path == "/market/synthetic/4673595/":
+            return httpx.Response(200,
+                text='<html>Тендер 4673595 <a href="/files/tz.docx">'
+                     'Скачать ТЗ</a></html>')
+        if request.url.path == "/files/tz.docx":
+            return httpx.Response(200, content=payload,
+                                  headers={"content-type": "application/octet-stream"})
+        return httpx.Response(404)
+    with httpx.Client(transport=httpx.MockTransport(endpoint)) as client:
+        found = docs.inspect_public_documents(
+            client,
+            {"status": "PUBLIC_PAGES_INSPECTED", "pages":
+             [{"url": URL, "excerpt": "Объявление тендера 4673595"}]},
+            TENDER)
+    doc = found["documents"][0]
+    assert doc["payload"] == payload
+    assert doc["sha256"] == hashlib.sha256(payload).hexdigest()

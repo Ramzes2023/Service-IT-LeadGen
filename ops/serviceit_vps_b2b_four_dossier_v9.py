@@ -341,13 +341,58 @@ def compose_dossier(item, notice, source, signed_title, findings, inference):
         fields[PREFIX+"AI_QUOTE"] = "Публично: " + clean(facts[0]["quote"],280)
     # Keep existing AI_STATUS as a truthful original model/provenance status,
     # while the new V9 provenance is explicit at the top of the dossier.
-    fields = {k: clean(v, MAX_REPORT if k==REPORT else MAX_TEXT)
-              if k != REPORT else v for k,v in fields.items()}
+    # Preserve line breaks in manager memo and limitations; a dossier must
+    # remain scannable on the actual Bitrix detail form.
+    fields = {
+        k: (v if k == REPORT else
+            "\n".join(clean(line, MAX_TEXT) for line in v.splitlines())[:MAX_TEXT]
+            if k in (BRIEF, PREFIX+"AI_LIMITATIONS") else clean(v, MAX_TEXT))
+        for k, v in fields.items()
+    }
     require(set(fields) == AI_FIELDS and all(
         type(v) is str and v.strip() and len(v) <= (
             MAX_REPORT if k==REPORT else MAX_TEXT)
         for k,v in fields.items()), "NINE_FIELD_SCHEMA_INVALID")
     return fields, len(docs), len(facts), bool(buyer)
+
+def verify_readback(env):
+    """Read-only reconciliation: V9 receipt hash against all 9 live CRM fields."""
+    env=exact_environment(env)
+    with db(env) as conn:
+        rows=list_exact_four(conn)
+        with httpx.Client(trust_env=False,follow_redirects=False,timeout=22) as client:
+            rest=Rest(secret_file(env,"SERVICEIT_BITRIX_WEBHOOK"),client)
+            confirmed=0
+            for ix,(card,source,notice) in enumerate(rows,1):
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute("SET TRANSACTION READ ONLY")
+                        cur.execute("""
+                            SELECT status,digest_salt,expected_digest,source_hash
+                            FROM serviceit_vps_b2b_dossier_v9_receipts
+                            WHERE card_id=%s
+                        """,(card,))
+                        rec=cur.fetchone()
+                item=normalized(rest("crm.item.get",{
+                    "entityTypeId":1062,"id":card,"useOriginalUfNames":"Y"})["item"])
+                validate_identity(item,card)
+                old_fields(item)
+                ok=(rec is not None and rec[0]=="VERIFIED" and
+                    isinstance(rec[1],(bytes,memoryview)) and
+                    isinstance(rec[2],(bytes,memoryview)) and
+                    rec[3]==sha_source(source))
+                if ok:
+                    observed={key:item.get(key) for key in AI_FIELDS}
+                    ok=(secrets.compare_digest(
+                            digest(observed,bytes(rec[1])),bytes(rec[2]))
+                        and "КОММЕРЧЕСКОЕ ДОСЬЕ V9" in item[REPORT]
+                        and item.get(PREFIX+"SIGNAL_ID")==source)
+                confirmed+=int(ok)
+                print(f"DOSSIER_V9_CARD_{ix}="+(
+                    "READBACK_VERIFIED" if ok else "READBACK_UNVERIFIED"),flush=True)
+            print("DOSSIER_V9_ALL_FOUR_READBACK="+(
+                "YES" if confirmed==MAX_CARDS else "NO"),flush=True)
+            require(confirmed==MAX_CARDS,"FOUR_CRM_READBACK_INCOMPLETE")
 
 def run(apply):
     env = dict(os.environ)
@@ -457,9 +502,13 @@ def main():
     mx=parser.add_mutually_exclusive_group(required=True)
     mx.add_argument("--preview",action="store_true")
     mx.add_argument("--apply",action="store_true")
+    mx.add_argument("--verify",action="store_true")
     args=parser.parse_args()
     try:
-        run(args.apply)
+        if args.verify:
+            verify_readback(dict(os.environ))
+        else:
+            run(args.apply)
     except Exception:
         print("DOSSIER_V9_GLOBAL_BLOCKED=YES",flush=True)
         return 2

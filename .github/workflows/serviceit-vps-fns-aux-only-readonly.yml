@@ -102,6 +102,41 @@ jobs:
               stat('STRUCTURED_STATUS_COUNT',str(min(len(hits),99)))
               for v in sorted(hits)[:12]:
                   stat('LOG_STATUS',v)
+          # Even during crash/restart, Docker's Env metadata is readable.
+          # Print ONLY fixed safe gate booleans, never values of secrets.
+          config=run(['docker','inspect','-f','{{json .Config.Env}}',AUX])
+          if config and config.returncode==0:
+              try:
+                  rows=json.loads(config.stdout)
+                  allowed={}
+                  for item in rows:
+                      if isinstance(item,str) and '=' in item:
+                          name,value=item.split('=',1)
+                          allowed[name]=value
+                  for name,want in (
+                      ('SERVICEIT_VPS_WRITER_MODE','LIVE'),
+                      ('SERVICEIT_VPS_CUTOVER_AUTHORIZED','YES'),
+                      ('SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK','YES'),
+                      ('SERVICEIT_VPS_POLL_ENABLED','YES'),
+                      ('SERVICEIT_AI_PROVIDER','routerai'),
+                      ('SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED','YES'),
+                      ('SERVICEIT_ROUTERAI_PRIVACY_APPROVED','YES_1062_21'),
+                      ('SERVICEIT_VPS_INTAKE_ENABLED','NO'),
+                      ('SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED','YES'),
+                      ('SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED','NO'),
+                      ('SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED','NO'),
+                  ):
+                      stat('GATE_'+name,'YES' if allowed.get(name,'NO' if name.endswith('_INTAKE_ENABLED') else '')==want
+                           else 'NO')
+                  stat('NATIVE_ACTIVATION_PRESENT','YES' if allowed.get(
+                      'SERVICEIT_VPS_NATIVE_ACTIVATION_UTC') else 'NO')
+                  stat('WEBHOOK_SECRET_MOUNT_CONFIGURED','YES' if allowed.get(
+                      'SERVICEIT_BITRIX_WEBHOOK_FILE') or allowed.get(
+                      'SERVICEIT_SECRETS_DIR') else 'UNVERIFIED')
+              except (TypeError,ValueError,AttributeError):
+                  stat('DOCKER_CONFIG_ENV','UNVERIFIED')
+          else:
+              stat('DOCKER_CONFIG_ENV','UNVERIFIED')
           core=run(['docker','inspect','-f','{{.State.Running}}',
                     'serviceit-leadgen-vps-coordinator-1'])
           fns=run(['docker','inspect','-f','{{.State.Running}}',

@@ -1,0 +1,84 @@
+name: ServiceIT B2B public buyer research feature gates READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-buyer-research-flags-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_BUYER_RESEARCH_FLAGS_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Check actual active optional public company research gates, no values
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/buyer-gates"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/buyer-gates/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/buyer-gates/hosts"
+          chmod 0600 "$RUNNER_TEMP/buyer-gates/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/buyer-gates/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/buyer-gates/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/buyer-gates/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/buyer-gates/result" <<'PY'
+          import os
+          from pathlib import Path
+          import hashlib
+          e=dict(os.environ)
+          for name,key in (
+            ("COMPANY","SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"),
+            ("REQUISITES_EXTRA","SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED"),
+            ("BRAVE_CONTEXT","SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"),
+            ("TDI","SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED"),
+            ("B2B_V4","SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED"),
+          ):
+              print("BUYER_SEARCH_GATE_"+name+"="+
+                    ("YES" if e.get(key)=="YES" else
+                     "MISSING" if key not in e else "NO"),flush=True)
+          print("BUYER_SEARCH_ROUTERAI="+
+                ("YES" if e.get("SERVICEIT_AI_PROVIDER")=="routerai" else "NO"),flush=True)
+          for name,key in (
+            ("BRAVE_KEY","SERVICEIT_BRAVE_SEARCH_API_KEY"),
+            ("ROUTERAI_KEY","SERVICEIT_ROUTERAI_API_KEY"),
+          ):
+              # Never print secret value or length. Distinguish only present.
+              print("BUYER_SEARCH_"+name+"="+
+                    ("YES" if bool(e.get(key)) else "NO"),flush=True)
+          for idx,name in enumerate((
+             "serviceit_vps_b2b_deep_research.py",
+             "serviceit_independent_company_research.py",
+             "serviceit_b2b_dossier_v11.py",
+             "serviceit_b2b_public_mirrors.py"),1):
+              p=Path("/app/leadpilot")/name
+              digest=hashlib.sha256(p.read_bytes()).hexdigest() if (
+                  p.is_file() and not p.is_symlink()) else "MISSING"
+              print(f"BUYER_SEARCH_FILE_{idx}="+digest,flush=True)
+          PY
+          grep -E '^BUYER_SEARCH_(GATE_[A-Z0-9_]+|ROUTERAI|BRAVE_KEY|ROUTERAI_KEY)=(YES|NO|MISSING)$|^BUYER_SEARCH_FILE_[1-4]=([a-f0-9]{64}|MISSING)$' \
+            "$RUNNER_TEMP/buyer-gates/result"
+          [[ "$(grep -c '^BUYER_SEARCH_' "$RUNNER_TEMP/buyer-gates/result")" == 12 ]]

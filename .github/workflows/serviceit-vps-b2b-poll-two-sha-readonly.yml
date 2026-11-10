@@ -1,0 +1,60 @@
+name: ServiceIT VPS Bitrix poll two-file SHA READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-bitrix-poll-two-sha-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_POLL_TWO_SHA_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Read exact live two-module SHA256, never CRM
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-poll-two-sha"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-poll-two-sha/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-poll-two-sha/hosts"
+          chmod 0600 "$RUNNER_TEMP/b2b-poll-two-sha/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-poll-two-sha/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/b2b-poll-two-sha/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-poll-two-sha/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/b2b-poll-two-sha/result" <<'PY'
+          import hashlib
+          from pathlib import Path
+          names=("serviceit_bitrix_poll_fallback.py",
+                 "serviceit_bitrix_batch_worker.py")
+          for idx,name in enumerate(names,1):
+              p=Path("/app/leadpilot")/name
+              value=hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() and not p.is_symlink() else "MISSING"
+              print(f"POLL_TWO_LIVE_SHA_{idx}={value}",flush=True)
+          PY
+          grep -E '^POLL_TWO_LIVE_SHA_[12]=([0-9a-f]{64}|MISSING)$' \
+            "$RUNNER_TEMP/b2b-poll-two-sha/result"
+          [[ "$(grep -c '^POLL_TWO_LIVE_SHA_' "$RUNNER_TEMP/b2b-poll-two-sha/result")" == 2 ]]

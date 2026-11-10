@@ -10,7 +10,7 @@ import re
 from .serviceit_b2b_hold_ai_fields import PREFIX, AI_FIELDS
 from .serviceit_vps_b2b_deep_research import published_buyer_inn_evidence
 
-URL = re.compile(r"https://[A-Za-z0-9.-]{4,220}/[^\\s]{0,700}\\Z")
+URL = re.compile(r"https://[A-Za-z0-9.-]{4,220}/[^\s]{0,700}\Z")
 MAX_REPORT = 12000
 MAX_OTHER = 4096
 
@@ -26,12 +26,12 @@ def _safe_contact(row):
     if kind not in ("email", "phone") or not all(
             isinstance(s, str) for s in (value, url)):
         return None
-    if not URL.fullmatch(url) or len(value) > 170 or "\\n" in value:
+    if not URL.fullmatch(url) or len(value) > 170 or "\n" in value:
         return None
     if kind == "email":
-        if not re.fullmatch(r"[A-Za-z0-9_.+-]{1,64}@[A-Za-z0-9.-]{2,110}\\.[A-Za-z]{2,15}", value):
+        if not re.fullmatch(r"[A-Za-z0-9_.+-]{1,64}@[A-Za-z0-9.-]{2,110}\.[A-Za-z]{2,15}", value):
             return None
-    elif not re.fullmatch(r"[+\\d ()-]{8,26}", value):
+    elif not re.fullmatch(r"[+\d ()-]{8,26}", value):
         return None
     return kind, value, url
 
@@ -70,7 +70,7 @@ def supplement_existing_ai(item: dict, findings: dict) -> dict | None:
         lines.append(("Публичный email" if kind == "email" else "Публичный телефон")
                      + ": " + value + " | источник: " + url)
     lines.append("Контакт компании и законность обращения требуют отдельного подтверждения.")
-    addon = "\\n".join(lines)
+    addon = "\n".join(lines)
     old_report = item[PREFIX + "AI_FULL_REPORT"]
     old_brief = item[PREFIX + "AI_MANAGER_BRIEF"]
     # Never truncate the previously cited report or silently lose old facts.
@@ -82,11 +82,11 @@ def supplement_existing_ai(item: dict, findings: dict) -> dict | None:
     brief = "Новые публичные реквизиты/контакты: " + (
         (published_inn["inn"] + " (НЕ ФНС); ") if published_inn else ""
     ) + ", ".join(v for _, v, _ in verified[:3]) + ". Источники в полном отчёте."
-    new_brief = (brief + "\\n" + old_brief) if brief not in old_brief else old_brief
+    new_brief = (brief + "\n" + old_brief) if brief not in old_brief else old_brief
     if len(new_brief) > MAX_OTHER:
         return None
     out = {key: item[key] for key in AI_FIELDS}
-    out[PREFIX + "AI_FULL_REPORT"] = old_report + "\\n\\n" + addon
+    out[PREFIX + "AI_FULL_REPORT"] = old_report + "\n\n" + addon
     out[PREFIX + "AI_MANAGER_BRIEF"] = new_brief
     if (set(out) != AI_FIELDS
             or any(len(v) > (MAX_REPORT if key == PREFIX + "AI_FULL_REPORT" else MAX_OTHER)

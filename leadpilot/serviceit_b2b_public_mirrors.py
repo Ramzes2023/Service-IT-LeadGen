@@ -105,9 +105,9 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         # originated there. Require an explicit publication attribution
         # directly after the labelled number in relaxed-title mode.
         b2b_publisher = bool(re.search(
-            r"(?iu)(?:опубликован\\w*|размещен\\w*|размещён\\w*|"
-            r"площадка\\s*[:—-]?)"
-            r".{0,155}\\bb2b-center\\b", after_id))
+            r"(?iu)(?:опубликован\w*|размещен\w*|размещён\w*|"
+            r"площадка\s*[:—-]?)"
+            r".{0,155}\bb2b-center\b", after_id))
         title_supported = title_exact or (title_overlap and b2b_publisher)
         if (platform and procurement and number_labeled
                 and title_supported and number.start() <= 4200):

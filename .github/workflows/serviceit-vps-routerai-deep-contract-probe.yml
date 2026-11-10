@@ -1,0 +1,95 @@
+name: ServiceIT RouterAI cited-research JSON contract synthetic DIAGNOSTIC
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Type AUDIT_SYNTH_ROUTERAI_DEEP_ONLY_314'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: serviceit-vps-deep-json-contract-synthetic
+  cancel-in-progress: false
+
+jobs:
+  synthetic:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.approval == 'AUDIT_SYNTH_ROUTERAI_DEEP_ONLY_314')
+        ||
+        (github.event_name == 'issue_comment' &&
+         github.event.action == 'created' &&
+         github.event.issue.number == 314 &&
+         !github.event.issue.pull_request &&
+         github.event.comment.user.login == 'Ramzes2023' &&
+         github.event.comment.body == 'SERVICEIT_B2B_ROUTERAI_DEEP_DIAG_314')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+      RUN_ID: "${{ github.run_id }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify pinned SSH and synthetic-only source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_routerai_deep_contract_probe.py
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-synthetic"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-synthetic/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-synthetic/known_hosts"
+          chmod 600 "$RUNNER_TEMP/serviceit-synthetic/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-synthetic/known_hosts" >/dev/null
+      - name: One synthetic model request; no CRM, browser, or buyer data
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/serviceit-synthetic/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-synthetic/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -' \
+            < ops/serviceit_vps_routerai_deep_contract_probe.py \
+            > "$RUNNER_TEMP/serviceit-synthetic/result.txt"
+          grep -E '^MODEL_DIAG_[A-Z0-9_]+=([A-Z0-9_]+)$' \
+            "$RUNNER_TEMP/serviceit-synthetic/result.txt" \
+            > "$RUNNER_TEMP/serviceit-synthetic/safe.txt"
+          cat "$RUNNER_TEMP/serviceit-synthetic/safe.txt"
+          grep -qx 'MODEL_DIAG_DONE=YES' "$RUNNER_TEMP/serviceit-synthetic/safe.txt"
+      - name: Post sanitized synthetic evidence to issue 290
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          p="$RUNNER_TEMP/serviceit-synthetic/safe.txt"
+          if [[ -f "$p" ]]; then
+            report="$(head -20 "$p")"
+          else
+            report="MODEL_DIAG_DONE=UNVERIFIED"
+          fi
+          msg="$(printf 'Диагностика формата RouterAI и JSON deep-research, учебный текст, без CRM:\n\n%s\n\nRun: https://github.com/%s/actions/runs/%s\n\nПроверяется только код окончания, JSON и наличие структурного результата. Ни один исходный текст, API-ключ, URL клиента, ответ модели или поле CRM не записывается в журнал.' "$report" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

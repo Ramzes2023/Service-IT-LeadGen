@@ -42,58 +42,58 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/fns-stages/known" \
             -o BatchMode=yes -o ConnectTimeout=15 \
             "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
-          import subprocess,time
+          import subprocess,time,textwrap
           containers={'CORE':'serviceit-leadgen-vps-coordinator-1',
                       'AUX':'serviceit-leadgen-vps-auxiliaries-1'}
           stages={
             'FLAGS': """
-import os
-from leadpilot.serviceit_vps_native_aux import enabled,global_gate
-env=dict(os.environ)
-enabled(env);global_gate(env)
-print('PASS')
-""",
+          import os
+          from leadpilot.serviceit_vps_native_aux import enabled,global_gate
+          env=dict(os.environ)
+          enabled(env);global_gate(env)
+          print('PASS')
+          """,
             'DB': """
-import os
-from leadpilot.serviceit_vps_pg_queue import db
-with db(dict(os.environ)) as conn:
-    with conn.transaction():
-        with conn.cursor() as cur:
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
             cur.execute('SET TRANSACTION READ ONLY')
             cur.execute('SELECT 1')
             assert cur.fetchone()[0]==1
-print('PASS')
-""",
+          print('PASS')
+          """,
             'SECRET': """
-import os
-from leadpilot.serviceit_vps_pg_queue import secret_file
-from leadpilot.bitrix_metadata_audit import validate_webhook
-assert validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
-print('PASS')
-""",
+          import os
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          assert validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+          print('PASS')
+          """,
             'CRM_LIST': """
-import os
-import httpx
-from datetime import datetime,timezone
-from leadpilot.serviceit_vps_pg_queue import secret_file
-from leadpilot.bitrix_metadata_audit import validate_webhook
-from leadpilot.serviceit_vps_native_aux import eligible_cards
-with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:
-    base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
-    cards=eligible_cards(client,dict(os.environ),base,datetime.now(timezone.utc))
-    assert isinstance(cards,list)
-print('PASS')
-""",
+          import os
+          import httpx
+          from datetime import datetime,timezone
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_vps_native_aux import eligible_cards
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:
+              base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              cards=eligible_cards(client,dict(os.environ),base,datetime.now(timezone.utc))
+              assert isinstance(cards,list)
+          print('PASS')
+          """,
             'FNS_FIELD': """
-import os,httpx
-from leadpilot.serviceit_vps_pg_queue import secret_file
-from leadpilot.bitrix_metadata_audit import validate_webhook
-from leadpilot.serviceit_fns_msp_crm_result_writer import result_field_verified
-with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:
-    base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
-    result_field_verified(client,base)
-print('PASS')
-""",
+          import os,httpx
+          from leadpilot.serviceit_vps_pg_queue import secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_fns_msp_crm_result_writer import result_field_verified
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:
+              base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+              result_field_verified(client,base)
+          print('PASS')
+          """,
           }
           for label,container in containers.items():
               for name in ('FLAGS','DB','SECRET','CRM_LIST','FNS_FIELD'):
@@ -101,7 +101,7 @@ print('PASS')
                   for attempt in range(2 if label=='AUX' else 1):
                       try:
                           z=subprocess.run(['docker','exec','-i',container,'python',
-                            '-B','-c',stages[name]],input='',
+                            '-B','-c',textwrap.dedent(stages[name])],input='',
                             capture_output=True,text=True,timeout=35,check=False)
                           if z.returncode==0 and z.stdout.strip()=='PASS':
                               outcome='PASS'

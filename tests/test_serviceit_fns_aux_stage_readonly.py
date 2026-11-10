@@ -10,3 +10,11 @@ def test_fns_stage_probe_contains_only_readonly_calls():
     for bad in ("crm.item.update","INSERT INTO","DELETE FROM","docker restart",
                 "docker compose up","workflow_dispatch"):
         assert bad not in s
+
+
+def test_yaml_run_block_all_lines_nested():
+    raw=(Path(__file__).resolve().parents[1]/".github/workflows/serviceit-vps-fns-aux-stage-readonly.yml").read_text("utf8")
+    lines=raw.splitlines()
+    i=next(i for i,line in enumerate(lines) if line.lstrip()=="run: |")
+    assert all(not line.strip() or line.startswith("          ") for line in lines[i+1:])
+    assert "textwrap.dedent(stages[name])" in raw

@@ -51,8 +51,8 @@ def test_preliminary_kanban_headline_and_hold_no_fake_score(title, kind, source,
     }
     fields = preliminary_fields(item)
     assert set(fields) == AI_FIELDS
-    assert fields[PREFIX+"AI_SUMMARY"].startswith(expected + "\nHOLD")
-    assert "🔎 Ориентир проверки: " in fields[PREFIX+"AI_SUMMARY"]
+    assert fields[PREFIX+"AI_SUMMARY"].startswith(expected.replace("📑","▣").replace("👥","◉").replace("🎯","◆") + "\nHOLD")
+    assert "⌕ Ориентир проверки: " in fields[PREFIX+"AI_SUMMARY"]
     assert "/100 (НЕ Lead Score; ФНС, CRM-дубли и STOP ещё не подтверждены)" in fields[PREFIX+"AI_SUMMARY"]
     assert "Lead Score не рассчитывался" in fields[PREFIX+"AI_SUMMARY"]
     assert "Lead Score: НЕ РАССЧИТАН" in fields[PREFIX+"AI_FULL_REPORT"]

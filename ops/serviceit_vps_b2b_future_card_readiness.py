@@ -51,6 +51,15 @@ def checks(env, client):
         for name, value in zip(names, expected)
     )
     say("V11_EXACT_LIVE_SHA", "YES" if sha_match else "NO")
+    poll_expected=sys.argv[3:5]
+    poll_names=("serviceit_bitrix_poll_fallback.py",
+                "serviceit_bitrix_batch_worker.py")
+    poll_sha_match=(len(poll_expected)==2 and all(
+        re.fullmatch(r"[0-9a-f]{64}", val or "") and
+        (Path("/app/leadpilot")/name).is_file() and
+        hashlib.sha256((Path("/app/leadpilot")/name).read_bytes()).hexdigest()==val
+        for name,val in zip(poll_names,poll_expected)))
+    say("POLL_MODULES_LIVE_SHA", "YES" if poll_sha_match else "NO")
 
     flags = live_permitted(env) and INTERVAL_SECONDS == 300 and all((
         env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES",
@@ -93,8 +102,27 @@ def checks(env, client):
         with db(env) as conn:
             probe = poll_new(env, client=client, connection=conn, preview_only=True)
         api_ready = api_ready and probe.get("status") == "POLL_READONLY"
-    except Exception:
+    except Exception as exc:
         api_ready = False
+        # Only exact whitelisted reason codes may leave the VPS. Never
+        # print exception text, provider URLs, notices, credentials or IDs.
+        code = str(exc)
+        checks = {
+            "POLL_CALIBRATION_POSITIVE_MISSING": "CALIBRATION",
+            "POLL_CALIBRATION_IDENTITY_INVALID": "CALIBRATION",
+            "POLL_CALIBRATION_PAGINATION_INVALID": "CALIBRATION",
+            "BATCH_LIST_FILTER_INVALID": "FILTER",
+            "BATCH_LIST_SCOPE_INVALID": "FILTER",
+            "POLL_ITEM_BEFORE_ACTIVATION_OR_FUTURE": "WINDOW",
+            "POLL_ACTIVATION_TIMESTAMP_INVALID": "WINDOW",
+            "POLL_LIST_SHAPE_UNTRUSTED": "RESPONSE",
+            "POLL_INCOMPLETE_PAGINATION": "RESPONSE",
+            "BATCH_LIST_HTTP_UNVERIFIED": "HTTP",
+        }
+        reason = checks.get(code, "OTHER")
+        for name in ("CALIBRATION","FILTER","WINDOW","RESPONSE","HTTP","OTHER"):
+            say("BITRIX_POLL_FAILURE_"+name,
+                "YES" if reason == name else "NO")
     say("BITRIX_NEW_CARD_READONLY_POLL", "YES" if api_ready else "NO")
 
     poll_age = None

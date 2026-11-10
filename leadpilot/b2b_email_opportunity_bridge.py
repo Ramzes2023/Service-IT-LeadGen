@@ -199,7 +199,18 @@ def parse_email(raw: bytes) -> dict:
         if not title:
             continue
         buyer = _get_field(block, "Организатор закупки") or _get_field(block, "Организатор")
-        deadline = _get_field(block, "Актуально до")
+        # Some authenticated B2B emails use "Актуально до", other
+        # templates name the final submission time explicitly. A value from
+        # the original notice remains EMAIL EVIDENCE, never verified tender
+        # status until the public page/document is independently checked.
+        deadline = next((
+            value for label in (
+                "Актуально до", "Окончание подачи заявок",
+                "Окончание приёма заявок", "Срок подачи заявок",
+                "Приём предложений до", "Окончание приема предложений",
+                "Дата окончания подачи заявок",
+            ) if (value := _get_field(block, label))
+        ), None)
         head = re.search(
             r"(?:Запрос\s+цен|Запрос\s+предложений|Конкурс|Предварительный\s+квалификационный\s+отбор|Процедура\s+закупки)\s*№\s*(\d{5,12})",
             block, re.I,

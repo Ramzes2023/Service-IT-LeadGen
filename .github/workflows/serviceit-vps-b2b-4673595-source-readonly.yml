@@ -1,0 +1,84 @@
+name: ServiceIT live B2B staffing public source support READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-staffing-source-readonly
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_4673595_SOURCE_RUNTIME_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Verify pinned SSH and current receiver/writer classifier without changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/source-support"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/source-support/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/source-support/hosts"
+          chmod 600 "$RUNNER_TEMP/source-support/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/source-support/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/source-support/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/source-support/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import subprocess
+          title='Оказание услуг по предоставлению ИТ-специалистов, включая 1С, DevOps и ИБ'
+          for label,name in [('RECEIVER','serviceit-b2b-vps-receiver-1'),
+                             ('WRITER','serviceit-b2b-vps-writer-1')]:
+              check = (
+                'from leadpilot.b2b_email_opportunity_bridge import classify_services;'
+                'title='+repr(title)+';'
+                'print("YES" if "IT_STAFFING" in classify_services(title) else "NO")')
+              try:
+                  p=subprocess.run(
+                      ['docker','exec',name,'python','-B','-c',check],
+                      text=True,capture_output=True,timeout=15,check=False)
+                  status=(p.stdout.strip() if p.returncode==0 and
+                          p.stdout.strip() in ('YES','NO') else 'UNVERIFIED')
+              except (OSError,subprocess.TimeoutExpired):
+                  status='UNVERIFIED'
+              print('STAFFING_'+label+'_CLASSIFIER='+status,flush=True)
+          check = """
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as con:
+              with con.transaction():
+                  with con.cursor() as cur:
+                      cur.execute('SET TRANSACTION READ ONLY')
+                      cur.execute("SELECT state FROM serviceit_vps_b2b_inbox WHERE source_id='B2B-CENTER-4673595'")
+                      row=cur.fetchone()
+                      state=row[0] if row else 'MISSING'
+                      print('STAFFING_PG_SOURCE_PRESENT='+('YES' if row else 'NO'))
+                      print('STAFFING_PG_SOURCE_VERIFIED='+('YES' if state=='VERIFIED' else 'NO'))
+          """
+          q=subprocess.run(['docker','exec','serviceit-b2b-vps-receiver-1',
+                            'python','-B','-c',check],
+                           text=True,capture_output=True,timeout=20,check=False)
+          if q.returncode==0:
+              print(q.stdout.strip())
+          else:
+              print('STAFFING_PG_SOURCE_PRESENT=UNVERIFIED')
+              print('STAFFING_PG_SOURCE_VERIFIED=UNVERIFIED')
+          print('STAFFING_ALL_READONLY=YES',flush=True)
+          PY

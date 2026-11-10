@@ -43,7 +43,7 @@ function environment(options={}) {
     SERVICEIT_VPS_B2B_DIRECT_ENABLED:'YES',
     SERVICEIT_VPS_B2B_ACTIVATION_MS:String(CUTOVER+500)
   }, options.properties || {});
-  const calls = {list:0,get:0,dispatch:[],logs:[],triggers:[]};
+  const calls = {list:0,get:0,rest:0,dispatch:[],logs:[],triggers:[]};
   let account = options.account || EMAIL;
   let currentMessage = options.message || message();
   let mailboxMessages = options.messages || null;
@@ -74,7 +74,7 @@ function environment(options={}) {
             assert(selected, 'message not in mock Gmail');
             assert(['full','raw'].includes(args.format));
             calls.get++;
-            return args.format==='raw' ? {id:selected.id,raw:selected._raw||''} : selected;
+            return args.format==='raw' ? {id:selected.id,raw:selected._advancedRawMissing ? '' : (selected._raw||'')} : selected;
           }
         }
       }
@@ -89,6 +89,7 @@ function environment(options={}) {
       getScriptLock: () => ({tryLock:()=>true,releaseLock:()=>{}})
     },
     ScriptApp: {
+      getOAuthToken:()=> 'synthetic-google-oauth-access-token',
       getProjectTriggers: () => calls.triggers,
       newTrigger: handler => ({
         timeBased:()=>({
@@ -118,6 +119,22 @@ function environment(options={}) {
     },
     UrlFetchApp: {
       fetch:(url,config)=>{
+        if(url.startsWith('https://gmail.googleapis.com/gmail/v1/users/me/messages/')) {
+          calls.rest++;
+          assert.strictEqual(config.method,'get');
+          assert.match(config.headers.Authorization,/^Bearer synthetic-google-oauth-access-token$/);
+          assert.strictEqual(config.followRedirects,false);
+          assert.strictEqual(config.validateHttpsCertificates,true);
+          assert.strictEqual(config.muteHttpExceptions,true);
+          assert.strictEqual(url.split('?')[1],'format=raw');
+          const id=decodeURIComponent(url.split('/').pop().split('?')[0]);
+          const msg=(mailboxMessages||[currentMessage]).find(x=>x.id===id);
+          assert(msg,'Gmail raw requested for missing message');
+          return {
+            getResponseCode:()=>options.restHttpCode || 200,
+            getContentText:()=>JSON.stringify({id:msg.id,raw:msg._raw||''})
+          };
+        }
         if(url==='https://leadgen.serviseit.ru/integrations/serviceit/b2b-center/health') {
           assert.strictEqual(config.method,'get');
           return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({
@@ -564,6 +581,41 @@ test('client service relevance matches production VPS: 1C/server yes, IT staffin
   assert(e.context.classifyServices_('Закупка серверов ЗОКИИ').includes('SERVERS'));
   assert.strictEqual(e.context.classifyServices_('Оказание услуг по предоставлению ИТ-специалистов').length,0);
   assert.strictEqual(e.context.classifyServices_('Источники бесперебойного питания').length,0);
+});
+
+
+test('Gmail advanced raw omission uses same-provider authenticated read-only REST fallback',()=>{
+  const html='<a href="https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/">Запрос цен № 1234567</a>'+
+    '<div>Организатор: ООО "Пример"</div><div>Предмет договора: Лицензии 1С</div>';
+  const msg=message();
+  msg.payload={mimeType:'text/html',headers:msg.payload.headers,body:{}};
+  msg._raw=Buffer.from('Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'+html).toString('base64url');
+  msg._advancedRawMissing=true;
+  const e=environment({message:msg,properties:{
+    ['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'
+  }});
+  const saved=JSON.stringify(e.properties);
+  const result=e.context.diagnoseB2BCenterReadOnly();
+  assert.strictEqual(result.samples[0].phase,'PARSED');
+  assert.strictEqual(result.samples[0].recognized_tenders,1);
+  assert.strictEqual(e.calls.rest,1);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(JSON.stringify(e.properties),saved);
+});
+
+test('Gmail direct REST 403 is quarantined with safe code and no side effects',()=>{
+  const msg=message();
+  msg.payload={mimeType:'text/html',headers:msg.payload.headers,body:{}};
+  msg._advancedRawMissing=true;
+  const e=environment({message:msg,restHttpCode:403,properties:{
+    ['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'
+  }});
+  const before=JSON.stringify(e.properties);
+  const result=e.context.diagnoseB2BCenterReadOnly();
+  assert.strictEqual(result.samples[0].code,'SERVICEIT_EMAIL_RAW_REST_HTTP_403');
+  assert.strictEqual(e.calls.rest,1);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(JSON.stringify(e.properties),before);
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

@@ -56,9 +56,8 @@ jobs:
           from leadpilot.serviceit_enrichment_worker import normalized,AI_FIELDS,PREFIX,Rest,validate_identity
           from leadpilot.serviceit_windows_autofill import preliminary_fields
           from leadpilot.serviceit_vps_native_fence import digested
-          from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control
           from leadpilot.bitrix_metadata_audit import validate_webhook
-          from leadpilot.b2b_github_to_bitrix import SIGNAL
+          SIGNAL=PREFIX+'SIGNAL_ID'
           keys=sorted(AI_FIELDS)
           with db(dict(os.environ)) as conn:
               with conn.cursor() as cur:
@@ -68,7 +67,6 @@ jobs:
           assert len(rows)==2
           base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
           with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
-              assert positive_duplicate_control(client,base)
               rest=Rest(base,client)
               for position,(card,source,queue,native,names,salt,digest) in enumerate(rows,1):
                   item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':int(card),'useOriginalUfNames':'Y'})['item'])

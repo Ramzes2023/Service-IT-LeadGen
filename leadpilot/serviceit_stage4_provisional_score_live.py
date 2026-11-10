@@ -168,7 +168,11 @@ def evaluate_one(client, env, card, *, now=None, native_fence=None):
     if (item.get(PREFIX + "AI_STATUS") not in (
             "NOT_RUN_SOURCE_UNVERIFIED", "HOLD", "NOT_RUN",
             "HYPOTHESIS_UNVERIFIED",
-            "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED")
+            "HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED",
+            # V4/V9 public research is still only provisional; no FNS,
+            # corporate identity or outreach entitlement follows from it.
+            "PUBLIC_RESEARCH_ROUTERAI_CITED",
+            "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT")
             or any(type(item[k]) is not str or not item[k].strip()
                    for k in AI_FIELDS)):
         return "WAIT_FOR_AI_MANAGER_FIELDS"

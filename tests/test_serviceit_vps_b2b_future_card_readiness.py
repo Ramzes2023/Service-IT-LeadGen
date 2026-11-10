@@ -52,6 +52,9 @@ def test_no_crm_mutation_or_external_ai_calls_anywhere():
     assert "serviceit_vps_b2b_dossier_v12_continuity_receipts" in content
     assert "NEW_CARD_V11_STYLE_IN_MEMORY" in content
     assert "REAL_NEW_B2B_E2E" in content
+    assert "POLL_MODULES_LIVE_SHA" in content
+    assert "BITRIX_POLL_FAILURE_CALIBRATION" in content
+    assert "POLL_CALIBRATION_POSITIVE_MISSING" in content
 
 
 def test_workflow_owner_guard_and_ssh_host_pin():

@@ -271,11 +271,12 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
         r'(?iu)(?:' + re.escape(form) + '|' +
         r'\s+'.join(map(re.escape, form_long.split())) +
         r')\s*[«"]' + re.escape(name) + r'[»"]')
-    urls = [x.get("url") for x in known_pages[:6]
+    urls = [x.get("url") for x in known_pages[:3]
             if isinstance(x, dict) and isinstance(x.get("url"), str)]
-    # One extra bounded public search only when earlier company search did not
-    # yield readable company pages. Query uses source-PUBLISHED company name.
-    if (allow_extra_discovery and not urls and isinstance(token, str)
+    # Extra source-backed discovery is also needed when Brave found OTHER
+    # company pages but none with the same legal buyer and printed INN.
+    # The limit remains three previously found + five extra candidate URLs.
+    if (allow_extra_discovery and isinstance(token, str)
             and token.isascii() and 12 <= len(token) <= 200):
         try:
             response = client.get(
@@ -289,13 +290,13 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                     and "application/json" in response.headers.get("content-type", "")):
                 rows = response.json().get("web", {}).get("results", [])
                 if isinstance(rows, list):
-                    urls = [x.get("url") for x in rows[:5] if isinstance(x, dict)]
+                    urls += [x.get("url") for x in rows[:5] if isinstance(x, dict)]
         except (httpx.HTTPError, ValueError, TypeError, AttributeError):
             pass
     results = []
     attempted = set()
     for raw in urls:
-        if len(attempted) >= 5 or len(results) >= 3:
+        if len(attempted) >= 8 or len(results) >= 3:
             break
         if not isinstance(raw, str) or raw in attempted:
             continue

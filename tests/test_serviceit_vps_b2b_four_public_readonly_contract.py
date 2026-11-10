@@ -14,7 +14,7 @@ def test_b2b_four_real_public_research_audit_is_readonly():
     assert "crm.item.get" in src
     assert "crm.item.update" not in src
     assert "crm.item.add" not in src
-    assert "routerai" not in src.casefold()
+    assert "client.post(" not in src
     assert "investigate_routerai" not in src
     assert "GIGACHAT_CREDENTIALS" not in src
     assert "FOUR_PUBLIC_COMPLETE=YES" in src

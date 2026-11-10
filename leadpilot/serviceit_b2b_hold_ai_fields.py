@@ -1,9 +1,9 @@
 """Fail-closed manager-readable analysis for each newly delivered B2B HOLD.
 
-Generated from unverified supplier-email subject, NOT GigaChat inference.
+Generated from an unverified supplier-email subject, NOT model inference.
 Automatically populates the SAME NINE existing AI fields as DEMO #3,
 but never manufactures a score, citation, buyer INN, proof of purchasing
-intent, GigaChat completion, contact permission or human approval.
+intent, RouterAI completion, contact permission or human approval.
 
 This is safe analysis metadata, not a lead or a model-generated report.
 """
@@ -40,7 +40,7 @@ def _check(value, maximum=240):
 def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None = None) -> dict[str,str]:
     """Safe descriptive fields for *every* exact unverified B2B notice.
 
-    GigaChat must be started by a separate authorized enrichment worker only
+    RouterAI must be started by a separate authorized enrichment worker only
     after checking source content and privacy constraints. This creates NO score.
     """
     if not isinstance(notice,dict):
@@ -90,13 +90,13 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
              +str(triage["indicative_priority"])
              +"/100 (НЕ Lead Score; ФНС, CRM-дубли и STOP ещё не подтверждены)\n"
              +"Получено уведомление B2B-Center №"+tid+
-             (". Гипотеза GigaChat получена, но потребность и заказчик не подтверждены."
+             (". Гипотеза модели получена, но потребность и заказчик не подтверждены."
               if ai else ". Потребность и заказчик не подтверждены; AI-анализ не запускался."))
     quote="Тема письма поставщика: "+subject
     hypothesis=(("Не проверенная моделью гипотеза: возможна закупка по направлению "+
                  service_text+". Требуется изучить оригинальное извещение.")
                 if ai is None else
-                ("GigaChat высказал НЕПРОВЕРЕННУЮ гипотезу о применимости услуги «"+
+                ("Модель высказала НЕПРОВЕРЕННУЮ гипотезу о применимости услуги «"+
                  _check(ai["service"],80)+"». Дословная цитата из темы уведомления: «"+
                  _check(ai["evidence_quote"],240)+"». Покупка и первоисточник не подтверждены."))
     limits=("Не проверены оригинал закупки, дата, актуальность, ИНН заказчика, ФНС, "
@@ -111,13 +111,13 @@ def hold_analysis_fields(notice: dict, services: list[str], *, ai: dict | None =
            "2. Установить заказчика и его ИНН, сверить ФНС.\n"
            "3. Проверить клиентскую базу, дубли и стоп-лист.\n"
            "4. Проверить применимость услуг, договор и правовое основание связи.\n"
-           "5. Только после проверок направить на реальный Score и GigaChat.")
+           "5. Проводить публичное исследование через RouterAI независимо от HOLD; подтверждать Score и право контакта отдельно.")
     full=(
         badge+" · "+triage["kind_title"]+"\n"+
         "Сервис ИТ | Автоматический предварительный разбор HOLD\n"+
         "Источник: уведомление B2B-Center, закупка №"+tid+"\n"+
-        ("AI-провайдер: GigaChat / "+model+" (гипотеза, не доказательство)\n"
-         if ai else "AI-провайдер: NOT_RUN (GigaChat не вызывался)\n")+
+        ("AI-провайдер: внешняя модель / "+model+" (гипотеза, не доказательство)\n"
+         if ai else "AI-провайдер: RouterAI (исследование ещё не выполнено)\n")+
         "Lead Score: НЕ РАССЧИТАН — отсутствуют подтверждённые факты\n"+
         "Цветной приоритет: НЕ НАЗНАЧЕН\n\n"+
         "Краткий вывод\n"+summary+"\n\n"+

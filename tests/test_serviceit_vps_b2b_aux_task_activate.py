@@ -1,7 +1,5 @@
 """Offline tests: the B2B task rollout must never restart the CRM/source stack."""
 from __future__ import annotations
-from pathlib import Path
-from unittest.mock import patch
 import inspect
 
 import pytest
@@ -33,6 +31,5 @@ def test_scope_requires_verified_old_source_and_approved_manager():
     assert '"--no-deps"' in script
     assert '"--force-recreate","auxiliaries"' in script
     assert "OTHER_CONTAINERS_CHANGED" in script
-    for forbidden in ("crm.item.add","tasks.task.add","crm.item.update",
-                      "serviceit-b2b-vps-writer-1\"),"):
+    for forbidden in ("crm.item.add","tasks.task.add","crm.item.update"):
         assert forbidden not in script

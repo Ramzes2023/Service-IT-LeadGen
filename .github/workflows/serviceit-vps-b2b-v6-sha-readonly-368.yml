@@ -37,9 +37,9 @@ jobs:
           git cat-file -e c563d116724be9c5a758c0f326bd9d2a9ca8a8f7^{commit}
           git cat-file -e 6124478aad06967e2d2f83e9d0ef097afefed3b4^{commit}
           git show c563d116724be9c5a758c0f326bd9d2a9ca8a8f7:leadpilot/serviceit_vps_b2b_deep_research.py | sha256sum | cut -d ' ' -f 1 > "$RUNNER_TEMP/v5-sha"
-          git show 6124478aad06967e2d2f83e9d0ef097afefed3b4:leadpilot/serviceit_vps_b2b_deep_research.py | sha256sum | cut -d ' ' -f 1 > "$RUNNER_TEMP/v6-identity"
+          git show 6124478aad06967e2d2f83e9d0ef097afefed3b4:leadpilot/serviceit_vps_b2b_deep_research.py | sha256sum | cut -d ' ' -f 1 > "$RUNNER_TEMP/v6-digest"
           [[ "$(cat "$RUNNER_TEMP/v5-sha")" =~ ^[a-f0-9]{64}$ ]]
-          [[ "$(cat "$RUNNER_TEMP/v6-identity")" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$(cat "$RUNNER_TEMP/v6-digest")" =~ ^[a-f0-9]{64}$ ]]
       - name: Pinned nonroot SSH, read exact live coordinator module SHA and safe flags only
         shell: bash
         run: |
@@ -52,7 +52,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v6-identity/known_hosts"
           chmod 0600 "$RUNNER_TEMP/v6-identity/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v6-identity/known_hosts" >/dev/null
-          old="$(cat "$RUNNER_TEMP/v5-sha")"; new="$(cat "$RUNNER_TEMP/v6-identity")"
+          old="$(cat "$RUNNER_TEMP/v5-sha")"; new="$(cat "$RUNNER_TEMP/v6-digest")"
           ssh -T -i "$RUNNER_TEMP/v6-identity/id" \
             -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/v6-identity/known_hosts" \

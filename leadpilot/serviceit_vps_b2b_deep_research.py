@@ -185,6 +185,62 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None):
     return None
 
 
+# Only a labelled, quoted LEGAL ORGANIZATION in independently verified
+# PUBLIC procurement text can trigger an additional company web search.
+# An organizer, bidding-platform support, IP/person or inferred CRM name cannot.
+PUBLIC_BUYER_LABEL = re.compile(
+    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)'
+    r'\s*[:—–-]\s*((?:ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
+    r'\s+(?:«[^»]{4,90}»|"[^"]{4,90}"))'
+)
+
+
+def public_buyer_candidate(findings):
+    """Published name candidate, NOT verified legal identity or authorization."""
+    if not isinstance(findings, dict) or findings.get("status") != "PUBLIC_PAGES_INSPECTED":
+        return ""
+    for row in (findings.get("pages") or [])[:3]:
+        if not isinstance(row, dict) or not isinstance(row.get("excerpt"), str):
+            continue
+        found = PUBLIC_BUYER_LABEL.search(" ".join(row["excerpt"].split()))
+        if found:
+            return " ".join(found.group(1).split())
+    return ""
+
+
+def followup_public_buyer_research(findings, env, client, key):
+    """Follow a verified public BUYER label to its candidate corporate pages.
+
+    No new source intake, no automatic customer identity/INN certification,
+    no contact sending, no CRM write. This does not read vendor email titles.
+    """
+    if env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") != "YES":
+        return findings
+    if not isinstance(findings, dict) or findings.get("status") != "PUBLIC_PAGES_INSPECTED":
+        return findings
+    previous = findings.get("independent_company_research")
+    if isinstance(previous, dict) and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY":
+        return findings
+    buyer = public_buyer_candidate(findings)
+    if not buyer:
+        return findings
+    from .serviceit_independent_company_research import independent_company_research
+    try:
+        independent = independent_company_research(
+            client, company_name=buyer, signal_kind="tender",
+            source_host="b2b-center.ru", search_token=key,
+            llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
+        )
+    except (ValueError, httpx.HTTPError):
+        return findings
+    if not isinstance(independent, dict):
+        return findings
+    independent["company_name_provenance"] = "PUBLIC_BUYER_LABEL_LEGAL_IDENTITY_UNVERIFIED"
+    result = dict(findings)
+    result["independent_company_research"] = independent
+    return result
+
+
 def source_findings(item, notice, env, client):
     hosts = host_allowlist(env)
     browser = None
@@ -221,9 +277,9 @@ def source_findings(item, notice, env, client):
             if mirror is not None:
                 candidate = dict(candidate)
                 candidate["pages"] = candidate["pages"][:2] + mirror["pages"][:1]
-            return candidate
+            return followup_public_buyer_research(candidate, env, client, key)
         if mirror is not None:
-            return mirror
+            return followup_public_buyer_research(mirror, env, client, key)
         return {"status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
                 "pages": [], "contacts": [], "model_excerpt": "",
                 "checked_at": datetime.now(timezone.utc).isoformat()}
@@ -244,7 +300,7 @@ def source_findings(item, notice, env, client):
             results = dict(results)
             results["pages"] = (results.get("pages") or [])[:2] + mirror["pages"][:1]
             results["brave_public_mirror_independently_verified"] = True
-    return results
+    return followup_public_buyer_research(results, env, client, key)
 
 
 def model_safe_source_title(title, findings):

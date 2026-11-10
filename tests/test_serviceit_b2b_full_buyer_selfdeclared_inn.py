@@ -104,3 +104,27 @@ def test_extra_brave_is_networkless_by_default_and_explicitly_opted_in(monkeypat
     assert len(calls) == 1
     assert result["inn"] == "5260365605"
     assert result["fns_verified"] is False
+
+
+def test_extra_bounded_search_when_initial_company_pages_have_no_legal_inn(monkeypatch):
+    # A plausible website candidate without the exact legal name/INN used to
+    # suppress the second Brave lookup; real buyer pages were never reached.
+    official = "https://globus-ltd.ru/contacts"
+    empty = "https://unrelated.example.org/about"
+    import leadpilot.serviceit_public_evidence_research as reader
+    candidates = []
+    def fetch(client,url,allowed):
+        candidates.append(url)
+        return {"url":url, "text": (
+            'ООО "ГЛОБУС-ИТ" ИНН 5260365605 contact@globus-ltd.com'
+            if url == official else 'Общие сведения, без реквизитов'
+        ),"emails":[],"phones":[]}
+    monkeypatch.setattr(reader, "_page", fetch)
+    def answer(request):
+        return httpx.Response(200, json={"web": {"results": [{"url":official}]}})
+    with httpx.Client(transport=httpx.MockTransport(answer)) as client:
+        result = b2b._public_company_self_declaration(
+            client,"ООО «ГЛОБУС-ИТ»",[{"url":empty}],
+            "SYNTHETIC-BRAVE-TOKEN",allow_extra_discovery=True)
+    assert result and result["inn"] == "5260365605"
+    assert candidates == [empty, official]

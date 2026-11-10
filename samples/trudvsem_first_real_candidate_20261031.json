@@ -1,0 +1,57 @@
+{
+  "mode": "SERVICEIT_TRUDVSEM_FIRST_LIVE_RESEARCH_CANDIDATE",
+  "researched_on": "2026-10-31",
+  "pilot": "1C maintenance / Moscow + Moscow Oblast / micro and small business",
+  "source": "Trudvsem vacancy surfaced via third-party mirror; original official job link pending validation",
+  "company": {
+    "name": "ООО «ГРЭЙТ ФУДЗ инк.»",
+    "inn": "5003079216",
+    "ogrn": "1105003003170",
+    "region": "Москва",
+    "corporate_brand": "Foodland",
+    "corporate_website": "https://foodland.ru/",
+    "official_business_identification": "https://foodland.ru/konkurs/usloviya.pdf"
+  },
+  "business_size": {
+    "source": "https://xn----8sbnjg0adinpefc8b1e6c.xn--p1ai/vacancies/company/greyt-fudz-ink/",
+    "third_party_label": "малое предприятие",
+    "official_fns_snapshot": null,
+    "official_fns_verified": false,
+    "qualification": "HOLD_OFFICIAL_FNS_REQUIRED"
+  },
+  "demand_signal": {
+    "type": "1c_vacancy",
+    "title": "Программист 1С",
+    "published_on": "2026-10-22",
+    "url": "https://xn----8sbnjg0adinpefc8b1e6c.xn--p1ai/vacancies/674993-programmist-1s/",
+    "external_services_requested": false,
+    "scope": "1С 8.3, ЗУП, УТ, БП; поддержка и доработка нетиповых конфигураций",
+    "live_original_trudvsem_url_verified": false,
+    "outsourcing_intent": "NOT_ESTABLISHED"
+  },
+  "public_corporate_channel": {
+    "source_url": "https://foodland.ru/contacts/",
+    "email": "info@foodland.ru",
+    "phone": "+7 495 662 94 41",
+    "type": "general_corporate",
+    "legal_contact_permission": "NOT_REVIEWED",
+    "opt_out_status": "NOT_CHECKED"
+  },
+  "scoring": {
+    "score": null,
+    "version": null,
+    "hypothesis": "1C support tasks exist; in-house hiring may mean no outsourcing budget",
+    "ai_claims": []
+  },
+  "duplicate_control": {
+    "bitrix_checked": false,
+    "existing_customer_checked": false,
+    "stop_list_checked": false
+  },
+  "next_action": "Confirm official FNS SME registration and original vacancy; validate actual outsourcing demand; admin-authorized read-only Bitrix duplicate check; manager acceptance; no outreach until lawful channel checked",
+  "status": "RESEARCH_HOLD_NOT_QUALIFIED_LEAD",
+  "crm_ready": false,
+  "outbound_authorized": false,
+  "crm_writes": "NO",
+  "warning": "Not a confirmed need for external 1C services; corporate contacts are not proof of permission to advertise."
+}

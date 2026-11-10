@@ -244,3 +244,35 @@ def test_missing_egrul_api_does_not_authorize_contact_or_formal_score(monkeypatc
     assert updates[0][VERSION_FIELD] == w.VERSION
     assert "ФНС: НЕ ПРОВЕРЕНА" in updates[0][BADGE_FIELD]
     assert "Контакт: НЕ РАЗРЕШЁН" in updates[0][BADGE_FIELD]
+
+
+@pytest.mark.parametrize("research_status", [
+    "PUBLIC_RESEARCH_ROUTERAI_CITED",
+    "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT",
+])
+def test_actual_b2b_research_status_eligible_for_fns_optional_color_score(
+        monkeypatch, research_status):
+    """Both actual four-card statuses must not block an internal 0-100 score."""
+    item = real_shape()
+    item[PREFIX + "AI_STATUS"] = research_status
+    crm, updates = wire(monkeypatch, item)
+    with httpx.Client() as client:
+        first = w.evaluate_one(client, ENV, 123, now=NOW)
+        second = w.evaluate_one(client, ENV, 123, now=NOW)
+    assert first == "PROVISIONAL_SCORE_EXACT_READBACK"
+    assert second == "ALREADY_PROVISIONAL_NO_REWRITE"
+    assert len(updates) == 1
+    assert crm[PREFIX + "AI_STATUS"] == research_status
+    assert crm[BADGE_FIELD].startswith(("🟢", "🟡", "🔴"))
+    assert "ПРЕДВАРИТЕЛЬНО" in crm[BADGE_FIELD]
+    assert "Контакт: НЕ РАЗРЕШЁН" in crm[BADGE_FIELD]
+    assert set(updates[0]) == {SCORE_FIELD, VERSION_FIELD, BADGE_FIELD}
+
+
+def test_unrecognized_advanced_status_is_not_auto_scored(monkeypatch):
+    item = real_shape()
+    item[PREFIX + "AI_STATUS"] = "PUBLIC_RESEARCH_BUYER_VERIFIED_AND_CONTACT_APPROVED"
+    _, updates = wire(monkeypatch, item)
+    with httpx.Client() as client:
+        assert w.evaluate_one(client, ENV, 123, now=NOW) == "WAIT_FOR_AI_MANAGER_FIELDS"
+    assert updates == []

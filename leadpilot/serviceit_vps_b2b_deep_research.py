@@ -387,6 +387,45 @@ def draft_fields(item, findings, *, ai=None, safe_title=""):
     return safe
 
 
+def published_buyer_inn_evidence(findings):
+    """Checksum-valid PUBLIC INN next to the labelled buyer: evidence, not FNS ID.
+
+    Do not infer it from the marketplace's own requisites or a search snippet.
+    It must be printed close to the same explicitly named legal buyer in one
+    independently read procurement page. The official registry remains pending.
+    """
+    buyer = public_buyer_candidate(findings)
+    if not buyer or not isinstance(findings, dict):
+        return None
+    from .bitrix_1062_mapping import _is_valid_inn
+    found = []
+    for row in (findings.get("pages") or [])[:3]:
+        if not isinstance(row, dict):
+            continue
+        excerpt = row.get("excerpt")
+        url = row.get("url")
+        if not isinstance(excerpt, str) or not isinstance(url, str):
+            continue
+        for match in PUBLIC_BUYER_LABEL.finditer(" ".join(excerpt.split())):
+            if " ".join(match.group(1).split()) != buyer:
+                continue
+            tail = " ".join(excerpt.split())[match.end():match.end()+260]
+            # Avoid mixing an unrelated organizer / platform legal identifier.
+            tail = re.split(r"(?iu)\b(?:организатор|оператор|площадка|поставщик)"
+                            r"\s*[:—–-]", tail, maxsplit=1)[0]
+            for candidate in re.findall(
+                    r"(?iu)\bИНН\s*[:№]?\s*(\d{10}|\d{12})(?!\d)", tail):
+                if _is_valid_inn(candidate):
+                    found.append((candidate, url))
+    # Conflicting buyer INNs are not an identity. Leave ambiguous candidates out.
+    unique = set(v for v, _ in found)
+    if len(unique) != 1:
+        return None
+    inn = next(iter(unique))
+    return {"inn": inn, "public_source": next(u for v, u in found if v == inn),
+            "buyer_name": buyer, "fns_verified": False}
+
+
 def cited_manager_fields(item, findings, report):
     """Combine RouterAI's verified quotes with independently sourced company data.
 
@@ -398,6 +437,22 @@ def cited_manager_fields(item, findings, report):
     fields = cited_fields({key: item[key] for key in AI_FIELDS}, findings, report)
     fields = enrich_manager_fields(
         fields, findings, signal_kind=item.get(PREFIX + "SIGNAL_KIND", ""))
+    public_inn = published_buyer_inn_evidence(findings)
+    if public_inn:
+        fields[PREFIX + "AI_FULL_REPORT"] += (
+            "\n\nРЕКВИЗИТЫ, НАПЕЧАТАННЫЕ В ПУБЛИЧНОМ ИСТОЧНИКЕ (НЕ ФНС)\n"
+            + "Заказчик по тексту страницы: " + public_inn["buyer_name"]
+            + "\nИНН-кандидат (контрольная сумма корректна): "
+            + public_inn["inn"]
+            + "\nИсточник: " + public_inn["public_source"]
+            + "\nЮридическая идентичность и статус ЕГРЮЛ/ЕГРИП/МСП НЕ "
+              "проверены. Не переносить в подтверждённый COMPANY_INN и "
+              "не разрешать исходящий контакт без независимой сверки."
+        )
+        fields[PREFIX + "AI_MANAGER_BRIEF"] += (
+            "\nИНН-кандидат из открытого текста: " + public_inn["inn"]
+            + "; ФНС/право контакта ещё не подтверждены."
+        )
     # Contact/evidence appendices may exceed the tested Bitrix text limits.
     # Normalize supplementary emoji and enforce the per-field CRM contract
     # *after* enrichment, not only before it.

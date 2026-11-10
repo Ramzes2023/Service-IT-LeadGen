@@ -96,6 +96,9 @@ jobs:
           print('TDI_RUN_STEP_CORE=YES',flush=True)
           from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
           print('TDI_RUN_STEP_EXTRACT=YES',flush=True)
+          import importlib
+          _src=importlib.import_module('leadpilot.serviceit_vps_b2b_deep_research')
+          print('TDI_RUN_BUYER_INN_EXPORT='+('YES' if hasattr(_src,'published_buyer_inn_evidence') else 'NO'),flush=True)
           from leadpilot.serviceit_vps_b2b_document_worker import worker_once, build_report
           print('TDI_RUN_STEP_WORKER=YES',flush=True)
           from leadpilot.serviceit_vps_b2b_dossier_v11_worker import verify_all
@@ -125,7 +128,7 @@ jobs:
               print('TDI_RUN_'+label+'_REASON='+reason(result))
               if result is not None:
                   for line in result.stdout.splitlines():
-                      if re.fullmatch(r'TDI_RUN_STEP_(PDF|CORE|EXTRACT|WORKER|V11)=YES',line):
+                      if re.fullmatch(r'TDI_RUN_(STEP_(PDF|CORE|EXTRACT|WORKER|V11)|BUYER_INN_EXPORT)=(YES|NO)',line):
                           print(line,flush=True)
           PY
           grep -E '^TDI_RUN_[A-Z_]+=(YES|NO|OK|OTHER|COMMAND_TIMEOUT|PY_ASSERTION|MISSING_MODULE|IMPORT_FAILED|PY_SYNTAX|CONTAINER_RESOURCE_DENIED|IMAGE_UNAVAILABLE|READONLY_FILE|BAD_ARCH)$' "$RUNNER_TEMP/tdi-run-probe/probe"

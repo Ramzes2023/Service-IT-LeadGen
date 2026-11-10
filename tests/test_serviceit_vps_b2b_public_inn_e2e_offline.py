@@ -7,7 +7,7 @@ from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 class Fence:
     active = []
     def __init__(self, connection, namespace):
-        assert namespace == "B2B_PUBLIC_INN_V1"
+        assert namespace == "B2B_PUBLIC_INN_V2"
         self.receipt = None
         self.status = []
         self.active.append(self)
@@ -61,8 +61,12 @@ def sources():
     }
 
 
+postponed = []
+
+
 def prepare(monkeypatch, found):
     Fence.active = []
+    postponed.clear()
     instance = Rest("TEST_WEBHOOK", None)
     monkeypatch.setattr(writer, "Rest", lambda *a: instance)
     monkeypatch.setattr(writer, "PostgresNativeFence", Fence)
@@ -70,6 +74,9 @@ def prepare(monkeypatch, found):
     monkeypatch.setattr(writer, "validate_identity", lambda *a: None)
     monkeypatch.setattr(writer, "fingerprint", lambda *a: "same")
     monkeypatch.setattr(writer, "safe_notice", lambda *a: None)
+    monkeypatch.setattr(writer, "ensure_retry_schema", lambda *a: None)
+    monkeypatch.setattr(writer, "postpone_public_research",
+                        lambda *a: postponed.append(a[-1]))
     monkeypatch.setattr(writer, "select_one", lambda *a:
                         (70, "B2B-CENTER-4673595", {"title": "synthetic"}))
     monkeypatch.setattr(writer, "source_findings", lambda *a: found)
@@ -108,4 +115,5 @@ def test_no_independent_company_proof_is_hold_without_crm_writes(monkeypatch):
     assert result["status"] == "B2B_PUBLIC_INN_NOT_CORROBORATED"
     assert result["writes"] == 0
     assert not instance.writes
-    assert Fence.active[0].status == ["HOLD"]
+    assert Fence.active[0].status == []
+    assert postponed == ["B2B_PUBLIC_INN_NOT_CORROBORATED"]

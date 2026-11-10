@@ -276,7 +276,7 @@ test('HTML-only B2B-Center bulletin parses a database-maintenance tender safely'
   assert.strictEqual(parsed.observations[0].notice.organizer,'АО "СО ЕЭС"');
   assert.strictEqual(parsed.observations[0].notice.subject,
     'Право заключения договора оказания услуг по техническому обслуживанию базы данных');
-  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['IT_SUPPORT']);
+  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['1C']);
   assert.strictEqual(parsed.observations[0].notice.qualified_lead,false);
 });
 
@@ -478,7 +478,7 @@ test('realistic Russian quoted-printable HTML via Gmail raw fallback is parsed a
   const html=[
     '<a href="https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/?utm_source=mail">Запрос предложений № 1234567</a>',
     '<div>Организатор:</div><div>ООО "ГЛОБУС-ИТ"</div>',
-    '<div>Предмет договора: Оказание услуг по предоставлению ИТ-специалистов</div>'
+    '<div>Предмет договора: Приобретение лицензий 1С</div>'
   ].join('\r\n');
   const qp=[...Buffer.from(html,'utf8')].map(v=>'='+v.toString(16).toUpperCase().padStart(2,'0')).join('');
   const mime='From: B2B-Center <marketplace@b2b-center.ru>\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n'+qp;
@@ -558,14 +558,12 @@ test('recovery blocks existing uncertain source receipt without changing any sta
   assert.strictEqual(e.calls.dispatch.length,0);
 });
 
-test('B2B-Center IT staff, 1C, server and UPS tender titles are relevant',()=>{
+test('client service relevance matches production VPS: 1C/server yes, IT staffing/UPS no',()=>{
   const e=environment();
-  [
-    'Оказание услуг по предоставлению ИТ-специалистов',
-    'Приобретение лицензий программного обеспечения для предоставления доступа к серверам 1С',
-    'Закупка серверов ЗОКИИ с ПНР и услугами расширенной ТП на 3 года',
-    'Источники бесперебойного питания'
-  ].forEach(title=>assert(e.context.classifyServices_(title).length>0,title));
+  assert(e.context.classifyServices_('Приобретение лицензий 1С').includes('1C'));
+  assert(e.context.classifyServices_('Закупка серверов ЗОКИИ').includes('SERVERS'));
+  assert.strictEqual(e.context.classifyServices_('Оказание услуг по предоставлению ИТ-специалистов').length,0);
+  assert.strictEqual(e.context.classifyServices_('Источники бесперебойного питания').length,0);
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

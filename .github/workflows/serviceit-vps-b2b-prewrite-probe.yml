@@ -52,16 +52,17 @@ jobs:
           compose=source/"deploy/serviceit-vps-b2b-direct.compose.yml"
           assert compose.is_file() and (source/"leadpilot/serviceit_b2b_positive_control.py").is_file()
           env=dict(os.environ, SERVICEIT_VPS_SECRETS_DIR="/etc/serviceit/secrets")
-          code='''import os,httpx
-          from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control
-          from leadpilot.serviceit_vps_pg_queue import secret_file
-          from leadpilot.bitrix_metadata_audit import validate_webhook
-          webhook=secret_file(dict(os.environ),"SERVICEIT_BITRIX_WEBHOOK")
-          base=validate_webhook(webhook)
-          with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
-              assert positive_duplicate_control(client,base)
-          print("B2B_PREWRITE_STAGED_EXACT_SOURCE=PASS")
-          '''
+          code="\\n".join([
+              "import os,httpx",
+              "from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control",
+              "from leadpilot.serviceit_vps_pg_queue import secret_file",
+              "from leadpilot.bitrix_metadata_audit import validate_webhook",
+              "webhook=secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK')",
+              "base=validate_webhook(webhook)",
+              "with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:",
+              "    assert positive_duplicate_control(client,base)",
+              "print('B2B_PREWRITE_STAGED_EXACT_SOURCE=PASS')",
+          ])
           p=subprocess.run(["docker","compose","-f",str(compose),
                "run","--no-deps","--rm","-T","--no-build",
                "writer","python","-c",code],env=env,

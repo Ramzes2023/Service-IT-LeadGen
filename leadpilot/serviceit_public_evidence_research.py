@@ -24,7 +24,7 @@ from .serviceit_b2b_hold_ai_fields import PREFIX, AI_FIELDS
 AGENT = "ServiceIT-PublicEvidenceResearch/1.0 (public pages; no outreach)"
 MARKETPLACES = frozenset({
     "hh.ru", "b2b-center.ru", "zakupki.gov.ru", "trudvsem.ru",
-    "superjob.ru", "avito.ru", "rabota.ru", "bidzaar.com",
+    "superjob.ru", "avito.ru", "rabota.ru", "bidzaar.com", "tendem.ru",
 })
 CONTACT_WORDS = ("контакт", "contacts", "contact", "связаться", "about", "о компании",
                  "реквизит", "rekvizit", "рекрут", "career", "hr")

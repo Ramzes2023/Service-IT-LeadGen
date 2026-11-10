@@ -16,6 +16,7 @@ import httpx
 from .ai import config_from_env
 from .serviceit_b2b_routerai_deep import (
     public_documents, investigate_routerai, cited_fields,
+    source_only_investigation,
 )
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_ai_report import plain
@@ -383,20 +384,13 @@ def run_once(env, client, connection):
                 # preserve independently read page evidence instead of losing
                 # all work. Never repeat the potentially billed request.
                 report = None
-            if report is not None:
-                fields = cited_fields(
-                    {key: item[key] for key in AI_FIELDS}, findings, report)
-            else:
-                fields = draft_fields(item, findings)
-                fields[PREFIX + "AI_STATUS"] = "PUBLIC_PAGES_ROUTERAI_UNVERIFIED"
-                fields[PREFIX + "AI_SUMMARY"] = (
-                    "Открытые страницы проверены и приложены к отчёту; "
-                    "RouterAI не вернул пригодный для проверки ответ. "
-                    "Факты не приписываются модели; коммерческий HOLD сохранён.")
-                fields[PREFIX + "AI_FULL_REPORT"] = (
-                    fields[PREFIX + "AI_FULL_REPORT"] +
-                    "\n\nRouterAI: результат не подтверждён, повторный платный "
-                    "вызов без отдельной версии не разрешён.")[:12000]
+            if report is None:
+                # A rejected model schema is NOT proof the public data was
+                # useless. Publish deterministic exact quotations and links,
+                # with an explicit 'AI unverified' label and no paid retry.
+                report = source_only_investigation(findings)
+            fields = cited_fields(
+                {key: item[key] for key in AI_FIELDS}, findings, report)
         else:
             fields = draft_fields(item, findings)
             fields[PREFIX + "AI_STATUS"] = "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT"

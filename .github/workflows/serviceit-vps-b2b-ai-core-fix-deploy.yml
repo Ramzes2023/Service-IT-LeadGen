@@ -1,0 +1,103 @@
+name: ServiceIT B2B 9 AI HOLD coordinator-only guarded fix deploy
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-ai-core-guarded
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_AI_CORE_DEPLOY_GUARDED_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin reviewed Python sha, native baseline and SSH host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile leadpilot/serviceit_windows_autofill.py ops/serviceit_vps_b2b_ai_core_activate.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-ai-core"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-ai-core/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-ai-core/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-ai-core/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-ai-core/known_hosts" >/dev/null
+          git show 5a5955ba8ee98c0ee6c1b8f228fee25cf14af335:leadpilot/serviceit_windows_autofill.py > "$RUNNER_TEMP/b2b-ai-core/baseline.py"
+          sha256sum "$RUNNER_TEMP/b2b-ai-core/baseline.py" | cut -d ' ' -f 1 > "$RUNNER_TEMP/b2b-ai-core/old"
+          sha256sum leadpilot/serviceit_windows_autofill.py | cut -d ' ' -f 1 > "$RUNNER_TEMP/b2b-ai-core/new"
+          sha256sum ops/serviceit_vps_b2b_ai_core_activate.py | cut -d ' ' -f 1 > "$RUNNER_TEMP/b2b-ai-core/script"
+          [[ "$(cat "$RUNNER_TEMP/b2b-ai-core/old")" != "$(cat "$RUNNER_TEMP/b2b-ai-core/new")" ]]
+      - name: Send only reviewed public source and script to VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-ai-core/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          dest="$VPS_USER@$VPS_HOST"
+          dir="serviceit/staging/b2b-ai-core-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/b2b-ai-core/id" "${opts[@]}" "$dest" \
+            "umask 077; install -d -m 0700 '$dir'"
+          scp -i "$RUNNER_TEMP/b2b-ai-core/id" "${opts[@]}" \
+            leadpilot/serviceit_windows_autofill.py "$dest:$dir/serviceit_windows_autofill.py"
+          scp -i "$RUNNER_TEMP/b2b-ai-core/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_ai_core_activate.py "$dest:$dir/activate.py"
+      - name: Deploy only coordinator module offline, restore original image on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-ai-core/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          old="$(cat "$RUNNER_TEMP/b2b-ai-core/old")"
+          new="$(cat "$RUNNER_TEMP/b2b-ai-core/new")"
+          sha="$(cat "$RUNNER_TEMP/b2b-ai-core/script")"
+          ssh -T -i "$RUNNER_TEMP/b2b-ai-core/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "bash -s -- '$GITHUB_RUN_ID' '$old' '$new' '$sha'" \
+            > "$RUNNER_TEMP/b2b-ai-core/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; old="$2"; new="$3"; sha="$4"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          [[ "$old" =~ ^[a-f0-9]{64}$ && "$new" =~ ^[a-f0-9]{64}$ && "$sha" =~ ^[a-f0-9]{64}$ ]]
+          path="$HOME/serviceit/staging/b2b-ai-core-$id/activate.py"
+          [[ -f "$path" && ! -L "$path" ]]
+          printf '%s  %s\n' "$sha" "$path" | sha256sum --check --status
+          python3 "$path" "$id" "$old" "$new"
+          REMOTE
+          grep -E '^B2B_AI_CORE_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED)$' \
+            "$RUNNER_TEMP/b2b-ai-core/status" | head -20
+          grep -qx 'B2B_AI_CORE_ACTIVATED=YES' "$RUNNER_TEMP/b2b-ai-core/status"
+      - name: Record redacted outcome in Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-ai-core/status"
+          summary="$(grep -E '^B2B_AI_CORE_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED)$' "$f" 2>/dev/null | head -20 || true)"
+          [[ -n "$summary" ]] || summary='B2B_AI_CORE_DEPLOY_UNVERIFIED=YES'
+          body="$(printf 'VPS coordinator-only 9-AI-fields scope repair:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core image overlay; old Docker digest protected. No GH CRM writers, credentials, contacts, sources or direct CRM POSTs.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$body" >/dev/null || true

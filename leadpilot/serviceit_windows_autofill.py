@@ -19,7 +19,7 @@ from .ai import AIProvider, config_from_env
 from .serviceit_enrichment_store import Store
 from .serviceit_enrichment_worker import (
     AI_FIELDS, FIELDS, PREFIX, Rest, Worker, approval_check,
-    empty_analysis, fingerprint, load_approval, normalized, poll,
+    alias, empty_analysis, fingerprint, load_approval, normalized, poll,
     schema_limits, validate_identity,
 )
 from .serviceit_bitrix_event_queue_readonly_worker import classify_item
@@ -171,6 +171,57 @@ def preliminary_fields(item):
     return fields
 
 
+def preliminary_schema_limits(rest):
+    """CRM-only, fail-closed bounds for UNQUALIFIED nine-field HOLD reports.
+
+    The native Bitrix webhook can read crm.item.fields but may lack the
+    separate userfieldconfig scope. Do NOT weaken schema_limits() for approved
+    company/Score writes: this reduced preflight is only for unqualified
+    manager HOLD reports, with exact readback and no Score/contact/stage writes.
+    """
+    # Preserve the full corporate configuration proof wherever the webhook
+    # has its own userfieldconfig scope. Only a missing HTTP permission on the
+    # EXACT userfieldconfig.list step activates this reduced HOLD-only path.
+    last_method = [""]
+    def tracked(method, params):
+        last_method[0] = method
+        return rest(method, params)
+    try:
+        return schema_limits(tracked)
+    except Exception as error:
+        _must(last_method[0] == "userfieldconfig.list"
+              and str(error) == "REST_HTTP_UNVERIFIED",
+              "PRELIM_FULL_SCHEMA_FAILED_NOT_PERMISSION")
+    typ = rest("crm.type.getByEntityTypeId", {"entityTypeId": 1062})["type"]
+    _must(str(typ.get("id")) == "13"
+          and str(typ.get("entityTypeId")) == "1062"
+          and typ.get("isAutomationEnabled") in (False, "N")
+          and typ.get("isBizProcEnabled") in (False, "N"),
+          "PRELIM_AUTOMATION_UNVERIFIED")
+    modes = []
+    for mode in ("Y", "N"):
+        fields = rest("crm.item.fields", {
+            "entityTypeId": 1062, "useOriginalUfNames": mode})["fields"]
+        _must(isinstance(fields, dict), "PRELIM_FIELDS_UNVERIFIED")
+        modes.append(fields)
+    result = {}
+    for key in AI_FIELDS:
+        original = modes[0].get(key)
+        camel = modes[1].get(alias(key))
+        _must(isinstance(original, dict) and original == camel,
+              "PRELIM_FIELD_ALIASES_UNVERIFIED")
+        _must(original.get("type") == "string"
+              and original.get("isReadOnly") is False
+              and original.get("isImmutable") in (None, False)
+              and original.get("isMultiple") in (None, False),
+              "PRELIM_FIELD_NOT_WRITABLE_STRING")
+        # This is an application-side upper bound, NOT a claim that the
+        # remote custom field has this configured MAX_LENGTH. The CRM update
+        # and exact readback must still independently confirm acceptance.
+        result[key] = 12000 if key == PREFIX + "AI_FULL_REPORT" else 4096
+    return result
+
+
 def preliminary_once(store, rest, requested_id, *, model=None,
                      public_ai_hosts=frozenset(), researcher=None):
     """One fenced CRM update; optional GigaChat gets ONLY approved public title.
@@ -268,7 +319,7 @@ def preliminary_once(store, rest, requested_id, *, model=None,
         if len(existing) == 9 and all(fields.get(k) == v for k, v in existing.items()):
             store.finish(item_id, owner, "HOLD", "EXISTING_NINE_FIELDS_PRESERVED")
             return "HOLD_9_PRESENT"
-        limits = schema_limits(rest)
+        limits = preliminary_schema_limits(rest)
         _must(all(len(value) <= limits[name] for name, value in fields.items()),
               "FIELD_LENGTH_BLOCKED")
         current = normalized(rest("crm.item.get", {

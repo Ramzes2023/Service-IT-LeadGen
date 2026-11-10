@@ -30,13 +30,15 @@ from .serviceit_public_evidence_research import (
 from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import VpsBlocked, secret_file
 
-RECEIPT = "B2B_RESEARCH_V2"
+RECEIPT = "B2B_RESEARCH_V3"
 RESEARCHABLE_STATES = frozenset((
     "NOT_RUN_SOURCE_UNVERIFIED",
     "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT",
     "PUBLIC_PAGES_ROUTERAI_UNVERIFIED",
     "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES",
     "PUBLIC_RESEARCH_AI_NOT_RUN",
+    "PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED",
+    "PUBLIC_RESEARCH_SOURCE_NO_QUOTES_AI_UNVERIFIED",
 ))
 MAX_PAGES = 3
 SOURCE_ID = re.compile(r"B2B-CENTER-(\d{5,12})\Z")
@@ -356,7 +358,7 @@ def run_once(env, client, connection):
         if fence.reserve(card) == "RESERVED":
             fence.finalize(card, "HOLD")
         return {"status": "B2B_RESEARCH_PRESERVE_EXISTING_AI", "research": 0}
-    safe_notice(notice, card, source_id, item)
+    _, signed_title = safe_notice(notice, card, source_id, item)
     # Read-only public search/JS fetch can fail; it is never a reason to
     # suppress the task or classify an unverified buyer as qualified.
     findings = source_findings(item, notice, env, client)
@@ -366,6 +368,7 @@ def run_once(env, client, connection):
         return {"status": "B2B_RESEARCH_ALREADY_RESERVED", "research": 0}
     fields = None
     model_invoked = False
+    model_error_code = "NOT_RUN"
     try:
         if docs:
             cfg = config_from_env({**env, "AI_PROVIDER": "routerai",
@@ -379,10 +382,15 @@ def run_once(env, client, connection):
             model_invoked = True
             try:
                 report = investigate_routerai(client, cfg, findings)
-            except Exception:
-                # If the one-use model request returned an unverified result,
-                # preserve independently read page evidence instead of losing
-                # all work. Never repeat the potentially billed request.
+                model_error_code = "NONE"
+            except Exception as exc:
+                # Fixed error codes only, never log any returned text, HTTP
+                # bodies, buyer/CRM records, URL, or token. No paid replay.
+                reason = str(exc)
+                model_error_code = (reason if re.fullmatch(
+                    r"[A-Z0-9_]{4,70}", reason)
+                    and reason.startswith(("ROUTERAI_", "MODEL_"))
+                    else "ROUTERAI_UNVERIFIED")
                 report = None
             if report is None:
                 # A rejected model schema is NOT proof the public data was
@@ -399,16 +407,47 @@ def run_once(env, client, connection):
                 "Проверка публикации и поиск Brave не дали доступного "
                 "цитируемого текста; RouterAI не вызывался. "
                 "HOLD относится только к квалификации и контакту.")
+            # Signed original email intake is first-party source metadata,
+            # NOT independently verified PUBLIC evidence. It may appear in
+            # internal CRM, but is never sent to Brave or external RouterAI.
+            title = signed_title or "Тема источника не прошла безопасную проверку"
+            hints = []
+            upper = title.casefold()
+            for marker,service in (
+                ("1с", "1С"), ("1c", "1С"), ("devops", "DevOps"),
+                ("битрикс", "Битрикс24"), ("информационн", "ИБ"),
+                ("аутсорс", "ИТ-аутсорсинг"), ("crm", "CRM"),
+                ("сервер", "серверная инфраструктура")):
+                if marker in upper and service not in hints:
+                    hints.append(service)
+            theme = ", ".join(hints) if hints else "требуется чтение оригинала"
+            fields[PREFIX + "AI_RECOMMENDATION"] = (
+                "Из темы входящего уведомления возможен профиль услуг: " +
+                theme + ". Это гипотеза, а не опубликованное требование "
+                "заказчика. Без доступа к первоисточнику запрещено "
+                "подтверждать закупку, сумму, сроки и право контакта.")[:4096]
+            fields[PREFIX + "AI_MANAGER_BRIEF"] = (
+                "Тема подписанного B2B-уведомления: " + title +
+                ". Направления для сверки: " + theme +
+                ". Из открытых страниц подтверждённых фактов нет. "
+                "Проверить права доступа к извещению, подробное ТЗ и срок; "
+                "сохранить HOLD до коммерческой квалификации.")[:4096]
             fields[PREFIX + "AI_FULL_REPORT"] = (
-                "B2B-Center: публичный документ не удалось подтвердить.\n"
-                "Проверялись исходная HTTPS-ссылка и, при доступном ключе Brave, "
-                "поиск по точному номеру закупки; страницы без номера или за "
-                "авторизацией не считались доказательством.\n"
-                "Нет доказательств: заказчик/ИНН, техническое задание, сроки, "
-                "бюджет, правила участия и право контакта.\n"
-                "RouterAI не запускался без проверенного публичного текста. "
-                "HOLD не блокирует исследования, но сохраняет защиту от "
-                "неподтверждённой квалификации.")
+                "СЕРВИС ИТ | B2B: НЕДОСТУПНО ПУБЛИЧНОЕ ДОКАЗАТЕЛЬСТВО\n"
+                "Происхождение сведений: подтверждённое исходное B2B-уведомление, "
+                "НЕ открытая публикация.\n"
+                "Предмет из уведомления: " + title + "\n"
+                "Потенциальные компетенции для проверки: " + theme + "\n"
+                "Проверено: HTTPS-первоисточник, Brave по номеру, независимые "
+                "публичные зеркала по номеру и тексту.\n"
+                "Открытое подтверждение номера+предмета: НЕТ.\n"
+                "Не установлено: юридическое лицо, полный объём ТЗ, бюджет, "
+                "дедлайн, участие внешних подрядчиков, контакт и разрешение "
+                "обращения. Не создавать выдуманные факты или Lead Score.\n"
+                "Действие: уполномоченному сотруднику проверить оригинал "
+                "закупки и при необходимости приложить разрешённый документ.\n"
+                "RouterAI не вызывался без проверенного публичного текста; "
+                "HOLD не ограничивает поиск, только коммерческие действия.")[:12000]
         fresh = normalized(rest("crm.item.get", {
             "entityTypeId": 1062, "id": card,
             "useOriginalUfNames": "Y"})["item"])
@@ -438,6 +477,7 @@ def run_once(env, client, connection):
                 "research": 1, "routerai_invoked": model_invoked,
                 "source_pages": min(len(findings.get("pages") or []), MAX_PAGES),
                 "cited_facts": len(report.get("facts", [])) if model_invoked and report else 0,
+                "routerai_failure_code": model_error_code,
                 "customer_contacts_sent": 0, "lead_qualified": False}
     except Exception:
         # RESERVATION may precede paid model request and CRM write. Once

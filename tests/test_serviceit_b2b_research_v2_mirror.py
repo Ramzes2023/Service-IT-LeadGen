@@ -105,8 +105,9 @@ def test_public_snippet_is_never_used_without_page_match(monkeypatch):
 
 
 def test_incomplete_v1_status_eligible_for_version_two_and_verified_cited_not():
-    assert research.RECEIPT == "B2B_RESEARCH_V2"
+    assert research.RECEIPT == "B2B_RESEARCH_V3"
     assert "B2B_RESEARCH_V2" in NATIVE_NAMESPACES
+    assert "B2B_RESEARCH_V3" in NATIVE_NAMESPACES
     assert "B2B_RESEARCH_V1" in NATIVE_NAMESPACES
     for value in ("NOT_RUN_SOURCE_UNVERIFIED",
                   "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT",

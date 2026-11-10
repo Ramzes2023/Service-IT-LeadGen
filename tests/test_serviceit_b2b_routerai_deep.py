@@ -159,6 +159,6 @@ def test_no_quotes_does_not_claim_ai_verified_facts():
     report = deep.validate_inference(response, deep.public_documents(PUBLIC))
     fields = deep.cited_fields({key: "PLACEHOLDER" for key in AI_FIELDS},
                                PUBLIC, report)
-    assert fields[PREFIX+"AI_STATUS"] == "PUBLIC_RESEARCH_ROUTERAI_CITED"
+    assert fields[PREFIX+"AI_STATUS"] == "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES"
     assert "4673595" in fields[PREFIX+"AI_FULL_REPORT"]
     assert "сто миллионов" not in fields[PREFIX+"AI_FULL_REPORT"]

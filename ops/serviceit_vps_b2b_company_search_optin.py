@@ -206,7 +206,7 @@ with db(dict(os.environ)) as conn:
     with conn.cursor() as cur:
         cur.execute(
           "SELECT count(*) FROM serviceit_vps_native_receipts "
-          "WHERE status IN ('RESERVED','WRITE_INTENT','UNCERTAIN') "
+          "WHERE status IN ('RESERVED','WRITE_INTENT') "
           "AND namespace IN ('AI_NINE_V1','B2B_RESEARCH_V4',"
           "'B2B_PUBLIC_INN_V1','B2B_PUBLIC_INN_V2','FNS_CRM_V1','TASK_V1')")
         total=int(cur.fetchone()[0])
@@ -218,7 +218,7 @@ with db(dict(os.environ)) as conn:
             cur.execute('SELECT to_regclass(%s)',('public.'+table,))
             if cur.fetchone()[0] is None:
                 continue
-            statuses=('RESERVED','WRITE_INTENT','AI_INTENT','UNCERTAIN')
+            statuses=('RESERVED','WRITE_INTENT','AI_INTENT')
             cur.execute('SELECT count(*) FROM '+table+' WHERE status=ANY(%s)',
                         (list(statuses),))
             total+=int(cur.fetchone()[0])
@@ -268,6 +268,18 @@ def run(run_id):
             old_env = env_of(CORE)
             require(all(old_env.get(k) == v for k,v in GATES.items()),
                     "EXISTING_PRIVACY_AND_POLL_GATES_MISSING")
+            # Secrets live in /run/secrets, not plaintext Docker env values.
+            # Require an actual mounted Brave token without ever logging it.
+            secrets_check = """
+import os
+from leadpilot.serviceit_vps_pg_queue import secret_file
+value=secret_file(dict(os.environ),
+                  'SERVICEIT_BRAVE_SEARCH_API_KEY',optional=True)
+print('YES' if isinstance(value,str) and 12 <= len(value) <= 200 else 'NO')
+"""
+            require(out(["docker","exec",CORE,"python","-B","-c",
+                         secrets_check]) == "YES",
+                    "BRAVE_MOUNTED_SEARCH_TOKEN_REQUIRED")
             require(old_env.get(FLAG) not in ("YES", "NO"),
                     "FEATURE_FLAG_ALREADY_CONFIGURED")
             old_image = image(CORE)

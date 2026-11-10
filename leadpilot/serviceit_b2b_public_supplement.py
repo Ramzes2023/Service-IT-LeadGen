@@ -93,3 +93,48 @@ def supplement_existing_ai(item: dict, findings: dict) -> dict | None:
                    for key, v in out.items())):
         raise SupplementBlocked("RESULT_FIELD_LIMIT_EXCEEDED")
     return out
+
+
+def source_backed_company_inn_update(item: dict, findings: dict) -> dict | None:
+    """Prepare ONLY 3 CRM fields if public tender + independent buyer site match.
+
+    Legal source claim is *not* a current EGRUL verification.
+    This is intentionally pure: no CRM, Postgres, HTTP or model call.
+    """
+    from urllib.parse import urlsplit
+    from .bitrix_1062_mapping import _is_valid_inn
+    INN = PREFIX + "COMPANY_INN"
+    REPORT = PREFIX + "AI_FULL_REPORT"
+    BRIEF = PREFIX + "AI_MANAGER_BRIEF"
+    if (not isinstance(item, dict) or item.get(INN) not in (None, "")
+            or not isinstance(findings, dict)
+            or findings.get("status") != "PUBLIC_PAGES_INSPECTED"):
+        return None
+    independent = findings.get("independent_company_research")
+    website = independent.get("public_inn") if isinstance(independent, dict) else None
+    public = published_buyer_inn_evidence(findings)
+    if not isinstance(website, dict) or not isinstance(public, dict):
+        return None
+    inn = website.get("inn")
+    if (not isinstance(inn, str) or not _is_valid_inn(inn)
+            or website.get("fns_verified") is not False
+            or website.get("provenance") != "PUBLIC_CORPORATE_SELF_DECLARATION"
+            or inn != public.get("inn")
+            or website.get("buyer_name") != public.get("buyer_name")
+            or website.get("public_source") != public.get("public_source")
+            or not isinstance(public.get("public_source"), str)
+            or not URL.fullmatch(public["public_source"])):
+        return None
+    # An independent buyer's company page must not actually be a
+    # tender marketplace mirror. The legal identity remains unverified by FNS.
+    url = urlsplit(public["public_source"])
+    if url.scheme != "https" or not url.hostname:
+        return None
+    from .serviceit_public_evidence_research import MARKETPLACES
+    if any(url.hostname == host or url.hostname.endswith("." + host)
+           for host in MARKETPLACES):
+        return None
+    ai = supplement_existing_ai(item, findings)
+    if ai is None:
+        return None
+    return {INN: inn, REPORT: ai[REPORT], BRIEF: ai[BRIEF]}

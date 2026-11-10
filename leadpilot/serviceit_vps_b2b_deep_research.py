@@ -16,6 +16,7 @@ import httpx
 from .ai import config_from_env
 from .serviceit_b2b_routerai_deep import (
     public_documents, investigate_routerai, cited_fields,
+    source_only_investigation,
 )
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_ai_report import plain
@@ -29,7 +30,14 @@ from .serviceit_public_evidence_research import (
 from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import VpsBlocked, secret_file
 
-RECEIPT = "B2B_RESEARCH_V1"
+RECEIPT = "B2B_RESEARCH_V2"
+RESEARCHABLE_STATES = frozenset((
+    "NOT_RUN_SOURCE_UNVERIFIED",
+    "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT",
+    "PUBLIC_PAGES_ROUTERAI_UNVERIFIED",
+    "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES",
+    "PUBLIC_RESEARCH_AI_NOT_RUN",
+))
 MAX_PAGES = 3
 SOURCE_ID = re.compile(r"B2B-CENTER-(\d{5,12})\Z")
 MODEL_ALLOWED = frozenset(("tender-opportunity",))
@@ -201,11 +209,19 @@ def source_findings(item, notice, env, client):
                   and any(exact.search(p.get("excerpt", ""))
                           for p in results.get("pages", [])[:3]
                           if isinstance(p, dict)))
+    from .serviceit_b2b_public_mirrors import brave_mirror_search
+    mirror = brave_mirror_search(
+        client, notice["tender_id"], notice["subject"], key)
     if not page_proof:
         candidate = brave_notice_page(
             client, notice["tender_id"], hosts, key, browser)
         if candidate is not None:
+            if mirror is not None:
+                candidate = dict(candidate)
+                candidate["pages"] = candidate["pages"][:2] + mirror["pages"][:1]
             return candidate
+        if mirror is not None:
+            return mirror
         return {"status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
                 "pages": [], "contacts": [], "model_excerpt": "",
                 "checked_at": datetime.now(timezone.utc).isoformat()}
@@ -220,6 +236,12 @@ def source_findings(item, notice, env, client):
             results = dict(results)
             results["pages"] = (results.get("pages") or [])[:2] + fresh[:1]
             results["brave_exact_id_independent_page"] = True
+    if mirror is not None:
+        existing = {x.get("url") for x in results.get("pages", [])}
+        if mirror["pages"][0]["url"] not in existing:
+            results = dict(results)
+            results["pages"] = (results.get("pages") or [])[:2] + mirror["pages"][:1]
+            results["brave_public_mirror_independently_verified"] = True
     return results
 
 
@@ -268,7 +290,7 @@ def draft_fields(item, findings, *, ai=None, safe_title=""):
     if any(type(value) is not str or not value.strip()
            or len(value) > 12000 for value in current.values()):
         raise B2BResearchBlocked("B2B_NINE_BASE_FIELDS_NOT_CONFIRMED")
-    if item[PREFIX + "AI_STATUS"] != SKIP_AI:
+    if item[PREFIX + "AI_STATUS"] not in RESEARCHABLE_STATES:
         raise B2BResearchBlocked("B2B_EXISTING_AI_RESULT_PRESERVED")
     result = {key: value.replace("GigaChat", "RouterAI")
               for key, value in current.items()}
@@ -327,7 +349,7 @@ def run_once(env, client, connection):
     item = normalized(rest("crm.item.get", {
         "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y"})["item"])
     validate_identity(item, card)
-    if item.get(PREFIX + "AI_STATUS") != SKIP_AI:
+    if item.get(PREFIX + "AI_STATUS") not in RESEARCHABLE_STATES:
         # Skip genuinely analyzed cards without starving later pending records.
         # PG namespace marks this exact card checked, but leaves CRM unchanged.
         fence = PostgresNativeFence(connection, RECEIPT)
@@ -362,20 +384,13 @@ def run_once(env, client, connection):
                 # preserve independently read page evidence instead of losing
                 # all work. Never repeat the potentially billed request.
                 report = None
-            if report is not None:
-                fields = cited_fields(
-                    {key: item[key] for key in AI_FIELDS}, findings, report)
-            else:
-                fields = draft_fields(item, findings)
-                fields[PREFIX + "AI_STATUS"] = "PUBLIC_PAGES_ROUTERAI_UNVERIFIED"
-                fields[PREFIX + "AI_SUMMARY"] = (
-                    "Открытые страницы проверены и приложены к отчёту; "
-                    "RouterAI не вернул пригодный для проверки ответ. "
-                    "Факты не приписываются модели; коммерческий HOLD сохранён.")
-                fields[PREFIX + "AI_FULL_REPORT"] = (
-                    fields[PREFIX + "AI_FULL_REPORT"] +
-                    "\n\nRouterAI: результат не подтверждён, повторный платный "
-                    "вызов без отдельной версии не разрешён.")[:12000]
+            if report is None:
+                # A rejected model schema is NOT proof the public data was
+                # useless. Publish deterministic exact quotations and links,
+                # with an explicit 'AI unverified' label and no paid retry.
+                report = source_only_investigation(findings)
+            fields = cited_fields(
+                {key: item[key] for key in AI_FIELDS}, findings, report)
         else:
             fields = draft_fields(item, findings)
             fields[PREFIX + "AI_STATUS"] = "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT"

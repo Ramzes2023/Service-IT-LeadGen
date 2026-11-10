@@ -1,0 +1,117 @@
+name: ServiceIT B2B real research / internal task gates READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-research-task-flags-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_RESEARCH_TASK_GATES_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pin host without exporting credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/gates"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/gates/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/gates/known_hosts"
+          chmod 600 "$RUNNER_TEMP/gates/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/gates/known_hosts" >/dev/null
+      - name: Query only yes/no flags and aggregate PG receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/gates/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/gates/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > "$RUNNER_TEMP/gates/results" <<'PY'
+          import subprocess,re
+          code = """
+          import os,re
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          e=dict(os.environ)
+          flags={
+              'MANAGER_TASK':'SERVICEIT_VPS_MANAGER_TASK_ENABLED',
+              'KANBAN':'SERVICEIT_VPS_KANBAN_TITLE_ENABLED',
+              'CRM_DUPLICATES':'SERVICEIT_VPS_CRM_DUPLICATE_ENABLED',
+              'OWN_STOP':'SERVICEIT_VPS_OWN_STOP_ENABLED',
+              'PROVISIONAL_SCORE':'SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED',
+              'PUBLIC_RESEARCH':'SERVICEIT_PUBLIC_RESEARCH_ENABLED',
+              'DEEP_RESEARCH':'SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED',
+              'PUBLIC_TITLE_AI':'SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED',
+              'BRAVE_LLM_CONTEXT':'SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED',
+              'BROWSER_RESEARCH':'SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED',
+              'BROWSER_PROXY':'SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED',
+              'TASK_ASSIGNEE_APPROVED':'SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED',
+          }
+          for alias,name in flags.items():
+              present=e.get(name,'')
+              acceptable=present=='YES' or (alias=='TASK_ASSIGNEE_APPROVED' and present=='YES_1062_21_INTERNAL_MANAGER')
+              print('B2B_GATES_'+alias+'='+('YES' if acceptable else 'NO'),flush=True)
+          print('B2B_GATES_APPROVED_TASK_ASSIGNEE='+
+              ('YES' if e.get('SERVICEIT_VPS_TASK_ASSIGNEE_ID')=='605' else 'NO'),flush=True)
+          hosts=e.get('SERVICEIT_PRELIMINARY_PUBLIC_HOSTS','')
+          allowed=[x.strip().lower() for x in hosts.split(',') if x.strip()]
+          print('B2B_GATES_PUBLIC_HOSTS_COUNT='+str(min(len(allowed),100)),flush=True)
+          print('B2B_GATES_B2B_HOST_APPROVED='+
+              ('YES' if 'b2b-center.ru' in allowed else 'NO'),flush=True)
+          print('B2B_GATES_BRAVE_SECRET_PRESENT='+
+              ('YES' if bool(secret_file(e,'SERVICEIT_BRAVE_SEARCH_API_KEY',optional=True)) else 'NO'),flush=True)
+          print('B2B_GATES_ROUTERAI_SECRET_PRESENT='+
+              ('YES' if bool(secret_file(e,'SERVICEIT_ROUTERAI_API_KEY',optional=True)) else 'NO'),flush=True)
+          with db(e) as c:
+              with c.cursor() as cur:
+                  cur.execute("SELECT namespace,status,count(*) FROM serviceit_vps_native_receipts WHERE namespace IN ('AI_NINE_V1','AI_BMP_REPAIR_V1','TASK_V1','CRM_DUP_V1','KANBAN_TITLE_V1','PROVISIONAL_SCORE_V1') GROUP BY namespace,status")
+                  for name,status,count in cur.fetchall():
+                      if re.fullmatch(r'[A-Z0-9_]{2,50}',name) and re.fullmatch(r'[A-Z0-9_]{2,30}',status):
+                          print('B2B_GATES_RECEIPTS_'+name+'_'+status+'='+str(min(int(count),100000)),flush=True)
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED'")
+                  print('B2B_GATES_VERIFIED_B2B='+str(min(cur.fetchone()[0],100000)),flush=True)
+          print('B2B_GATES_READ_DONE=YES',flush=True)
+          """
+          p=subprocess.run(['docker','exec','serviceit-leadgen-vps-coordinator-1',
+              'python','-B','-c',code],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+              stdin=subprocess.DEVNULL,text=True,timeout=110)
+          for line in p.stdout.splitlines():
+              if re.fullmatch(r'B2B_GATES_[A-Z0-9_]+=(?:YES|NO|[0-9]+)',line):
+                  print(line,flush=True)
+          if p.returncode:
+              print('B2B_GATES_BLOCKED=YES',flush=True)
+              raise SystemExit(2)
+          PY
+          grep -E '^B2B_GATES_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$RUNNER_TEMP/gates/results" | head -45
+          grep -qx 'B2B_GATES_READ_DONE=YES' "$RUNNER_TEMP/gates/results"
+      - name: Publish only booleans and counts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/gates/results"
+          summary="$(grep -E '^B2B_GATES_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$r" 2>/dev/null | head -45 || true)"
+          [[ -n "$summary" ]] || summary="B2B_GATES_READ_UNVERIFIED=YES"
+          msg="$(printf 'Actual VPS public research and internal manager task feature gates (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo CRM, PG, email or source writes. No source identifiers, secrets, card values or report text.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

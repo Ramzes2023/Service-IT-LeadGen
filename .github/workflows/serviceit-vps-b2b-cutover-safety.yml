@@ -1,0 +1,106 @@
+name: ServiceIT B2B cutover rollback and compose READ ONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-cutover-safety
+  cancel-in-progress: false
+jobs:
+  check:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_CUTOVER_SAFETY_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pinned SSH setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ && "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          install -d -m 0700 "$RUNNER_TEMP/safety"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/safety/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/safety/known_hosts"
+          chmod 600 "$RUNNER_TEMP/safety/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/safety/known_hosts" >/dev/null
+      - name: Validate deploy configuration, source image and rollback possibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/safety/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/safety/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > "$RUNNER_TEMP/safety/status" <<'PY'
+          import os,subprocess,pathlib,json
+          def cmd(argv,env=None):
+              try:
+                  p=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL,timeout=15,text=True,env=env)
+                  return p.returncode,p.stdout.strip()
+              except (OSError,subprocess.TimeoutExpired):
+                  return 255,""
+          def state(label,value):
+              print("B2BSAFE_"+label+"="+("YES" if value is True else "NO" if value is False else "UNVERIFIED"))
+          release=pathlib.Path.home()/"serviceit/staging/b2b-direct-image-42791235235/source"
+          compose=release/"deploy/serviceit-vps-b2b-direct.compose.yml"
+          state("STAGED_COMPOSE_PRESENT",compose.is_file())
+          state("STAGED_BRIDGE_PRESENT",(release/"leadpilot/serviceit_b2b_positive_control.py").is_file())
+          env=dict(os.environ)
+          env.update({
+              "SERVICEIT_VPS_SECRETS_DIR":"/etc/serviceit/secrets",
+              "SERVICEIT_VPS_B2B_RECEIVER_ENABLED":"YES",
+              "SERVICEIT_VPS_B2B_WRITER_ENABLED":"YES",
+              "SERVICEIT_VPS_B2B_GH_WRITERS_DISABLED_ACK":"YES",
+              "SERVICEIT_VPS_CUTOVER_AUTHORIZED":"YES",
+              "SERVICEIT_VPS_POLL_ENABLED":"YES",
+              "SERVICEIT_VPS_OLD_GH_WRITERS_DISABLED_ACK":"YES",
+              "SERVICEIT_VPS_WRITER_MODE":"LIVE",
+          })
+          if compose.is_file():
+              rc,output=cmd(["docker","compose","-f",str(compose),"config","--quiet"],env=env)
+              state("COMPOSE_CONFIG_VALID",rc==0)
+          else:
+              state("COMPOSE_CONFIG_VALID",None)
+          rc,image=cmd(["docker","image","inspect","-f","{{.Id}}","serviceit-vps-b2b-direct:20261109-pilot"])
+          state("STAGED_IMAGE_INSPECTABLE",rc==0 and image.startswith("sha256:"))
+          for role in ("receiver","writer"):
+              name="serviceit-b2b-vps-"+role+"-1"
+              rc,raw=cmd(["docker","inspect","--format","{{.Image}}",name])
+              state(role.upper()+"_CONTAINER_INSPECTABLE",rc==0 and raw.startswith("sha256:"))
+              if rc==0 and raw.startswith("sha256:"):
+                  rc,old=cmd(["docker","image","inspect","-f","{{.Id}}",raw])
+                  state(role.upper()+"_OLD_IMAGE_AVAILABLE",rc==0 and old==raw)
+                  state(role.upper()+"_NEW_IMAGE_SAME",raw==image if image else None)
+              else:
+                  state(role.upper()+"_OLD_IMAGE_AVAILABLE",None)
+                  state(role.upper()+"_NEW_IMAGE_SAME",None)
+          print("B2BSAFE_DONE=YES")
+          PY
+          grep -E '^B2BSAFE_[A-Z0-9_]+=(YES|NO|UNVERIFIED)$' "$RUNNER_TEMP/safety/status" | head -35
+          grep -qx 'B2BSAFE_DONE=YES' "$RUNNER_TEMP/safety/status"
+      - name: Publish sanitized safety statuses
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/safety/status"
+          summary="$(grep -E '^B2BSAFE_[A-Z0-9_]+=(YES|NO|UNVERIFIED)$' "$f" 2>/dev/null | head -35 || true)"
+          [[ -n "$summary" ]] || summary="B2BSAFE_DONE=UNVERIFIED"
+          msg="$(printf 'B2B live cutover safety, READ ONLY:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo container changes and no CRM writes.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

@@ -9,7 +9,6 @@ claim is promoted to a buyer fact.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
 import re
 
 import httpx
@@ -276,8 +275,13 @@ def run_once(env, client, connection):
         "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y"})["item"])
     validate_identity(item, card)
     if item.get(PREFIX + "AI_STATUS") != SKIP_AI:
+        # Skip genuinely analyzed cards without starving later pending records.
+        # PG namespace marks this exact card checked, but leaves CRM unchanged.
+        fence = PostgresNativeFence(connection, RECEIPT)
+        if fence.reserve(card) == "RESERVED":
+            fence.finalize(card, "HOLD")
         return {"status": "B2B_RESEARCH_PRESERVE_EXISTING_AI", "research": 0}
-    url, title = safe_notice(notice, card, source_id, item)
+    _, title = safe_notice(notice, card, source_id, item)
     # Read-only public search/JS fetch can fail; it is never a reason to
     # suppress the task or classify an unverified buyer as qualified.
     findings = source_findings(item, notice, env, client)

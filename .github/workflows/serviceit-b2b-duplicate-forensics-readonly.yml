@@ -1,0 +1,33 @@
+name: ServiceIT B2B 1062 source duplicate fields forensic READ ONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-duplicate-forensics-readonly
+  cancel-in-progress: false
+jobs:
+  readonly:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_DUPLICATE_FORENSICS_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: serviceit-vps-readonly
+    env:
+      SERVICEIT_BITRIX_WEBHOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Fixed 1062/21 GET list fields, sanitized booleans, ZERO writes
+        run: python -m leadpilot.serviceit_b2b_duplicate_forensics_readonly

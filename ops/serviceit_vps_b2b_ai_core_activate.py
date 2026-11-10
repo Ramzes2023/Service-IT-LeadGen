@@ -130,7 +130,11 @@ def image_pin(image):
 
 
 def preflight(paths, former_id):
-    need(len(paths) == 2 and PIN in paths, "COMPOSE_PATH_DRIFT")
+    # Original core was configured with two reviewed Compose layers. The
+    # five-minute cutover added this third immutable-image pin and preserved
+    # the other two labels; do not misclassify it as a drift.
+    need(len(paths) == 3 and len(set(paths)) == 3 and PIN in paths,
+         "COMPOSE_PATH_DRIFT")
     need(any(p.resolve().is_relative_to(RELEASES)
              and re.search(r"/releases/[a-f0-9]{40}/deploy/serviceit-vps\.compose\.yml$",
                            str(p.resolve())) for p in paths),

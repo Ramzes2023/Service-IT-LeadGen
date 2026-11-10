@@ -204,6 +204,44 @@ def task_recipient_for_card(assigned_on_card, env, *, native_fence=None):
     return positive(assigned_on_card)
 
 
+def b2b_preliminary_hold_allows_internal_review(item):
+    """Distinguish source-unverified HOLD from a real company/owner STOP.
+
+    Source adapter writes this exact text at creation, to prevent qualification
+    and external contact until independent verification. The same marker
+    must NOT suppress a *private, non-outreach* task to verify a fresh tender.
+    All independent own-signal STOP rules still take priority in process_card.
+    """
+    from urllib.parse import urlsplit
+    from .serviceit_enrichment_worker import PREFIX
+    if not isinstance(item, dict):
+        return False
+    if item.get(PREFIX+"STOP_REASON") != "Не квалифицированный B2B-лид":
+        return False
+    if item.get(PREFIX+"SIGNAL_SOURCE") != "B2B-Center email subscription":
+        return False
+    if item.get(PREFIX+"SIGNAL_KIND") != "tender-opportunity":
+        return False
+    if item.get(PREFIX+"EVIDENCE_STATUS") != (
+            "HOLD: письмо; оригинал, статус, ИНН, ФНС и регион не проверены"):
+        return False
+    source_id = item.get(PREFIX+"SIGNAL_ID")
+    if not isinstance(source_id, str) or not re.fullmatch(
+            r"B2B-CENTER-[0-9]{5,12}", source_id):
+        return False
+    url = item.get(PREFIX+"SIGNAL_URL")
+    if not isinstance(url,str):
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return (parsed.scheme == "https" and
+            parsed.hostname in ("b2b-center.ru", "www.b2b-center.ru") and
+            parsed.username is None and parsed.password is None and
+            parsed.port in (None,443))
+
+
 def process_card(client, env, card, *, now=None, native_fence=None):
     """One card. Every refusal before reserve is non-destructive.
 
@@ -240,8 +278,11 @@ def process_card(client, env, card, *, now=None, native_fence=None):
         card_id=card)
     if own_status == "HOLD_OWN_SIGNAL_STOP":
         return "OWN_SIGNAL_STOP_HOLD_NO_TASK"
-    # A CRM-recorded STOP reason must not generate fresh outreach work.
-    if item.get(PREFIX + "STOP_REASON") not in (None, ""):
+    # A genuine STOP still suppresses all task creation. The exact signed
+    # B2B source's provisional HOLD is different: it bars sales/outreach but
+    # requires a *private verification task* for the assigned manager.
+    if (item.get(PREFIX + "STOP_REASON") not in (None, "")
+            and not b2b_preliminary_hold_allows_internal_review(item)):
         return "CARD_STOP_REASON_HOLD_NO_TASK"
     check_task_binding(client,base)
     binding=owner_type(client,base)+"_"+str(card)

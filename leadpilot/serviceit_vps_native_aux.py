@@ -80,14 +80,25 @@ def eligible_cards(client, env, base, now):
 
 
 def ai_receipt_allows_task(connection, card):
-    """Tasks only after a verified native AI result, not after an assumption."""
+    """Authorize an internal review task only after a proven exact nine-field readback.
+
+    B2B 2026-11-10 recovery intentionally retained the original failed
+    non-BMP AI_NINE_V1 write as NEEDS_REVIEW, with the replacement nine
+    fields independently verified under AI_BMP_REPAIR_V1. This is valid
+    evidence of *manager HOLD fields*, not of qualified leads or model work.
+    Never treat an arbitrary failed receipt alone as task authorization.
+    """
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT status FROM serviceit_vps_native_receipts "
-            "WHERE namespace=%s AND card_id=%s",
-            (NAMESPACE, card))
-        row = cur.fetchone()
-    return bool(row and row[0] in ("HOLD_9_WRITTEN", "HOLD_9_PRESENT", "VERIFIED"))
+            "SELECT namespace,status FROM serviceit_vps_native_receipts "
+            "WHERE card_id=%s AND namespace IN (%s,%s)",
+            (card, NAMESPACE, "AI_BMP_REPAIR_V1"))
+        receipts = dict(cur.fetchall())
+    original = receipts.get(NAMESPACE)
+    if original in ("HOLD_9_WRITTEN", "HOLD_9_PRESENT", "VERIFIED"):
+        return True
+    return (original == "NEEDS_REVIEW"
+            and receipts.get("AI_BMP_REPAIR_V1") == "VERIFIED")
 
 
 def run_once(env: dict, *, client: httpx.Client, connection,

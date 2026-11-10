@@ -56,3 +56,32 @@ def test_vps_compose_defaults_all_aux_writers_to_no():
     assert 'leadpilot.serviceit_vps_native_aux", "--loop"' in compose
     assert "serviceit_gh_ledger_key" not in compose
     assert "GIGACHAT_CREDENTIALS" not in compose
+
+
+def test_native_task_can_use_only_verified_bmp_nine_field_repair():
+    class Cursor:
+        rows = []
+        def __init__(self, rows): self._rows=rows
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def execute(self,sql,args):
+            assert "SELECT namespace,status" in sql
+            assert args[0]==99 and args[2]=="AI_BMP_REPAIR_V1"
+        def fetchall(self): return self._rows
+    class Connection:
+        def __init__(self, rows): self.rows=rows
+        def cursor(self): return Cursor(self.rows)
+    assert aux.ai_receipt_allows_task(Connection([
+        ("AI_NINE_V1","NEEDS_REVIEW"),
+        ("AI_BMP_REPAIR_V1","VERIFIED")]),99)
+    assert aux.ai_receipt_allows_task(Connection([
+        ("AI_NINE_V1","HOLD_9_WRITTEN")]),99)
+    for rows in [
+        [("AI_NINE_V1","NEEDS_REVIEW")],
+        [("AI_BMP_REPAIR_V1","VERIFIED")],
+        [("AI_NINE_V1","NEEDS_REVIEW"),
+         ("AI_BMP_REPAIR_V1","WRITE_INTENT")],
+        [("AI_NINE_V1","UNCERTAIN"),
+         ("AI_BMP_REPAIR_V1","VERIFIED")],
+    ]:
+        assert aux.ai_receipt_allows_task(Connection(rows),99) is False

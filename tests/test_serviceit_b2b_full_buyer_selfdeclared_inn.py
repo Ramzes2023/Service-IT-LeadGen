@@ -80,3 +80,27 @@ def test_fns_not_claimed_with_valid_self_published_inn(monkeypatch):
     assert b2b.published_buyer_inn_evidence(source) == {
         "inn": "5260365605", "public_source": url,
         "buyer_name": "ООО «ГЛОБУС-ИТ»", "fns_verified": False}
+
+
+def test_extra_brave_is_networkless_by_default_and_explicitly_opted_in(monkeypatch):
+    url = "https://globus-ltd.ru/contacts"
+    site = {
+        "url": url, "emails": [], "phones": [],
+        "text": 'ООО "ГЛОБУС-ИТ" ИНН 5260365605 info@globus-ltd.com',
+    }
+    calls = []
+    def transport(request):
+        calls.append(request)
+        return httpx.Response(200, json={"web": {"results": [{"url": url}]}})
+    monkeypatch.setattr(page_reader, "_page", lambda *_: site)
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        assert b2b._public_company_self_declaration(
+            client, "ООО «ГЛОБУС-ИТ»", [],
+            "SYNTHETIC-BRAVE-TOKEN") is None
+        assert calls == []
+        result = b2b._public_company_self_declaration(
+            client, "ООО «ГЛОБУС-ИТ»", [],
+            "SYNTHETIC-BRAVE-TOKEN", allow_extra_discovery=True)
+    assert len(calls) == 1
+    assert result["inn"] == "5260365605"
+    assert result["fns_verified"] is False

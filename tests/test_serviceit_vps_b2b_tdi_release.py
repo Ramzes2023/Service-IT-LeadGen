@@ -62,3 +62,11 @@ def test_github_owner_exact_comment_and_sha_pinned_wheel():
     assert "workflow_dispatch" not in WF
     assert "SERVICEIT_B2B_V11_GUARDED_RELEASE_368" not in WF
     assert not re.search(r'\bTOKEN\b', WF)
+
+
+def test_tdi_smoke_import_matches_real_module_export():
+    from leadpilot.serviceit_vps_b2b_document_worker import run_once, build_report
+    assert callable(run_once) and callable(build_report)
+    assert ("from leadpilot.serviceit_vps_b2b_document_worker "
+            "import run_once, build_report") in ACT
+    assert "import worker_once, build_report" not in ACT

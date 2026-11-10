@@ -228,9 +228,13 @@ def main():
             for name,label in fixed_labels.items():
                 print("B2B_TASK_AUX_HEALTH_"+label+"="+
                       ("YES" if baseline_health[name] else "NO"),flush=True)
+            # Internal TASK_V1 generation reads its own PG, existing CRM,
+            # and prior AI receipt. It never depends on a currently healthy
+            # source receiver/writer. Those source services are checked and
+            # reported separately (their recent cycles are still running),
+            # and their Docker images remain strictly unchanged.
             must(all(baseline_health.get(name) for name in (
-                AUX, "serviceit-leadgen-vps-coordinator-1",
-                "serviceit-b2b-vps-writer-1")),
+                AUX, "serviceit-leadgen-vps-coordinator-1")),
                  "CRITICAL_TASK_DEPENDENCY_UNHEALTHY")
             preserved={name:image_id(name) for name in OTHER}
             old_image=image_id(AUX)

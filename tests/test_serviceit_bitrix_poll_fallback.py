@@ -274,8 +274,13 @@ def test_calibration_requires_real_exact_known_old_id_and_datetime(bad_items):
     def rest(method, params):
         assert method == "crm.item.list"
         assert params["useOriginalUfNames"] == "N"
-        assert params["filter"] == {"id":3}
-        return {"items": bad_items}
+        if params["filter"] == {"id": 3}:
+            return {"items": bad_items}
+        # A missing historical control can now fall back to a REAL card.
+        # No real control exists in this synthetic negative test either.
+        assert bad_items == []
+        assert params["filter"] == {"categoryId": 21}
+        return {"items": [], "total": 0}
     with pytest.raises((PollBlocked, ValueError)):
         calibrate_known_card(rest)
 

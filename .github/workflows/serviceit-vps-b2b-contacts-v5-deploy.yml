@@ -1,0 +1,127 @@
+name: ServiceIT B2B guarded verified public contacts one-file VPS deployment
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-contacts-v5-live-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_CONTACTS_V5_DEPLOY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Compile reviewed source and pin VPS SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_contacts_v5_deploy.py
+          python -m py_compile \
+            leadpilot/serviceit_vps_worker.py \
+            leadpilot/serviceit_vps_native_fence.py \
+            leadpilot/serviceit_vps_b2b_deep_research.py \
+            leadpilot/serviceit_b2b_routerai_deep.py \
+            leadpilot/serviceit_public_evidence_research.py \
+            leadpilot/serviceit_windows_autofill.py \
+            leadpilot/serviceit_b2b_hold_ai_fields.py \
+            leadpilot/serviceit_b2b_public_mirrors.py
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-contacts"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-contacts/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-contacts/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/serviceit-contacts/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-contacts/known_hosts" >/dev/null
+      - name: Send only reviewed eight module files and offline deploy script
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-contacts/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          dest="$VPS_USER@$VPS_HOST"
+          target="serviceit/staging/b2b-contacts-$GITHUB_RUN_ID"
+          names=(serviceit_vps_b2b_deep_research.py)
+          # Pin exact pre-change file and forbid newer unreviewed modifications.
+          git cat-file -e 3485e55eef4a63e6b3eff1f5bd6fc298ac5a3a4e^{commit}
+          git diff --quiet 97a49f49483a3078048439549a9b74f3eb54d0e5 HEAD -- leadpilot/serviceit_vps_b2b_deep_research.py
+          git show 3485e55eef4a63e6b3eff1f5bd6fc298ac5a3a4e:leadpilot/serviceit_vps_b2b_deep_research.py | sha256sum | cut -d ' ' -f 1 > "$RUNNER_TEMP/serviceit-contacts/old-sha"
+          : > "$RUNNER_TEMP/serviceit-contacts/shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d ' ' -f 1 \
+              >> "$RUNNER_TEMP/serviceit-contacts/shas"
+          done
+          sha256sum ops/serviceit_vps_b2b_contacts_v5_deploy.py | cut -d ' ' -f 1 \
+            > "$RUNNER_TEMP/serviceit-contacts/script-sha"
+          ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" "$dest" \
+            "umask 077; install -d -m 0700 '$target'"
+          for name in "${names[@]}"; do
+            scp -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
+              "leadpilot/$name" "$dest:$target/$name"
+          done
+          scp -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_contacts_v5_deploy.py "$dest:$target/activate.py"
+      - name: Offline image build, guarded live coordinator-only enable
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-contacts/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/serviceit-contacts/shas"
+          [[ "${#shas[@]}" == 1 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/serviceit-contacts/script-sha")"
+          oldsha="$(cat "$RUNNER_TEMP/serviceit-contacts/old-sha")"
+          for value in "$scriptsha" "$oldsha" "${shas[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+          done
+          ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '$oldsha' '${shas[0]}'" \
+            > "$RUNNER_TEMP/serviceit-contacts/status" <<'REMOTE'
+          set -euo pipefail
+          runid="$1"; scriptsha="$2"; shift 2
+          [[ "$runid" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          for digest in "$@"; do [[ "$digest" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-contacts-$runid/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$scriptsha" "$script" | sha256sum --check --status
+          python3 "$script" "$runid" "$@"
+          REMOTE
+          grep -E '^B2B_CONTACTS_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' \
+            "$RUNNER_TEMP/serviceit-contacts/status" | head -35
+          grep -qx 'B2B_CONTACTS_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/serviceit-contacts/status"
+      - name: Write sanitized outcome to project issue
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/serviceit-contacts/status"
+          safe="$(grep -E '^B2B_CONTACTS_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$file" 2>/dev/null | head -35 || true)"
+          [[ -n "$safe" ]] || safe='B2B_CONTACTS_VPS_ACTIVATION_UNVERIFIED=YES'
+          body="$(printf 'B2B public evidence and contacts v5 one-file VPS deploy:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core container, no source or auxiliary restarts. No CRM data or secrets in logs. Check actual 9-field Bitrix readback separately.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

@@ -30,7 +30,7 @@ from .serviceit_public_evidence_research import (
 from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import VpsBlocked, secret_file
 
-RECEIPT = "B2B_RESEARCH_V3"
+RECEIPT = "B2B_RESEARCH_V4"
 RESEARCHABLE_STATES = frozenset((
     "NOT_RUN_SOURCE_UNVERIFIED",
     "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT",

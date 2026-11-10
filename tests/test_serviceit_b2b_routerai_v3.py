@@ -44,7 +44,7 @@ def test_json_object_accepted_one_call_with_safe_structured_evidence():
     def transport(request):
         called.append(request)
         body=json.loads(request.content)
-        assert body["max_tokens"]==4200
+        assert body["max_tokens"]==6200
         assert "JSON" in body["messages"][0]["content"]
         assert "example_shape" in body["messages"][1]["content"]
         return httpx.Response(200,json={"choices":[{
@@ -76,8 +76,8 @@ def test_diagnostic_returns_fixed_no_data_codes(status,body,expected):
 
 
 def test_v3_only_upgrades_not_yet_ai_verified_previous_versions():
-    assert runner.RECEIPT=="B2B_RESEARCH_V3"
-    assert {"B2B_RESEARCH_V1","B2B_RESEARCH_V2","B2B_RESEARCH_V3"} <= NATIVE_NAMESPACES
+    assert runner.RECEIPT=="B2B_RESEARCH_V4"
+    assert {"B2B_RESEARCH_V1","B2B_RESEARCH_V2","B2B_RESEARCH_V3","B2B_RESEARCH_V4"} <= NATIVE_NAMESPACES
     assert "PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED" in runner.RESEARCHABLE_STATES
     assert "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT" in runner.RESEARCHABLE_STATES
     assert "PUBLIC_RESEARCH_ROUTERAI_CITED" not in runner.RESEARCHABLE_STATES

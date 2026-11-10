@@ -56,9 +56,9 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
     for number in exact[:12]:
         prefix = text[max(0,number.start()-90):number.start()]
         number_labeled = re.search(
-            r"(?iu)(?:номер\\s+у\\s+источника|закупка\\s*(?:№\\s*)?|"
-            r"запрос\\s+(?:цен|предложений)\\s*№\\s*|"
-            r"лот\\s*№\\s*)[:\\s№-]*$", prefix) is not None
+            r"(?iu)(?:номер\s+у\s+источника|закупка\s*(?:№\s*)?|"
+            r"запрос\s+(?:цен|предложений)\s*№\s*|"
+            r"лот\s*№\s*)[:\s№-]*$", prefix) is not None
         if title_exact and platform and procurement and number_labeled:
             nearby = text[max(0,number.start()-200):number.end()+350]
             return head[:1450] + " Источник и номер: " + nearby

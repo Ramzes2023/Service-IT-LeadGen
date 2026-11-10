@@ -121,13 +121,15 @@ def source_backed_company_inn_update(item: dict, findings: dict) -> dict | None:
             or website.get("provenance") != "PUBLIC_CORPORATE_SELF_DECLARATION"
             or inn != public.get("inn")
             or website.get("buyer_name") != public.get("buyer_name")
-            or website.get("public_source") != public.get("public_source")
-            or not isinstance(public.get("public_source"), str)
-            or not URL.fullmatch(public["public_source"])):
+            or not isinstance(website.get("public_source"), str)
+            or not URL.fullmatch(website["public_source"])):
         return None
     # An independent buyer's company page must not actually be a
     # tender marketplace mirror. The legal identity remains unverified by FNS.
-    url = urlsplit(public["public_source"])
+    # The tender page and the separately fetched corporate website MUST
+    # be different sources: requiring their URLs to match wrongly rejects
+    # a stronger corroboration when the tender ALSO prints the buyer INN.
+    url = urlsplit(website["public_source"])
     if url.scheme != "https" or not url.hostname:
         return None
     # A tender mirror is NOT an independently fetched company website.

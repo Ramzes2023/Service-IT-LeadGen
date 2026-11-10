@@ -297,9 +297,17 @@ def compose(notice, old_item, findings, investigation):
         sections.append("    «" + row["quote"] + "»")
     if not facts:
         sections.append("Нет пригодных дословных цитат; не подменять их догадками ИИ.")
-    sections += ["", "08  РЕЕСТР ИСТОЧНИКОВ", "[ОРИГИНАЛ] " + source_url]
+    sections += ["", "08  РЕЕСТР ИСТОЧНИКОВ"]
+    # One URL is listed exactly once even when it is both the signed
+    # marketplace link and the independently fetched public source.
+    if source_url in unique_urls:
+        ref = unique_urls.index(source_url) + 1
+        sections.append(f"[ОРИГИНАЛ = {ref}] " + source_url)
+    else:
+        sections.append("[ОРИГИНАЛ] " + source_url)
     for i, url in enumerate(unique_urls, 1):
-        sections.append("[" + str(i) + "] " + url)
+        if url != source_url:
+            sections.append("[" + str(i) + "] " + url)
     for kind, value, url in contacts:
         if url not in unique_urls:
             sections.append("[КОНТАКТ " + kind + "] " + url)

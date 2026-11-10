@@ -54,7 +54,7 @@ jobs:
             -o BatchMode=yes -o ConnectTimeout=15 \
             "$VPS_USER@$VPS_HOST" 'python3 -' \
             >> "$RUNNER_TEMP/b2b-audit/status" <<'PY'
-          import pathlib,subprocess
+          import pathlib,subprocess,re
           def cmd(args):
               try:
                   p=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
@@ -113,6 +113,59 @@ jobs:
                   out('CADDY_SITE_FOUND',False)
           except (OSError,UnicodeError,PermissionError):
               out('CADDY_SITE_FOUND',None)
+          # Additional READ-ONLY B2B queue diagnostics, never email/CRM contents.
+          for label,container in [
+              ('RECEIVER','serviceit-b2b-vps-receiver-1'),
+              ('WRITER','serviceit-b2b-vps-writer-1')]:
+              rc,running=cmd(['docker','inspect','-f',
+                                '{{.State.Running}}',container])
+              out(label+'_RUNNING',running=='true' if rc==0 else None)
+          rc,log=cmd(['docker','logs','--since','90m','--tail','100',
+                      'serviceit-b2b-vps-writer-1'])
+          if rc==0:
+              import json
+              entries=[]
+              for line in log.splitlines():
+                  try:
+                      payload=json.loads(line)
+                      if isinstance(payload,dict):
+                          entries.append(payload.get('status'))
+                  except (ValueError,TypeError):
+                      pass
+              out('WRITER_RECENT_CYCLE', 'B2B_VPS_CONTINUOUS_CYCLE' in entries)
+              out('WRITER_RECENT_BLOCKED','B2B_WORKER_BLOCKED_OR_UNCERTAIN' in entries)
+          else:
+              out('WRITER_RECENT_CYCLE',None)
+              out('WRITER_RECENT_BLOCKED',None)
+          query = (
+              'import os,sys;'
+              'from leadpilot.serviceit_vps_pg_queue import db;'
+              'e=dict(os.environ);'
+              'c=db(e);'
+              'cur=c.cursor();'
+              "cur.execute(\"SELECT to_regclass('public.serviceit_vps_b2b_inbox')\");"
+              'present=bool(cur.fetchone()[0]);'
+              "print('B2B_PG_TABLE='+('YES' if present else 'NO'));"
+              'states={};'
+              'exec("if present:\\n"
+              "\" cur.execute('SELECT state,count(*) FROM serviceit_vps_b2b_inbox GROUP BY state')\\n"
+              "\" states=dict(cur.fetchall())\");"
+              "print('B2B_PG_HAS_ANY='+('YES' if sum(states.values())>0 else 'NO'));"
+              "print('B2B_PG_HAS_PENDING='+('YES' if states.get('PENDING',0)>0 else 'NO'));"
+              "print('B2B_PG_HAS_VERIFIED='+('YES' if states.get('VERIFIED',0)>0 else 'NO'));"
+              "print('B2B_PG_HAS_REVIEW='+('YES' if states.get('REVIEW',0)>0 else 'NO'));"
+              "print('B2B_PG_HAS_POST_UNCERTAIN='+('YES' if states.get('POST_UNCERTAIN',0)>0 else 'NO'));"
+              "print('B2B_PG_HAS_EXISTING='+('YES' if states.get('EXISTING',0)>0 else 'NO'));"
+              'cur.close();c.close();'
+          )
+          rc,dbstatus=cmd(['docker','exec','serviceit-b2b-vps-receiver-1',
+                           'python','-c',query])
+          if rc==0:
+              for line in dbstatus.splitlines():
+                  if re.fullmatch(r'B2B_PG_[A-Z_]+=(?:YES|NO)',line):
+                      print(line)
+          else:
+              out('PG_INBOX_AUDIT',None)
           out('SUDO_NONINTERACTIVE',cmd(['sudo','-n','true'])[0]==0)
           print('B2B_PREFLIGHT_DONE=YES')
           PY

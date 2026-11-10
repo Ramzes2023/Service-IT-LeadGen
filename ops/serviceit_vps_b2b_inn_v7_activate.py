@@ -35,10 +35,17 @@ OTHER = (
     "serviceit-b2b-vps-receiver-1",
     "serviceit-b2b-vps-writer-1",
 )
-FILES = ("serviceit_vps_b2b_deep_research.py",)
+FILES = (
+    "serviceit_vps_worker.py",
+    "serviceit_vps_native_fence.py",
+    "serviceit_public_evidence_research.py",
+    "serviceit_b2b_public_supplement.py",
+    "serviceit_vps_b2b_public_inn.py",
+)
 # Enforce pinned previous SHA passed by GitHub owner workflow.
 FLAG = "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED"
 EXTRA_FLAG = "SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED"
+INN_FLAG = "SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED"
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
     "SERVICEIT_VPS_CUTOVER_AUTHORIZED": "YES",
@@ -50,6 +57,7 @@ GATES = {
     "SERVICEIT_ROUTERAI_PRIVACY_APPROVED": "YES_1062_21",
     "SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED": "YES",
     "SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED": "YES",
+    "SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED": "YES",
 }
 MAX_RUN_SECONDS = 220
 
@@ -180,13 +188,15 @@ def compose_json(paths):
     return json.loads(out(compose(paths, "config", "--format", "json")))
 
 
-def make_pin(image_id, *, active, extra=False):
+def make_pin(image_id, *, active, extra=False, inn=False):
     text = ('services:\n  coordinator:\n    image: "' + image_id +
             '"\n    pull_policy: never\n')
     if active:
         text += ('    environment:\n      ' + FLAG + ': "YES"\n')
         if extra:
             text += ('      ' + EXTRA_FLAG + ': "YES"\n')
+        if inn:
+            text += ('      ' + INN_FLAG + ': "YES"\n')
     return text
 
 
@@ -216,8 +226,9 @@ def wait_healthy(expected_image, expected_shas):
     require(runtime_shas() == expected_shas,
             "COORDINATOR_PYTHON_SHA_MISMATCH")
     data = env_of(CORE)
-    require(data.get(FLAG) == "YES" and data.get(EXTRA_FLAG) == "YES",
-            "B2B_BUYER_V6_FEATURES_NOT_ENABLED")
+    require(data.get(FLAG) == "YES" and data.get(EXTRA_FLAG) == "YES"
+            and data.get(INN_FLAG) == "YES",
+            "B2B_INN_V7_FEATURES_NOT_ENABLED")
 
 
 def main():

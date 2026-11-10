@@ -60,7 +60,7 @@ def test_mismatching_live_item_is_not_accepted(monkeypatch):
 
 def test_native_aux_passes_connection_and_fns_collector_uses_same_control(monkeypatch):
     assert "eligible_cards(client, env, base, now, connection)" in inspect.getsource(aux.run_once)
-    assert "calibrate_verified_live_card(client, base, connection)" in inspect.getsource(
+    assert "calibrate_msp_verified_card(client, base, connection)" in inspect.getsource(
         msp.run_once)
     assert "calibrate_known_card(read_only_list)" not in inspect.getsource(msp.run_once)
 
@@ -69,3 +69,14 @@ def test_no_existing_qualifying_card_cannot_fake_discovery(monkeypatch):
     monkeypatch.setattr(stage,"read_item",fail_reader)
     with pytest.raises(VpsBlocked):
         aux.calibrate_verified_live_card(object(),"unused",Conn(None))
+
+def test_msp_has_independent_control_for_different_image(monkeypatch):
+    seen=[]
+    def valid(client,base,card):
+        seen.append(card)
+        return item(card)
+    monkeypatch.setattr(msp,"read_item",valid)
+    assert msp.calibrate_msp_verified_card(object(),"unused",Conn((104,)))
+    assert seen==[104]
+    with pytest.raises(VpsBlocked,match="NO_VERIFIED_POSITIVE_CONTROL"):
+        msp.calibrate_msp_verified_card(object(),"unused",Conn(None))

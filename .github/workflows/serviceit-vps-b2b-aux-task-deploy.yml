@@ -1,0 +1,116 @@
+name: ServiceIT B2B native manager TASK auxiliary-only guarded deploy
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-native-manager-task-guarded
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_AUX_TASK_DEPLOY_GUARDED_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin trusted current and source baseline module hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            leadpilot/serviceit_vps_native_aux.py \
+            leadpilot/serviceit_stage3_all_new_task_automation.py \
+            ops/serviceit_vps_b2b_aux_task_activate.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/task-aux"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/task-aux/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/task-aux/known_hosts"
+          chmod 600 "$RUNNER_TEMP/task-aux/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/task-aux/known_hosts" >/dev/null
+          for name in serviceit_vps_native_aux serviceit_stage3_all_new_task_automation; do
+            git show "3ac9660d8044246a6a358a9b0850273bb5e8085d:leadpilot/$name.py" \
+              > "$RUNNER_TEMP/task-aux/$name.old"
+            sha256sum "$RUNNER_TEMP/task-aux/$name.old" | cut -d' ' -f1 \
+              > "$RUNNER_TEMP/task-aux/$name.oldsha"
+            sha256sum "leadpilot/$name.py" | cut -d' ' -f1 \
+              > "$RUNNER_TEMP/task-aux/$name.newsha"
+          done
+      - name: Stage ONLY two reviewed modules and offline builder on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/task-aux/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          folder="serviceit/staging/b2b-aux-task-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/task-aux/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$folder'"
+          for name in serviceit_vps_native_aux serviceit_stage3_all_new_task_automation; do
+            scp -i "$RUNNER_TEMP/task-aux/id" "${opts[@]}" \
+              "leadpilot/$name.py" "$target:$folder/$name.py"
+          done
+          scp -i "$RUNNER_TEMP/task-aux/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_aux_task_activate.py "$target:$folder/activate.py"
+      - name: Scoped non-root auxiliary-only deployment; rollback exact old image on error
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/task-aux/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          a="$(cat "$RUNNER_TEMP/task-aux/serviceit_vps_native_aux.oldsha")"
+          b="$(cat "$RUNNER_TEMP/task-aux/serviceit_stage3_all_new_task_automation.oldsha")"
+          c="$(cat "$RUNNER_TEMP/task-aux/serviceit_vps_native_aux.newsha")"
+          d="$(cat "$RUNNER_TEMP/task-aux/serviceit_stage3_all_new_task_automation.newsha")"
+          digest="$(sha256sum ops/serviceit_vps_b2b_aux_task_activate.py | cut -d' ' -f1)"
+          ssh -T -i "$RUNNER_TEMP/task-aux/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_RUN_ID' '$a' '$b' '$c' '$d' '$digest'" \
+            > "$RUNNER_TEMP/task-aux/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; a="$2"; b="$3"; c="$4"; d="$5"; digest="$6"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          for v in "$a" "$b" "$c" "$d" "$digest"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+          done
+          path="$HOME/serviceit/staging/b2b-aux-task-$id/activate.py"
+          [[ -f "$path" && ! -L "$path" ]]
+          printf '%s  %s\n' "$digest" "$path" | sha256sum --check --status
+          python3 "$path" "$id" "$a" "$b" "$c" "$d"
+          REMOTE
+          grep -E '^B2B_TASK_AUX_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED)$' \
+            "$RUNNER_TEMP/task-aux/status" | head -25
+          grep -qx 'B2B_TASK_AUX_ACTIVATED=YES' "$RUNNER_TEMP/task-aux/status"
+      - name: Publish only trusted status codes to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/task-aux/status"
+          summary="$(grep -E '^B2B_TASK_AUX_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED)$' "$f" 2>/dev/null | head -25 || true)"
+          [[ -n "$summary" ]] || summary='B2B_TASK_AUX_STATUS_UNVERIFIED=YES'
+          msg="$(printf 'B2B standalone internal manager task module patch (guarded AUX-only):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo new CRM card, contact, task, email, PostgreSQL mutation or public research in this deployment step. Rollback available; only auxiliaries service eligible for restart.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

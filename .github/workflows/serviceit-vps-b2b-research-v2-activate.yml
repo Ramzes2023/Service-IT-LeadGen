@@ -55,7 +55,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-deep/known_hosts"
           chmod 0600 "$RUNNER_TEMP/serviceit-deep/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-deep/known_hosts" >/dev/null
-      - name: Send only reviewed seven module files and offline deploy script
+      - name: Send only reviewed eight module files and offline deploy script
         shell: bash
         run: |
           set -euo pipefail
@@ -101,7 +101,7 @@ jobs:
           done
           ssh -T -i "$RUNNER_TEMP/serviceit-deep/id" "${opts[@]}" \
             "$VPS_USER@$VPS_HOST" \
-            "bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '${shas[0]}' '${shas[1]}' '${shas[2]}' '${shas[3]}' '${shas[4]}' '${shas[5]}' '${shas[6]}' '${shas[7]}' \
+            "bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '${shas[0]}' '${shas[1]}' '${shas[2]}' '${shas[3]}' '${shas[4]}' '${shas[5]}' '${shas[6]}' '${shas[7]}'" \
             > "$RUNNER_TEMP/serviceit-deep/status" <<'REMOTE'
           set -euo pipefail
           runid="$1"; scriptsha="$2"; shift 2

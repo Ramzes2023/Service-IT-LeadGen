@@ -259,12 +259,15 @@ def _safe_model_excerpt(text):
 
 def research_public(item, client, allow_hosts, *, now=None,
                     deep_search_enabled=False, deep_search_key="",
-                    deep_llm_context_enabled=False, browser_render=None):
+                    deep_llm_context_enabled=False, browser_render=None,
+                    detail_excerpt_chars=500):
     """At most five source/company pages plus optional independent web search.
 
     Caller must explicitly opt in; source host and prospective company host must
     be independently configured in the approved domain allowlist.
     """
+    if type(detail_excerpt_chars) is not int or not 200 <= detail_excerpt_chars <= 1900:
+        raise ResearchBlocked("RESEARCH_EXCERPT_LIMIT_INVALID")
     if (type(item) is not dict or not isinstance(client, httpx.Client)
             or not isinstance(allow_hosts, frozenset) or not 1 <= len(allow_hosts) <= 80
             or any(type(h) is not str or not SAFE_HOST.fullmatch(h) for h in allow_hosts)):
@@ -372,7 +375,7 @@ def research_public(item, client, allow_hosts, *, now=None,
         if additional:
             excerpt = (excerpt[:210] + "\nВнешний контекст: " + additional)[:850]
     return {"status": "PUBLIC_PAGES_INSPECTED", "pages": [
-                {"url": p["url"], "excerpt": " ".join(p["text"].split())[:500]}
+                {"url": p["url"], "excerpt": " ".join(p["text"].split())[:detail_excerpt_chars]}
                 for p in pages],
             "contacts": list(dedup.values())[:6],
             "model_excerpt": excerpt, "checked_at": stamp,

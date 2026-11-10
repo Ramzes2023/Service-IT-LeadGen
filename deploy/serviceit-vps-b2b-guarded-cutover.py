@@ -220,13 +220,20 @@ def main():
          "IMAGE_ALREADY_RUNNING")
     source_probe()
     print("B2BLIVE_PREWRITE=YES", flush=True)
-    # Preserve both old containers and independent snapshots before mutation.
-    for name, role in ((RECEIVER, "receiver"), (WRITER, "writer")):
-        print("B2BLIVE_SNAPSHOT_"+role.upper()+"_STARTED=YES", flush=True)
-        run(["docker", "commit", "--pause=false", name,
-             "serviceit-b2b-rollback:" + role + "-" + ref], timeout=100)
-        print("B2BLIVE_SNAPSHOT_"+role.upper()+"_COMPLETED=YES", flush=True)
-    print("B2BLIVE_OLD_SNAPSHOTS=YES", flush=True)
+    # Docker commit is not supported by every production storage/backend setup.
+    # Keep the ORIGINAL stopped Docker containers, including their root filesystems,
+    # env, and mounts, as rollback checkpoints. Never delete or recreate originals.
+    # The rollback() path renames and restarts the exact original containers.
+    for name in (RECEIVER, WRITER):
+        current = inspect(name)
+        need(current.get("Id") == original[name].get("Id")
+             and current.get("State", {}).get("Running") is True,
+             "ORIGINAL_CHANGED_BEFORE_CUTOVER")
+        backup = name.replace("-1", "-rollback-" + ref)
+        need(run(["docker", "inspect", "--type", "container", backup],
+                 check=False).returncode != 0,
+             "ROLLBACK_NAME_ALREADY_EXISTS")
+    print("B2BLIVE_ORIGINAL_CONTAINERS_READY=YES", flush=True)
     backups = {}
     try:
         for name in (WRITER, RECEIVER):

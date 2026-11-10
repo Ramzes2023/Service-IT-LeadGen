@@ -114,6 +114,29 @@ jobs:
               expected=dict(old.get('environment',{}))
               expected['SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED']='YES'
               print('TDI_COMPOSE_ENV_ONLY_ADD='+('YES' if new.get('environment')==expected else 'NO'))
+              oldenv=old.get('environment') or {}
+              newenv=new.get('environment') or {}
+              print('TDI_COMPOSE_ENV_MAPS='+('YES' if
+                  isinstance(oldenv,dict) and isinstance(newenv,dict) else 'NO'))
+              if isinstance(oldenv,dict) and isinstance(newenv,dict):
+                  added=sorted(set(newenv)-set(oldenv))
+                  removed=sorted(set(oldenv)-set(newenv))
+                  changed=sorted(k for k in set(oldenv)&set(newenv)
+                                 if oldenv[k]!=newenv[k])
+                  print('TDI_COMPOSE_ENV_ADDED_COUNT='+str(len(added)))
+                  print('TDI_COMPOSE_ENV_REMOVED_COUNT='+str(len(removed)))
+                  print('TDI_COMPOSE_ENV_CHANGED_COUNT='+str(len(changed)))
+                  flag='SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED'
+                  print('TDI_COMPOSE_ENV_FLAG_PRESENT='+('YES' if flag in newenv else 'NO'))
+                  print('TDI_COMPOSE_ENV_FLAG_IS_YES='+('YES' if newenv.get(flag)=='YES' else 'NO'))
+                  print('TDI_COMPOSE_ENV_FLAG_ONLY_ADDED='+('YES' if added==[flag] else 'NO'))
+                  # Output *names only*, never changed environment VALUES.
+                  for key in added+removed+changed:
+                      if re.fullmatch(r'SERVICEIT_[A-Z0-9_]{4,100}',key):
+                          print('TDI_COMPOSE_ENV_DIFF_KEY_'+key+'=YES')
+                      else:
+                          print('TDI_COMPOSE_ENV_DIFF_KEY_OTHER=YES')
+
               print('TDI_COMPOSE_NEW_IMAGE='+('YES' if new.get('image')!=old.get('image') else 'NO'))
               exclude={'image','environment'}
               rest_old={k:v for k,v in old.items() if k not in exclude}
@@ -142,6 +165,4 @@ jobs:
                   else 'NO'))
 
           PY
-          grep -E '^TDI_COMPOSE_[A-Z_]+=(YES|NO|OK|PERMISSION|MISSING_FILE|YAML_PARSE|INTERPOLATION|INVALID_TYPE|UNSUPPORTED_KEY|INVALID_SERVICE|DUPLICATE|OTHER|IMAGE_NOT_FOUND)$' "$RUNNER_TEMP/tdi-compose/result"
-          grep -E '^TDI_COMPOSE_DRIFT_FIELD_COUNT=[0-9]{1,2}$' "$RUNNER_TEMP/tdi-compose/result"
-          grep -E '^TDI_COMPOSE_DRIFT_[A-Z_]+=(YES|NO)$' "$RUNNER_TEMP/tdi-compose/result"
+          grep -E '^TDI_COMPOSE_[A-Z0-9_]+=(YES|NO|OK|PERMISSION|MISSING_FILE|YAML_PARSE|INTERPOLATION|INVALID_TYPE|UNSUPPORTED_KEY|INVALID_SERVICE|DUPLICATE|OTHER|IMAGE_NOT_FOUND|[0-9]{1,3})$' "$RUNNER_TEMP/tdi-compose/result"

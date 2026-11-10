@@ -454,7 +454,7 @@ def source_findings(item, notice, env, client):
         if candidate is not None:
             if mirror is not None:
                 candidate = dict(candidate)
-                candidate["pages"] = candidate["pages"][:2] + mirror["pages"][:1]
+                candidate["pages"] = (candidate["pages"][:1] + mirror["pages"][:2])[:3]
             return followup_public_buyer_research(candidate, env, client, key)
         if mirror is not None:
             return followup_public_buyer_research(mirror, env, client, key)
@@ -475,10 +475,16 @@ def source_findings(item, notice, env, client):
             results["pages"] = (results.get("pages") or [])[:2] + fresh[:1]
             results["brave_exact_id_independent_page"] = True
     if mirror is not None:
-        existing = {x.get("url") for x in results.get("pages", [])}
-        if mirror["pages"][0]["url"] not in existing:
+        prior = (results.get("pages") or [])[:1]
+        existing = {x.get("url") for x in prior}
+        added = [x for x in mirror["pages"]
+                 if isinstance(x, dict) and x.get("url") not in existing][:2]
+        if added:
             results = dict(results)
-            results["pages"] = (results.get("pages") or [])[:2] + mirror["pages"][:1]
+            # Keep the independently confirmed official page, then the two
+            # richest verified mirrors. Do NOT sacrifice a buyer/terms page
+            # to preserve a generic company/site listing.
+            results["pages"] = (prior + added)[:3]
             results["brave_public_mirror_independently_verified"] = True
     return followup_public_buyer_research(results, env, client, key)
 

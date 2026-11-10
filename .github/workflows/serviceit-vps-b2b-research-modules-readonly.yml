@@ -37,7 +37,7 @@ jobs:
           import hashlib
           from pathlib import Path
           from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS
-          for name in ('serviceit_vps_worker','serviceit_vps_native_fence','serviceit_b2b_hold_ai_fields','serviceit_windows_autofill','serviceit_vps_b2b_deep_research','serviceit_b2b_routerai_deep','serviceit_public_evidence_research'):
+          for name in ('serviceit_vps_worker','serviceit_vps_native_fence','serviceit_b2b_hold_ai_fields','serviceit_windows_autofill','serviceit_vps_b2b_deep_research','serviceit_b2b_routerai_deep','serviceit_public_evidence_research','serviceit_b2b_public_mirrors'):
               p=Path('/app/leadpilot')/(name+'.py')
               print('MODULE_'+name.upper()+'='+(hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else 'MISSING'))
           for key in ('SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED','SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED','SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED','SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED','SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED','SERVICEIT_VPS_WRITER_MODE','SERVICEIT_VPS_POLL_ENABLED'):

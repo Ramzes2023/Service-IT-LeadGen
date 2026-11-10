@@ -61,6 +61,22 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         # Capture enough context on both sides, not the site-wide navbar.
         excerpt = text[max(0, m.start()-550):min(len(text),m.end()+1750)]
         return excerpt
+    # Some marketplaces show the official B2B number in their SOURCE link
+    # after a long lot table, while the procurement title/terms appear near
+    # the top. This is a bounded document-level cross-check, NOT a mere ID
+    # match: the top introduction must also share 2 distinctive terms, and
+    # the page must identify the same B2B source platform.
+    head = text[:3100]
+    head_terms = set(re.findall(r"[^\W_]{3,}", head.casefold()))
+    if re.search(r"(?i)\b1[сc]\b", head):
+        head_terms.add("1с")
+    if (matches and len(important & head_terms) >= 2
+            and "b2b-center" in text.casefold()
+            and ("закупк" in head.casefold() or "тендер" in head.casefold()
+                 or "запрос" in head.casefold())):
+        matched = text[max(0,matches[0].start()-250):
+                       min(len(text),matches[0].end()+350)]
+        return head[:2900] + " Источник и номер: " + matched
     return ""
 
 

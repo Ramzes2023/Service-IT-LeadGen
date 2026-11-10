@@ -218,7 +218,10 @@ def main():
                  "LIVE_AUX_NOT_REVIEWED_BASELINE")
             paths=inspect_paths()
             original_service=read_compose(paths)
-            must(original_service.get("image")==old_image,
+            configured=original_service.get("image")
+            must(isinstance(configured,str) and configured
+                 and out(["docker","image","inspect","-f","{{.Id}}",
+                          configured])==old_image,
                  "AUX_EXISTING_IMAGE_DRIFT")
             original_env=check_existing_env(original_service)
             print("B2B_TASK_AUX_PREFLIGHT=YES",flush=True)
@@ -268,7 +271,6 @@ print('B2B_TASK_AUX_OFFLINE_SMOKE=YES')
             must(not pin.exists() and not pin.is_symlink(),
                  "AUX_PATCH_PIN_CONFLICT")
             write_pin(pin,pin_value(new_image))
-            changed=True
             next_service=read_compose(paths+[pin])
             must(next_service.get("image")==new_image
                  and next_service.get("environment")==original_env
@@ -276,6 +278,7 @@ print('B2B_TASK_AUX_OFFLINE_SMOKE=YES')
                          for k,v in original_service.items()
                          if k not in ("image","pull_policy")),
                  "NEW_AUX_COMPOSE_CHANGES_UNAPPROVED")
+            changed=True
             call(compose_cmd(paths+[pin],"up","-d","--no-deps","--no-build",
                              "--pull","never","--force-recreate","auxiliaries"),
                  timeout=170)

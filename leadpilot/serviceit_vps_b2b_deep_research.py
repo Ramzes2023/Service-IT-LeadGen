@@ -296,8 +296,13 @@ def draft_fields(item, findings, *, ai=None, safe_title=""):
                      if ord(c) not in (0xFE0F, 0x200D, 0x20E3))
         for key, value in result.items()
     }
-    if set(safe) != AI_FIELDS or any(not 0 < len(v) <= 12000
-            or any(ord(c) > 0xFFFF for c in v) for v in safe.values()):
+    safe = {name: value[:(12000 if name == PREFIX + "AI_FULL_REPORT"
+                           else 4096)] for name, value in safe.items()}
+    if set(safe) != AI_FIELDS or any(
+            not 0 < len(v) <= (12000 if name == PREFIX + "AI_FULL_REPORT"
+                               else 4096)
+            or any(ord(c) > 0xFFFF for c in v)
+            for name, v in safe.items()):
         raise B2BResearchBlocked("B2B_RESEARCH_OUTPUT_INVALID")
     return safe
 

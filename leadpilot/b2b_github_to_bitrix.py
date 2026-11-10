@@ -184,26 +184,25 @@ def bitrix_call(client, base, method, params):
     return content
 
 
-def exact_duplicate(client, base, source_id):
-    """Fail-closed source duplicate check: list for candidate IDs, exact GET proof.
+CRM_SOURCE_CAMEL = "ufCrm13SvcitSignalId"
+POSITIVE_ID = 3
+NEGATIVE_SOURCE = "B2B-CENTER-999999999999"
 
-    Bitrix CRM documentation explicitly says `entityTypeId` is dropped from
-    list `select` and must not be required in list result items. If the list
-    contains malformed nested arrays or ambiguous pages, never interpret it
-    as "no duplicate"; block the write. Each returned ID is independently
-    checked via crm.item.get for 1062/category 21 and exact source ID.
+
+def _exact_source_search(client, base, source_id):
+    """Exact filter with live-proven portal field spelling, then original GET.
+
+    Read-only canary 2026-11-10 established original=Y source filters were
+    not a trustworthy *positive* control. The N camelCase filter is proven
+    against existing 1062/category21 item #3, and every candidate is
+    independently verified by GET with the original source field.
     """
     must(isinstance(source_id, str)
-         and re.fullmatch(r"B2B-CENTER-\d{5,12}", source_id),
+         and re.fullmatch(r"[A-Za-z0-9:_-]{4,120}", source_id),
          "CRM_SOURCE_ID_INVALID")
     response = bitrix_call(client, base, "crm.item.list", {
-        "entityTypeId": 1062, "useOriginalUfNames": "Y",
-        "filter": {"categoryId": 21, SIGNAL: source_id},
-        # LIVE portal 2026-11-03 read-only: using select (even with
-        # supported fields) returned a row WITHOUT id, while the SAME exact
-        # source/category filter with NO select returned valid flat records.
-        # This request is narrowly scoped to one source. Exact GET verifies
-        # type/category/source before any write. Never broaden this request.
+        "entityTypeId": 1062, "useOriginalUfNames": "N",
+        "filter": {"categoryId": 21, CRM_SOURCE_CAMEL: source_id},
         "start": 0})
     body = response["result"]
     must("next" not in body and "next" not in response,
@@ -211,14 +210,13 @@ def exact_duplicate(client, base, source_id):
     items = body.get("items")
     must(isinstance(items, list) and len(items) < 50,
          "CRM_LIST_INCOMPLETE")
+    verified = []
     for item in items:
         must(isinstance(item, dict)
              and str(item.get("categoryId")) == "21"
-             and item.get(SIGNAL) == source_id
+             and item.get(CRM_SOURCE_CAMEL) == source_id
              and type(item.get("id")) is int and 0 < item["id"] <= 2_000_000_000,
              "CRM_ITEM_OUT_OF_SCOPE")
-        # Exact GET checks the type independently because Bitrix removes
-        # entityTypeId from list select output.
         exact = bitrix_call(client, base, "crm.item.get", {
             "entityTypeId": 1062, "id": item["id"],
             "useOriginalUfNames": "Y"})
@@ -229,11 +227,50 @@ def exact_duplicate(client, base, source_id):
              and str(found.get("categoryId")) == "21"
              and found.get(SIGNAL) == source_id,
              "CRM_DUPLICATE_EXACT_GET_UNVERIFIED")
+        verified.append({"id": item["id"], "categoryId": 21,
+                         SIGNAL: source_id})
     for total in (response.get("total"), body.get("total")):
         if total is not None:
             must(type(total) is int and total == len(items),
                  "CRM_TOTAL_MISMATCH")
-    return items
+    return verified
+
+
+def exact_duplicate(client, base, source_id):
+    """Vendor source dedup; match the exact source ID or block any write."""
+    must(isinstance(source_id, str)
+         and re.fullmatch(r"B2B-CENTER-\d{5,12}", source_id),
+         "CRM_SOURCE_ID_INVALID")
+    return _exact_source_search(client, base, source_id)
+
+
+def verified_duplicate_control(client, base):
+    """Read-only positive AND negative proof using a live visible CRM item.
+
+    The historical B2B examples 4661617/4665948 are not visible in this
+    portal and MUST NOT be assumed to exist. Item #3 is real and was proved
+    by the owner-triggered November 10 read-only audit. Never print its
+    source value, and refuse to write if it later disappears or changes.
+    """
+    result = bitrix_call(client, base, "crm.item.get", {
+        "entityTypeId": 1062, "id": POSITIVE_ID,
+        "useOriginalUfNames": "Y"})
+    item = result["result"].get("item")
+    must(isinstance(item, dict)
+         and str(item.get("id")) == str(POSITIVE_ID)
+         and str(item.get("entityTypeId")) == "1062"
+         and str(item.get("categoryId")) == "21",
+         "CRM_POSITIVE_CONTROL_ID_NOT_VISIBLE")
+    source_id = item.get(SIGNAL)
+    must(type(source_id) is str and re.fullmatch(r"[A-Za-z0-9:_-]{4,120}", source_id),
+         "CRM_POSITIVE_CONTROL_SOURCE_NOT_VISIBLE")
+    matches = _exact_source_search(client, base, source_id)
+    must(len(matches) == 1 and matches[0]["id"] == POSITIVE_ID,
+         "CRM_POSITIVE_CONTROL_FILTER_UNVERIFIED")
+    must(not exact_duplicate(client, base, NEGATIVE_SOURCE),
+         "CRM_NEGATIVE_CONTROL_FILTER_UNVERIFIED")
+    return True
+
 
 def run_once(event, *, client=None, github_token="", webhook="", live=False):
     notice, services = notice_from_event(event)

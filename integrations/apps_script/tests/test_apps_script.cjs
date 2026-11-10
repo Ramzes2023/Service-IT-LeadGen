@@ -476,7 +476,7 @@ test('read-only diagnostic reports safe error code and preserves REVIEW_REQUIRED
 test('realistic Russian quoted-printable HTML via Gmail raw fallback is parsed and sent',()=>{
   const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
   const html=[
-    '<a href="https://www.b2b-center.ru/market/specialisty/tender-1234567/?utm_source=mail">Запрос предложений № 1234567</a>',
+    '<a href="https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/?utm_source=mail">Запрос предложений № 1234567</a>',
     '<div>Организатор:</div><div>ООО "ГЛОБУС-ИТ"</div>',
     '<div>Предмет договора: Оказание услуг по предоставлению ИТ-специалистов</div>'
   ].join('\r\n');

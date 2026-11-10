@@ -24,6 +24,8 @@ def test_scope_old_live_sha_and_immutable_lock():
         "b28fca017e44b67a9fc091e007f28833d69ad0937b4cd3890a07ec61f327c53b",)
     assert all(re.fullmatch(r"[a-f0-9]{64}",h) for h in m.AUDITED_OLD_SHAS)
     assert m.CORE=="serviceit-leadgen-vps-coordinator-1"
+    assert m.GATES["SERVICEIT_VPS_POLL_ENABLED"]=="YES"
+    assert "SERVICEIT_VPS_MIRROR_ENABLED" not in m.GATES
     script=SCRIPT.read_text("utf8")
     assert ".serviceit-five-minute-activate.lock" in script
     assert "EXISTING_CORE_SHA_DRIFT_NO_DEPLOY" in script

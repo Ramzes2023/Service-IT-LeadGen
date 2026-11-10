@@ -36,10 +36,34 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         return ""
     text = " ".join(text.split())
     tokens = re.findall(r"[^\W_]{3,}", subject.casefold())
-    stops = {"закупка", "предоставление", "оказание", "включая",
-             "услуги", "работы", "специалистов", "тендер", "поставка",
-             "техническое", "требуется", "компании", "для", "или"}
+    stops = {"закупка", "предоставление", "предоставлению",
+             "предоставления", "оказание", "оказанию", "включая",
+             "услуги", "услуг", "работы", "специалистов", "тендер",
+             "поставка", "техническое", "требуется", "компании",
+             "для", "или"}
     important = set(tokens) - stops
+    # Generic titles ("Оказание услуг по предоставлению ИТ-специалистов")
+    # can have too few distinctive terms after stopword removal. Accept a
+    # FULL independently read public title instead, but only together with
+    # the exact source-number label, platform, and procurement context.
+    # A number in an unrelated footer link or a search snippet is insufficient.
+    exact = list(re.finditer(ID_RX.format(id=tender_id), text))
+    head = text[:3100]
+    normal = lambda v: " ".join(v.casefold().replace("ё", "е").split())
+    title_exact = 24 <= len(subject.strip()) <= 240 and normal(subject) in normal(head)
+    platform = "b2b-center" in head.casefold()
+    procurement = any(x in head.casefold() for x in
+                      ("запрос котировок", "запрос цен", "запрос предложений",
+                       "закупка", "тендер"))
+    for number in exact[:12]:
+        prefix = text[max(0,number.start()-90):number.start()]
+        number_labeled = re.search(
+            r"(?iu)(?:номер\s+у\s+источника|закупка\s*(?:№\s*)?|"
+            r"запрос\s+(?:цен|предложений)\s*№\s*|"
+            r"лот\s*№\s*)[:\s№-]*$", prefix) is not None
+        if title_exact and platform and procurement and number_labeled:
+            nearby = text[max(0,number.start()-200):number.end()+350]
+            return head[:1450] + " Источник и номер: " + nearby
     # Code/abbreviation words (1С, ИБ) may be short but meaningful.
     if re.search(r"(?i)\b1[сc]\b", subject):
         important.add("1с")

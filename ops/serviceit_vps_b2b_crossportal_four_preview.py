@@ -47,7 +47,7 @@ def assess(env, client):
     import hashlib
     expected = {
         "serviceit_vps_b2b_deep_research.py":
-            "93fa83332e3a177e35b8ffd893bf21e35913fbb0718d7e4e9b6337590f05112c",
+            "168cc67ecef993e75a0dfd65c16e79ee7a841e9b051fe1eb1bc18cd8d8b9655c",
         "serviceit_b2b_public_mirrors.py":
             "e11fb8f76618371e80938516c569fd5aea8757baac8254e02ffa3ec9716ab593",
         "serviceit_b2b_dossier_v11.py":

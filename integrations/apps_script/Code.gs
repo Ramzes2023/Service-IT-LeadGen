@@ -522,6 +522,56 @@ function checkB2BCenter() {
   return summary;
 }
 
+
+/**
+ * Owner-run ONLY: inspect most recent quarantined B2B emails, READ-ONLY.
+ * Exposes fixed processing codes and counts; no raw email data, Gmail IDs,
+ * subjects, sender addresses, HMAC secrets, inbox mutations or VPS POSTs.
+ * REVIEW_REQUIRED and source dedup state remain unchanged.
+ */
+function diagnoseB2BCenterReadOnly() {
+  assertMailbox_();
+  const props = scriptProperties_();
+  const ids = listVendorMessageIds_();
+  const failed = ids.filter(function (id) {
+    return props.getProperty("SERVICEIT_EMAIL_" + id) === "REVIEW_REQUIRED";
+  });
+  const result = {
+    status: "SERVICEIT_B2B_REVIEW_DIAGNOSTIC",
+    flagged_messages: failed.length,
+    inspected_messages: 0,
+    samples: [],
+    source_states_changed: 0,
+    gmail_modified: false,
+    vps_posts: 0,
+    crm_writes: 0
+  };
+  failed.slice(0, 6).forEach(function (id, index) {
+    const sample = {slot: index + 1, phase: "GMAIL_GET"};
+    try {
+      const message = Gmail.Users.Messages.get("me", id, {format: "full"});
+      if (!message || message.id !== id) {
+        throw new Error("SERVICEIT_GMAIL_READBACK_ID_MISMATCH");
+      }
+      sample.phase = "PARSE";
+      const parsed = parseEmailMessage_(message, id);
+      sample.phase = "PARSED";
+      sample.recognized_tenders = parsed.observations.length;
+      sample.post_activation = parsed.internalDate >
+        Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0);
+    } catch (err) {
+      const message = String(err && err.message || "");
+      sample.code = /^SERVICEIT_[A-Z0-9_]{3,100}$/.test(message) ?
+        message : sample.phase === "GMAIL_GET" ?
+          "SERVICEIT_GMAIL_GET_FAILED" : "SERVICEIT_PARSE_UNCLASSIFIED";
+    }
+    result.samples.push(sample);
+  });
+  result.inspected_messages = result.samples.length;
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function activateVpsB2BCenter() {
   // One-time, owner-run from authenticated Apps Script. Requires the VPS
   // receiver HEALTH and signed end-to-end read-only preflight first.

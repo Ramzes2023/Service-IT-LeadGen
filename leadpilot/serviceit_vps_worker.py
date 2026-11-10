@@ -178,7 +178,15 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 research = deep_once(exact_env, client, connection)
             except Exception:
                 research = {"status": "B2B_RESEARCH_CHECK_FAILED", "research": 0}
+        public_inn = {"status": "B2B_PUBLIC_INN_DISABLED", "writes": 0}
+        if env.get("SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED", "NO") == "YES":
+            try:
+                from .serviceit_vps_b2b_public_inn import run_once as public_inn_once
+                public_inn = public_inn_once(exact_env, client, connection)
+            except Exception:
+                public_inn = {"status": "B2B_PUBLIC_INN_CHECK_FAILED", "writes": 0}
         return {
+            "b2b_public_inn": public_inn,
             "b2b_research": research,
             "status": "VPS_LIVE_CYCLE_COMPLETE",
             "handled": handled, "review": review,

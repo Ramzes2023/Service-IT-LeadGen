@@ -284,7 +284,7 @@ with db(dict(os.environ)) as c:
                          "-c", pending_code]) == "0",
                     "MIRROR_V9_INFLIGHT_NOT_SAFE_TO_RESTART")
             runtime = runtime_shas()
-            require(runtime == dict(zip(FILES, old_shas)), "LIVE_INN_V8_SHA_DRIFT")
+            require(runtime == dict(zip(FILES, old_shas)), "LIVE_MIRROR_V9_SHA_DRIFT")
             require(out(["docker", "exec", CORE, "python", "-B", "-c",
                          "from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS;print(INTERVAL_SECONDS)"])
                     == "300", "EXACT_FIVE_MINUTE_CADENCE_REQUIRED")

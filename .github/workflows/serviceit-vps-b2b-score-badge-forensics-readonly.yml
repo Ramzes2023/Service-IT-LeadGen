@@ -1,0 +1,100 @@
+name: ServiceIT four B2B score badge exact read-only forensics
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-four-score-badge-forensics-readonly
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_SCORE_BADGE_FORENSICS_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pinned nonroot SSH and exact four-card anonymous readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/badge-fns-free"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/badge-fns-free/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/badge-fns-free/hosts"
+          chmod 0600 "$RUNNER_TEMP/badge-fns-free/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/badge-fns-free/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/badge-fns-free/key" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/badge-fns-free/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-auxiliaries-1 python -B -' <<'PY'
+          import os,hashlib
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity
+          from leadpilot.serviceit_kanban_presentation import SCORE_FIELD,VERSION_FIELD,BADGE_FIELD,score_color
+          from leadpilot.serviceit_preliminary_score_markers import VERSION,DUP_STATUSES,provisional_payload
+          from leadpilot.serviceit_vps_native_aux import FLAGS
+          from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
+          from leadpilot.serviceit_stage4_provisional_score_live import evaluate_one
+          import inspect
+          env=dict(os.environ)
+          print("BADGE_ACTUAL_RESEARCH_STATUS_ENABLED="+
+                ("YES" if all(x in inspect.getsource(evaluate_one) for x in
+                ("PUBLIC_RESEARCH_ROUTERAI_CITED","PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT"))
+                else "NO"),flush=True)
+          print("BADGE_FNS_WRITER_OFF="+("YES" if env.get("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED")=="NO" else "NO"),flush=True)
+          with db(env) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
+                      cur.execute('SET TRANSACTION READ ONLY')
+                      cur.execute("SELECT card_id FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL ORDER BY received_at,source_id LIMIT 5")
+                      rows=cur.fetchall()
+                      assert len(rows)==4
+                      print('BADGE_FOUR_CARDS=YES',flush=True)
+                      cur.execute("SELECT status,count(*) FROM serviceit_vps_native_receipts WHERE namespace='PROVISIONAL_SCORE_V1' GROUP BY status ORDER BY status")
+                      for status,n in cur.fetchall():
+                          if status in ('UNCERTAIN','VERIFIED','HOLD','WRITE_INTENT','RESERVED'):
+                              print('BADGE_RECEIPT_'+status+'='+str(min(int(n),99)),flush=True)
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=22) as client:
+              rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
+              for i,(card,) in enumerate(rows,1):
+                  item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
+                  validate_identity(item,card)
+                  s=item.get(SCORE_FIELD)
+                  b=item.get(BADGE_FIELD)
+                  v=item.get(VERSION_FIELD)
+                  prefix='BADGE_CARD_'+str(i)+'_'
+                  print(prefix+'SCORE_VALID='+('YES' if type(s) is int and 0<=s<=100 else 'NO'),flush=True)
+                  print(prefix+'VERSION_OURS='+('YES' if v==VERSION else 'NO'),flush=True)
+                  print(prefix+'BADGE_EMPTY='+('YES' if b in (None,'') else 'NO'),flush=True)
+                  print(prefix+'BADGE_TEXT='+('YES' if type(b) is str and 'ПРЕДВАРИТЕЛЬНО' in b else 'NO'),flush=True)
+                  print(prefix+'HAS_COLOR='+('YES' if type(b) is str and any(c in b for c in ('🟢','🟡','🔴')) else 'NO'),flush=True)
+                  print(prefix+'HAS_SUPPLEMENTARY='+('YES' if type(b) is str and any(ord(c)>0xffff for c in b) else 'NO'),flush=True)
+                  if type(s) is int and 0<=s<=100 and type(b) is str:
+                      expectations=[provisional_payload(s,k)[BADGE_FIELD] for k in DUP_STATUSES]
+                      matches=any(b==want for want in expectations)
+                      no_emoji=any(b==want.replace(score_color(s),'',1).lstrip() for want in expectations)
+                      text_only=any(b==want[2:] for want in expectations)
+                      print(prefix+'EXACT_EXPECTED='+('YES' if matches else 'NO'),flush=True)
+                      print(prefix+'EMOJI_DROPPED='+('YES' if (no_emoji or text_only) else 'NO'),flush=True)
+                  print(prefix+'LEN_BAND='+('EMPTY' if b in (None,'') else
+                        'UNDER_30' if type(b) is str and len(b)<30 else
+                        'UNDER_210' if type(b) is str and len(b)<210 else 'OTHER'),flush=True)
+          print('BADGE_ALL_READONLY=YES',flush=True)
+          PY

@@ -46,6 +46,7 @@ function environment(options={}) {
   const calls = {list:0,get:0,dispatch:[],logs:[],triggers:[]};
   let account = options.account || EMAIL;
   let currentMessage = options.message || message();
+  let mailboxMessages = options.messages || null;
   let responseCode = options.responseCode || 202;
   let uuid = 0;
   const context = {
@@ -65,14 +66,15 @@ function environment(options={}) {
             assert.match(args.q,/from:\(b2b-center\.ru\)/);
             assert.strictEqual(args.maxResults,100);
             calls.list++;
-            return {messages:[{id:currentMessage.id}]};
+            return {messages:(mailboxMessages || [currentMessage]).map(m=>({id:m.id}))};
           },
           get: (_user, id, args) => {
             assert.strictEqual(_user,'me');
-            assert.strictEqual(id,currentMessage.id);
-            assert.strictEqual(args.format,'full');
+            const selected=(mailboxMessages || [currentMessage]).find(m=>m.id===id);
+            assert(selected, 'message not in mock Gmail');
+            assert(['full','raw'].includes(args.format));
             calls.get++;
-            return currentMessage;
+            return args.format==='raw' ? {id:selected.id,raw:selected._raw||''} : selected;
           }
         }
       }
@@ -106,7 +108,8 @@ function environment(options={}) {
     Utilities: {
       Charset:{UTF_8:'utf8'},
       base64DecodeWebSafe: value => [...Buffer.from(value,'base64url')],
-      newBlob: bytes => ({getDataAsString:()=>Buffer.from(bytes).toString('utf8')}),
+      newBlob: bytes => ({getDataAsString:()=>Buffer.from(bytes).toString('utf8'),getBytes:()=>[...Buffer.from(bytes)]}),
+      base64Decode:value=>[...Buffer.from(value,'base64')],
       computeHmacSha256Signature:(value,key)=>{
         return [...crypto.createHmac('sha256',key).update(value).digest()]
           .map(x=>x>127?x-256:x);
@@ -169,7 +172,7 @@ function environment(options={}) {
   return {
     context,properties,calls,
     setAccount:value=>{account=value;},
-    setMessage:value=>{currentMessage=value;},
+    setMessage:value=>{currentMessage=value;mailboxMessages=null;},
     setResponseCode:value=>{responseCode=value;}
   };
 }
@@ -467,6 +470,100 @@ test('read-only diagnostic reports safe error code and preserves REVIEW_REQUIRED
   assert.strictEqual(e.calls.dispatch.length,0);
   assert.strictEqual(JSON.stringify(e.properties),before);
   assert(!JSON.stringify(result).includes(MID));
+});
+
+
+test('realistic Russian quoted-printable HTML via Gmail raw fallback is parsed and sent',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  const html=[
+    '<a href="https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/?utm_source=mail">Запрос предложений № 1234567</a>',
+    '<div>Организатор:</div><div>ООО "ГЛОБУС-ИТ"</div>',
+    '<div>Предмет договора: Приобретение лицензий 1С</div>'
+  ].join('\r\n');
+  const qp=[...Buffer.from(html,'utf8')].map(v=>'='+v.toString(16).toUpperCase().padStart(2,'0')).join('');
+  const mime='From: B2B-Center <marketplace@b2b-center.ru>\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n'+qp;
+  const msg=message();
+  msg.payload={mimeType:'text/html',headers:msg.payload.headers,body:{size:0}};
+  msg._raw=Buffer.from(mime).toString('base64url');
+  e.setMessage(msg);
+  const parsed=e.context.parseEmailMessage_(msg,MID);
+  assert.strictEqual(parsed.observations.length,1);
+  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['1C']);
+  assert.strictEqual(parsed.observations[0].notice.tender_id,'1234567');
+  assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('read-only quarantine diagnostic uses raw fallback and does not release review',()=>{
+  const msg=message();
+  const html='<a href="https://www.b2b-center.ru/market/servers/tender-1234567/">Запрос цен № 1234567</a>'+
+    '<div>Организатор: ООО "ГЛОБУС-ИТ"</div><div>Предмет договора: Закупка серверов</div>';
+  msg.payload={mimeType:'text/html',headers:msg.payload.headers,body:{}};
+  msg._raw=Buffer.from('Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'+html).toString('base64url');
+  const e=environment({message:msg,properties:{['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'}});
+  const before=JSON.stringify(e.properties);
+  const result=e.context.diagnoseB2BCenterReadOnly();
+  assert.strictEqual(result.samples[0].phase,'PARSED');
+  assert.strictEqual(result.samples[0].recognized_tenders,1);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(JSON.stringify(e.properties),before);
+});
+
+test('unexpected raw multipart input stays quarantined without external writes',()=>{
+  const msg=message();
+  msg.payload={mimeType:'text/html',headers:msg.payload.headers,body:{}};
+  msg._raw=Buffer.from('Content-Type: multipart/mixed; boundary=x\r\n\r\nx').toString('base64url');
+  const e=environment({message:msg,properties:{['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'}});
+  const result=e.context.diagnoseB2BCenterReadOnly();
+  assert.strictEqual(result.samples[0].code,'SERVICEIT_EMAIL_RAW_MIME_UNSUPPORTED');
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'REVIEW_REQUIRED');
+  assert.strictEqual(e.calls.dispatch.length,0);
+});
+
+test('owner exact Nov10 recovery only releases two reviewed emails with zero VPS POSTs',()=>{
+  const ids=['1a1c44a89c79ccd6','1a1c449c537d5613'];
+  const e=environment({messages:[
+    message(ids[0],{body:BODY,internalDate:CUTOVER+1000}),
+    message(ids[1],{body:BODY,internalDate:CUTOVER+1000})
+  ],properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+ids[0]]:'REVIEW_REQUIRED',
+    ['SERVICEIT_EMAIL_'+ids[1]]:'REVIEW_REQUIRED',
+    ['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'
+  }});
+  const result=e.context.recoverNov10B2BCenterAfterFix();
+  assert.strictEqual(result.messages_released,2);
+  assert.strictEqual(result.vps_posts_during_recovery,0);
+  assert.strictEqual(result.crm_writes_during_recovery,0);
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+ids[0]],'PENDING');
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+ids[1]],'PENDING');
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'REVIEW_REQUIRED');
+  assert.strictEqual(e.calls.dispatch.length,0);
+});
+
+test('recovery blocks existing uncertain source receipt without changing any state',()=>{
+  const ids=['1a1c44a89c79ccd6','1a1c449c537d5613'];
+  const e=environment({messages:[
+    message(ids[0],{body:BODY,internalDate:CUTOVER+1000}),
+    message(ids[1],{body:BODY,internalDate:CUTOVER+1000})
+  ],properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+ids[0]]:'REVIEW_REQUIRED',
+    ['SERVICEIT_EMAIL_'+ids[1]]:'REVIEW_REQUIRED',
+    SERVICEIT_SOURCE_1234567:'DISPATCH_UNCERTAIN:do-not-retry'
+  }});
+  assert.throws(()=>e.context.recoverNov10B2BCenterAfterFix(),
+    /SERVICEIT_B2B_RECOVERY_EXISTING_RECEIPT/);
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+ids[0]],'REVIEW_REQUIRED');
+  assert.strictEqual(e.calls.dispatch.length,0);
+});
+
+test('client service relevance matches production VPS: 1C/server yes, IT staffing/UPS no',()=>{
+  const e=environment();
+  assert(e.context.classifyServices_('Приобретение лицензий 1С').includes('1C'));
+  assert(e.context.classifyServices_('Закупка серверов ЗОКИИ').includes('SERVERS'));
+  assert.strictEqual(e.context.classifyServices_('Оказание услуг по предоставлению ИТ-специалистов').length,0);
+  assert.strictEqual(e.context.classifyServices_('Источники бесперебойного питания').length,0);
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

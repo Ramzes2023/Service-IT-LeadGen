@@ -41,9 +41,9 @@ jobs:
             serviceit_vps_b2b_document_worker.py)
           # Parallel FNS/score work may change main; do not copy changed
           # unreviewed V11 modules into production.
-          git cat-file -e 0ad38637e1deb1ef1e02c29c479596d7e51015d3^{commit}
+          git cat-file -e 006e346b619a6bd2561a4e723b133b89b74b89a1^{commit}
           for name in "${names[@]}"; do
-            git diff --quiet 0ad38637e1deb1ef1e02c29c479596d7e51015d3 HEAD -- "leadpilot/$name"
+            git diff --quiet 006e346b619a6bd2561a4e723b133b89b74b89a1 HEAD -- "leadpilot/$name"
             python -m py_compile "leadpilot/$name"
           done
           python -m py_compile ops/serviceit_vps_b2b_tdi_activate.py

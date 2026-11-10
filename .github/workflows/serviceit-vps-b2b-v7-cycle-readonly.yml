@@ -82,7 +82,7 @@ jobs:
                       for status,n in cur.fetchall():
                           if status in ('RESERVED','WRITE_INTENT','HOLD','UNCERTAIN','VERIFIED','NEEDS_REVIEW'):
                               print('V7_RECEIPT_'+status+'='+str(min(n,999)))
-"""
+          """
           cp=subprocess.run(["docker","exec",C,"python","-B","-c",check],
                             text=True,capture_output=True,timeout=30,check=False)
           if cp.returncode==0:

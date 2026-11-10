@@ -27,7 +27,7 @@ from .serviceit_enrichment_worker import Rest, normalized, validate_identity
 from .serviceit_vps_b2b_deep_research import (
     safe_notice, source_findings, published_buyer_inn_evidence,
 )
-from .serviceit_vps_b2b_tender_documents import inspect_public_documents
+from .serviceit_b2b_tender_documents import inspect_public_documents
 from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import db, secret_file
 from .serviceit_vps_worker import live_permitted, exact_environment

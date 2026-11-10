@@ -200,24 +200,24 @@ def test_live_one_card_uses_separate_fence_and_exact_nine_readback(monkeypatch):
                 return {"item": deepcopy(live)}
             raise AssertionError(method)
     monkeypatch.setattr(research, "Rest", Rest)
-    class Model:
-        def __init__(self, *_args, **_kwargs):
-            pass
-        def __enter__(self):
-            return self
-        def __exit__(self, *_):
-            pass
-        def classify(self, text):
-            assert text == NOTICE["subject"]
-            calls.append("routerai.classify")
-            return {
-                "origin": "AI_hypothesis", "provider": "routerai",
-                "model": "model-name", "quality_status": "complete",
-                "service": "IT-аутсорсинг", "confidence": .7,
-                "possible_need": "Предположительно нужен IT-подрядчик",
-                "evidence_quote": "IT-специалистов",
-            }
-    monkeypatch.setattr(research, "AIProvider", Model)
+    def deep_model(client, cfg, findings):
+        assert findings["pages"][0]["url"] == NOTICE["source_url"]
+        calls.append("routerai.deep_inference")
+        return {
+            "provider": "RouterAI",
+            "overview": "На публичной странице упомянуты услуги ИТ-специалистов",
+            "service_fit": "IT-аутсорсинг",
+            "likely_need": "Возможно внешнее сопровождение по ИТ-направлению",
+            "facts": [{
+                "category": "SCOPE", "source_id": 1,
+                "finding": "В объявлении перечислены 1С и DevOps",
+                "quote": "Закупка 4673595.",
+                "url": NOTICE["source_url"],
+            }],
+            "missing": ["дата и срок подачи"],
+            "manager_questions": ["Уточнить действующий срок подачи заявки"],
+        }
+    monkeypatch.setattr(research, "investigate_routerai", deep_model)
     class Fence:
         def __init__(self, _, namespace):
             assert namespace == "B2B_RESEARCH_V1"
@@ -241,7 +241,7 @@ def test_live_one_card_uses_separate_fence_and_exact_nine_readback(monkeypatch):
     }, None, None)
     assert data["status"] == "B2B_RESEARCH_NINE_FIELDS_VERIFIED"
     assert data["routerai_invoked"] is True
-    assert calls.index("pg.reserve") < calls.index("routerai.classify")
+    assert calls.index("pg.reserve") < calls.index("routerai.deep_inference")
     assert calls.index("pg.write_intent") < calls.index("crm.item.update")
     assert calls[-1] == "pg.verified"
     assert "crm.item.add" not in calls

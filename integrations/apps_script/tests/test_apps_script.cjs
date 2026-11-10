@@ -167,12 +167,15 @@ function environment(options={}) {
         assert.deepStrictEqual(Object.keys(payload).sort(),
           ['dispatch_id','email_message_id','mailbox','notice','version'].sort());
         assert.strictEqual(payload.mailbox,EMAIL);
-        assert.strictEqual(payload.email_message_id,MID);
-        assert(['1234567', '1234568'].includes(payload.notice.tender_id));
+        assert.strictEqual(payload.email_message_id,
+          payload.notice.tender_id === '4673595' ? '1a1c44a89c79ccd6' : MID);
+        assert(['1234567','1234568','4673595'].includes(payload.notice.tender_id));
         assert.strictEqual(payload.notice.source_url,
-          payload.notice.tender_id === '1234567'
-            ? 'https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/'
-            : 'https://www.b2b-center.ru/market/podderzhka-serverov/tender-1234568/');
+          payload.notice.tender_id === '4673595'
+            ? 'https://www.b2b-center.ru/market/okazanie-uslug-po-predostavleniiu-it-spetsialistov/tender-4673595/'
+            : payload.notice.tender_id === '1234567'
+              ? 'https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/'
+              : 'https://www.b2b-center.ru/market/podderzhka-serverov/tender-1234568/');
         assert.strictEqual(payload.notice.buyer_inn,null);
         assert.strictEqual(payload.notice.contact_approved,false);
         assert(!cp.payload_json.includes('raw_b64url'));
@@ -616,6 +619,59 @@ test('Gmail direct REST 403 is quarantined with safe code and no side effects',(
   assert.strictEqual(e.calls.rest,1);
   assert.strictEqual(e.calls.dispatch.length,0);
   assert.strictEqual(JSON.stringify(e.properties),before);
+});
+
+
+test('B2B IT-staffing tender subject is service fit; generic vacancy is not',()=>{
+  const e=environment();
+  assert.deepStrictEqual(Array.from(
+    e.context.classifyServices_('Оказание услуг по предоставлению ИТ-специалистов')),
+    ['IT_STAFFING']);
+  assert.deepStrictEqual(Array.from(
+    e.context.classifyServices_('Привлечение IT-специалистов для проектов')),
+    ['IT_STAFFING']);
+  assert.strictEqual(e.context.classifyServices_('Вакансия IT-специалиста').length,0);
+  assert.strictEqual(e.context.classifyServices_('Предоставление персонала для клининга').length,0);
+});
+
+test('owner-only exact tender 4673595 sends one notice and never repeats',()=>{
+  const id='1a1c44a89c79ccd6';
+  const msg=message(id,{body:[
+    'Организатор закупки: ООО "ГЛОБУС-ИТ"',
+    'Предмет закупки: Оказание услуг по предоставлению ИТ-специалистов',
+    'https://www.b2b-center.ru/market/okazanie-uslug-po-predostavleniiu-it-spetsialistov/tender-4673595/?utm_source=mail'
+  ].join('\n'),internalDate:CUTOVER+1000});
+  const e=environment({messages:[msg],properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+id]:'DONE'
+  }});
+  assert.strictEqual(e.context.dispatchB2B4673595Once().status,
+    'SERVICEIT_B2B_STAFFING_NOTICE_ACCEPTED');
+  assert.strictEqual(e.calls.dispatch.length,1);
+  assert.strictEqual(e.calls.dispatch[0].notice.tender_id,'4673595');
+  assert.strictEqual(e.calls.dispatch[0].notice.qualified_lead,false);
+  assert.match(e.properties.SERVICEIT_SOURCE_4673595,/^DISPATCHED:/);
+  assert.strictEqual(e.context.dispatchB2B4673595Once().status,
+    'SERVICEIT_B2B_STAFFING_ALREADY_RESERVED_OR_HANDLED');
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('ambiguous source receipt for IT staffing prevents any replay',()=>{
+  const id='1a1c44a89c79ccd6';
+  const msg=message(id,{body:[
+    'Организатор закупки: ООО "ГЛОБУС-ИТ"',
+    'Предмет закупки: Оказание услуг по предоставлению ИТ-специалистов',
+    'https://www.b2b-center.ru/market/okazanie-uslug-po-predostavleniiu-it-spetsialistov/tender-4673595/'
+  ].join('\n'),internalDate:CUTOVER+1000});
+  const e=environment({messages:[msg],responseCode:503,properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES'
+  }});
+  assert.strictEqual(e.context.dispatchB2B4673595Once().status,
+    'SERVICEIT_B2B_STAFFING_DISPATCH_UNCERTAIN_NO_RETRY');
+  assert.match(e.properties.SERVICEIT_SOURCE_4673595,/^DISPATCH_UNCERTAIN:/);
+  assert.strictEqual(e.context.dispatchB2B4673595Once().status,
+    'SERVICEIT_B2B_STAFFING_ALREADY_RESERVED_OR_HANDLED');
+  assert.strictEqual(e.calls.dispatch.length,1);
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

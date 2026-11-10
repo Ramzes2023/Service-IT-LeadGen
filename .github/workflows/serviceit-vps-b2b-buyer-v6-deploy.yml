@@ -99,8 +99,7 @@ jobs:
           for value in "$scriptsha" "$oldsha" "${shas[@]}"; do
             [[ "$value" =~ ^[a-f0-9]{64}$ ]]
           done
-          # Remote activator returns fixed status codes even on a guarded preflight stop.
-          # Capture and sanitize those codes before propagating the remote exit status.
+          # Preserve remote exit status; display only fixed sanitized codes.
           set +e
           ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
             "$VPS_USER@$VPS_HOST" \
@@ -117,18 +116,7 @@ jobs:
           REMOTE
           remote_rc=$?
           set -e
-          safe="$(grep -E '^B2B_BUYER_V6_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)
-      - name: Write sanitized outcome to project issue
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          file="$RUNNER_TEMP/serviceit-contacts/status"
-          safe="$(grep -E '^B2B_BUYER_V6_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$file" 2>/dev/null | head -35 || true)"
-          [[ -n "$safe" ]] || safe='B2B_BUYER_V6_VPS_ACTIVATION_UNVERIFIED=YES'
-          body="$(printf 'B2B buyer V6 public legal requisites and opt-in extra Brave search:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core container, no source or auxiliary restarts. No CRM data or secrets in logs. Check actual 9-field Bitrix readback separately.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
-          gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true
- \
+          safe="$(grep -E '^B2B_BUYER_V6_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' \
             "$RUNNER_TEMP/serviceit-contacts/status" 2>/dev/null | head -35 || true)"
           if [[ -n "$safe" ]]; then
             printf '%s\n' "$safe"

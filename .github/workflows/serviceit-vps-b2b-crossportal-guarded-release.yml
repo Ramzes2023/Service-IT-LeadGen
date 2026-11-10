@@ -40,9 +40,9 @@ jobs:
           names=(serviceit_b2b_public_mirrors.py)
           # Parallel FNS/score work may change main; do not copy changed
           # unreviewed MIRROR modules into production.
-          git cat-file -e 5762dcf0e953164c546099a374eea4c973414478^{commit}
+          git cat-file -e 2fa8ac8af9c455a8bb26bc30d83944588a5fc924^{commit}
           for name in "${names[@]}"; do
-            git diff --quiet 5762dcf0e953164c546099a374eea4c973414478 HEAD -- "leadpilot/$name"
+            git diff --quiet 2fa8ac8af9c455a8bb26bc30d83944588a5fc924 HEAD -- "leadpilot/$name"
             python -m py_compile "leadpilot/$name"
           done
           python -m py_compile ops/serviceit_vps_b2b_crossportal_activate.py
@@ -62,7 +62,7 @@ jobs:
           sha256sum ops/serviceit_vps_b2b_crossportal_activate.py | cut -d' ' -f1 \
             > "$RUNNER_TEMP/b2b-crossportal/script-sha"
           [[ "$(wc -l < "$RUNNER_TEMP/b2b-crossportal/shas")" == 1 ]]
-      - name: Stage exactly two non-secret files and immutable release script
+      - name: Stage exact one non-secret module and immutable release script
         shell: bash
         run: |
           set -euo pipefail
@@ -122,5 +122,5 @@ jobs:
           file="$RUNNER_TEMP/b2b-crossportal/status"
           safe="$(grep -E '^MIRROR_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' "$file" 2>/dev/null | head -20 || true)"
           [[ -n "$safe" ]] || safe="MIRROR_RELEASE_RESULT_UNVERIFIED=YES"
-          body="$(printf 'B2B poll calibration guarded source release; coordinator only; exact SHAs, no CRM installer write, rollback on uncertainty.\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nIndependent 4-card MIRROR CRM readback and future automatic-cycle proof required separately. No customer outreach.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          body="$(printf 'B2B public crossportal exact-number guarded source release; coordinator only; exact SHAs, no CRM installer write, rollback on uncertainty.\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNew-card MIRROR live SHA readback and future automatic-cycle proof required separately. No customer outreach.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
           gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

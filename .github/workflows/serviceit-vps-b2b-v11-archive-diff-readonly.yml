@@ -77,8 +77,8 @@ jobs:
               if not isinstance(prev,str) or not isinstance(curr,str):
                   print(f'V11_DIFF_CARD_{idx}_FIELDS_INVALID=YES',flush=True)
                   continue
-              prev_quotes=len(re.findall(r'(?m)^\\d{2}\\. [^\\n]{6,180} \\[\\d+\\]$',prev))
-              curr_quotes=len(re.findall(r'(?m)^\\d{2}\\. [^\\n]{6,180} \\[\\d+\\]$',curr))
+              prev_quotes=len(re.findall(r'(?m)^\d{2}\. [^\n]{6,180} \[\d+\]$',prev))
+              curr_quotes=len(re.findall(r'(?m)^\d{2}\. [^\n]{6,180} \[\d+\]$',curr))
               print(f'V11_DIFF_CARD_{idx}_QUOTES_BEFORE={min(prev_quotes,99)}',flush=True)
               print(f'V11_DIFF_CARD_{idx}_QUOTES_AFTER={min(curr_quotes,99)}',flush=True)
               old_buyer='Заказчик: не установлен' not in prev and 'Заказчик:' in prev
@@ -92,6 +92,5 @@ jobs:
                   print(f'V11_DIFF_CARD_{idx}_{label}_AFTER='+('YES' if after else 'NO'),flush=True)
               print(f'V11_DIFF_CARD_{idx}_SOURCE_LOSS='+('YES' if prev_quotes>curr_quotes else 'NO'),flush=True)
           PY
-          grep -E '^V11_DIFF_[A-Z0-9_]+=(YES|NO|[0-9]{1,2})
- \
+          grep -E '^V11_DIFF_[A-Z0-9_]+=(YES|NO|[0-9]{1,2})$' \
             "$RUNNER_TEMP/v11-diff/status" | head -96

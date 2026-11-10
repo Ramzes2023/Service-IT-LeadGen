@@ -1,0 +1,86 @@
+name: ServiceIT B2B V10 live runtime SHA and readiness READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v10-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V10_RUNTIME_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pin SSH identity; read fixed flags, source SHA and health only
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v10audit"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v10audit/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v10audit/hosts"
+          chmod 0600 "$RUNNER_TEMP/v10audit/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v10audit/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/v10audit/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v10audit/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/v10audit/status" <<'PY'
+          from pathlib import Path
+          import hashlib, os
+          env=dict(os.environ)
+          files=('serviceit_vps_worker.py','serviceit_b2b_routerai_deep.py',
+                 'serviceit_b2b_public_mirrors.py','b2b_email_opportunity_bridge.py',
+                 'serviceit_b2b_dossier_v10.py',
+                 'serviceit_vps_b2b_dossier_v10_worker.py')
+          for i,name in enumerate(files,1):
+              p=Path('/app/leadpilot')/name
+              value=(hashlib.sha256(p.read_bytes()).hexdigest()
+                     if p.is_file() and not p.is_symlink() else 'MISSING')
+              print(f'V10_AUDIT_SHA_{i}={value}',flush=True)
+          flags={
+            'CORE_LIVE': env.get('SERVICEIT_VPS_WRITER_MODE')=='LIVE',
+            'CUTOVER': env.get('SERVICEIT_VPS_CUTOVER_AUTHORIZED')=='YES',
+            'POLL_5M': env.get('SERVICEIT_VPS_POLL_ENABLED')=='YES',
+            'ROUTERAI': env.get('SERVICEIT_AI_PROVIDER')=='routerai',
+            'V4': env.get('SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED')=='YES',
+            'BROWSER': (env.get('SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED')=='YES'
+                        and env.get('SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED')=='YES'),
+          }
+          for label,ok in flags.items():
+              print(f'V10_AUDIT_FLAG_{label}=' + ('YES' if ok else 'NO'),flush=True)
+          try:
+              from leadpilot.serviceit_vps_pg_queue import db
+              with db(env) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute("SELECT count(*) FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL")
+                      count=int(cur.fetchone()[0])
+                      cur.execute("SELECT count(*) FROM serviceit_vps_native_receipts WHERE status IN ('UNCERTAIN','RESERVED','WRITE_INTENT')")
+                      active=int(cur.fetchone()[0])
+              print('V10_AUDIT_CARDS_PRESENT=' + ('YES' if count>=4 else 'NO'),flush=True)
+              print('V10_AUDIT_INFLIGHT=' + ('YES' if active else 'NO'),flush=True)
+          except Exception:
+              print('V10_AUDIT_PG=UNVERIFIED',flush=True)
+          PY
+          grep -E '^V10_AUDIT_(SHA_[1-6]=([a-f0-9]{64}|MISSING)|FLAG_[A-Z0-9_]+=(YES|NO)|CARDS_PRESENT=(YES|NO)|INFLIGHT=(YES|NO)|PG=UNVERIFIED)$' \
+            "$RUNNER_TEMP/v10audit/status" | head -25

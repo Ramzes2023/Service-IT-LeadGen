@@ -211,3 +211,23 @@ def test_cli_offline_never_reads_env_webhook_or_network(monkeypatch, tmp_path, c
     event_path.write_text("{}", encoding="utf-8")
     assert bridge.main(["--event", str(event_path)]) == 2
     assert "SECRET_SENSITIVE" not in capsys.readouterr().out
+
+
+def test_staffing_tender_4673595_generates_unverified_hold_only():
+    event = fixture_event(subject="Оказание услуг по предоставлению ИТ-специалистов",
+                          organizer='ООО "ГЛОБУС-ИТ"')
+    change_notice(event, "tender_id", "4673595")
+    change_notice(event, "source_url",
+                  "https://www.b2b-center.ru/market/"
+                  "okazanie-uslug-po-predostavleniiu-it-spetsialistov/tender-4673595/")
+    notice, categories = bridge.notice_from_event(event)
+    assert categories == ["IT_STAFFING"]
+    item = bridge.hold_payload(notice, categories)
+    assert item["entityTypeId"] == 1062
+    assert item["fields"]["categoryId"] == 21
+    assert item["fields"][bridge.SIGNAL] == "B2B-CENTER-4673595"
+    assert item["fields"]["UF_CRM_13_SVCIT_SUGGESTED_SERVICE"] == "IT_STAFFING"
+    assert notice["qualified_lead"] is False
+    assert notice["contact_approved"] is False
+    assert notice["original_publication_verified"] is False
+

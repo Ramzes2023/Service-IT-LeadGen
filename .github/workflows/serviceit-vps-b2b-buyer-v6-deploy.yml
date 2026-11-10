@@ -75,7 +75,7 @@ jobs:
             sha256sum "leadpilot/$name" | cut -d ' ' -f 1 \
               >> "$RUNNER_TEMP/serviceit-contacts/shas"
           done
-          sha256sum ops/serviceit_vps_b2b_contacts_v5_deploy.py | cut -d ' ' -f 1 \
+          sha256sum ops/serviceit_vps_b2b_buyer_v6_deploy.py | cut -d ' ' -f 1 \
             > "$RUNNER_TEMP/serviceit-contacts/script-sha"
           ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" "$dest" \
             "umask 077; install -d -m 0700 '$target'"
@@ -84,7 +84,7 @@ jobs:
               "leadpilot/$name" "$dest:$target/$name"
           done
           scp -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
-            ops/serviceit_vps_b2b_contacts_v5_deploy.py "$dest:$target/activate.py"
+            ops/serviceit_vps_b2b_buyer_v6_deploy.py "$dest:$target/activate.py"
       - name: Offline image build, guarded live coordinator-only enable
         shell: bash
         run: |

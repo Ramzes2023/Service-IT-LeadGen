@@ -18,7 +18,7 @@ from .serviceit_ai_report import plain
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 
 MAX_PAGES = 3
-MAX_DOCUMENT_CHARS = 1900
+MAX_DOCUMENT_CHARS = 3300
 MAX_REPORT = 12000
 QUESTION_SECTIONS = (
     "предмет и объём работ", "технические требования / компетенции",

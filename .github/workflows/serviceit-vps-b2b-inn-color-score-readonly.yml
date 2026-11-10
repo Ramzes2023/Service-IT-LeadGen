@@ -63,6 +63,28 @@ jobs:
                     val if val in ('YES','NO') else 'UNVERIFIED'),flush=True)
               r=call("docker","inspect","-f","{{.State.Running}}:{{.State.Health.Status}}",container)
               print('INN_SCORE_'+name+'_HEALTH='+('YES' if r.stdout.strip()=='true:healthy' else 'NO'),flush=True)
+          logs=call("docker","logs","--tail","70",containers["AUX"])
+          codes={}
+          if logs.returncode==0:
+              for line in logs.stdout.splitlines():
+                  try:
+                      value=json.loads(line)
+                  except (ValueError,TypeError):
+                      continue
+                  if not isinstance(value,dict):
+                      continue
+                  status=value.get("status")
+                  if status in ("NATIVE_AUX_CYCLE","NATIVE_AUX_CYCLE_BLOCKED",
+                                "NATIVE_AUX_DISABLED","NATIVE_AUX_HOLD"):
+                      codes[status]=codes.get(status,0)+1
+                      if status=="NATIVE_AUX_CYCLE":
+                          for key in ("new_card_candidates","checks","review",
+                                      "score_verified"):
+                              number=value.get(key)
+                              if type(number) is int and 0<=number<=10000:
+                                  print("INN_SCORE_AUX_LAST_"+key.upper()+"="+str(number),flush=True)
+          for code in sorted(codes):
+              print("INN_SCORE_AUX_LOG_"+code+"="+str(min(codes[code],99)),flush=True)
           py = """
           import os
           import httpx
@@ -70,6 +92,10 @@ jobs:
           from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity,PREFIX
           from leadpilot.serviceit_kanban_presentation import SCORE_FIELD,VERSION_FIELD,BADGE_FIELD
           from leadpilot.bitrix_1062_mapping import _is_valid_inn
+          from leadpilot.serviceit_stage4_provisional_score_live import classify_preliminary
+          from leadpilot.serviceit_enrichment_worker import AI_FIELDS
+          from leadpilot.serviceit_three_signal_triage import REVIEW
+          from datetime import datetime,timezone
           with db(dict(os.environ)) as conn:
               with conn.transaction():
                   with conn.cursor() as cur:
@@ -99,6 +125,18 @@ jobs:
                   score=i.get(SCORE_FIELD)
                   badge=i.get(BADGE_FIELD)
                   valid=type(score) is int and 0<=score<=100
+                  complete=all(type(i.get(f)) is str and bool(i[f].strip()) for f in AI_FIELDS)
+                  status_ok=i.get(PREFIX+'AI_STATUS') in (
+                      'NOT_RUN_SOURCE_UNVERIFIED','HOLD','NOT_RUN',
+                      'HYPOTHESIS_UNVERIFIED',
+                      'HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED')
+                  try:
+                      triage=classify_preliminary(i,datetime.now(timezone.utc))
+                      typed=triage.get('type')!=REVIEW
+                  except Exception:
+                      typed=False
+                  print('INN_SCORE_CARD_'+str(n)+'_AI_READY='+('YES' if complete and status_ok else 'NO'),flush=True)
+                  print('INN_SCORE_CARD_'+str(n)+'_TYPE_READY='+('YES' if typed else 'NO'),flush=True)
                   print('INN_SCORE_CARD_'+str(n)+'_INN='+('YES' if type(inn) is str and _is_valid_inn(inn) else 'NO'),flush=True)
                   print('INN_SCORE_CARD_'+str(n)+'_SCORE='+('YES' if valid else 'NO'),flush=True)
                   print('INN_SCORE_CARD_'+str(n)+'_COLOR='+('YES' if type(badge) is str and any(c in badge for c in ('🟢','🟡','🔴')) else 'NO'),flush=True)

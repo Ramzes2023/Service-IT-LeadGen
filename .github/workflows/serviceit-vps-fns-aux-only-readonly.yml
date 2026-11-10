@@ -96,8 +96,8 @@ jobs:
                       except (ValueError,TypeError): continue
                       if isinstance(j,dict):
                           status=j.get('status')
-                          if isinstance(status,str) and status.isascii() and
-                             all(c.isupper() or c.isdigit() or c=='_' for c in status):
+                          if (isinstance(status,str) and status.isascii()
+                                  and all(c.isupper() or c.isdigit() or c=='_' for c in status)):
                               hits.add(status[:80])
               stat('STRUCTURED_STATUS_COUNT',str(min(len(hits),99)))
               for v in sorted(hits)[:12]:

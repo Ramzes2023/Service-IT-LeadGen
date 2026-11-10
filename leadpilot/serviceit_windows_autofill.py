@@ -179,6 +179,19 @@ def preliminary_schema_limits(rest):
     company/Score writes: this reduced preflight is only for unqualified
     manager HOLD reports, with exact readback and no Score/contact/stage writes.
     """
+    # Preserve the full corporate configuration proof wherever the webhook
+    # has its own userfieldconfig scope. Only a missing HTTP permission on the
+    # EXACT userfieldconfig.list step activates this reduced HOLD-only path.
+    last_method = [""]
+    def tracked(method, params):
+        last_method[0] = method
+        return rest(method, params)
+    try:
+        return schema_limits(tracked)
+    except Exception as error:
+        _must(last_method[0] == "userfieldconfig.list"
+              and str(error) == "REST_HTTP_UNVERIFIED",
+              "PRELIM_FULL_SCHEMA_FAILED_NOT_PERMISSION")
     typ = rest("crm.type.getByEntityTypeId", {"entityTypeId": 1062})["type"]
     _must(str(typ.get("id")) == "13"
           and str(typ.get("entityTypeId")) == "1062"

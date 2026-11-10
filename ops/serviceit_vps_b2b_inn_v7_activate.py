@@ -313,7 +313,7 @@ with db(dict(os.environ)) as c:
             require(all(str(v) == old_env.get(k)
                         for k,v in before["environment"].items()
                         if v is not None), "COMPOSE_RUNTIME_ENV_DRIFT")
-            print("B2B_BUYER_V6_PREFLIGHT=YES", flush=True)
+            print("B2B_INN_V7_PREFLIGHT=YES", flush=True)
             # Tag exact running digest. No registry, pip, apt or network.
             baseline = "serviceit-b2b-inn-v7-base:" + runid
             target = "serviceit-b2b-inn-v7-live:" + runid
@@ -339,13 +339,15 @@ with db(dict(os.environ)) as c:
             smoke = """
 import hashlib,sys
 from pathlib import Path
-names=sys.argv[1:2]
-digests=sys.argv[2:]
-assert len(names)==len(digests)==1
+names=sys.argv[1:6]
+digests=sys.argv[6:]
+assert len(names)==len(digests)==5
 for name,expected in zip(names,digests):
     p=Path('/app/leadpilot')/name
     assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected
 from leadpilot.serviceit_vps_b2b_deep_research import run_once
+from leadpilot.serviceit_vps_b2b_public_inn import run_once as public_inn_once
+from leadpilot.serviceit_b2b_public_supplement import source_backed_company_inn_update
 from leadpilot.serviceit_vps_b2b_deep_research import public_buyer_candidate,published_buyer_inn_evidence,cited_manager_fields,_public_company_self_declaration
 from leadpilot.serviceit_b2b_routerai_deep import public_documents,cited_fields
 from leadpilot.serviceit_vps_native_fence import NATIVE_NAMESPACES
@@ -353,8 +355,9 @@ from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS
 from leadpilot.serviceit_b2b_public_mirrors import matched_excerpt
 assert callable(matched_excerpt)
 assert all(callable(f) for f in (run_once, public_documents, cited_fields, public_buyer_candidate,published_buyer_inn_evidence,cited_manager_fields,_public_company_self_declaration))
-assert 'B2B_RESEARCH_V4' in NATIVE_NAMESPACES and INTERVAL_SECONDS==300
-print('B2B_BUYER_V6_OFFLINE_SMOKE=YES')
+assert 'B2B_RESEARCH_V4' in NATIVE_NAMESPACES and 'B2B_PUBLIC_INN_V1' in NATIVE_NAMESPACES and INTERVAL_SECONDS==300
+assert callable(public_inn_once) and callable(source_backed_company_inn_update)
+print('B2B_INN_V7_OFFLINE_SMOKE=YES')
 """
             checked = call(["docker", "run", "--rm", "--network", "none",
                             "--read-only", "--user", "10001:10001",
@@ -362,11 +365,11 @@ print('B2B_BUYER_V6_OFFLINE_SMOKE=YES')
                             "--cap-drop", "ALL", "--entrypoint", "python",
                             new_image, "-B", "-c", smoke, *FILES, *new_shas],
                            timeout=100)
-            require(checked.stdout.strip() == "B2B_BUYER_V6_OFFLINE_SMOKE=YES",
-                    "B2B_BUYER_V6_IMAGE_SMOKE_FAILED")
-            print("B2B_BUYER_V6_IMAGE_VERIFIED=YES", flush=True)
+            require(checked.stdout.strip() == "B2B_INN_V7_OFFLINE_SMOKE=YES",
+                    "B2B_INN_V7_IMAGE_SMOKE_FAILED")
+            print("B2B_INN_V7_IMAGE_VERIFIED=YES", flush=True)
             # Preflight full merged Compose BEFORE altering the live pin.
-            next_pin = make_pin(new_image, active=True, extra=True)
+            next_pin = make_pin(new_image, active=True, extra=True, inn=True)
             preflight_pin = stage / "preflight.compose.yml"
             preflight_pin.write_text(next_pin, encoding="utf8")
             trial = compose_json([p for p in paths if p != PIN] + [preflight_pin])
@@ -377,9 +380,9 @@ print('B2B_BUYER_V6_OFFLINE_SMOKE=YES')
                            if k not in ("image","pull_policy","environment")}
             require(same_before == same_future and future.get("image") == new_image,
                     "UNRELATED_COMPOSE_SETTINGS_CHANGED")
-            needed = dict(before["environment"], **{FLAG:"YES", EXTRA_FLAG:"YES"})
+            needed = dict(before["environment"], **{FLAG:"YES", EXTRA_FLAG:"YES", INN_FLAG:"YES"})
             require(future.get("environment") == needed,
-                    "ONLY_ONE_NEW_PUBLIC_BUYER_SEARCH_FLAG_REQUIRED")
+                    "ONLY_ONE_NEW_INN_FLAG_REQUIRED")
             atomic_replace(PIN, next_pin)
             changed = True
             call(compose(paths, "up", "-d", "--no-deps", "--no-build",
@@ -390,16 +393,16 @@ print('B2B_BUYER_V6_OFFLINE_SMOKE=YES')
                         (not old_health[name] or healthy(name))
                         for name, digest in old_digests.items()),
                     "OTHER_CONTAINERS_CHANGED")
-            print("B2B_BUYER_V6_VPS_LIVE_ENABLED=YES", flush=True)
-            print("B2B_BUYER_V6_RESEARCH_V4=READY_FOR_FIVE_MINUTE_WORKER", flush=True)
-            print("B2B_BUYER_V6_CRM_WRITES_BY_ACTIVATOR=NO", flush=True)
-            print("B2B_BUYER_V6_ROLLBACK=NOT_NEEDED", flush=True)
+            print("B2B_INN_V7_VPS_LIVE_ENABLED=YES", flush=True)
+            print("B2B_INN_V7_RESEARCH_V4=READY_FOR_FIVE_MINUTE_WORKER", flush=True)
+            print("B2B_INN_V7_CRM_WRITES_BY_ACTIVATOR=NO", flush=True)
+            print("B2B_INN_V7_ROLLBACK=NOT_NEEDED", flush=True)
             return 0
         except Exception as exc:
             code = str(exc) if isinstance(exc, DeploymentBlocked) else "UNEXPECTED_EXCEPTION"
             if re.fullmatch(r"[A-Z0-9_]{3,100}", code) is None:
                 code = "UNEXPECTED_EXCEPTION"
-            print("B2B_BUYER_V6_BLOCKED_" + code + "=YES", flush=True)
+            print("B2B_INN_V7_BLOCKED_" + code + "=YES", flush=True)
             if changed and old_pin and paths and old_image:
                 try:
                     atomic_replace(PIN, old_pin)
@@ -408,11 +411,11 @@ print('B2B_BUYER_V6_OFFLINE_SMOKE=YES')
                                  "--force-recreate", "coordinator"), timeout=180)
                     require(healthy(CORE) and image(CORE)==old_image,
                             "ROLLBACK_CORE_NOT_HEALTHY")
-                    print("B2B_BUYER_V6_ROLLBACK=YES", flush=True)
+                    print("B2B_INN_V7_ROLLBACK=YES", flush=True)
                 except Exception:
-                    print("B2B_BUYER_V6_ROLLBACK=FAILED", flush=True)
+                    print("B2B_INN_V7_ROLLBACK=FAILED", flush=True)
             else:
-                print("B2B_BUYER_V6_NO_LIVE_CHANGE=YES", flush=True)
+                print("B2B_INN_V7_NO_LIVE_CHANGE=YES", flush=True)
             return 2
 
 
@@ -420,5 +423,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception:
-        print("B2B_BUYER_V6_ACTIVATOR_OUTER_BLOCKED=YES", flush=True)
+        print("B2B_INN_V7_ACTIVATOR_OUTER_BLOCKED=YES", flush=True)
         raise SystemExit(2)

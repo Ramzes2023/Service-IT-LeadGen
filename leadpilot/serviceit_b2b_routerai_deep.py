@@ -195,9 +195,88 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
                 questions.append(item)
         except DeepEvidenceError:
             continue
+    for exact in extract_source_facts(docs):
+        if not any(f["quote"] == exact["quote"]
+                   and f["source_id"] == exact["source_id"] for f in facts):
+            if len(facts) >= 10:
+                break
+            facts.append(exact)
     return {"overview": overview, "service_fit": service,
             "likely_need": need, "facts": facts, "missing": missing,
             "manager_questions": questions, "provider": "RouterAI"}
+
+
+def extract_source_facts(docs: list[dict]) -> list[dict]:
+    """Deterministic verbatim snippets; safe even when RouterAI JSON is bad.
+
+    These report ONLY words physically present on independently fetched
+    pages, never invented buyer identity, deadlines or monetary amounts.
+    """
+    patterns = (
+        ("SCOPE", r"(?i)(?:оказани[ея] услуг|предоставлени[ея] (?:ит|it)|закупк[аи]|запрос цен)"),
+        ("TECHNOLOGY", r"(?i)(?:\b1[сc]\b|devops|mlops|информационн\w* безопасност\w*|"
+                       r"разработчик|аналитик|системн\w* администратор|инженер)"),
+        ("DEADLINE", r"(?i)(?:подача заявок до|окончание подачи заявок|"
+                     r"до\s+\d{1,2}\.\d{1,2}\.\d{4}|срок подачи)"),
+        ("BUDGET", r"(?i)(?:цена не указана|сумма не задана|начальная цена|стоимость)"),
+        ("BUYER", r"(?i)(?:заказчик|организатор закупки)"),
+        ("ELIGIBILITY", r"(?i)(?:требовани[ея] к участник|условия участи|квалификац)"),
+        ("LOCATION", r"(?i)(?:регион|удалённо|офис\s*\(|область|москва)"),
+    )
+    facts = []
+    seen = set()
+    for doc in docs[:MAX_PAGES]:
+        text = doc.get("text", "")
+        if type(text) is not str:
+            continue
+        for category, pattern in patterns:
+            if len(facts) >= 10:
+                break
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            # Prefer the exact short site phrase, extending only within the
+            # same sentence/label. If unsafe (phone/INN/contact/injection),
+            # omit rather than leak any private information or paraphrase.
+            left = max(0, match.start()-35)
+            right = min(len(text), match.end()+105)
+            quote = text[left:right].strip(" .:;,-")
+            if len(quote) > 220:
+                quote = quote[:220]
+            try:
+                quote = _must_plain(quote, 220)
+            except DeepEvidenceError:
+                continue
+            if len(quote) < 12 or quote not in text:
+                continue
+            key = (doc["source_id"], quote)
+            if key in seen:
+                continue
+            seen.add(key)
+            facts.append({
+                "source_id": doc["source_id"], "url": doc["url"],
+                "quote": quote, "category": category,
+                "finding": "Текст самостоятельно прочитанной страницы (без AI-интерпретации)",
+            })
+    return facts
+
+
+def source_only_investigation(findings: dict):
+    """Useful cited manager output if the paid model's schema is unusable."""
+    docs = public_documents(findings)
+    return {
+        "overview": "Опубликованные сведения извлечены независимо от ответа модели",
+        "service_fit": "определяется после изучения требований",
+        "likely_need": "Вероятность закупочной потребности требует подтверждения",
+        "facts": extract_source_facts(docs),
+        "missing": list(QUESTION_SECTIONS),
+        "manager_questions": [
+            "Проверить срок подачи и перечень доступных документов",
+            "Сопоставить перечень компетенций с услугами Сервис ИТ",
+            "Проверить заказчика, дубли CRM, STOP и право контакта",
+        ],
+        "provider": "PUBLIC_SOURCE_EXTRACTOR",
+    }
 
 
 def investigate_routerai(client: httpx.Client, config, findings: dict) -> dict:
@@ -248,15 +327,20 @@ def cited_fields(base: dict, findings: dict, investigation: dict) -> dict:
     """Write a real research report in 9 existing CRM fields. HOLD unchanged."""
     if type(base) is not dict or set(base) != AI_FIELDS:
         raise DeepEvidenceError("NINE_FIELDS_REQUIRED")
-    if type(investigation) is not dict or investigation.get("provider") != "RouterAI":
-        raise DeepEvidenceError("ROUTERAI_RESULT_REQUIRED")
+    if type(investigation) is not dict or investigation.get("provider") not in (
+            "RouterAI", "PUBLIC_SOURCE_EXTRACTOR"):
+        raise DeepEvidenceError("RESEARCH_RESULT_REQUIRED")
     facts = investigation["facts"]
     checked = str(findings.get("checked_at") or
                   datetime.now(timezone.utc).isoformat())[:50]
     missing = investigation["missing"]
     # Even when source is readable, no unverified text becomes "fact".
-    status = ("PUBLIC_RESEARCH_ROUTERAI_CITED" if facts
-              else "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES")
+    if investigation["provider"] == "RouterAI":
+        status = ("PUBLIC_RESEARCH_ROUTERAI_CITED" if facts
+                  else "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES")
+    else:
+        status = ("PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED" if facts
+                  else "PUBLIC_RESEARCH_SOURCE_NO_QUOTES_AI_UNVERIFIED")
     header = "СЕРВИС ИТ | ГЛУБОКОЕ ИССЛЕДОВАНИЕ B2B-CENTER"
     fact_lines = []
     for number, fact in enumerate(facts, 1):
@@ -293,7 +377,7 @@ def cited_fields(base: dict, findings: dict, investigation: dict) -> dict:
         "«Сервис ИТ», условия участия и возможность внешнего подрядчика."
     )
     brief = (
-        "AI-исследование RouterAI (не Lead Score). Источник открыт: " +
+        "Исследование публичных страниц (не Lead Score). Источник открыт: " +
         str(len(public_documents(findings))) + " стр.; цитируемых фактов: " +
         str(len(facts)) + ".\n" +
         "\n".join(x.split("\n")[0] for x in fact_lines[:5]) +

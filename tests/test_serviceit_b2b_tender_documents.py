@@ -89,7 +89,7 @@ def test_zip_bomb_archive_and_fake_pdf_do_not_become_evidence():
     with pytest.raises(docs.TenderDocumentBlocked):
         docs.extract_text(buf.getvalue(), ".zip")
     with pytest.raises(docs.TenderDocumentBlocked):
-        docs.extract_text(b"not pdf", ".pdf") if False else docs._safe_archive(b"not pdf")
+        docs._safe_archive(b"not pdf")
 
 
 def test_xlsx_standard_cells_work_without_pip_office_suite():
@@ -120,7 +120,7 @@ def test_report_is_cited_extra_timeline_note_not_replacement():
     assert "ФНС" in result
     assert "НЕ подставлялась" in result or "не установлены" in result
     assert "https://www.b2b-center.ru/files/tz.docx" in result
-    assert "файл(ов)" in result
+    assert "файла(ов)" in result
 
 
 def test_sensitive_download_token_not_written_to_bitrix_report():

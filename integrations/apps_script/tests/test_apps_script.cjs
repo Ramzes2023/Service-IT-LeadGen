@@ -578,11 +578,11 @@ test('recovery blocks existing uncertain source receipt without changing any sta
   assert.strictEqual(e.calls.dispatch.length,0);
 });
 
-test('client service relevance matches production VPS: 1C/server yes, IT staffing/UPS no',()=>{
+test('client service relevance matches VPS: 1C, servers, explicit IT staffing yes; UPS no',()=>{
   const e=environment();
   assert(e.context.classifyServices_('Приобретение лицензий 1С').includes('1C'));
   assert(e.context.classifyServices_('Закупка серверов ЗОКИИ').includes('SERVERS'));
-  assert.strictEqual(e.context.classifyServices_('Оказание услуг по предоставлению ИТ-специалистов').length,0);
+  assert(e.context.classifyServices_('Оказание услуг по предоставлению ИТ-специалистов').includes('IT_STAFFING'));
   assert.strictEqual(e.context.classifyServices_('Источники бесперебойного питания').length,0);
 });
 

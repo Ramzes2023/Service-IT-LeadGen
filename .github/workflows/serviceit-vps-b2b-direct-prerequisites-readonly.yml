@@ -138,25 +138,24 @@ jobs:
               out('WRITER_RECENT_CYCLE',None)
               out('WRITER_RECENT_BLOCKED',None)
           query = (
-              'import os,sys;'
-              'from leadpilot.serviceit_vps_pg_queue import db;'
-              'e=dict(os.environ);'
-              'c=db(e);'
-              'cur=c.cursor();'
-              "cur.execute(\"SELECT to_regclass('public.serviceit_vps_b2b_inbox')\");"
-              'present=bool(cur.fetchone()[0]);'
-              "print('B2B_PG_TABLE='+('YES' if present else 'NO'));"
-              'states={};'
-              'exec("if present:\\n"
-              "\" cur.execute('SELECT state,count(*) FROM serviceit_vps_b2b_inbox GROUP BY state')\\n"
-              "\" states=dict(cur.fetchall())\");"
-              "print('B2B_PG_HAS_ANY='+('YES' if sum(states.values())>0 else 'NO'));"
-              "print('B2B_PG_HAS_PENDING='+('YES' if states.get('PENDING',0)>0 else 'NO'));"
-              "print('B2B_PG_HAS_VERIFIED='+('YES' if states.get('VERIFIED',0)>0 else 'NO'));"
-              "print('B2B_PG_HAS_REVIEW='+('YES' if states.get('REVIEW',0)>0 else 'NO'));"
-              "print('B2B_PG_HAS_POST_UNCERTAIN='+('YES' if states.get('POST_UNCERTAIN',0)>0 else 'NO'));"
-              "print('B2B_PG_HAS_EXISTING='+('YES' if states.get('EXISTING',0)>0 else 'NO'));"
-              'cur.close();c.close();'
+              "import os\n"
+              "from leadpilot.serviceit_vps_pg_queue import db\n"
+              "e=dict(os.environ)\n"
+              "with db(e) as c:\n"
+              "    with c.cursor() as cur:\n"
+              "        cur.execute(\"SELECT to_regclass('public.serviceit_vps_b2b_inbox')\")\n"
+              "        present=bool(cur.fetchone()[0])\n"
+              "        print('B2B_PG_TABLE='+('YES' if present else 'NO'))\n"
+              "        states={}\n"
+              "        if present:\n"
+              "            cur.execute('SELECT state,count(*) FROM serviceit_vps_b2b_inbox GROUP BY state')\n"
+              "            states=dict(cur.fetchall())\n"
+              "        print('B2B_PG_HAS_ANY='+('YES' if sum(states.values())>0 else 'NO'))\n"
+              "        print('B2B_PG_HAS_PENDING='+('YES' if states.get('PENDING',0)>0 else 'NO'))\n"
+              "        print('B2B_PG_HAS_VERIFIED='+('YES' if states.get('VERIFIED',0)>0 else 'NO'))\n"
+              "        print('B2B_PG_HAS_REVIEW='+('YES' if states.get('REVIEW',0)>0 else 'NO'))\n"
+              "        print('B2B_PG_HAS_POST_UNCERTAIN='+('YES' if states.get('POST_UNCERTAIN',0)>0 else 'NO'))\n"
+              "        print('B2B_PG_HAS_EXISTING='+('YES' if states.get('EXISTING',0)>0 else 'NO'))\n"
           )
           rc,dbstatus=cmd(['docker','exec','serviceit-b2b-vps-receiver-1',
                            'python','-c',query])

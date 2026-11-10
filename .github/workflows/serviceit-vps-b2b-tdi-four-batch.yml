@@ -168,9 +168,5 @@ jobs:
           print('TDI_FOUR_READBACK_NO_DOCS='+str(sum(x[1]=='SCANNED_NO_DOCS' for x in rows)),flush=True)
           print('TDI_FOUR_READBACK_UNCERTAIN='+str(sum(x[1] in ('UNCERTAIN','CONFLICT','RESERVED','AI_INTENT','WRITE_INTENT') for x in rows)),flush=True)
           PY
-          grep -E '^TDI_FOUR_READBACK_(ROWS|VERIFIED|NO_DOCS|UNCERTAIN|WITH_FILES)=[0-4] "$RUNNER_TEMP/tdi-four/readback"
- "$RUNNER_TEMP/tdi-four/readback"
-          grep -E '^TDI_FOUR_READBACK_ATTACHMENTS=([0-9]|1[0-6]) "$RUNNER_TEMP/tdi-four/readback"
- "$RUNNER_TEMP/tdi-four/readback"
-          # old bounded check preserved as a precondition:           grep -E '^TDI_FOUR_READBACK_(ROWS|VERIFIED|NO_DOCS|UNCERTAIN)=[0-4] "$RUNNER_TEMP/tdi-four/readback"
- "$RUNNER_TEMP/tdi-four/readback"
+          grep -E '^TDI_FOUR_READBACK_(ROWS|VERIFIED|NO_DOCS|UNCERTAIN|WITH_FILES)=[0-4]$' "$RUNNER_TEMP/tdi-four/readback"
+          grep -E '^TDI_FOUR_READBACK_ATTACHMENTS=([0-9]|1[0-6])$' "$RUNNER_TEMP/tdi-four/readback"

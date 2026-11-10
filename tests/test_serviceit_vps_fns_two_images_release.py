@@ -31,3 +31,10 @@ def test_two_image_workflow_exact_owner_pin_and_bounded_modules():
                      "FNS_ONLY_FNS_MSP_PATCH=YES"):
         assert expected in w
     assert "workflow_dispatch" not in w
+
+
+def test_failure_emits_only_safe_codes_before_propagating_exit():
+    w=(ROOT/".github/workflows/serviceit-vps-fns-two-images-release.yml").read_text("utf8")
+    assert "remote_rc=$?" in w
+    assert '[[ "$remote_rc" -eq 0 ]] || exit "$remote_rc"' in w
+    assert "^FNS_ONLY_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$" in w

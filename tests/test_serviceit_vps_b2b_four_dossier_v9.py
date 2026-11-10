@@ -94,4 +94,6 @@ def test_no_contact_or_fns_or_task_mutation_in_one_shot_script():
     assert "github.actor == 'Ramzes2023'" in w
     assert "github.event.issue.number == 368" in w
     assert "persist-credentials: false" in w
+    assert chr(92) + "${{" not in w
+    assert "VPS_SSH_KEY: \"${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}\"" in w
     assert "docker exec -i serviceit-leadgen-vps-coordinator-1" in w

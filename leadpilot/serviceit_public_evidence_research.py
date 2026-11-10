@@ -266,7 +266,7 @@ def research_public(item, client, allow_hosts, *, now=None,
     Caller must explicitly opt in; source host and prospective company host must
     be independently configured in the approved domain allowlist.
     """
-    if type(detail_excerpt_chars) is not int or not 200 <= detail_excerpt_chars <= 1900:
+    if type(detail_excerpt_chars) is not int or not 200 <= detail_excerpt_chars <= 4800:
         raise ResearchBlocked("RESEARCH_EXCERPT_LIMIT_INVALID")
     if (type(item) is not dict or not isinstance(client, httpx.Client)
             or not isinstance(allow_hosts, frozenset) or not 1 <= len(allow_hosts) <= 80

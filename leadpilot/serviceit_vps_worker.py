@@ -185,7 +185,21 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 public_inn = public_inn_once(exact_env, client, connection)
             except Exception:
                 public_inn = {"status": "B2B_PUBLIC_INN_CHECK_FAILED", "writes": 0}
+        # V10 runs AFTER source research and public-INN handoff. Its own
+        # PostgreSQL receipt and advisory lock protect exactly one visible
+        # dossier update, including the original four historical B2B cards.
+        # Only reviewed source-backed cards are eligible; no demo, score,
+        # stage, outreach, task or company/contact mutation.
+        dossier = {"status": "B2B_DOSSIER_V10_DISABLED", "crm_writes": 0}
+        if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO") == "YES":
+            try:
+                from .serviceit_vps_b2b_dossier_v10_worker import worker_once
+                dossier = worker_once(env, client, connection)
+            except Exception:
+                dossier = {"status": "B2B_DOSSIER_V10_CHECK_FAILED",
+                           "crm_writes": 0}
         return {
+            "b2b_dossier_v10": dossier,
             "b2b_public_inn": public_inn,
             "b2b_research": research,
             "status": "VPS_LIVE_CYCLE_COMPLETE",

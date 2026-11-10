@@ -210,8 +210,28 @@ def main():
         paths=[]
         changed=False
         try:
-            must(healthy(AUX) and all(healthy(x) for x in OTHER),
-                 "BASELINE_CONTAINER_UNHEALTHY")
+            # Auxiliary task deployment depends on its OWN health plus the
+            # live core/CRM and B2B processing path. A separate finance, FNS
+            # or observer service may be degraded; that must not silently
+            # prevent repair of two verified B2B manager tasks.
+            baseline_health={AUX:healthy(AUX)}
+            baseline_health.update({name:healthy(name) for name in OTHER})
+            fixed_labels={
+                AUX:"AUX",
+                "serviceit-leadgen-vps-coordinator-1":"CORE",
+                "serviceit-leadgen-vps-business-1":"BUSINESS",
+                "serviceit-leadgen-vps-observer-1":"OBSERVER",
+                "serviceit-leadgen-vps-fns-msp-1":"FNS_MSP",
+                "serviceit-b2b-vps-receiver-1":"B2B_RECEIVER",
+                "serviceit-b2b-vps-writer-1":"B2B_WRITER",
+            }
+            for name,label in fixed_labels.items():
+                print("B2B_TASK_AUX_HEALTH_"+label+"="+
+                      ("YES" if baseline_health[name] else "NO"),flush=True)
+            must(all(baseline_health.get(name) for name in (
+                AUX, "serviceit-leadgen-vps-coordinator-1",
+                "serviceit-b2b-vps-writer-1")),
+                 "CRITICAL_TASK_DEPENDENCY_UNHEALTHY")
             preserved={name:image_id(name) for name in OTHER}
             old_image=image_id(AUX)
             must(runtime_shas(AUX)==old_hashes,
@@ -283,9 +303,10 @@ print('B2B_TASK_AUX_OFFLINE_SMOKE=YES')
                              "--pull","never","--force-recreate","auxiliaries"),
                  timeout=170)
             wait_new(new_image,new_hashes)
-            must(all(healthy(name) and image_id(name)==expected
+            must(all(image_id(name)==expected
+                     and (not baseline_health[name] or healthy(name))
                      for name,expected in preserved.items()),
-                 "OTHER_CONTAINERS_CHANGED")
+                 "OTHER_CONTAINERS_CHANGED_OR_NEWLY_UNHEALTHY")
             print("B2B_TASK_AUX_ACTIVATED=YES",flush=True)
             print("B2B_TASK_AUX_ROLLBACK=NOT_NEEDED",flush=True)
             return 0

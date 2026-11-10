@@ -66,13 +66,42 @@ def global_gate(env: dict) -> None:
         raise VpsBlocked("NATIVE_AUX_CUTOVER_TIME_MISSING")
 
 
-def eligible_cards(client, env, base, now):
+def calibrate_verified_live_card(client, base, connection):
+    """Positive control from PostgreSQL VERIFIED real B2B -> exact Bitrix GET.
+
+    The historical test ID 3 can be absent from a live portal. Do not
+    substitute an arbitrary ID or trust an empty CRM list as success.
+    This source is never enumerated as a new card or updated.
+    """
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT card_id FROM serviceit_vps_b2b_inbox "
+            "WHERE state='VERIFIED' AND card_id IS NOT NULL "
+            "ORDER BY received_at,source_id LIMIT 1")
+        row = cur.fetchone()
+    if not row or type(row[0]) is not int or row[0] < 8:
+        raise VpsBlocked("NATIVE_FNS_NO_VERIFIED_POSITIVE_CONTROL")
+    from .serviceit_stage4_fns_dedupe_watch import read_item
+    from .serviceit_bitrix_poll_fallback import date_value
+    verified = read_item(client, base, row[0])
+    # read_item verifies 1062 / category 21 and exact item identity.
+    date_value(verified.get("createdTime"))
+    return True
+
+
+def eligible_cards(client, env, base, now, connection=None):
     activated = env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"]
     start = after_activation({
         **env, "SERVICEIT_BITRIX_POLL_START_UTC": activated,
     }, now)
     reader = lambda method, params: list_only(client, base, method, params)
-    calibrate_known_card(reader)
+    # Discover strictly validates every returned ID, category and timestamp.
+    # Always independently check one previously VERIFIED source-backed CRM item;
+    # never use missing historical card #3 as a permanent production gate.
+    if connection is None:
+        calibrate_known_card(reader)  # legacy offline callers, fail closed
+    else:
+        calibrate_verified_live_card(client, base, connection)
     cards = discover(reader, start, now)
     windows = max(1, (len(cards) + MAX_CARDS - 1) // MAX_CARDS)
     slot = (int(now.timestamp()) // INTERVAL_SECONDS) % windows
@@ -111,7 +140,7 @@ def run_once(env: dict, *, client: httpx.Client, connection,
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
     base = validate_webhook(webhook)
-    cards = eligible_cards(client, env, base, now)
+    cards = eligible_cards(client, env, base, now, connection)
     runtime_env = {
         **env, "SERVICEIT_BITRIX_WEBHOOK": webhook,
         # Reuse reviewed future-only validators, but NEVER the old cloud

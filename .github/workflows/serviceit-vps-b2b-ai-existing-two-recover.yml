@@ -1,0 +1,72 @@
+name: ServiceIT B2B restore exact two native 9-AI HOLD reviews (no replay)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-two-review-recovery
+  cancel-in-progress: false
+jobs:
+  restore:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_AI_REPAIR_EXISTING_TWO_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin SSH and compile fixed recovery logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_ai_review_recover.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-review-recovery"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-review-recovery/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-review-recovery/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-review-recovery/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-review-recovery/known_hosts" >/dev/null
+      - name: Recover ONLY two proven existing real cards; never create again
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-review-recovery/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-review-recovery/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            < ops/serviceit_vps_b2b_ai_review_recover.py \
+            > "$RUNNER_TEMP/b2b-review-recovery/status"
+          grep -E '^B2B_AI_RECOVERY_[A-Z0-9_]+=(YES|NO|[0-9]+)$' \
+            "$RUNNER_TEMP/b2b-review-recovery/status" | head -15
+          grep -qx 'B2B_AI_RECOVERY_COMPLETE=YES' "$RUNNER_TEMP/b2b-review-recovery/status"
+          grep -qx 'B2B_AI_RECOVERY_RESTORED=2' "$RUNNER_TEMP/b2b-review-recovery/status"
+      - name: Publish only aggregate receipt counts and reason codes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-review-recovery/status"
+          summary="$(grep -E '^B2B_AI_RECOVERY_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$f" 2>/dev/null | head -15 || true)"
+          [[ -n "$summary" ]] || summary='B2B_AI_RECOVERY_UNVERIFIED=YES'
+          msg="$(printf 'B2B two existing verified cards: one-time fenced 9-HOLD restoration:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo crm.item.add, no model calls, no new contacts/tasks/outreach, no PII or card IDs in logs. Every crm.item.update requires previous durable PG WRITE_INTENT and exact CRM readback.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

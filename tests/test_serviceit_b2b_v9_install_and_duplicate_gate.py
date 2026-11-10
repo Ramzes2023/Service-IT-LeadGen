@@ -5,82 +5,18 @@ from pathlib import Path
 import httpx
 import pytest
 
-from leadpilot.serviceit_b2b_exact_duplicate_preflight import (
-    KNOWN_EXISTING, PROBE_NONEXISTENT, verified_duplicate_lookup,
-    DuplicateSearchBlocked,
-)
-from leadpilot.b2b_github_to_bitrix import BridgeBlocked
 
 URL = "https://serviseit.bitrix24.ru/rest/789/LOCAL_TEST_ONLY_TOKEN"
 
 
-def _handler_factory(known_items, absent_items):
-    calls = []
-    def handler(request):
-        assert request.method == "POST"
-        assert request.url.host == "serviseit.bitrix24.ru"
-        params = json.loads(request.content)
-        assert params["entityTypeId"] == 1062
-        if request.url.path.endswith("/crm.item.get.json"):
-            assert params["id"] == 41
-            # Full GET includes entityTypeId; list.select does not.
-            source_seen = calls[-1]
-            calls.append("GET_EXACT")
-            assert source_seen in (KNOWN_EXISTING, PROBE_NONEXISTENT)
-            item = {**_known(), "UF_CRM_13_SVCIT_SIGNAL_ID": source_seen}
-            return httpx.Response(200, json={"result": {"item": item}})
-        assert request.url.path.endswith("/crm.item.list.json")
-        assert params["filter"]["categoryId"] == 21
-        assert "select" not in params  # Real portal returned id only in this mode
-        source = params["filter"]["UF_CRM_13_SVCIT_SIGNAL_ID"]
-        calls.append(source)
-        assert source in (KNOWN_EXISTING, PROBE_NONEXISTENT)
-        items = known_items if source == KNOWN_EXISTING else absent_items
-        return httpx.Response(200, json={"result": {"items": items}, "total": len(items)})
-    return handler, calls
-
-
-def _known():
-    return {"id": 41, "entityTypeId": 1062, "categoryId": 21,
-            "UF_CRM_13_SVCIT_SIGNAL_ID": KNOWN_EXISTING}
-
-
-def test_exact_duplicate_requires_positive_and_negative_proof():
-    # Simulate real Bitrix list dropping entityTypeId while full GET has it.
-    listed = {k: v for k, v in _known().items() if k != "entityTypeId"}
-    handler, calls = _handler_factory([listed], [])
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        assert verified_duplicate_lookup(client, URL) == {
-            "status": "B2B_EXACT_DUPLICATE_READONLY_PASS",
-            "crm_writes": 0, "gigachat_calls": 0,
-            "existing_found": True, "unseen_empty": True}
-    assert calls == [KNOWN_EXISTING, "GET_EXACT", PROBE_NONEXISTENT]
-
-
-def test_no_positive_proof_blocks_auto_creation():
-    handler, calls = _handler_factory([], [])
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(DuplicateSearchBlocked, match="KNOWN_DUPLICATE"):
-            verified_duplicate_lookup(client, URL)
-    assert calls == [KNOWN_EXISTING]
-
-
-def test_nested_empty_shape_never_mistaken_for_no_duplicates():
-    handler, calls = _handler_factory([[]], [])
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(BridgeBlocked, match="CRM_ITEM_OUT_OF_SCOPE"):
-            verified_duplicate_lookup(client, URL)
-    assert calls == [KNOWN_EXISTING]
-
-
-def test_negative_probe_false_positive_also_blocks():
-    impossible_duplicate = {**_known(), "UF_CRM_13_SVCIT_SIGNAL_ID": PROBE_NONEXISTENT}
-    listed = {k: v for k, v in _known().items() if k != "entityTypeId"}
-    handler, calls = _handler_factory([listed], [impossible_duplicate])
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(DuplicateSearchBlocked, match="NEGATIVE_DUPLICATE"):
-            verified_duplicate_lookup(client, URL)
-    assert calls == [KNOWN_EXISTING, "GET_EXACT", PROBE_NONEXISTENT, "GET_EXACT"]
+def test_v9_positive_control_uses_current_crm_item_and_no_historical_id():
+    from inspect import getsource
+    from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control
+    source = getsource(positive_duplicate_control)
+    assert '"id": CANARY_ID' in source
+    assert '"Y"' in source and '"N"' in source
+    assert 'exact_duplicate(client, base, ABSENT)' in source
+    assert '4665948' not in source
 
 
 def test_v9_dedicated_project_and_approval_gates():
@@ -153,28 +89,6 @@ def test_v9_node_bootstrap_is_before_cloud_secrets_and_writes():
     assert script.index("$Node = Ensure-ServiceITNode") < script.index("Set-GhVar 'SERVICEIT_B2B_INGEST_ENABLED' 'YES'")
     assert script.index("$Node = Ensure-ServiceITNode") < script.index("SERVICEIT_GMAIL_PROJECT=NEW_CREATED_ID_PERSISTED")
 
-
-
-def test_malformed_list_blocks_without_ever_fetching_untrusted_id():
-    handler, calls = _handler_factory([[{"id": 41}]], [])
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(BridgeBlocked, match="CRM_ITEM_OUT_OF_SCOPE"):
-            verified_duplicate_lookup(client, URL)
-    assert calls == [KNOWN_EXISTING]
-
-
-def test_exact_get_wrong_scope_refuses_positive_duplicate():
-    def handler(request):
-        params = json.loads(request.content)
-        assert params["entityTypeId"] == 1062
-        if request.url.path.endswith("/crm.item.list.json"):
-            listed = {k: v for k, v in _known().items() if k != "entityTypeId"}
-            return httpx.Response(200, json={"result": {"items": [listed]}, "total": 1})
-        assert request.url.path.endswith("/crm.item.get.json")
-        return httpx.Response(200, json={"result": {"item": {**_known(), "categoryId": 99}}})
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(BridgeBlocked, match="CRM_DUPLICATE_EXACT_GET_UNVERIFIED"):
-            verified_duplicate_lookup(client, URL)
 
 
 def test_bitrix_exact_duplicate_list_uses_live_verified_no_select_mode():

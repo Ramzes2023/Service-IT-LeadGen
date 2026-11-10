@@ -94,6 +94,34 @@ def run(secret, client):
             "entityTypeId": ENTITY, "useOriginalUfNames": mode,
             "filter": {"categoryId": CATEGORY, field: source}, "start": 0})
         result["LIST_"+label] = _shape(list_response, source, field)
+    # Live actual-positive control. Old B2B cards may no longer exist,
+    # so compare against an independently readable existing exact CRM item 3.
+    # Neither its source value nor any other CRM property is logged.
+    known = _call(client, base, "crm.item.get", {
+        "entityTypeId": ENTITY, "id": 3, "useOriginalUfNames": "Y"})
+    record = ((known or {}).get("result") or {}).get("item")
+    if not (type(record) is dict and str(record.get("id")) == "3"
+            and str(record.get("entityTypeId")) == str(ENTITY)
+            and str(record.get("categoryId")) == str(CATEGORY)
+            and type(record.get(ORIGINAL)) is str
+            and 4 <= len(record[ORIGINAL]) <= 120
+            and re.fullmatch(r"[A-Za-z0-9:_-]{4,120}", record[ORIGINAL])):
+        result["POSITIVE_3_SOURCE"] = "NOT_AVAILABLE"
+    else:
+        source = record[ORIGINAL]  # Never returned, logged or persisted.
+        for mode, field in (("Y", ORIGINAL), ("N", CAMEL)):
+            observed = _call(client, base, "crm.item.list", {
+                "entityTypeId": ENTITY, "useOriginalUfNames": mode,
+                "filter": {"categoryId": CATEGORY, field: source},
+                "start": 0})
+            base_shape = _shape(observed, source, field)
+            rows = ((observed or {}).get("result") or {}).get("items")
+            result["POSITIVE_3_"+mode] = (
+                "VERIFIED" if base_shape == "SOURCE_MATCH"
+                and type(rows) is list and len(rows) == 1
+                and str(rows[0].get("id")) == "3" else base_shape
+            )
+        result["POSITIVE_3_SOURCE"] = "AVAILABLE_NO_VALUES_LOGGED"
     return result
 
 

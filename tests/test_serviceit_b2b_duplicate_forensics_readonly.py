@@ -17,16 +17,19 @@ def test_exact_probe_uses_only_sanitized_get_fields_list_and_no_crm_writes(monke
         mode = params["useOriginalUfNames"]
         field = audit.ORIGINAL if mode == "Y" else audit.CAMEL
         if method == "crm.item.get":
-            assert params["id"] == 7
+            assert params["id"] in (3, 7)
             return httpx.Response(200, json={"result": {"item": {
-                "id": 7, "entityTypeId": audit.ENTITY,
-                "categoryId": audit.CATEGORY, field: audit.KNOWN7}}})
+                "id": params["id"], "entityTypeId": audit.ENTITY,
+                "categoryId": audit.CATEGORY,
+                field: "SVCIT-TEST-SOURCE" if params["id"] == 3 else audit.KNOWN7}}})
         if method == "crm.item.fields":
             return httpx.Response(200, json={"result": {"fields": {
                 field: {"type": "string"}}}})
         target = params["filter"][field]
         rows = ([{"id": 7, "categoryId": 21, field: audit.KNOWN7}]
-                if target == audit.KNOWN7 else [])
+                if target == audit.KNOWN7 else
+                [{"id": 3, "categoryId": 21, field: "SVCIT-TEST-SOURCE"}]
+                if target == "SVCIT-TEST-SOURCE" else [])
         return httpx.Response(200, json={"result": {"items": rows}})
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         result = audit.run("SYNTHETIC-WEBHOOK-NOT-REAL", client)
@@ -34,12 +37,14 @@ def test_exact_probe_uses_only_sanitized_get_fields_list_and_no_crm_writes(monke
     assert result["LIST_KNOWN_4661617_N"] == "SOURCE_MATCH"
     assert result["LIST_OLD_4665948_Y"] == "EMPTY"
     assert result["LIST_ABSENT_N"] == "EMPTY"
-    assert methods.count("crm.item.get") == 2
+    assert methods.count("crm.item.get") == 3
     assert methods.count("crm.item.fields") == 2
-    assert methods.count("crm.item.list") == 5
+    assert methods.count("crm.item.list") == 7
+    assert result["POSITIVE_3_Y"] == result["POSITIVE_3_N"] == "VERIFIED"
     assert result["crm_writes"] == result["outreach"] == 0
     assert audit.ORIGINAL not in str(result)
     assert audit.CAMEL not in str(result)
+    assert "SVCIT-TEST-SOURCE" not in str(result)
     assert "SYNTHETIC-WEBHOOK" not in str(result)
 
 

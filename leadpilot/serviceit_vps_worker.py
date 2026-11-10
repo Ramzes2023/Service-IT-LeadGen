@@ -198,7 +198,17 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             except Exception:
                 dossier = {"status": "B2B_DOSSIER_V11_CHECK_FAILED",
                            "crm_writes": 0}
+        # Completely separate document step: never replaces V11 nine fields,
+        # public INN, score, stage or task. OFF until explicitly activated.
+        tender_docs = {"status": "TDI_DISABLED", "crm_writes": 0}
+        if env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED", "NO") == "YES":
+            try:
+                from .serviceit_vps_b2b_document_worker import run_once as docs_once
+                tender_docs = docs_once(exact_env, client, connection)
+            except Exception:
+                tender_docs = {"status": "TDI_CHECK_FAILED", "crm_writes": 0}
         return {
+            "b2b_tender_documents": tender_docs,
             "b2b_dossier_v11": dossier,
             "b2b_public_inn": public_inn,
             "b2b_research": research,

@@ -38,3 +38,10 @@ def test_failure_emits_only_safe_codes_before_propagating_exit():
     assert "remote_rc=$?" in w
     assert '[[ "$remote_rc" -eq 0 ]] || exit "$remote_rc"' in w
     assert "^FNS_ONLY_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$" in w
+
+
+def test_existing_fns_writer_flag_is_preserved_not_toggled():
+    code=(ROOT/"ops/serviceit_vps_fns_calibration_two_images_activate.py").read_text("utf8")
+    assert 'env.get("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED") in ("YES","NO")' in code
+    assert "FNS_WRITER_ALREADY_ENABLED" not in code
+    assert "COMPOSE_LIVE_ENV_DRIFT" in code

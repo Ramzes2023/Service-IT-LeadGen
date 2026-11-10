@@ -42,3 +42,8 @@ def test_v6_failed_remote_preflight_prints_only_sanitized_fixed_codes():
     assert "exit 1" in content
     assert "safe=\"$(grep -E '^B2B_BUYER_V6_" in content
     assert 'cat "$RUNNER_TEMP/serviceit-contacts/status"' not in content
+
+def test_v6_workflow_only_stages_and_compiles_v6_activator():
+    content=(ROOT/".github/workflows/serviceit-vps-b2b-buyer-v6-deploy.yml").read_text("utf8")
+    assert "ops/serviceit_vps_b2b_contacts_v5_deploy.py" not in content
+    assert content.count("ops/serviceit_vps_b2b_buyer_v6_deploy.py") >= 3

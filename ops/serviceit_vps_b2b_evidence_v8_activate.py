@@ -35,10 +35,7 @@ OTHER = (
     "serviceit-b2b-vps-receiver-1",
     "serviceit-b2b-vps-writer-1",
 )
-FILES = (
-    "serviceit_vps_b2b_deep_research.py",
-    "serviceit_b2b_routerai_deep.py",
-)
+FILES = ("serviceit_b2b_routerai_deep.py",)
 # Enforce pinned previous SHA passed by GitHub owner workflow.
 FLAG = "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED"
 EXTRA_FLAG = "SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED"
@@ -285,7 +282,15 @@ with db(dict(os.environ)) as c:
                          "-c", pending_code]) == "0",
                     "V4_OR_AI_INFLIGHT_NOT_SAFE_TO_RESTART")
             runtime = runtime_shas()
-            require(runtime == dict(zip(FILES, old_shas)), "LIVE_INN_V7_SHA_DRIFT")
+            require(runtime == dict(zip(FILES, old_shas)), "LIVE_ROUTERAI_SHA_DRIFT")
+            # B2B INN V8 concurrently deployed this exact newer deep
+            # source into the running image. Do not regress it or launch
+            # a mismatched RouterAI inference schema.
+            deep_sha = out(["docker", "exec", CORE, "python", "-B", "-c",
+                            "import hashlib;from pathlib import Path;p=Path('/app/leadpilot/serviceit_vps_b2b_deep_research.py');print(hashlib.sha256(p.read_bytes()).hexdigest())"])
+            require(deep_sha ==
+                    "fc8b91870fe0c8b6e91e66d136aa06ae052d947d638bbb68d70799d8930ed550",
+                    "LIVE_INN_V8_DEEP_SHA_REQUIRED")
             require(out(["docker", "exec", CORE, "python", "-B", "-c",
                          "from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS;print(INTERVAL_SECONDS)"])
                     == "300", "EXACT_FIVE_MINUTE_CADENCE_REQUIRED")
@@ -336,9 +341,9 @@ with db(dict(os.environ)) as c:
             smoke = """
 import hashlib,sys
 from pathlib import Path
-names=sys.argv[1:3]
-digests=sys.argv[3:]
-assert len(names)==len(digests)==2
+names=sys.argv[1:2]
+digests=sys.argv[2:]
+assert len(names)==len(digests)==1
 for name,expected in zip(names,digests):
     p=Path('/app/leadpilot')/name
     assert p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==expected
@@ -348,7 +353,8 @@ from leadpilot.serviceit_b2b_routerai_deep import (
     validate_inference,
 )
 from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS
-assert INTERVAL_SECONDS==300
+from leadpilot.serviceit_vps_b2b_public_inn import NAMESPACE
+assert INTERVAL_SECONDS==300 and NAMESPACE=='B2B_PUBLIC_INN_V2'
 assert all(callable(f) for f in (
     run_once, source_findings, brave_notice_page, public_documents,
     cited_fields, investigate_routerai, validate_inference))
@@ -377,7 +383,7 @@ print('B2B_EVIDENCE_V8_OFFLINE_SMOKE=YES')
                     "UNRELATED_COMPOSE_SETTINGS_CHANGED")
             needed = dict(before["environment"], **{FLAG:"YES", EXTRA_FLAG:"YES", INN_FLAG:"YES"})
             require(future.get("environment") == needed,
-                    "ONLY_ONE_NEW_INN_FLAG_REQUIRED")
+                    "V8_V7_COMPOSE_FLAGS_UNCHANGED")
             atomic_replace(PIN, next_pin)
             changed = True
             call(compose(paths, "up", "-d", "--no-deps", "--no-build",

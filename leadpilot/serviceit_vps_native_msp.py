@@ -134,7 +134,10 @@ def run_once(env, *, client: httpx.Client, connection,
             env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
     }, now)
     read_only_list = lambda m,p: list_only(client, base, m,p)
-    calibrate_known_card(read_only_list)
+    # FNS daily collector uses the same exact VERIFIED native source control
+    # as the auxiliary Bitrix writer; historical card #3 may be absent.
+    from .serviceit_vps_native_aux import calibrate_verified_live_card
+    calibrate_verified_live_card(client, base, connection)
     cards = discover(read_only_list, start, now)
     out["new_cards_seen"] = len(cards)
     if not cards:

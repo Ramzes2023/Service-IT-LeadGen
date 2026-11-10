@@ -168,7 +168,18 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                     pass
                 review += 1
                 break
+        research = {"status": "B2B_RESEARCH_DISABLED", "research": 0}
+        if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO") == "YES":
+            # Separate versioned PG receipt upgrades verified B2B HOLD cards.
+            # This is not a replay of an already completed AI_NINE_V1 write.
+            # Public research failures must not stall future source intake.
+            try:
+                from .serviceit_vps_b2b_deep_research import run_once as deep_once
+                research = deep_once(exact_env, client, connection)
+            except Exception:
+                research = {"status": "B2B_RESEARCH_CHECK_FAILED", "research": 0}
         return {
+            "b2b_research": research,
             "status": "VPS_LIVE_CYCLE_COMPLETE",
             "handled": handled, "review": review,
             "poll": polled["status"],

@@ -40,7 +40,7 @@ def test_opted_in_model_is_used_once_before_single_create(monkeypatch):
     assert target.calls.count("crm.item.add")==1
     assert target.calls.count("crm.item.update")==0
     assert target.add_fields["UF_CRM_13_SVCIT_AI_STATUS"]=="HYPOTHESIS_UNVERIFIED_SOURCE_UNVERIFIED"
-    assert "AI-провайдер: GigaChat / GigaChat-2" in target.add_fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
+    assert "AI-провайдер: внешняя модель / GigaChat-2" in target.add_fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
     assert "Lead Score: НЕ РАССЧИТАН" in target.add_fields["UF_CRM_13_SVCIT_AI_FULL_REPORT"]
     assert "UF_CRM_13_SVCIT_LEAD_SCORE" not in target.add_fields
     assert "UF_CRM_13_SVCIT_AI_SCORE_BADGE" not in target.add_fields

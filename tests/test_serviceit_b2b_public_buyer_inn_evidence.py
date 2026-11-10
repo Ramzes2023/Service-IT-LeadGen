@@ -38,3 +38,22 @@ def test_conflicting_public_buyer_inns_not_promoted():
         "excerpt": "Заказчик: ООО «Учебная фирма». ИНН: 7707083893.",
     })
     assert b2b.published_buyer_inn_evidence(source) is None
+
+
+def test_public_buyer_inn_is_source_cited_in_nine_ai_fields_not_claimed_fns():
+    from leadpilot import serviceit_b2b_routerai_deep as deep
+    from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
+    source = findings("ИНН: 1234567894. ИТ-услуги 1С и DevOps.")
+    source["checked_at"] = "2026-11-10T12:00:00+00:00"
+    item = {field: "Previous AI content" for field in AI_FIELDS}
+    item[PREFIX + "SIGNAL_KIND"] = "tender"
+    report = deep.source_only_investigation(source)
+    card = b2b.cited_manager_fields(item, source, report)
+    assert set(card) == AI_FIELDS
+    assert "ИНН-кандидат (контрольная сумма корректна): 1234567894" in (
+        card[PREFIX + "AI_FULL_REPORT"])
+    assert "ФНС/право контакта ещё не подтверждены" in (
+        card[PREFIX + "AI_MANAGER_BRIEF"])
+    assert "не разрешать исходящий контакт" in card[PREFIX + "AI_FULL_REPORT"]
+    assert all(len(value) <= (12000 if key == PREFIX + "AI_FULL_REPORT" else 4096)
+               for key, value in card.items())

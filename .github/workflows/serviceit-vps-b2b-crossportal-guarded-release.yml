@@ -1,0 +1,126 @@
+name: ServiceIT VPS B2B public crossportal exact-number research guarded release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-crossportal-live-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_CROSSPORTAL_GUARDED_RELEASE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify reviewed MIRROR payload and pinned SSH host
+        shell: bash
+        run: |
+          set -euo pipefail
+          names=(serviceit_b2b_public_mirrors.py)
+          # Parallel FNS/score work may change main; do not copy changed
+          # unreviewed MIRROR modules into production.
+          git cat-file -e 2fa8ac8af9c455a8bb26bc30d83944588a5fc924^{commit}
+          for name in "${names[@]}"; do
+            git diff --quiet 2fa8ac8af9c455a8bb26bc30d83944588a5fc924 HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+          done
+          python -m py_compile ops/serviceit_vps_b2b_crossportal_activate.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-crossportal"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-crossportal/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-crossportal/hosts"
+          chmod 0600 "$RUNNER_TEMP/b2b-crossportal/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-crossportal/hosts" >/dev/null
+          : > "$RUNNER_TEMP/b2b-crossportal/shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/b2b-crossportal/shas"
+          done
+          sha256sum ops/serviceit_vps_b2b_crossportal_activate.py | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/b2b-crossportal/script-sha"
+          [[ "$(wc -l < "$RUNNER_TEMP/b2b-crossportal/shas")" == 1 ]]
+      - name: Stage exact one non-secret module and immutable release script
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-crossportal/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-crossportal-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/b2b-crossportal/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/b2b-crossportal/id" "${opts[@]}" \
+            leadpilot/serviceit_b2b_public_mirrors.py "$target:$stage/"
+          scp -i "$RUNNER_TEMP/b2b-crossportal/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_crossportal_activate.py "$target:$stage/activate.py"
+      - name: Verify stage, rebuild offline, activate only coordinator with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-crossportal/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/b2b-crossportal/shas"
+          [[ "${#shas[@]}" == 1 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/b2b-crossportal/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          checked=()
+          for value in "${shas[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$value'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${checked[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/b2b-crossportal/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/b2b-crossportal/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 1 ]]
+          for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-crossportal-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^MIRROR_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/b2b-crossportal/status" | head -25 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'MIRROR_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/b2b-crossportal/status"
+          grep -qx 'MIRROR_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/b2b-crossportal/status"
+      - name: Report sanitized outcome to issue 368
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/b2b-crossportal/status"
+          safe="$(grep -E '^MIRROR_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' "$file" 2>/dev/null | head -20 || true)"
+          [[ -n "$safe" ]] || safe="MIRROR_RELEASE_RESULT_UNVERIFIED=YES"
+          body="$(printf 'B2B public crossportal exact-number guarded source release; coordinator only; exact SHAs, no CRM installer write, rollback on uncertainty.\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNew-card MIRROR live SHA readback and future automatic-cycle proof required separately. No customer outreach.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

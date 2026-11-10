@@ -189,9 +189,9 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None):
 # PUBLIC procurement text can trigger an additional company web search.
 # An organizer, bidding-platform support, IP/person or inferred CRM name cannot.
 PUBLIC_BUYER_LABEL = re.compile(
-    r'(?iu)\\b(?:заказчик|покупатель|наименование\\s+заказчика)'
-    r'\\s*[:—–-]\\s*((?:ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
-    r'\\s+(?:«[^»]{4,90}»|"[^"]{4,90}"))'
+    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)'
+    r'\s*[:—–-]\s*((?:ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
+    r'\s+(?:«[^»]{4,90}»|"[^"]{4,90}"))'
 )
 
 

@@ -193,6 +193,41 @@ function decodeQuotedPrintableUtf8_(encoded) {
   return Utilities.newBlob(bytes).getDataAsString("UTF-8");
 }
 
+/**
+ * Gmail Advanced Service occasionally omits .raw even though the owner is
+ * authorized. Make a second READ-ONLY request to the SAME Gmail API via
+ * UrlFetchApp with the Apps Script OAuth token. No MIME leaves Google.
+ */
+function readRawGmailDirect_(messageId) {
+  if (!/^[a-f0-9]{16,24}$/i.test(String(messageId || ""))) {
+    throw new Error("SERVICEIT_EMAIL_RAW_MESSAGE_ID_INVALID");
+  }
+  const response = UrlFetchApp.fetch(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/" +
+      encodeURIComponent(messageId) + "?format=raw", {
+      method: "get",
+      headers: {Authorization: "Bearer " + ScriptApp.getOAuthToken()},
+      followRedirects: false,
+      validateHttpsCertificates: true,
+      muteHttpExceptions: true
+    }
+  );
+  const code = response && response.getResponseCode();
+  if (code !== 200) {
+    const safe = Number.isInteger(code) && code >= 400 && code <= 599 ?
+      String(code) : "UNKNOWN";
+    throw new Error("SERVICEIT_EMAIL_RAW_REST_HTTP_" + safe);
+  }
+  let result;
+  try { result = JSON.parse(response.getContentText()); }
+  catch (_ignored) { throw new Error("SERVICEIT_EMAIL_RAW_REST_INVALID_JSON"); }
+  if (!result || result.id !== messageId || typeof result.raw !== "string" ||
+      !result.raw || result.raw.length > SERVICEIT_CONFIG.maxEmailText * 8) {
+    throw new Error("SERVICEIT_EMAIL_RAW_REST_UNAVAILABLE");
+  }
+  return result.raw;
+}
+
 function messageTextFromRaw_(message) {
   // Gmail may return an empty MessagePart.body.data even for genuine
   // authenticated single-part B2B HTML. Use Gmail's READ-ONLY raw response
@@ -201,13 +236,18 @@ function messageTextFromRaw_(message) {
   if (!message || !/^[a-f0-9]{16,24}$/i.test(String(message.id || ""))) {
     throw new Error("SERVICEIT_EMAIL_RAW_MESSAGE_ID_INVALID");
   }
-  const raw = Gmail.Users.Messages.get("me", message.id, {format: "raw"});
-  if (!raw || raw.id !== message.id || typeof raw.raw !== "string" ||
-      !raw.raw || raw.raw.length > SERVICEIT_CONFIG.maxEmailText * 8) {
-    throw new Error("SERVICEIT_EMAIL_RAW_UNAVAILABLE");
+  let raw = null;
+  try {
+    raw = Gmail.Users.Messages.get("me", message.id, {format: "raw"});
+  } catch (_ignored) {
+    // A fallback to the same authenticated Gmail endpoint is still read-only.
   }
+  const rawValue = raw && raw.id === message.id &&
+    typeof raw.raw === "string" && raw.raw &&
+    raw.raw.length <= SERVICEIT_CONFIG.maxEmailText * 8 ?
+      raw.raw : readRawGmailDirect_(message.id);
   const mime = Utilities.newBlob(
-    Utilities.base64DecodeWebSafe(raw.raw)).getDataAsString("UTF-8");
+    Utilities.base64DecodeWebSafe(rawValue)).getDataAsString("UTF-8");
   if (mime.length > SERVICEIT_CONFIG.maxEmailText * 4) {
     throw new Error("SERVICEIT_EMAIL_RAW_TOO_LARGE");
   }

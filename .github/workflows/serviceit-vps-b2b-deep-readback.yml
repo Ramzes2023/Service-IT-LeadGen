@@ -63,10 +63,13 @@ jobs:
           with db(env) as connection:
               with connection.cursor() as cur:
                   cur.execute("""
-                    SELECT b.card_id, COALESCE(r.status,'NONE')
+                    SELECT b.card_id, COALESCE(r.status,'NONE'),
+                           COALESCE(r2.status,'NONE')
                     FROM serviceit_vps_b2b_inbox b
                     LEFT JOIN serviceit_vps_native_receipts r
                     ON r.namespace='B2B_RESEARCH_V1' AND r.card_id=b.card_id
+                    LEFT JOIN serviceit_vps_native_receipts r2
+                    ON r2.namespace='B2B_RESEARCH_V2' AND r2.card_id=b.card_id
                     WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
                     ORDER BY b.received_at,b.source_id LIMIT 10
                   """)
@@ -84,10 +87,14 @@ jobs:
           model_unverified=0
           receipt_verified=0
           receipt_uncertain=0
+          v2_verified=0
+          v2_uncertain=0
+          v2_cited=0
+          source_only_cited=0
           webhook=secret_file(env,'SERVICEIT_BITRIX_WEBHOOK')
           with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
               rest=Rest(webhook,client)
-              for card,receipt in rows:
+              for card,receipt,receipt_v2 in rows:
                   item=normalized(rest('crm.item.get',{
                       'entityTypeId':1062,'id':int(card),
                       'useOriginalUfNames':'Y'})['item'])
@@ -100,9 +107,14 @@ jobs:
                   report=item.get(prefix+'AI_FULL_REPORT') or ''
                   if status=='PUBLIC_RESEARCH_ROUTERAI_CITED':
                       cited+=1
+                      v2_cited+=1
+                  if status=='PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED':
+                      source_only_cited+=1
                   if status in ('PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES',
                                 'PUBLIC_PAGES_ROUTERAI_UNVERIFIED',
-                                'PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT'):
+                                'PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT',
+                                'PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED',
+                                'PUBLIC_RESEARCH_SOURCE_NO_QUOTES_AI_UNVERIFIED'):
                       model_unverified+=1
                   if status=='NOT_RUN_SOURCE_UNVERIFIED':
                       untouched+=1
@@ -113,10 +125,16 @@ jobs:
                       receipt_verified+=1
                   if receipt=='UNCERTAIN':
                       receipt_uncertain+=1
+                  if receipt_v2=='VERIFIED':
+                      v2_verified+=1
+                  if receipt_v2=='UNCERTAIN':
+                      v2_uncertain+=1
                   label=status if re.fullmatch(r'[A-Z0-9_]{4,90}',status) else 'OTHER'
                   print('DEEP_CARD_'+str(seen)+'_STATUS='+label)
                   rlabel=receipt if re.fullmatch(r'[A-Z0-9_]{3,30}',receipt) else 'OTHER'
                   print('DEEP_CARD_'+str(seen)+'_RECEIPT='+rlabel)
+                  vlabel=receipt_v2 if re.fullmatch(r'[A-Z0-9_]{3,30}',receipt_v2) else 'OTHER'
+                  print('DEEP_CARD_'+str(seen)+'_V2_RECEIPT='+vlabel)
                   print('DEEP_CARD_'+str(seen)+'_NINE='+('YES' if all(
                       isinstance(v,str) and v.strip() for v in data.values()) else 'NO'))
           for key,value in (
@@ -126,6 +144,10 @@ jobs:
               ('DEEP_STILL_ORIGINAL_TEMPLATE',untouched),
               ('DEEP_RECEIPTS_VERIFIED',receipt_verified),
               ('DEEP_RECEIPTS_UNCERTAIN',receipt_uncertain),
+              ('DEEP_V2_RECEIPTS_VERIFIED',v2_verified),
+              ('DEEP_V2_RECEIPTS_UNCERTAIN',v2_uncertain),
+              ('DEEP_V2_CITED_ROUTERAI',v2_cited),
+              ('DEEP_V2_CITED_SOURCE_ONLY',source_only_cited),
           ):
               print(key+'='+str(value))
           print('DEEP_READBACK_DONE=YES')

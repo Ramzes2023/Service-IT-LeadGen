@@ -102,9 +102,69 @@ jobs:
           if p.returncode:
               print('B2B_GATES_BLOCKED=YES',flush=True)
               raise SystemExit(2)
+          aux_code="""
+import os
+from leadpilot.serviceit_vps_pg_queue import db
+from leadpilot.serviceit_vps_native_aux import enabled,ai_receipt_allows_task
+env=dict(os.environ)
+flags=enabled(env)
+for name,value in flags.items():
+    print('B2B_AUX_'+name.upper()+'='+('YES' if value else 'NO'),flush=True)
+print('B2B_AUX_APPROVED_605='+(
+    'YES' if env.get('SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED')=='YES_1062_21_INTERNAL_MANAGER'
+       and env.get('SERVICEIT_VPS_TASK_ASSIGNEE_ID')=='605' else 'NO'),flush=True)
+with db(env) as connection:
+    with connection.cursor() as cur:
+        cur.execute("SELECT card_id FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL LIMIT 3")
+        rows=cur.fetchall()
+    print('B2B_AUX_MATCHING_B2B_CARDS='+str(len(rows)),flush=True)
+    good=sum(int(ai_receipt_allows_task(connection,int(card))) for (card,) in rows)
+    print('B2B_AUX_TASK_AI_GATE_ALLOW='+str(good),flush=True)
+print('B2B_AUX_DONE=YES',flush=True)
+"""
+          p2=subprocess.run(['docker','exec','serviceit-leadgen-vps-auxiliaries-1',
+              'python','-B','-c',aux_code],stdout=subprocess.PIPE,
+              stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,text=True,timeout=90)
+          for line in p2.stdout.splitlines():
+              if re.fullmatch(r'B2B_AUX_[A-Z0-9_]+=(?:YES|NO|[0-9]+)',line):
+                  print(line,flush=True)
+          if p2.returncode:
+              print('B2B_AUX_BLOCKED=YES',flush=True)
+              raise SystemExit(2)
           PY
-          grep -E '^B2B_GATES_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$RUNNER_TEMP/gates/results" | head -45
+          grep -E '^B2B_(GATES|AUX)_[A-Z0-9_]+=(YES|NO|[0-9]+)
           grep -qx 'B2B_GATES_READ_DONE=YES' "$RUNNER_TEMP/gates/results"
+          grep -qx 'B2B_AUX_DONE=YES' "$RUNNER_TEMP/gates/results"
+      - name: Publish only booleans and counts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/gates/results"
+          summary="$(grep -E '^B2B_(GATES|AUX)_[A-Z0-9_]+=(YES|NO|[0-9]+) || true)"
+          [[ -n "$summary" ]] || summary="B2B_GATES_READ_UNVERIFIED=YES"
+          msg="$(printf 'Actual VPS public research and internal manager task feature gates (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo CRM, PG, email or source writes. No source identifiers, secrets, card values or report text.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true
+ "$RUNNER_TEMP/gates/results" | head -65
+          grep -qx 'B2B_GATES_READ_DONE=YES' "$RUNNER_TEMP/gates/results"
+          grep -qx 'B2B_AUX_DONE=YES' "$RUNNER_TEMP/gates/results"
+      - name: Publish only booleans and counts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/gates/results"
+          summary="$(grep -E '^B2B_GATES_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$r" 2>/dev/null | head -45 || true)"
+          [[ -n "$summary" ]] || summary="B2B_GATES_READ_UNVERIFIED=YES"
+          msg="$(printf 'Actual VPS public research and internal manager task feature gates (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo CRM, PG, email or source writes. No source identifiers, secrets, card values or report text.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true
+ "$r" 2>/dev/null | head -65 || true)"
+          [[ -n "$summary" ]] || summary="B2B_GATES_READ_UNVERIFIED=YES"
+          msg="$(printf 'Actual VPS public research and internal manager task feature gates (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo CRM, PG, email or source writes. No source identifiers, secrets, card values or report text.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true
+ "$RUNNER_TEMP/gates/results" | head -65
+          grep -qx 'B2B_GATES_READ_DONE=YES' "$RUNNER_TEMP/gates/results"
+          grep -qx 'B2B_AUX_DONE=YES' "$RUNNER_TEMP/gates/results"
       - name: Publish only booleans and counts
         if: always()
         shell: bash

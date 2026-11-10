@@ -42,8 +42,21 @@ def run():
                                "поддержке CRM и DevOps. Это учебный пример "
                                "без настоящего заказчика и потребности.")}],
     }
+    # Long purely fictional multi-role tender text approximates a REAL
+    # public page's 3.3k input budget; never uses a real buyer or notice.
+    synthetic_rows = [
+        "Лот номер " + str(i) + ". "
+        "Учебные требования к специалистам по 1С, DevOps, CRM, "
+        "серверному сопровождению, информационной безопасности, "
+        "разработке интеграций и тестированию. "
+        "Срок сдачи заявки не опубликован. "
+        "Цена договора не указана. "
+        for i in range(1, 13)
+    ]
+    findings["pages"][0]["excerpt"] += " ".join(synthetic_rows)
     docs = public_documents(findings)
     assert len(docs) == 1
+    line("PUBLIC_DOCUMENT_CHARS", min(len(docs[0]["text"]), 4000))
     prompt = json.dumps({
         "task": "Разобрать публичную ИТ-закупку по цитируемым фактам",
         "documents": [{"source_id": d["source_id"], "text": d["text"]}

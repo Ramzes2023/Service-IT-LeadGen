@@ -1,0 +1,112 @@
+name: ServiceIT B2B four real INN and color score status READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-inn-color-score-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_INN_COLOR_SCORE_READONLY_314'
+    runs-on: ubuntu-latest
+    environment: serviceit-vps-readonly
+    timeout-minutes: 10
+    env:
+      VPS_HOST: "\${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "\${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "\${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "\${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pinned SSH read-only four-card score and flags audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/inn-score-audit"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/inn-score-audit/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/inn-score-audit/known"
+          chmod 600 "$RUNNER_TEMP/inn-score-audit/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/inn-score-audit/known" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/inn-score-audit/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/inn-score-audit/known" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' <<'PY'
+          import subprocess,json
+          containers={'AUX':'serviceit-leadgen-vps-auxiliaries-1',
+                      'FNS':'serviceit-leadgen-vps-fns-msp-1',
+                      'CORE':'serviceit-leadgen-vps-coordinator-1'}
+          def call(*args):
+              return subprocess.run(args,stdin=subprocess.DEVNULL,
+                       capture_output=True,text=True,timeout=90,check=False)
+          for name,container in containers.items():
+              r=call("docker","inspect","-f","{{json .Config.Env}}",container)
+              rows=json.loads(r.stdout) if r.returncode==0 else []
+              env=dict(s.split("=",1) for s in rows if "=" in s)
+              for field in (("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED",
+                              "SERVICEIT_VPS_PROVISIONAL_SCORE_ENABLED",
+                              "SERVICEIT_VPS_FREE_MSP_SCORE_ENABLED") if name=='AUX'
+                            else ("SERVICEIT_VPS_FNS_MSP_ENABLED",) if name=='FNS'
+                            else ("SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED",)):
+                  val=env.get(field)
+                  print('INN_SCORE_'+name+'_'+field+'='+(
+                    val if val in ('YES','NO') else 'UNVERIFIED'),flush=True)
+              r=call("docker","inspect","-f","{{.State.Running}}:{{.State.Health.Status}}",container)
+              print('INN_SCORE_'+name+'_HEALTH='+('YES' if r.stdout.strip()=='true:healthy' else 'NO'),flush=True)
+          py = """
+import os
+import httpx
+from leadpilot.serviceit_vps_pg_queue import db,secret_file
+from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity,PREFIX
+from leadpilot.serviceit_kanban_presentation import SCORE_FIELD,VERSION_FIELD,BADGE_FIELD
+from leadpilot.bitrix_1062_mapping import _is_valid_inn
+with db(dict(os.environ)) as conn:
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute('SET TRANSACTION READ ONLY')
+            cur.execute("SELECT card_id FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL ORDER BY received_at,source_id LIMIT 5")
+            rows=cur.fetchall()
+            print('INN_SCORE_FOUR='+('YES' if len(rows)==4 else 'NO'),flush=True)
+            assert len(rows)==4
+            cur.execute("SELECT to_regclass('public.serviceit_vps_b2b_public_inn_retry') IS NOT NULL")
+            if cur.fetchone()[0]:
+                cur.execute("SELECT count(*), count(*) FILTER(WHERE next_attempt_at<=now()) FROM serviceit_vps_b2b_public_inn_retry")
+                total,due=cur.fetchone()
+                print('INN_SCORE_RETRY_COUNT='+str(min(total,99)),flush=True)
+                print('INN_SCORE_RETRY_DUE='+str(min(due,99)),flush=True)
+            cur.execute("SELECT namespace,status,count(*) FROM serviceit_vps_native_receipts WHERE namespace IN ('B2B_PUBLIC_INN_V2','PROVISIONAL_SCORE_V1','FREE_MSP_SCORE_V1') GROUP BY namespace,status ORDER BY namespace,status")
+            for namespace,status,count in cur.fetchall():
+                if namespace in ('B2B_PUBLIC_INN_V2','PROVISIONAL_SCORE_V1','FREE_MSP_SCORE_V1') and status in ('VERIFIED','HOLD','UNCERTAIN','RESERVED','WRITE_INTENT'):
+                    print('INN_SCORE_RECEIPT_'+namespace+'_'+status+'='+str(min(count,99)),flush=True)
+with httpx.Client(trust_env=False,follow_redirects=False,timeout=25) as client:
+    rest=Rest(secret_file(dict(os.environ),"SERVICEIT_BITRIX_WEBHOOK"),client)
+    fields=rest('crm.item.fields',{'entityTypeId':1062,'useOriginalUfNames':'Y'}).get('fields',{})
+    print('INN_SCORE_CRM_FIELDS_READY='+('YES' if all(k in fields for k in (SCORE_FIELD,VERSION_FIELD,BADGE_FIELD,PREFIX+'COMPANY_INN')) else 'NO'),flush=True)
+    for n,(card,) in enumerate(rows,1):
+        i=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
+        validate_identity(i,card)
+        inn=i.get(PREFIX+'COMPANY_INN')
+        score=i.get(SCORE_FIELD)
+        badge=i.get(BADGE_FIELD)
+        valid=type(score) is int and 0<=score<=100
+        print('INN_SCORE_CARD_'+str(n)+'_INN='+('YES' if type(inn) is str and _is_valid_inn(inn) else 'NO'),flush=True)
+        print('INN_SCORE_CARD_'+str(n)+'_SCORE='+('YES' if valid else 'NO'),flush=True)
+        print('INN_SCORE_CARD_'+str(n)+'_COLOR='+('YES' if type(badge) is str and any(c in badge for c in ('🟢','🟡','🔴')) else 'NO'),flush=True)
+print('INN_SCORE_ALL_READONLY=YES',flush=True)
+          """
+          p=call("docker","exec",containers["CORE"],"python","-B","-c",py)
+          if p.returncode==0:
+              print(p.stdout.strip(),flush=True)
+          else:
+              print('INN_SCORE_CARD_READBACK=UNVERIFIED',flush=True)
+          PY

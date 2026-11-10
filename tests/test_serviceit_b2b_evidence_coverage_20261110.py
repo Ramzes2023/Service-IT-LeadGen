@@ -13,7 +13,7 @@ URL = "https://www.b2b-center.ru/search/moskva/servernoe-oborudovanie/"
 TOKEN = "SYNTHETIC-BRAVE-NOT-REAL"
 
 
-def _client(html, *, robots="User-agent: *\\nAllow: /"):
+def _client(html, *, robots="User-agent: *\nAllow: /"):
     calls = []
     def respond(req):
         calls.append((req.url.host, req.url.path))
@@ -68,7 +68,7 @@ def test_official_html_robots_disallow_does_not_use_search_snippet(monkeypatch):
     monkeypatch.setattr(public, "_public_dns", lambda host: True)
     client, calls = _client(
         "<html><body>4675475 Приобретение серверного оборудования для нужд МКБ</body></html>",
-        robots="User-agent: *\\nDisallow: /")
+        robots="User-agent: *\nDisallow: /")
     with client:
         assert research.brave_notice_page(
             client, TENDER, frozenset({"b2b-center.ru"}), TOKEN,

@@ -137,32 +137,65 @@ def discover(rest, start: datetime, now: datetime) -> list[int]:
 
 
 def calibrate_known_card(rest) -> None:
-    """Read-only positive control: N-mode ID 3 must expose creation time.
+    """Prove Bitrix can read a real 1062/21 card, without relying on deleted ID 3.
 
-    A recent-list query that happens to return [] does NOT prove new-card
-    discovery works. Pair it with a fixed historical ID positive control.
-    ID 3 is never dispatched or updated; this is only an API shape check.
+    Prefer the historical read-only control. If that card is absent, select
+    ONE real card from the bounded category-21 list and confirm its exact ID
+    via an independent filtered request. No updates, queue inserts or writes.
+    Empty/malformed/ignored-filter responses fail closed.
     """
+    fields = ["id", "categoryId", "createdTime"]
     response = rest("crm.item.list", {
-        "entityTypeId": 1062,
-        "useOriginalUfNames": "N",
-        "filter": {"id": 3},
-        "select": ["id", "categoryId", "createdTime"],
-        "start": 0,
+        "entityTypeId": 1062, "useOriginalUfNames": "N",
+        "filter": {"id": 3}, "select": fields, "start": 0,
     })
     require(type(response) is dict, "POLL_CALIBRATION_RESULT_INVALID")
     items = response.get("items")
+    require(type(items) is list, "POLL_CALIBRATION_POSITIVE_MISSING")
+    control_id = 3
+    if not items:
+        require(response.get("next") is None
+                and response.get("total") in (None, 0),
+                "POLL_CALIBRATION_PAGINATION_INVALID")
+        # A historical card may have been deleted or moved. A category list
+        # provides a current candidate, not proof until the exact-ID GET.
+        candidates = rest("crm.item.list", {
+            "entityTypeId": 1062, "useOriginalUfNames": "N",
+            "filter": {"categoryId": 21},
+            "order": {"id": "ASC"}, "select": fields, "start": 0,
+        })
+        require(type(candidates) is dict, "POLL_CALIBRATION_RESULT_INVALID")
+        page = candidates.get("items")
+        require(type(page) is list and 1 <= len(page) <= 50,
+                "POLL_CALIBRATION_POSITIVE_MISSING")
+        first = page[0]
+        require(type(first) is dict
+                and str(first.get("categoryId")) == "21",
+                "POLL_CALIBRATION_IDENTITY_INVALID")
+        raw_id = first.get("id")
+        require((type(raw_id) is int or
+                 (type(raw_id) is str
+                  and re.fullmatch(r"[1-9][0-9]{0,9}", raw_id)))
+                and MIN_CARD <= int(raw_id) <= MAX_CARD,
+                "POLL_CALIBRATION_IDENTITY_INVALID")
+        date_value(first.get("createdTime"))
+        control_id = int(raw_id)
+        response = rest("crm.item.list", {
+            "entityTypeId": 1062, "useOriginalUfNames": "N",
+            "filter": {"id": control_id}, "select": fields, "start": 0,
+        })
+        require(type(response) is dict, "POLL_CALIBRATION_RESULT_INVALID")
+        items = response.get("items")
     require(type(items) is list and len(items) == 1,
             "POLL_CALIBRATION_POSITIVE_MISSING")
     item = items[0]
-    require(type(item) is dict and str(item.get("id")) == "3"
+    require(type(item) is dict and str(item.get("id")) == str(control_id)
             and str(item.get("categoryId")) == "21",
             "POLL_CALIBRATION_IDENTITY_INVALID")
     date_value(item.get("createdTime"))
     require(response.get("next") is None
             and response.get("total") in (None, 1),
             "POLL_CALIBRATION_PAGINATION_INVALID")
-
 
 def signed_payload(item_id: int, secret: str, now: int) -> dict:
     require(type(item_id) is int and MIN_CARD <= item_id <= MAX_CARD,

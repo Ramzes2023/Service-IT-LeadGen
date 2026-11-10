@@ -1,0 +1,161 @@
+name: ServiceIT B2B V14 FOUR actual CRM exact receipt independent READONLY acceptance
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v14-uncertain-readonly
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V14_FOUR_READBACK_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pin SSH identity for no-write verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v14-reconcile"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v14-reconcile/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v14-reconcile/hosts"
+          chmod 0600 "$RUNNER_TEMP/v14-reconcile/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v14-reconcile/hosts" >/dev/null
+      - name: Independent PG receipt vs exact Bitrix nine-field CURRENT readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/v14-reconcile/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v14-reconcile/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/v14-reconcile/status" <<'PY'
+          import os,secrets
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity
+          from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS,PREFIX
+          from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest
+          from leadpilot.serviceit_vps_b2b_deep_research import safe_notice
+          env=dict(os.environ)
+          webhook=secret_file(env,"SERVICEIT_BITRIX_WEBHOOK")
+          validate_webhook(webhook)
+          with db(env) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
+                      cur.execute("SET TRANSACTION READ ONLY")
+                      cur.execute("""
+                        SELECT b.card_id,b.source_id,b.notice_json,
+                               v11.after_fields,v12.status,v12.after_fields,
+                               v14.status,v14.before_fields,v14.after_fields,
+                               v14.salt,v14.digest
+                        FROM serviceit_vps_b2b_dossier_v12_continuity_receipts v12
+                        JOIN serviceit_vps_b2b_dossier_v11_receipts v11
+                          ON v11.card_id=v12.card_id AND v11.status='VERIFIED'
+                        JOIN serviceit_vps_b2b_inbox b
+                          ON b.card_id=v11.card_id AND b.state='VERIFIED'
+                        LEFT JOIN serviceit_vps_b2b_public_v14_receipts v14
+                          ON v14.card_id=b.card_id
+                        WHERE v12.status IN ('VERIFIED','NO_CHANGE')
+                        ORDER BY b.received_at,b.source_id
+                      """)
+                      records=cur.fetchall()
+          print("V14_AUDIT_FOUR="+str(len(records)),flush=True)
+          ok=len(records)==4
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
+              rest=Rest(webhook,client)
+              for i,row in enumerate(records,1):
+                  (card,source,notice,prev,vs,after12,rs,before13,
+                   after13,salt,digest)=row
+                  name="V14_AUDIT_CARD_"+str(i)+"_"
+                  try:
+                      item=normalized(rest("crm.item.get",{
+                          "entityTypeId":1062,"id":card,
+                          "useOriginalUfNames":"Y"})["item"])
+                      validate_identity(item,card)
+                      safe_notice(notice,card,source,item)
+                      current={k:item.get(k) for k in AI_FIELDS}
+                      expected=after12 if vs=="VERIFIED" else prev
+                      snap=before13 if isinstance(before13,dict) else expected
+                      target=after13 if isinstance(after13,dict) else None
+                      if rs is None:
+                          label="NOT_ATTEMPTED"
+                      elif rs in ("VERIFIED","NO_NEW_EVIDENCE",
+                                  "CONFLICT","UNCERTAIN","RESERVED","WRITE_INTENT"):
+                          label=rs
+                      else:
+                          label="UNKNOWN"
+                      print(name+"RECEIPT="+label,flush=True)
+                      print(name+"MATCH_BEFORE="+("YES" if current==snap else "NO"),flush=True)
+                      same=target is not None and current==target
+                      print(name+"MATCH_TARGET="+("YES" if same else "NO"),flush=True)
+                      print(name+"V12_HISTORY_PRESERVED="+
+                            ("YES" if isinstance(expected,dict)
+                              and isinstance(current.get(PREFIX+"AI_FULL_REPORT"),str)
+                              and current[PREFIX+"AI_FULL_REPORT"].startswith(
+                                  expected[PREFIX+"AI_FULL_REPORT"]) else "NO"),flush=True)
+                      print(name+"SUMMARY_TARGET="+
+                            ("YES" if target is not None
+                              and current.get(PREFIX+"AI_SUMMARY")==
+                                  target.get(PREFIX+"AI_SUMMARY") else "NO"),flush=True)
+                      print(name+"BRIEF_TARGET="+
+                            ("YES" if target is not None
+                              and current.get(PREFIX+"AI_MANAGER_BRIEF")==
+                                  target.get(PREFIX+"AI_MANAGER_BRIEF") else "NO"),flush=True)
+                      digest_ok=bool(same and salt is not None and digest is not None
+                                  and secrets.compare_digest(
+                                      compute_digest(current,bytes(salt)),
+                                      bytes(digest)))
+                      print(name+"EXACT_DIGEST="+("YES" if digest_ok else "NO"),flush=True)
+                      section=any(title in str(current.get(PREFIX+"AI_FULL_REPORT",""))
+                                  for title in (
+                                      "10  ПУБЛИЧНАЯ ПРОВЕРКА V13",
+                                      "10  ПУБЛИЧНАЯ ПРОВЕРКА V14"))
+                      print(name+"V14_SECTION="+("YES" if section else "NO"),flush=True)
+                      print(name+"AI_STATUS_UNCHANGED="+("YES" if
+                            isinstance(snap,dict) and current.get(
+                                PREFIX+"AI_STATUS")==snap.get(PREFIX+"AI_STATUS")
+                            else "NO"),flush=True)
+                      archive_ok=bool(isinstance(expected,dict)
+                          and isinstance(current.get(PREFIX+"AI_FULL_REPORT"),str)
+                          and current[PREFIX+"AI_FULL_REPORT"].startswith(
+                              expected[PREFIX+"AI_FULL_REPORT"]))
+                      state_ok=bool(isinstance(snap,dict)
+                          and current.get(PREFIX+"AI_STATUS")==snap.get(PREFIX+"AI_STATUS"))
+                      if label=="VERIFIED":
+                          ok=bool(ok and same and digest_ok and archive_ok
+                                  and section and state_ok)
+                      elif label=="NO_NEW_EVIDENCE":
+                          ok=bool(ok and current==snap and archive_ok and state_ok)
+                      else:
+                          ok=False
+                  except Exception:
+                      ok=False
+                      print(name+"READBACK=ERROR",flush=True)
+          print("V14_AUDIT_SAFE_READ="+("YES" if ok else "NO"),flush=True)
+          PY
+          grep -E '^V14_AUDIT_([A-Z0-9_]+)=(YES|NO|ERROR|UNKNOWN|VERIFIED|NO_NEW_EVIDENCE|NOT_ATTEMPTED|CONFLICT|UNCERTAIN|RESERVED|WRITE_INTENT|[0-9]{1,3})$' \
+            "$RUNNER_TEMP/v14-reconcile/status" | head -100
+          grep -qx 'V14_AUDIT_FOUR=4' "$RUNNER_TEMP/v14-reconcile/status"
+          grep -qx 'V14_AUDIT_SAFE_READ=YES' "$RUNNER_TEMP/v14-reconcile/status"

@@ -44,6 +44,21 @@ def assess(env, client):
     )
     from leadpilot.bitrix_metadata_audit import validate_webhook
 
+    import hashlib
+    expected = {
+        "serviceit_vps_b2b_deep_research.py":
+            "93fa83332e3a177e35b8ffd893bf21e35913fbb0718d7e4e9b6337590f05112c",
+        "serviceit_b2b_public_mirrors.py":
+            "e11fb8f76618371e80938516c569fd5aea8757baac8254e02ffa3ec9716ab593",
+        "serviceit_b2b_dossier_v11.py":
+            "233c211f75e75d4bfeddbedd9e3b163ddf1e05ee39372bb6010b119f8a88009a",
+    }
+    pinned = all((Path("/app/leadpilot")/name).is_file()
+                 and hashlib.sha256((Path("/app/leadpilot")/name).read_bytes()).hexdigest()==sha
+                 for name,sha in expected.items())
+    say("LIVE_EXACT_CODE_SHA","YES" if pinned else "NO")
+    if not pinned:
+        return False
     eligible = (
         live_permitted(env) and
         env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES" and

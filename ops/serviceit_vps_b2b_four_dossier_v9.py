@@ -241,8 +241,10 @@ def compose_dossier(item, notice, source, signed_title, findings, inference):
                     if company_contacts else "проверенных корпоративных контактов нет")
     docs = public_documents(findings)
     facts = (inference.get("facts", [])[:10] if isinstance(inference,dict) else [])
-    facts = [f for f in facts if isinstance(f,dict) and isinstance(f.get("quote"),str)
-             and isinstance(f.get("url"),str)][:10]
+    facts = [f for f in facts if isinstance(f,dict)
+             and isinstance(f.get("quote"),str) and isinstance(f.get("url"),str)
+             and len(f["quote"]) >= 10
+             and any(f["url"] == d["url"] and f["quote"] in d["text"] for d in docs)][:10]
     quote_lines = [
         f"[{clean(f.get('category'),20)}] «{clean(f['quote'],220)}»\nURL: {f['url']}"
         for f in facts

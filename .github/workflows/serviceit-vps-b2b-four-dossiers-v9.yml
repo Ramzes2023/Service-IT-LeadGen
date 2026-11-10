@@ -1,0 +1,78 @@
+name: ServiceIT V9 four existing B2B dossiers (guarded VPS)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-four-existing-b2b-v9-vps
+  cancel-in-progress: false
+jobs:
+  dossiers:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      (github.event.comment.body == 'SERVICEIT_B2B_FOUR_DOSSIER_V9_PREVIEW_368' ||
+       github.event.comment.body == 'SERVICEIT_B2B_FOUR_DOSSIER_V9_APPLY_368' ||
+       github.event.comment.body == 'SERVICEIT_B2B_FOUR_DOSSIER_V9_VERIFY_368')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "\${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "\${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "\${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "\${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      OWNER_MARKER: "\${{ github.event.comment.body }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check owner action and pin VPS host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_four_dossier_v9.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/svc-v9"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/svc-v9/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/svc-v9/hosts"
+          chmod 0600 "$RUNNER_TEMP/svc-v9/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/svc-v9/hosts" >/dev/null
+      - name: Execute once on VPS; print only fixed status codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$OWNER_MARKER" in
+            SERVICEIT_B2B_FOUR_DOSSIER_V9_PREVIEW_368) mode=--preview; expected=PREVIEW_VALID;;
+            SERVICEIT_B2B_FOUR_DOSSIER_V9_APPLY_368) mode=--apply; expected=VERIFIED;;
+            SERVICEIT_B2B_FOUR_DOSSIER_V9_VERIFY_368) mode=--verify; expected=READBACK_VERIFIED;;
+            *) exit 4;;
+          esac
+          set +e
+          ssh -T -i "$RUNNER_TEMP/svc-v9/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/svc-v9/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - $mode" \
+            < ops/serviceit_vps_b2b_four_dossier_v9.py \
+            > "$RUNNER_TEMP/svc-v9/results"
+          result=$?
+          set -e
+          grep -E '^DOSSIER_V9_(EXACT_FOUR|MODE|CARD_[1-4](_PAGES|_CITATIONS|_BUYER_PUBLIC)?|DONE|ALL_FOUR_READBACK|GLOBAL_BLOCKED)=' \
+            "$RUNNER_TEMP/svc-v9/results" | head -36 || true
+          [[ "$result" == 0 ]]
+          count="$(grep -Ec "^DOSSIER_V9_CARD_[1-4]=$expected$" "$RUNNER_TEMP/svc-v9/results" || true)"
+          [[ "$count" == 4 ]]
+          if [[ "$mode" == --verify ]]; then
+            grep -qx 'DOSSIER_V9_ALL_FOUR_READBACK=YES' "$RUNNER_TEMP/svc-v9/results"
+          else
+            grep -qx 'DOSSIER_V9_EXACT_FOUR=YES' "$RUNNER_TEMP/svc-v9/results"
+          fi

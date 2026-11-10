@@ -1,0 +1,89 @@
+name: ServiceIT VPS color score without mandatory FNS guarded AUX deploy
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-vps-score-no-fns-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_VPS_SCORE_COLOR_NO_FNS_DEPLOY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify pinned SHA and host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/score-no-fns"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/score-no-fns/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/score-no-fns/hosts"
+          chmod 600 "$RUNNER_TEMP/score-no-fns/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/score-no-fns/hosts" >/dev/null
+          git cat-file -e 5aae5b2288f072b94fb1edc08ce1dd6077ab4309^{commit}
+          git cat-file -e 80ec482521ef3001508c45424c78706edbf8d536^{commit}
+          git diff --quiet 80ec482521ef3001508c45424c78706edbf8d536 HEAD -- leadpilot/serviceit_preliminary_score_markers.py
+          python -m py_compile leadpilot/serviceit_preliminary_score_markers.py ops/serviceit_vps_score_no_fns_color_activate.py
+          git show 5aae5b2288f072b94fb1edc08ce1dd6077ab4309:leadpilot/serviceit_preliminary_score_markers.py | sha256sum | cut -d' ' -f1 > "$RUNNER_TEMP/score-no-fns/oldsha"
+          sha256sum leadpilot/serviceit_preliminary_score_markers.py | cut -d' ' -f1 > "$RUNNER_TEMP/score-no-fns/newsha"
+      - name: Stage single reviewed module and activator
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$VPS_USER@$VPS_HOST"
+          options=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/score-no-fns/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          folder="serviceit/staging/score-no-fns-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/score-no-fns/key" "${options[@]}" "$target" "umask 077; install -d -m 0700 '$folder'"
+          scp -i "$RUNNER_TEMP/score-no-fns/key" "${options[@]}" leadpilot/serviceit_preliminary_score_markers.py "$target:$folder/serviceit_preliminary_score_markers.py"
+          scp -i "$RUNNER_TEMP/score-no-fns/key" "${options[@]}" ops/serviceit_vps_score_no_fns_color_activate.py "$target:$folder/activate.py"
+      - name: Release only AUX image and three FNS-optional flags with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          options=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/score-no-fns/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          old="$(cat "$RUNNER_TEMP/score-no-fns/oldsha")"
+          new="$(cat "$RUNNER_TEMP/score-no-fns/newsha")"
+          sha="$(sha256sum ops/serviceit_vps_score_no_fns_color_activate.py | cut -d' ' -f1)"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/score-no-fns/key" "${options[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_RUN_ID' '$old' '$new' '$sha'" > "$RUNNER_TEMP/score-no-fns/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; old="$2"; new="$3"; sha="$4"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          for check in "$old" "$new" "$sha"; do
+            [[ "$check" =~ ^[a-f0-9]{64}$ ]]
+          done
+          f="$HOME/serviceit/staging/score-no-fns-$id/activate.py"
+          [[ -f "$f" && ! -L "$f" ]]
+          printf '%s  %s\n' "$sha" "$f" | sha256sum --check --status
+          python3 "$f" "$id" "$old" "$new"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^SCORE_NO_FNS_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' "$RUNNER_TEMP/score-no-fns/status" | head -30 || true
+          [[ "$rc" -eq 0 ]] || exit "$rc"
+          for item in SCORE_NO_FNS_AUX_ACTIVATED=YES SCORE_NO_FNS_FNS_REQUIRED=NO SCORE_NO_FNS_FREE_MSP_SCORE=NO SCORE_NO_FNS_PROVISIONAL_SCORE=YES SCORE_NO_FNS_INN_WORKER_UNCHANGED=YES SCORE_NO_FNS_OTHER_IMAGES_UNCHANGED=YES; do
+            grep -qx "$item" "$RUNNER_TEMP/score-no-fns/status"
+          done

@@ -1,0 +1,161 @@
+name: ServiceIT B2B V8 source-backed public INN guarded live release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-inn-v8-live-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_INN_V8_RELEASE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Compile reviewed source and pin VPS SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_inn_v8_activate.py
+          python -m py_compile \
+            leadpilot/serviceit_vps_worker.py \
+            leadpilot/serviceit_vps_native_fence.py \
+            leadpilot/serviceit_vps_b2b_deep_research.py \
+            leadpilot/serviceit_b2b_routerai_deep.py \
+            leadpilot/serviceit_public_evidence_research.py \
+            leadpilot/serviceit_windows_autofill.py \
+            leadpilot/serviceit_b2b_hold_ai_fields.py \
+            leadpilot/serviceit_b2b_public_mirrors.py
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          install -d -m 0700 "$RUNNER_TEMP/serviceit-contacts"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/serviceit-contacts/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-contacts/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/serviceit-contacts/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-contacts/known_hosts" >/dev/null
+      - name: Stage exact four reviewed code modules and deployment script
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-contacts/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          dest="$VPS_USER@$VPS_HOST"
+          target="serviceit/staging/b2b-inn-v8-$GITHUB_RUN_ID"
+          names=(serviceit_vps_native_fence.py
+                 serviceit_vps_b2b_deep_research.py
+                 serviceit_b2b_public_supplement.py serviceit_vps_b2b_public_inn.py)
+          # Attested previous live V7 manifest:
+          # deep research was installed at V6 commit 6124478;
+          # the other three reviewed modules came from the V7 source ce706d0.
+          # New four modules are pinned to the merged V8 code PR #386.
+          for commit in 6124478aad06967e2d2f83e9d0ef097afefed3b4 \
+                        ce706d0777295db4b03fae714c12a83d47ffa2c9 \
+                        0655587324289efdede8860fdf69e07a25bf5477; do
+            git cat-file -e "${commit}^{commit}"
+          done
+          git diff --quiet 0655587324289efdede8860fdf69e07a25bf5477 HEAD -- \
+            leadpilot/serviceit_vps_native_fence.py \
+            leadpilot/serviceit_vps_b2b_deep_research.py \
+            leadpilot/serviceit_b2b_public_supplement.py \
+            leadpilot/serviceit_vps_b2b_public_inn.py
+          : > "$RUNNER_TEMP/serviceit-contacts/old-shas"
+          for name in "${names[@]}"; do
+            if [[ "$name" == serviceit_vps_b2b_deep_research.py ]]; then
+              oldref=6124478aad06967e2d2f83e9d0ef097afefed3b4
+            else
+              oldref=ce706d0777295db4b03fae714c12a83d47ffa2c9
+            fi
+            git show "$oldref:leadpilot/$name" | sha256sum | cut -d ' ' -f 1 \
+              >> "$RUNNER_TEMP/serviceit-contacts/old-shas"
+          done
+          : > "$RUNNER_TEMP/serviceit-contacts/shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d ' ' -f 1 \
+              >> "$RUNNER_TEMP/serviceit-contacts/shas"
+          done
+          sha256sum ops/serviceit_vps_b2b_inn_v8_activate.py | cut -d ' ' -f 1 \
+            > "$RUNNER_TEMP/serviceit-contacts/script-sha"
+          ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" "$dest" \
+            "umask 077; install -d -m 0700 '$target'"
+          for name in "${names[@]}"; do
+            scp -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
+              "leadpilot/$name" "$dest:$target/$name"
+          done
+          scp -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_inn_v8_activate.py "$dest:$target/activate.py"
+      - name: Guarded offline image overlay, rollback and safe status
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-contacts/known_hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/serviceit-contacts/shas"
+          mapfile -t oldshas < "$RUNNER_TEMP/serviceit-contacts/old-shas"
+          [[ "${#shas[@]}" == 4 && "${#oldshas[@]}" == 4 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/serviceit-contacts/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          checked=()
+          for value in "${oldshas[@]}"; do
+            [[ "$value" == MISSING || "$value" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$value'")
+          done
+          for value in "${shas[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$value'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${checked[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/serviceit-contacts/status" <<'REMOTE'
+          set -euo pipefail
+          runid="$1"; scriptsha="$2"; shift 2
+          [[ "$runid" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ && "$#" == 8 ]]
+          for digest in "$@"; do
+            [[ "$digest" == MISSING || "$digest" =~ ^[a-f0-9]{64}$ ]]
+          done
+          script="$HOME/serviceit/staging/b2b-inn-v8-$runid/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$scriptsha" "$script" | sha256sum --check --status
+          python3 "$script" "$runid" "$@"
+          REMOTE
+          remote_rc=$?
+          set -e
+          safe="$(grep -E '^B2B_INN_V8_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$RUNNER_TEMP/serviceit-contacts/status" 2>/dev/null | head -35 || true)"
+          if [[ -n "$safe" ]]; then printf '%s\n' "$safe"; else echo "B2B_INN_V8_STATUS_ABSENT=YES"; fi
+          [[ "$remote_rc" == 0 ]]
+          grep -qx 'B2B_INN_V8_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/serviceit-contacts/status"
+      - name: Write sanitized outcome to project issue
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/serviceit-contacts/status"
+          safe="$(grep -E '^B2B_INN_V8_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$file" 2>/dev/null | head -35 || true)"
+          [[ -n "$safe" ]] || safe='B2B_INN_V8_VPS_ACTIVATION_UNVERIFIED=YES'
+          body="$(printf 'B2B V8 bounded public buyer INN retry and three-field handoff:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nCore image only; no auxiliary changes. PG schema-only retry table, no installer CRM writes. Recheck four live CRM cards and FNS independently.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

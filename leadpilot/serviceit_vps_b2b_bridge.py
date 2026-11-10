@@ -29,6 +29,7 @@ from .serviceit_vps_pg_queue import db, insert_new, secret_file, VpsBlocked
 from .serviceit_vps_worker import live_permitted
 from .b2b_email_opportunity_bridge import classify_services
 from .bitrix_metadata_audit import validate_webhook
+from .serviceit_b2b_positive_control import positive_duplicate_control
 
 PATH = "/integrations/serviceit/b2b-center/notice"
 MAX_BODY = 6000
@@ -219,8 +220,9 @@ def deliver_one(connection, client, webhook):
     except (BridgeBlocked, B2BBlocked, KeyError, TypeError, ValueError):
         return "REVIEW" if set_review(connection, source) else "ALREADY_RESERVED"
     base = validate_webhook(webhook)
-    # Existing known source MUST be visible (the portal once gave false empties).
-    must(len(exact_duplicate(client, base, "B2B-CENTER-4665948")) == 1,
+    # Prove live exact-source search against an independently readable real CRM item.
+    # Never bypass when a historic B2B item has been deleted.
+    must(positive_duplicate_control(client, base),
          "B2B_POSITIVE_CRM_DUPLICATE_CONTROL_FAILED")
     if exact_duplicate(client, base, source):
         return "EXISTING" if set_existing(connection, source) else "ALREADY_RESERVED"

@@ -11,11 +11,9 @@ import re
 
 import httpx
 
-from .b2b_github_to_bitrix import exact_duplicate, BridgeBlocked
+from .b2b_github_to_bitrix import BridgeBlocked
+from .serviceit_b2b_positive_control import positive_duplicate_control
 from .bitrix_metadata_audit import validate_webhook
-
-KNOWN_EXISTING = "B2B-CENTER-4665948"
-PROBE_NONEXISTENT = "B2B-CENTER-999999999999"
 
 
 class DuplicateSearchBlocked(ValueError):
@@ -26,12 +24,7 @@ def verified_duplicate_lookup(client: httpx.Client, webhook: str) -> dict:
     if not isinstance(client, httpx.Client):
         raise DuplicateSearchBlocked("B2B_READONLY_CLIENT_REQUIRED")
     base = validate_webhook(webhook)
-    known = exact_duplicate(client, base, KNOWN_EXISTING)
-    if len(known) != 1 or known[0].get("UF_CRM_13_SVCIT_SIGNAL_ID") != KNOWN_EXISTING:
-        raise DuplicateSearchBlocked("B2B_KNOWN_DUPLICATE_NOT_VISIBLE")
-    unseen = exact_duplicate(client, base, PROBE_NONEXISTENT)
-    if unseen:
-        raise DuplicateSearchBlocked("B2B_NEGATIVE_DUPLICATE_PROBE_CONFLICT")
+    positive_duplicate_control(client, base)
     return {"status": "B2B_EXACT_DUPLICATE_READONLY_PASS", "crm_writes": 0,
             "gigachat_calls": 0, "existing_found": True, "unseen_empty": True}
 

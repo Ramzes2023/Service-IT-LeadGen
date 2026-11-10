@@ -51,6 +51,7 @@ jobs:
             "$VPS_USER@$VPS_HOST" 'python3 -' > "$RUNNER_TEMP/b2b-nine-forensic/status" <<'PY'
           import subprocess,re
           code = """
+          print('B2B_NINE_STARTED=YES',flush=True)
           import os,httpx
           from leadpilot.serviceit_vps_pg_queue import db,secret_file
           from leadpilot.serviceit_enrichment_worker import normalized,AI_FIELDS,PREFIX,Rest,validate_identity
@@ -58,16 +59,21 @@ jobs:
           from leadpilot.serviceit_vps_native_fence import digested
           from leadpilot.bitrix_metadata_audit import validate_webhook
           SIGNAL=PREFIX+'SIGNAL_ID'
+          print('B2B_NINE_IMPORTS=YES',flush=True)
           keys=sorted(AI_FIELDS)
+          print('B2B_NINE_DB_OPEN_START=YES',flush=True)
           with db(dict(os.environ)) as conn:
               with conn.cursor() as cur:
                   cur.execute("SELECT b.card_id,b.source_id,q.status,r.status,r.field_names,r.digest_salt,r.expected_digest FROM serviceit_vps_b2b_inbox b JOIN serviceit_vps_new_cards q ON q.card_id=b.card_id LEFT JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='AI_NINE_V1' WHERE b.state='VERIFIED' ORDER BY b.received_at,b.source_id LIMIT 3")
                   rows=cur.fetchall()
+          print('B2B_NINE_DB_ROWS_READ=YES',flush=True)
           print('B2B_NINE_CARDS='+str(len(rows)),flush=True)
           assert len(rows)==2
+          print('B2B_NINE_CREDENTIAL_READ_START=YES',flush=True)
           base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
           with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
               rest=Rest(base,client)
+              print('B2B_NINE_REST_READY=YES',flush=True)
               for position,(card,source,queue,native,names,salt,digest) in enumerate(rows,1):
                   item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':int(card),'useOriginalUfNames':'Y'})['item'])
                   validate_identity(item,int(card))

@@ -102,3 +102,16 @@ def test_canonical_tdi_pin_rejects_an_existing_enablement():
                 '"\n    pull_policy: never\n')
     with pytest.raises(ReleaseBlocked):
         pin_image(original + "    " + TDI_FLAG + ": YES\n", old, target)
+
+
+def test_four_card_acceptance_verifies_real_bitrix_file_metadata():
+    batch = Path(".github/workflows/serviceit-vps-b2b-tdi-four-batch.yml").read_text("utf8")
+    assert "TDI_ATTACHMENT_READBACK_MISMATCH" in batch
+    assert "TDI_ATTACHMENT_FILENAME_UNEXPECTED" in batch
+    assert "TDI_ATTACHMENT_RECEIPT_MISSING" in batch
+    assert "TDI_FOUR_READBACK_ATTACHMENTS" in batch
+    assert "TDI_FOUR_READBACK_WITH_FILES" in batch
+    assert "crm.timeline.comment.get" in batch
+    assert "Файлы для прикрепления к карточке:" in batch
+    assert "SERVICEIT_B2B_TDI_FOUR_BATCH_368" in batch
+    assert "workflow_dispatch" not in batch

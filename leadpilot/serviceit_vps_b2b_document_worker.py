@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -35,6 +36,10 @@ from .serviceit_vps_worker import live_permitted, exact_environment
 ENABLED = "SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED"
 LOCK_ID = 6754819002
 MAX_REPORT = 9900
+MAX_ATTACHMENTS = 4
+MAX_SINGLE_ATTACHMENT_BYTES = 3_000_000
+MAX_TOTAL_ATTACHMENT_BYTES = 6_000_000
+ATTACHABLE_KINDS = frozenset((".pdf", ".docx", ".xlsx", ".txt"))
 DDL = """
 CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_tender_doc_receipts (
  card_id BIGINT PRIMARY KEY CHECK(card_id BETWEEN 8 AND 2000000000),
@@ -128,13 +133,73 @@ def transition(connection, card, old, new, *, text=None):
     return salt, digest
 
 
+def prepare_public_attachments(docs, tender_id):
+    """Encode verified public download bytes for ONE fenced Bitrix comment.
+
+    Never upload ZIP bundles or names/paths supplied by third-party HTML.
+    Large files remain source references rather than bypassing upload caps.
+    Raw content stays in memory and is never persisted or logged.
+    """
+    need(isinstance(tender_id, str) and
+         re.fullmatch(r"[0-9]{5,12}", tender_id),
+         "TDI_ATTACHMENT_TENDER_ID_INVALID")
+    files, manifest, total = [], [], 0
+    for index, doc in enumerate(docs, 1):
+        kind = doc.get("kind")
+        if kind not in ATTACHABLE_KINDS:
+            continue
+        payload, digest, declared = (doc.get("payload"),
+                                     doc.get("sha256"), doc.get("bytes"))
+        need(isinstance(payload, bytes) and len(payload) >= 20
+             and type(declared) is int and len(payload) == declared
+             and type(digest) is str and len(digest) == 64
+             and hashlib.sha256(payload).hexdigest() == digest,
+             "TDI_ATTACHMENT_SOURCE_BYTES_MISMATCH")
+        if (len(files) >= MAX_ATTACHMENTS or
+                declared > MAX_SINGLE_ATTACHMENT_BYTES or
+                total + declared > MAX_TOTAL_ATTACHMENT_BYTES):
+            continue
+        filename = "b2b-" + tender_id + "-document-" + str(index) + kind
+        files.append([filename, base64.b64encode(payload).decode("ascii")])
+        manifest.append({"name": filename, "size": declared})
+        total += declared
+    return files, manifest
+
+
+def verify_timeline_attachments(actual, manifest):
+    """Require exact downloaded file metadata after Bitrix readback.
+
+    A partial or uncertain upload must never be blindly retried.
+    """
+    if not manifest:
+        return 0
+    data = actual.get("FILES") if type(actual) is dict else None
+    need(type(data) is dict and len(data) == len(manifest),
+         "TDI_BITRIX_ATTACHMENT_READBACK_MISSING")
+    found = {}
+    for item in data.values():
+        need(type(item) is dict, "TDI_BITRIX_ATTACHMENT_SHAPE_INVALID")
+        name, size, identity = (item.get("name"), item.get("size"), item.get("id"))
+        need(type(name) is str and
+             (type(size) is int or
+              (type(size) is str and size.isdecimal())) and
+             str(identity).isdecimal() and int(identity) > 0,
+             "TDI_BITRIX_ATTACHMENT_METADATA_INVALID")
+        need(name not in found, "TDI_BITRIX_ATTACHMENT_DUPLICATE")
+        found[name] = int(size)
+    need(found == {row["name"]: row["size"] for row in manifest},
+         "TDI_BITRIX_ATTACHMENT_CONTENT_MISMATCH")
+    return len(manifest)
+
+
 def _timeline_call(client, webhook, method, params):
     base = validate_webhook(webhook)
     need(method in ("crm.timeline.comment.add", "crm.timeline.comment.get"),
          "TDI_REST_METHOD_BLOCKED")
     try:
         response = client.post(base + "/" + method + ".json", json=params,
-                               follow_redirects=False, timeout=25)
+                               follow_redirects=False,
+                               timeout=60 if method.endswith(".add") else 25)
         need(response.status_code == 200 and 0 < len(response.content) < 250000,
              "TDI_REST_UNVERIFIED")
         data = response.json()
@@ -224,7 +289,7 @@ def _model_research(client, env, docs):
     return reports
 
 
-def build_report(notice, docs, reports):
+def build_report(notice, docs, reports, *, attachments_planned=0):
     """Facts-first manager dossier: no repeated empty template categories."""
     need(docs and len(docs) <= 6, "TDI_SOURCE_DOCS_REQUIRED")
     tender_id = notice["tender_id"]
@@ -271,6 +336,8 @@ def build_report(notice, docs, reports):
             str(evidence_count) + " подтверждённых цитат",
             "RouterAI: " + ("цитаты проверены" if model_used
                             else "недоступен; использованы исходные тексты"),
+            "Файлы для прикрепления к карточке: " +
+            str(attachments_planned) + " (только общедоступные форматы)",
             "",
             "01 | ФАКТЫ, УСЛОВИЯ И ТРЕБОВАНИЯ ПО ДОКУМЕНТАМ",
         ]
@@ -386,8 +453,11 @@ def run_once(env, client, connection, *, preview=False):
         try:
             transition(connection, card, phase, "AI_INTENT")
             phase = "AI_INTENT"
+            files, manifest = prepare_public_attachments(
+                docs, notice["tender_id"])
             reports = _model_research(client, env, docs)
-            text = build_report(notice, docs, reports)
+            text = build_report(notice, docs, reports,
+                                attachments_planned=len(manifest))
             # Prove the same source/identity is still in CRM before append.
             current = normalized(rest("crm.item.get", {
                 "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
@@ -400,11 +470,13 @@ def run_once(env, client, connection, *, preview=False):
             salt, digest = transition(
                 connection, card, "AI_INTENT", "WRITE_INTENT", text=text)
             phase = "WRITE_INTENT"
-            ident = _timeline_call(client, webhook, "crm.timeline.comment.add", {
-                "fields": {"ENTITY_ID": card,
-                           "ENTITY_TYPE": "DYNAMIC_1062",
-                           "COMMENT": text}
-            })
+            fields = {"ENTITY_ID": card,
+                      "ENTITY_TYPE": "DYNAMIC_1062",
+                      "COMMENT": text}
+            if files:
+                fields["FILES"] = files
+            ident = _timeline_call(client, webhook, "crm.timeline.comment.add",
+                                   {"fields": fields})
             comment_id = (int(ident) if str(ident).isdecimal() else 0)
             need(comment_id > 0, "TDI_COMMENT_ID_INVALID")
             actual = _timeline_call(
@@ -418,6 +490,7 @@ def run_once(env, client, connection, *, preview=False):
                      hashlib.sha256(salt + actual["COMMENT"].encode("utf8")).digest(),
                      digest),
                  "TDI_COMMENT_READBACK_MISMATCH")
+            attachment_count = verify_timeline_attachments(actual, manifest)
             with connection.transaction():
                 with connection.cursor() as cur:
                     cur.execute("""
@@ -428,6 +501,7 @@ def run_once(env, client, connection, *, preview=False):
                     need(cur.rowcount == 1, "TDI_FINALIZE_FAILED")
             return {"status": "TDI_COMMENT_VERIFIED", "crm_writes": 1,
                     "documents_readable": len(docs),
+                    "attachments_verified": attachment_count,
                     "routerai_used": any(x.get("provider") == "RouterAI"
                                          for x in reports)}
         except Exception:

@@ -138,12 +138,21 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
         raise DeepEvidenceError("MODEL_JSON_INVALID")
     if not isinstance(docs, list) or not docs:
         raise DeepEvidenceError("PUBLIC_DOCUMENTS_REQUIRED")
-    overview = _must_plain(response.get("overview"), 450)
-    service = _must_plain(response.get("service_fit"), 170)
-    need = _must_plain(response.get("likely_need"), 320)
+    # Model JSON is often valid while one optional explanatory field has an
+    # unsafe symbol, company INN, or exceeds the conservative text cap. Drop
+    # that field, NOT otherwise usable exact cited source evidence.
+    def note(name, limit, default):
+        try:
+            return _must_plain(response.get(name), limit)
+        except DeepEvidenceError:
+            return default
+    overview = note("overview", 450, "Публичные сведения проверены по цитатам")
+    service = note("service_fit", 170, "не установлено")
+    need = note("likely_need", 320, "Потребность требует отдельного подтверждения")
     raw_facts = response.get("facts")
-    if type(raw_facts) is not list or len(raw_facts) > 12:
-        raise DeepEvidenceError("MODEL_FACTS_INVALID")
+    if type(raw_facts) is not list:
+        raw_facts = []
+    raw_facts = raw_facts[:18]
     facts, dedup = [], set()
     for fact in raw_facts:
         if type(fact) is not dict or fact.get("category") not in CATEGORIES:
@@ -153,7 +162,9 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
             continue
         try:
             quote = _must_plain(fact.get("quote"), 260)
-            finding = _must_plain(fact.get("finding"), 360)
+            # Do not promote model-made freeform claims to confirmed facts.
+            # Only its category and exact source quote enter factual section.
+            finding = "Опубликованный фрагмент по категории " + fact["category"]
         except DeepEvidenceError:
             continue
         if len(quote) < 10 or quote not in docs[source_id - 1]["text"]:
@@ -171,7 +182,7 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
             break
     raw_missing = response.get("missing", [])
     if type(raw_missing) is not list:
-        raise DeepEvidenceError("MODEL_MISSING_INVALID")
+        raw_missing = []
     missing = []
     for label in raw_missing[:12]:
         if type(label) is str and label in QUESTION_SECTIONS and label not in missing:

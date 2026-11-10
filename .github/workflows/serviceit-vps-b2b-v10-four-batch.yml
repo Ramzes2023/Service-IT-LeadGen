@@ -1,0 +1,107 @@
+name: ServiceIT B2B V10 four existing verified dossiers one-use batch
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v10-four-write
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V10_FOUR_BATCH_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Protected SSH and exact four original B2B identity preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v10-batch"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v10-batch/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v10-batch/hosts"
+          chmod 0600 "$RUNNER_TEMP/v10-batch/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v10-batch/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/v10-batch/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v10-batch/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/v10-batch/preflight" <<'PY'
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_vps_worker import live_permitted
+          assert live_permitted(dict(os.environ))
+          from leadpilot.serviceit_vps_b2b_dossier_v10_worker import worker_once
+          assert callable(worker_once)
+          with db(dict(os.environ)) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL")
+                  count=int(cur.fetchone()[0])
+                  cur.execute("SELECT count(*) FROM serviceit_vps_b2b_dossier_v9_receipts WHERE status='VERIFIED'")
+                  old=int(cur.fetchone()[0])
+                  assert count == old == 4, "EXACT_FOUR_EXISTING_ONLY"
+                  cur.execute("SELECT to_regclass('public.serviceit_vps_b2b_dossier_v10_receipts')")
+                  if cur.fetchone()[0]:
+                      cur.execute("SELECT status,count(*) FROM serviceit_vps_b2b_dossier_v10_receipts GROUP BY status")
+                      statuses=dict(cur.fetchall())
+                      assert not (set(statuses)-{'VERIFIED','NO_CHANGE'}), "UNCERTAIN_V10_RECEIPT"
+          print("V10_FOUR_BATCH_PREFLIGHT=YES",flush=True)
+          PY
+          grep -qx 'V10_FOUR_BATCH_PREFLIGHT=YES' "$RUNNER_TEMP/v10-batch/preflight"
+      - name: One batch of at most four source-backed cards, PG-fenced
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v10-batch/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v10-batch/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -m leadpilot.serviceit_vps_b2b_dossier_v10_worker --batch-four' \
+            > "$RUNNER_TEMP/v10-batch/result"
+          rc=$?
+          set -e
+          # Only whitelisted status identifiers/counts, no customer text or ids.
+          python - "$RUNNER_TEMP/v10-batch/result" <<'PY'
+          import json,sys
+          try:
+              obj=json.load(open(sys.argv[1],encoding='utf8'))
+              allowed={'V10_NINE_FIELDS_VERIFIED','V10_ALREADY_RESERVED_NO_RETRY',
+                       'V10_NO_ELIGIBLE_CARDS','V10_ANOTHER_WORKER_ACTIVE',
+                       'V10_NO_CHANGE','V10_BLOCKED_NO_BLIND_REPLAY'}
+              rows=obj.get('outcomes',[])
+              assert type(rows) is list and len(rows)==4
+              assert all(r.get('status') in allowed for r in rows)
+              print('V10_FOUR_BATCH_RESULT=VERIFIED' if all(
+                    r.get('status') not in ('V10_BLOCKED_NO_BLIND_REPLAY',)
+                    for r in rows) else 'V10_FOUR_BATCH_RESULT=REVIEW',flush=True)
+              print('V10_FOUR_BATCH_NEW_VERIFIED='+str(sum(
+                r.get('status')=='V10_NINE_FIELDS_VERIFIED' for r in rows)),flush=True)
+              print('V10_FOUR_BATCH_NO_NEW='+str(sum(
+                r.get('status') in ('V10_ALREADY_RESERVED_NO_RETRY','V10_NO_ELIGIBLE_CARDS')
+                for r in rows)),flush=True)
+          except Exception:
+              print('V10_FOUR_BATCH_RESULT=UNVERIFIED',flush=True)
+              sys.exit(2)
+          PY
+          [[ "$rc" == 0 ]]

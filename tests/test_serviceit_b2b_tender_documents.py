@@ -145,3 +145,59 @@ def test_no_old_dossier_update_or_manually_unfenced_timeline():
     assert 'env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED", "NO") == "YES"' in core
     assert "b2b_tender_documents" in core
     assert core.index("dossier = worker_once") < core.index("tender_docs =")
+
+
+def test_late_document_terms_are_retained_and_sampled_for_routerai():
+    """Long technical attachments must not lose late eligibility/deadline."""
+    filler = "Нейтральное описание услуг по сопровождению системы. " * 210
+    late = ("Критерии оценки: подтвержденный опыт внедрения 1С. "
+            "Место исполнения: Республика Татарстан. "
+            "Срок подачи заявок: 29.11.2026. "
+            "Условия оплаты: после приемки работ.")
+    text = filler + late
+    assert len(text) > 5500
+    sample = worker._priority_excerpt(text)
+    assert len(sample) <= 4500
+    assert "Критерии оценки" in sample
+    assert "Республика Татарстан" in sample
+    assert "29.11.2026" in sample
+    assert "после приемки работ" in sample
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", (
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+            'wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>' +
+            text + '</w:t></w:r></w:p></w:body></w:document>'
+        ))
+    extracted = docs.extract_text(buf.getvalue(), ".docx")
+    assert "29.11.2026" in extracted
+    assert "Республика Татарстан" in extracted
+
+
+def test_fact_first_document_dossier_skips_repeated_empty_sections():
+    document_url = "https://www.b2b-center.ru/files/terms.pdf"
+    document_text = (
+        "Требования к участнику: три завершённых проекта внедрения 1С. "
+        "Критерии оценки: релевантный опыт 70 процентов. "
+        "Регион оказания услуг: Республика Татарстан.")
+    docs_read = [{"url": document_url, "kind": ".pdf",
+                  "bytes": 1800, "sha256": "b" * 64, "text": document_text}]
+    report = worker.build_report(
+        {"tender_id": TENDER}, docs_read,
+        [{"provider": "PUBLIC_SOURCE_EXTRACTOR", "facts": [
+            {"category": "ELIGIBILITY", "url": document_url,
+             "quote": "три завершённых проекта внедрения 1С"},
+            {"category": "EVALUATION", "url": document_url,
+             "quote": "релевантный опыт 70 процентов"},
+            {"category": "LOCATION", "url": document_url,
+             "quote": "Регион оказания услуг: Республика Татарстан"},
+        ]}])
+    assert "ПАСПОРТ" not in report
+    assert "Республика Татарстан" in report
+    assert "КРИТЕРИИ ОЦЕНКИ И ВЫБОРА" in report
+    assert "ЧТО ЕЩЁ НЕ ПОДТВЕРЖДЕНО" in report
+    assert report.count("Нет подтверждённых цитат:") == 1
+    assert "Не найдено подтверждённых цитат" not in report
+    assert document_url in report
+    assert "достоверный ИНН документами не установлены" in report

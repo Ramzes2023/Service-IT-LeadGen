@@ -233,14 +233,18 @@ def wait_healthy(expected_image, expected_shas):
 
 def main():
     require(os.geteuid() != 0, "NONROOT_HOST_REQUIRED")
-    require(len(sys.argv) == 3 + len(FILES),
+    require(len(sys.argv) == 2 + 2 * len(FILES),
             "OWNER_RELEASE_SHA_ARGUMENTS_REQUIRED")
-    runid, old_sha, *new_shas = sys.argv[1:]
+    runid, *digests = sys.argv[1:]
+    old_shas = digests[:len(FILES)]
+    new_shas = digests[len(FILES):]
     require(re.fullmatch(r"[0-9]{7,16}", runid) is not None
-            and re.fullmatch(r"[a-f0-9]{64}", old_sha) is not None
+            and len(old_shas) == len(new_shas) == len(FILES)
+            and all(value == "MISSING" or re.fullmatch(r"[a-f0-9]{64}", value)
+                    for value in old_shas)
             and all(re.fullmatch(r"[a-f0-9]{64}", value)
                     for value in new_shas), "SOURCE_SHA_INPUT_INVALID")
-    stage = HOME / "serviceit/staging" / ("b2b-contacts-" + runid)
+    stage = HOME / "serviceit/staging" / ("b2b-inn-v7-" + runid)
     files = dict(zip(FILES, new_shas))
     require(stage.is_dir() and not stage.is_symlink()
             and stage.stat().st_uid == os.geteuid(), "STAGE_NOT_OWNED")
@@ -284,22 +288,23 @@ with db(dict(os.environ)) as c:
                          "-c", pending_code]) == "0",
                     "V4_OR_AI_INFLIGHT_NOT_SAFE_TO_RESTART")
             runtime = runtime_shas()
-            require(runtime == {FILES[0]: old_sha}, "LIVE_B2B_PREVIOUS_SHA_DRIFT")
+            require(runtime == dict(zip(FILES, old_shas)), "LIVE_INN_V7_SHA_DRIFT")
             require(out(["docker", "exec", CORE, "python", "-B", "-c",
                          "from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS;print(INTERVAL_SECONDS)"])
                     == "300", "EXACT_FIVE_MINUTE_CADENCE_REQUIRED")
             secret_readiness()
             old_image = image(CORE)
             old_env = env_of(CORE)
-            require(old_env.get(FLAG) == "YES" and old_env.get(EXTRA_FLAG, "NO") == "NO",
-                    "CURRENT_V5_ACTIVE_EXTRA_SEARCH_NOT_ALREADY_ENABLED")
+            require(old_env.get(FLAG) == "YES" and old_env.get(EXTRA_FLAG) == "YES"
+                    and old_env.get(INN_FLAG, "NO") == "NO",
+                    "CURRENT_V6_ACTIVE_INN_WRITER_NOT_ALREADY_ENABLED")
             require(all(old_env.get(k, "NO") == v for k,v in GATES.items()),
                     "CURRENT_APPROVED_LIVE_GATES_MISSING")
             old_health = {n: healthy(n) for n in OTHER if running(n)}
             old_digests = {n: image(n) for n in old_health}
             paths = current_paths()
             old_pin = PIN.read_text("utf8")
-            require(old_pin == make_pin(old_image, active=True, extra=False),
+            require(old_pin == make_pin(old_image, active=True, extra=True, inn=False),
                     "CURRENT_IMMUTABLE_PIN_DRIFT")
             before = compose_json(paths)["services"]["coordinator"]
             require(isinstance(before.get("environment"), dict)
@@ -310,8 +315,8 @@ with db(dict(os.environ)) as c:
                         if v is not None), "COMPOSE_RUNTIME_ENV_DRIFT")
             print("B2B_BUYER_V6_PREFLIGHT=YES", flush=True)
             # Tag exact running digest. No registry, pip, apt or network.
-            baseline = "serviceit-b2b-contacts-base:" + runid
-            target = "serviceit-b2b-contacts-live:" + runid
+            baseline = "serviceit-b2b-inn-v7-base:" + runid
+            target = "serviceit-b2b-inn-v7-live:" + runid
             require(call(["docker", "image", "inspect", target],
                          check=False).returncode != 0,
                     "DEPLOY_TAG_REUSE_FORBIDDEN")

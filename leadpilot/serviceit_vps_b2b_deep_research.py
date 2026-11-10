@@ -331,6 +331,34 @@ def draft_fields(item, findings, *, ai=None, safe_title=""):
     return safe
 
 
+def cited_manager_fields(item, findings, report):
+    """Combine RouterAI's verified quotes with independently sourced company data.
+
+    Previously the successful RouterAI path skipped enrich_manager_fields().
+    Thus verified public corporate contacts, additional sourced pages and
+    independent company intelligence were lost precisely on the best cards.
+    Never elevate a candidate contact to a verified legal buyer or send mail.
+    """
+    fields = cited_fields({key: item[key] for key in AI_FIELDS}, findings, report)
+    fields = enrich_manager_fields(
+        fields, findings, signal_kind=item.get(PREFIX + "SIGNAL_KIND", ""))
+    # Contact/evidence appendices may exceed the tested Bitrix text limits.
+    # Normalize supplementary emoji and enforce the per-field CRM contract
+    # *after* enrichment, not only before it.
+    cleaned = {
+        key: "".join("•" if ord(c) > 0xFFFF else c for c in value
+                     if ord(c) not in (0xFE0F, 0x200D, 0x20E3))[
+                         :12000 if key == PREFIX + "AI_FULL_REPORT" else 4096]
+        for key, value in fields.items()
+    }
+    if (set(cleaned) != AI_FIELDS
+            or any(type(v) is not str or not v
+                   or len(v) > (12000 if k == PREFIX + "AI_FULL_REPORT" else 4096)
+                   for k, v in cleaned.items())):
+        raise B2BResearchBlocked("B2B_ENRICHED_REPORT_INVALID")
+    return cleaned
+
+
 def run_once(env, client, connection):
     """One card per 5-min coordinator cycle; no blind write or paid AI replay."""
     if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO") != "YES":
@@ -397,8 +425,7 @@ def run_once(env, client, connection):
                 # useless. Publish deterministic exact quotations and links,
                 # with an explicit 'AI unverified' label and no paid retry.
                 report = source_only_investigation(findings)
-            fields = cited_fields(
-                {key: item[key] for key in AI_FIELDS}, findings, report)
+            fields = cited_manager_fields(item, findings, report)
         else:
             fields = draft_fields(item, findings)
             fields[PREFIX + "AI_STATUS"] = "PUBLIC_RESEARCH_NO_VERIFIED_PUBLIC_TEXT"

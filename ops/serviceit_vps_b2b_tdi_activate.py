@@ -329,7 +329,9 @@ def run(run_id, new_hashes):
             require(call(["docker", "image", "inspect", target],
                          check=False).returncode != 0,
                     "IMAGE_TAG_ALREADY_EXISTS")
-            call(["docker", "tag", old_image, baseline])
+            tagged = call(["docker", "tag", old_image, baseline],
+                          check=False)
+            require(tagged.returncode == 0, "TDI_TAG_BASELINE_FAILED")
             build = stage / "build"
             build.mkdir(mode=0o700, exist_ok=False)
             dockerfile = "FROM " + baseline + "\n"
@@ -346,11 +348,14 @@ def run(run_id, new_hashes):
                 'USER 10001:10001\n'
             )
             (build / "Dockerfile").write_text(dockerfile, "utf8")
-            call(["docker", "build", "--network", "none", "--pull=false",
+            built = call(["docker", "build", "--network", "none", "--pull=false",
                   "--no-cache", "-t", target, "-f", str(build / "Dockerfile"),
-                  str(build)], timeout=250)
-            next_image = output(["docker", "image", "inspect", "-f",
-                                 "{{.Id}}", target])
+                  str(build)], timeout=250, check=False)
+            require(built.returncode == 0, "TDI_OFFLINE_DOCKER_BUILD_FAILED")
+            image_query = call(["docker", "image", "inspect", "-f",
+                                 "{{.Id}}", target], check=False)
+            require(image_query.returncode == 0, "TDI_IMAGE_INSPECT_FAILED")
+            next_image = image_query.stdout.strip()
             require(bool(SHA_RE.fullmatch(next_image))
                     and next_image != old_image, "NEW_TDI_IMAGE_INVALID")
             smoke = """
@@ -374,9 +379,10 @@ print('TDI_OFFLINE_SMOKE_PASS')
                         "--pull", "never", "--read-only", "--user", "10001:10001",
                         "--cap-drop", "ALL", "--pids-limit", "64", "--memory", "512m",
                         "--entrypoint", "python", next_image, "-B", "-c", smoke,
-                        *FILES, *new_hashes], timeout=110)
+                        *FILES, *new_hashes], timeout=110, check=False)
+            require(res.returncode == 0, "TDI_OFFLINE_DOCKER_RUN_FAILED")
             require(res.stdout.strip() == "TDI_OFFLINE_SMOKE_PASS",
-                    "TDI_OFFLINE_SMOKE_FAILED")
+                    "TDI_OFFLINE_SMOKE_OUTPUT_FAILED")
             print("TDI_RELEASE_OFFLINE_SMOKE=YES", flush=True)
             next_pin = pin_image(old_pin, old_image, next_image)
             preflight = stage / "preflight.compose.yml"

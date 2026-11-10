@@ -339,6 +339,13 @@ function classifyServices_(title) {
   const WORD = "[\\p{L}\\p{N}_]";
   const suffix = WORD + "*";
   const patterns = {
+    // Only an explicit tender to provide IT personnel qualifies; a vacancy,
+    // general recruitment or a generic outsourcing headline is not enough.
+    "IT_STAFFING": new RegExp(
+      "(?:предоставлени|привлечени|аутстаффинг)" + suffix +
+      "\\s+(?:ит|it)[\\s-]*специалист" + suffix,
+      "iu"
+    ),
     "1C": new RegExp("(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:", "iu"),
     "IT_SUPPORT": new RegExp(
       "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +
@@ -701,6 +708,77 @@ function recoverNov10B2BCenterAfterFix() {
     };
     console.log(JSON.stringify(result));
     return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * OPTIONAL owner-run exact resend of a single IT-staffing tender #4673595.
+ * This cannot run through a timer, and cannot resend any recorded source.
+ * Requires the VPS to have the same IT_STAFFING classifier deployed first.
+ */
+function dispatchB2B4673595Once() {
+  privateConfig_();
+  assertMailbox_();
+  const props = scriptProperties_();
+  if (props.getProperty("SERVICEIT_AUTOMATION_ENABLED") !== "YES" ||
+      props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") !== "YES") {
+    throw new Error("SERVICEIT_B2B_STAFFING_SOURCE_NOT_ACTIVE");
+  }
+  const activation = Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0);
+  if (!Number.isFinite(activation) || activation <= 0) {
+    throw new Error("SERVICEIT_B2B_STAFFING_ACTIVATION_MISSING");
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) throw new Error("SERVICEIT_B2B_STAFFING_LOCK_BUSY");
+  try {
+    const id = "1a1c44a89c79ccd6";
+    const tenderId = "4673595";
+    const sourceKey = "SERVICEIT_SOURCE_" + tenderId;
+    if (props.getProperty(sourceKey)) {
+      const existing = {
+        status: "SERVICEIT_B2B_STAFFING_ALREADY_RESERVED_OR_HANDLED",
+        tender_id: tenderId, vps_posts: 0, crm_writes: 0
+      };
+      console.log(JSON.stringify(existing));
+      return existing;
+    }
+    const msg = Gmail.Users.Messages.get("me", id, {format: "full"});
+    if (!msg || msg.id !== id) {
+      throw new Error("SERVICEIT_B2B_STAFFING_EMAIL_MISMATCH");
+    }
+    const parsed = parseEmailMessage_(msg, id);
+    if (parsed.internalDate <= activation) {
+      throw new Error("SERVICEIT_B2B_STAFFING_BEFORE_ACTIVATION");
+    }
+    const eligible = parsed.observations.filter(function (row) {
+      return row.notice.tender_id === tenderId &&
+        row.services.indexOf("IT_STAFFING") >= 0;
+    });
+    if (eligible.length !== 1) {
+      throw new Error("SERVICEIT_B2B_STAFFING_TENDER_NOT_VERIFIED");
+    }
+    const dispatchId = Utilities.getUuid();
+    props.setProperty(sourceKey, "RESERVED:" + dispatchId);
+    try {
+      dispatchNotice_(eligible[0].notice, dispatchId);
+    } catch (_error) {
+      props.setProperty(sourceKey, "DISPATCH_UNCERTAIN:" + dispatchId);
+      const uncertain = {
+        status: "SERVICEIT_B2B_STAFFING_DISPATCH_UNCERTAIN_NO_RETRY",
+        tender_id: tenderId, crm_writes: 0
+      };
+      console.log(JSON.stringify(uncertain));
+      return uncertain;
+    }
+    props.setProperty(sourceKey, "DISPATCHED:" + dispatchId);
+    const sent = {
+      status: "SERVICEIT_B2B_STAFFING_NOTICE_ACCEPTED",
+      tender_id: tenderId, vps_notices_accepted: 1, crm_writes: 0
+    };
+    console.log(JSON.stringify(sent));
+    return sent;
   } finally {
     lock.releaseLock();
   }

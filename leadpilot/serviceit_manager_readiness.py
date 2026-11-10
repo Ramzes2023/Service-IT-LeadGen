@@ -66,7 +66,7 @@ def preliminary_manager_action(notice, services):
            and notice.get("fns_msp") is None
            and isinstance(services, list)
            and 1 <= len(services) <= 5
-           and all(x in {"1C", "IT_SUPPORT", "CRM", "KKT_EDO",
+           and all(x in {"1C", "IT_SUPPORT", "IT_STAFFING", "CRM", "KKT_EDO",
                          "SERVERS", "INTEGRATION"} for x in services),
            "HOLD_SOURCE_UNVERIFIED")
     return ("Проверить первоисточник B2B-Center, дату и актуальность; "

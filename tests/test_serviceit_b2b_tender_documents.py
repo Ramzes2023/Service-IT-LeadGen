@@ -274,8 +274,9 @@ def test_reader_keeps_payload_for_valid_fenced_bitrix_attachment(monkeypatch):
     def endpoint(request):
         if request.url.path == "/market/synthetic/4673595/":
             return httpx.Response(200,
-                text='<html>Тендер 4673595 <a href="/files/tz.docx">'
-                     'Скачать ТЗ</a></html>')
+                text='<html><body>Тендер 4673595 <a href="/files/tz.docx">'
+                     'Скачать ТЗ</a></body></html>',
+                headers={"content-type": "text/html"})
         if request.url.path == "/files/tz.docx":
             return httpx.Response(200, content=payload,
                                   headers={"content-type": "application/octet-stream"})

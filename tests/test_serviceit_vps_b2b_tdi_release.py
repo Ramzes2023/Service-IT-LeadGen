@@ -70,3 +70,35 @@ def test_tdi_smoke_import_matches_real_module_export():
     assert ("from leadpilot.serviceit_vps_b2b_document_worker "
             "import run_once, build_report") in ACT
     assert "import worker_once, build_report" not in ACT
+
+
+def test_canonical_tdi_pin_is_clean_yaml_and_never_appends_old_tail():
+    from ops.serviceit_vps_b2b_tdi_activate import pin_image, TDI_FLAG
+    old = "sha256:" + "a" * 64
+    target = "sha256:" + "b" * 64
+    existing = (
+        'services:\n  coordinator:\n    image: "' + old +
+        '"\n    pull_policy: never\n'
+        '  another-service:\n    image: "placeholder"\n'
+    )
+    rendered = pin_image(existing, old, target)
+    assert rendered == (
+        'services:\n  coordinator:\n    image: "' + target +
+        '"\n    pull_policy: never\n'
+        '    environment:\n      ' + TDI_FLAG + ': "YES"\n'
+    )
+    assert rendered.count('image:') == 1
+    assert "another-service" not in rendered
+
+
+def test_canonical_tdi_pin_rejects_an_existing_enablement():
+    import pytest
+    from ops.serviceit_vps_b2b_tdi_activate import (
+        pin_image, TDI_FLAG, ReleaseBlocked,
+    )
+    old = "sha256:" + "a" * 64
+    target = "sha256:" + "b" * 64
+    original = ('services:\n  coordinator:\n    image: "' + old +
+                '"\n    pull_policy: never\n')
+    with pytest.raises(ReleaseBlocked):
+        pin_image(original + "    " + TDI_FLAG + ": YES\n", old, target)

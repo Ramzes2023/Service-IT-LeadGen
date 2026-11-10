@@ -65,5 +65,25 @@ jobs:
                 reason=str(exc) if isinstance(exc,ResearchBlocked) else 'NETWORK_OR_HTTP'
                 print('MIRROR_'+label+'_BLOCK='+(
                   reason if re.fullmatch(r'[A-Z0-9_]{4,80}',reason) else 'OTHER'))
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_b2b_public_mirrors import from_public_page
+          import os
+          with db(dict(os.environ)) as conn:
+            with conn.cursor() as cur:
+              cur.execute("SELECT notice_json FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL ORDER BY received_at LIMIT 8")
+              notices=cur.fetchall()
+          for index,row in enumerate(notices,1):
+            notice=row[0]
+            is_known=type(notice) is dict and notice.get('tender_id')=='4673595'
+            print('MIRROR_CARD_'+str(index)+'_EXACT_KNOWN_ID='+('YES' if is_known else 'NO'))
+            if is_known:
+              try:
+                with httpx.Client(trust_env=False,follow_redirects=False,timeout=12) as client:
+                  candidate=from_public_page(client,'https://tendem.ru/tenders/16548471',
+                    '4673595',notice.get('subject',''))
+                print('MIRROR_CARD_'+str(index)+'_VERIFIED_RELEVANT_EXCERPT='+('YES' if candidate else 'NO'))
+                print('MIRROR_CARD_'+str(index)+'_EXCERPT_CHARS='+str(min(len(candidate['excerpt']),3500) if candidate else 0))
+              except (ResearchBlocked,httpx.HTTPError,ValueError,TypeError):
+                print('MIRROR_CARD_'+str(index)+'_VERIFIED_RELEVANT_EXCERPT=NO')
           print('MIRROR_PROBE_DONE=YES')
           PY

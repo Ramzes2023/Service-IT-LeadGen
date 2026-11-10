@@ -199,15 +199,38 @@ def source_findings(item, notice, env, client):
 
 
 def model_safe_source_title(title, findings):
-    """Only allow RouterAI inference when an actual public source was read."""
+    """Model gets independently read, sanitized PUBLIC material only.
+
+    The signed supplier-email title is not assumed to be published on the
+    marketplace just because the URL returned HTTP 200 (which may be a login
+    page). If the published text doesn't corroborate the notice title, send
+    only the independently fetched safe excerpt, never the email subject.
+    """
     if not title or not isinstance(findings, dict):
         return ""
-    if findings.get("status") != "PUBLIC_PAGES_INSPECTED":
+    if (findings.get("status") != "PUBLIC_PAGES_INSPECTED"
+            or not findings.get("pages")):
         return ""
-    pages = findings.get("pages") or []
-    if not pages:
+    excerpt = findings.get("model_excerpt", "")
+    if not isinstance(excerpt, str) or len(excerpt.strip()) < 24:
         return ""
-    return title
+    try:
+        excerpt = plain(excerpt, 900)
+    except ValueError:
+        return ""
+    if not re.search(r"(?i)(?:1[сc]|devops|(?:ит|it)[-\s]*специалист|"
+                     r"программист|аутсорс|сервер|инфраструктур|"
+                     r"битрикс|ккт|эдо|закупк[аи]|оборудован)", excerpt):
+        return ""
+    tokens = lambda value: set(re.findall(r"[^\W_]{3,}", value.casefold()))
+    meaningful = tokens(title) - {"услуги", "оказание", "предоставление",
+                                   "включая", "для", "компании"}
+    public = tokens(excerpt)
+    # At least two distinctive words from the original notice appear on
+    # the public page. This is an inference gate, not proof of buyer identity.
+    if len(meaningful & public) >= 2:
+        return title
+    return excerpt
 
 
 def draft_fields(item, findings, *, ai=None, safe_title=""):

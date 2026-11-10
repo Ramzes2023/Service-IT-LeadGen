@@ -1,0 +1,104 @@
+name: ServiceIT TDI offline Docker build failure probe (no live changes)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-tdi-build-diagnostic
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_TDI_OFFLINE_BUILD_DIAG_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Inspect only prior already staged wheel Dockerfile and offline image build
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/tdi-debug"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tdi-debug/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tdi-debug/hosts"
+          chmod 0600 "$RUNNER_TEMP/tdi-debug/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tdi-debug/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/tdi-debug/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tdi-debug/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            > "$RUNNER_TEMP/tdi-debug/probe" <<'PY'
+          from pathlib import Path
+          import subprocess,os,re,hashlib
+          stage=Path.home()/'serviceit/staging/b2b-tdi-release-42903193440/build'
+          dockerfile=stage/'Dockerfile'
+          print('TDI_DIAG_STAGE_PRESENT='+('YES' if stage.is_dir() else 'NO'),flush=True)
+          print('TDI_DIAG_DOCKERFILE_PRESENT='+('YES' if dockerfile.is_file() else 'NO'),flush=True)
+          if not dockerfile.is_file():
+              raise SystemExit(2)
+          text=dockerfile.read_text('utf8')
+          print('TDI_DIAG_WHEEL_COPY='+('YES' if 'pypdf-6.21.4-py3-none-any.whl' in text else 'NO'),flush=True)
+          print('TDI_DIAG_PIP_INSTALL='+('YES' if 'pip install --no-index --no-deps' in text else 'NO'),flush=True)
+          print('TDI_DIAG_FROM_BASELINE='+('YES' if text.startswith('FROM serviceit-tdi-baseline:42903193440') else 'NO'),flush=True)
+          assert stage.resolve().is_relative_to((Path.home()/'serviceit/staging').resolve())
+          assert stage.stat().st_uid==os.geteuid()
+          def categorize(output):
+              t=output.casefold()
+              patterns=(
+                  ('NO_SPACE',('no space left','disk full')),
+                  ('FILE_NOT_FOUND',('not found in build context','no such file','failed to calculate checksum')),
+                  ('BASE_IMAGE_MISSING',('pull access denied','manifest unknown','no match for platform')),
+                  ('PERMISSION',('permission denied',)),
+                  ('PIP_REJECTED',('not a supported wheel','no matching distribution','invalid wheel','error: externally-managed-environment')),
+                  ('PIP_INSTALL_FAILED',('error: could not install packages','error: failed building wheel',)),
+                  ('BUILD_SOLVE_FAILED',('failed to solve','failed to build',)),
+                  ('NETWORK',('network is unreachable','connection refused','temporary failure in name resolution')),
+                  ('ARCH',('exec format error',)),
+              )
+              for name,values in patterns:
+                  if any(v in t for v in values): return name
+              return 'OTHER'
+          cmd=['docker','build','--network','none','--pull=false','--no-cache',
+               '-t','serviceit-tdi-diagnostic:42903193440','-f',str(dockerfile),str(stage)]
+          try:
+              p=subprocess.run(cmd,capture_output=True,text=True,timeout=210,check=False)
+          except Exception:
+              print('TDI_DIAG_BUILD=UNVERIFIED',flush=True)
+              raise SystemExit(2)
+          print('TDI_DIAG_BUILD='+('YES' if p.returncode==0 else 'NO'),flush=True)
+          print('TDI_DIAG_BUILD_REASON='+('OK' if p.returncode==0 else categorize(p.stdout+'\n'+p.stderr)),flush=True)
+          if p.returncode:
+              raise SystemExit(0)
+          code=(
+            "from pypdf import PdfReader\n"
+            "from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents\n"
+            "from leadpilot.serviceit_vps_b2b_document_worker import worker_once\n"
+            "print('TDI_DIAG_SMOKE=YES')\n"
+          )
+          smoke=subprocess.run([
+              'docker','run','--rm','--network','none','--pull','never',
+              '--read-only','--user','10001:10001','--cap-drop','ALL',
+              '--entrypoint','python','serviceit-tdi-diagnostic:42903193440',
+              '-B','-c',code],capture_output=True,text=True,timeout=65,check=False)
+          print('TDI_DIAG_SMOKE='+('YES' if smoke.returncode==0 and 'TDI_DIAG_SMOKE=YES' in smoke.stdout else 'NO'),flush=True)
+          if smoke.returncode:
+              print('TDI_DIAG_SMOKE_REASON='+categorize(smoke.stderr),flush=True)
+          PY
+          grep -E '^TDI_DIAG_[A-Z_]+=(YES|NO|UNVERIFIED|OK|OTHER|NO_SPACE|FILE_NOT_FOUND|BASE_IMAGE_MISSING|PERMISSION|PIP_REJECTED|PIP_INSTALL_FAILED|BUILD_SOLVE_FAILED|NETWORK|ARCH)$' "$RUNNER_TEMP/tdi-debug/probe"

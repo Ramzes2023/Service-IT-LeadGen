@@ -60,6 +60,10 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         # Retain the tender number; after it, likely description/requirements.
         # Capture enough context on both sides, not the site-wide navbar.
         excerpt = text[max(0, m.start()-550):min(len(text),m.end()+1750)]
+        if len(text) > 7000 and len(text) > m.end()+250:
+            intro = text[:1350]
+            if "b2b-center" in text.casefold():
+                return intro + " Фрагмент с номером: " + excerpt[:1900]
         return excerpt
     # Some marketplaces show the official B2B number in their SOURCE link
     # after a long lot table, while the procurement title/terms appear near

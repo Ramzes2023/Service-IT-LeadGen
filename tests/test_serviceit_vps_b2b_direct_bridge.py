@@ -97,6 +97,7 @@ def test_exact_existing_source_never_posts(monkeypatch):
     monkeypatch.setattr(bridge, "attempted_24h", lambda con: 0)
     monkeypatch.setattr(bridge, "read_candidate", lambda con: (SOURCE, NOTICE))
     monkeypatch.setattr(bridge, "validate_webhook", lambda x: "https://example.invalid/rest")
+    monkeypatch.setattr(bridge, "positive_duplicate_control", lambda client, base: True)
     monkeypatch.setattr(bridge, "exact_duplicate",
         lambda client, base, source: [dict(id=9)])
     monkeypatch.setattr(bridge, "set_existing", lambda con, source: True)
@@ -110,9 +111,9 @@ def test_one_real_hold_requires_pg_reservation_before_crm_add(monkeypatch):
     monkeypatch.setattr(bridge, "attempted_24h", lambda con: 0)
     monkeypatch.setattr(bridge, "read_candidate", lambda con: (SOURCE, NOTICE))
     monkeypatch.setattr(bridge, "validate_webhook", lambda x: "https://example.invalid/rest")
+    monkeypatch.setattr(bridge, "positive_duplicate_control", lambda client, base: True)
     monkeypatch.setattr(bridge, "exact_duplicate",
-        lambda client, base, source: [dict(id=9)] if source ==
-        "B2B-CENTER-4665948" else [])
+        lambda client, base, source: [])
     monkeypatch.setattr(bridge, "reserve_post",
         lambda con, source: called.append("RESERVE") or True)
     monkeypatch.setattr(bridge, "confirm",
@@ -143,6 +144,7 @@ def test_post_timeout_is_ambiguous_never_automatically_retried(monkeypatch):
     monkeypatch.setattr(bridge, "attempted_24h",lambda con:0)
     monkeypatch.setattr(bridge, "read_candidate",lambda con:(SOURCE,NOTICE))
     monkeypatch.setattr(bridge, "validate_webhook",lambda x:"https://example.invalid/rest")
+    monkeypatch.setattr(bridge, "positive_duplicate_control", lambda client, base: True)
     monkeypatch.setattr(bridge, "exact_duplicate",
         lambda client, base, source:[dict(id=9)] if source ==
         "B2B-CENTER-4665948" else [])

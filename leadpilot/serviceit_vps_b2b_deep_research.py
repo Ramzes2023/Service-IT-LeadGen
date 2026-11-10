@@ -271,6 +271,7 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
     )
     from .bitrix_1062_mapping import _is_valid_inn
     from .serviceit_independent_company_research import SEARCH_URL
+    from .serviceit_b2b_public_mirrors import MIRRORS
     match = re.fullmatch(r'(ООО|ПАО|АО|ОАО|ЗАО)\s+«([^»]{4,90})»', buyer)
     if match is None:
         return None
@@ -314,8 +315,11 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
         attempted.add(raw)
         try:
             host = _host(raw, frozenset({(urlsplit(raw).hostname or "").lower()}))
+            # A tender aggregator prints the procurement's buyer legal name
+            # and INN, but its footer phone belongs to the PLATFORM. It
+            # cannot establish a buyer-owned official company mailbox/phone.
             if any(host == p or host.endswith("." + p)
-                   for p in MARKETPLACES):
+                   for p in (MARKETPLACES | MIRRORS)):
                 continue
             page = _page(client, raw, frozenset({host}))
             body = " ".join(page["text"].split())
@@ -356,8 +360,18 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                 "checked_at": stamp,
                 "origin": "LEGAL_NAME_AND_INN_ON_PUBLIC_PAGE_NOT_FNS",
             })
-        # Independently displayed public telephone remains a candidate.
-        company_contacts.extend(_contacts(page, host, stamp))
+        # The public company's own phone is allowed ONLY after its legal
+        # name and checksum-valid INN were read together on this exact page.
+        # Previously _contacts() omitted the provenance marker, so V11's
+        # strict checked_public_contacts() silently dropped every phone.
+        # Never reclassify the general corporate line as the tender manager.
+        for contact in _contacts(page, host, stamp):
+            if contact.get("type") == "phone":
+                company_contacts.append({
+                    **contact,
+                    "origin": "LEGAL_NAME_AND_INN_ON_PUBLIC_PAGE_NOT_FNS",
+                    "role": "публичный телефон компании; тендерный ответственный не подтверждён",
+                })
         results.append({"inn": inn, "url": raw, "contacts": company_contacts[:6]})
     if not results or len({x["inn"] for x in results}) != 1:
         return None

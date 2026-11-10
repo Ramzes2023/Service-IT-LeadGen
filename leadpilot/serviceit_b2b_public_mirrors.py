@@ -35,7 +35,7 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
             or type(subject) is not str or not 10 <= len(subject) <= 240):
         return ""
     text = " ".join(text.split())
-    tokens = re.findall(r"[^\\W_]{3,}", subject.casefold())
+    tokens = re.findall(r"[^\W_]{3,}", subject.casefold())
     stops = {"закупка", "предоставление", "оказание", "включая",
              "услуги", "работы", "специалистов", "тендер", "поставка",
              "техническое", "требуется", "компании", "для", "или"}
@@ -52,7 +52,7 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         # Advertiser-related or navigation text elsewhere in page must not
         # satisfy the content match. Keep checks within same local vicinity.
         neighborhood = text[max(0, m.start()-950):min(len(text),m.end()+1700)]
-        terms = set(re.findall(r"[^\\W_]{3,}", neighborhood.casefold()))
+        terms = set(re.findall(r"[^\W_]{3,}", neighborhood.casefold()))
         if re.search(r"(?i)\b1[сc]\b", neighborhood):
             terms.add("1с")
         if len(important & terms) < 2:

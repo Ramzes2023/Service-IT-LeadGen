@@ -168,6 +168,78 @@ function htmlToText_(html) {
     .replace(/\n[ \t]+/g, "\n");
 }
 
+function decodeQuotedPrintableUtf8_(encoded) {
+  // Transfer-decode bytes, not JavaScript characters: B2B sends Russian
+  // HTML as quoted-printable UTF-8 with soft line breaks.
+  const unfolded = String(encoded).replace(/=\r?\n/g, "");
+  if (unfolded.length > SERVICEIT_CONFIG.maxEmailText * 4) {
+    throw new Error("SERVICEIT_EMAIL_RAW_TOO_LARGE");
+  }
+  const bytes = [];
+  for (let i = 0; i < unfolded.length; i++) {
+    const char = unfolded.charAt(i);
+    if (char === "=" && /^[0-9a-f]{2}$/i.test(unfolded.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(unfolded.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      // Normal QP encoded messages are all ASCII; retain valid 8-bit
+      // UTF-8 content instead of corrupting non-ASCII characters.
+      const utf8 = Utilities.newBlob(char).getBytes();
+      for (let j = 0; j < utf8.length; j++) {
+        bytes.push((utf8[j] + 256) % 256);
+      }
+    }
+  }
+  return Utilities.newBlob(bytes).getDataAsString("UTF-8");
+}
+
+function messageTextFromRaw_(message) {
+  // Gmail may return an empty MessagePart.body.data even for genuine
+  // authenticated single-part B2B HTML. Use Gmail's READ-ONLY raw response
+  // for those messages; raw MIME stays inside Apps Script and is NEVER
+  // transmitted to VPS, GitHub or CRM.
+  if (!message || !/^[a-f0-9]{16,24}$/i.test(String(message.id || ""))) {
+    throw new Error("SERVICEIT_EMAIL_RAW_MESSAGE_ID_INVALID");
+  }
+  const raw = Gmail.Users.Messages.get("me", message.id, {format: "raw"});
+  if (!raw || raw.id !== message.id || typeof raw.raw !== "string" ||
+      !raw.raw || raw.raw.length > SERVICEIT_CONFIG.maxEmailText * 8) {
+    throw new Error("SERVICEIT_EMAIL_RAW_UNAVAILABLE");
+  }
+  const mime = Utilities.newBlob(
+    Utilities.base64DecodeWebSafe(raw.raw)).getDataAsString("UTF-8");
+  if (mime.length > SERVICEIT_CONFIG.maxEmailText * 4) {
+    throw new Error("SERVICEIT_EMAIL_RAW_TOO_LARGE");
+  }
+  const separator = /\r?\n\r?\n/.exec(mime);
+  if (!separator) throw new Error("SERVICEIT_EMAIL_MIME_INVALID");
+  const headers = mime.slice(0, separator.index).replace(/\r?\n[ \t]+/g, " ");
+  const body = mime.slice(separator.index + separator[0].length);
+  const contentType = (headers.match(/^Content-Type:\s*([^\r\n]+)/mi) || [])[1] || "";
+  const encoding = (headers.match(/^Content-Transfer-Encoding:\s*([^\r\n]+)/mi) || [])[1] || "";
+  // Fail closed on complex multipart payloads, attachments and unexpected
+  // MIME encodings. Only direct text/plain or text/html is supported here.
+  if (!/^text\/(?:plain|html)(?:\s*;|\s*$)/i.test(contentType)) {
+    throw new Error("SERVICEIT_EMAIL_RAW_MIME_UNSUPPORTED");
+  }
+  let value;
+  if (/^quoted-printable$/i.test(encoding.trim())) {
+    value = decodeQuotedPrintableUtf8_(body);
+  } else if (/^base64$/i.test(encoding.trim())) {
+    value = Utilities.newBlob(Utilities.base64Decode(body.replace(/\s+/g, "")))
+      .getDataAsString("UTF-8");
+  } else if (!encoding || /^(?:7bit|8bit)$/i.test(encoding.trim())) {
+    value = body;
+  } else {
+    throw new Error("SERVICEIT_EMAIL_RAW_ENCODING_UNSUPPORTED");
+  }
+  const normalized = /^text\/html/i.test(contentType) ? htmlToText_(value) : value;
+  if (!normalized || normalized.length > SERVICEIT_CONFIG.maxEmailText) {
+    throw new Error("SERVICEIT_EMAIL_CONTENT_INVALID");
+  }
+  return normalized;
+}
+
 function messageText_(message) {
   const output = {plain: [], html: []};
   collectParts_(message.payload || {}, output);
@@ -176,7 +248,8 @@ function messageText_(message) {
     return (b.match(/b2b-center\.ru/gi) || []).length -
       (a.match(/b2b-center\.ru/gi) || []).length;
   })[0] || "";
-  if (!text || text.length > SERVICEIT_CONFIG.maxEmailText) {
+  if (!text) return messageTextFromRaw_(message);
+  if (text.length > SERVICEIT_CONFIG.maxEmailText) {
     throw new Error("SERVICEIT_EMAIL_CONTENT_INVALID");
   }
   return text;

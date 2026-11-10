@@ -35,6 +35,11 @@ INVITE_START = re.compile(r"(?=Организатор\s+закупки\s*:)", re
 # Strict ServiceIT domains. A generic "integration", "implementation",
 # "monitoring", "service", "marking" or "equipment" is NOT proof of IT demand.
 KINDS = {
+    # Match only explicit procurement of IT personnel, not a generic vacancy
+    # or recruiting advertisement. The title must state provision/outsourcing.
+    "IT_STAFFING": re.compile(
+        r"(?:предоставлени\\w*|привлечени\\w*|аутстаффинг\\w*)\\s+"
+        r"(?:ит|it)[\\s-]*специалист\\w*", re.I),
     "1C": re.compile(r"(?<!\w)1[сc](?!\w)|1[сc]:", re.I),
     "IT_SUPPORT": re.compile(
         r"(?<!\w)(?:ит|it)[\s-]*(?:аутсорс\w*|поддержк\w*|обслуживан\w*|инфраструктур\w*)"

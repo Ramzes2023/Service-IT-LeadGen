@@ -108,9 +108,14 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
             r"(?iu)(?:опубликован\w*|размещен\w*|размещён\w*|"
             r"площадка\s*[:—-]?)"
             r".{0,155}\bb2b-center\b", after_id))
-        title_supported = title_exact or (title_overlap and b2b_publisher)
-        if (platform and procurement and number_labeled
-                and title_supported and number.start() <= 4200):
+        # Preserve the established exact-title mode for long public pages
+        # where "Номер у источника" appears AFTER a large item table.
+        # Only NEW tolerant matching is restricted to the first 4200 chars
+        # and an explicit near-ID B2B source attribution.
+        title_supported = (title_exact or
+                           (title_overlap and b2b_publisher
+                            and number.start() <= 4200))
+        if platform and procurement and number_labeled and title_supported:
             nearby = text[max(0, number.start()-200):number.end()+450]
             return head[:3700] + " Источник и номер: " + nearby
     # Code/abbreviation words (1С, ИБ) may be short but meaningful.

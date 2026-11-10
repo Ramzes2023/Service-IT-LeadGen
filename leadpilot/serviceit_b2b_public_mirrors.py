@@ -100,9 +100,15 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         # A category list can contain an unrelated purchase with this ID.
         # Relaxed title matching demands BOTH a labelled exact B2B number
         # and 2 procurement topic roots in an independently read page.
-        near = text[max(0, number.start()-240):number.end()+300]
-        b2b_near_id = "b2b-center" in near.casefold()
-        title_supported = title_exact or (title_overlap and b2b_near_id)
+        after_id = text[number.end():number.end()+220].casefold()
+        # A sidebar listing "B2B-Center" does NOT prove that this tender
+        # originated there. Require an explicit publication attribution
+        # directly after the labelled number in relaxed-title mode.
+        b2b_publisher = bool(re.search(
+            r"(?iu)(?:опубликован\\w*|размещен\\w*|размещён\\w*|"
+            r"площадка\\s*[:—-]?)"
+            r".{0,155}\\bb2b-center\\b", after_id))
+        title_supported = title_exact or (title_overlap and b2b_publisher)
         if (platform and procurement and number_labeled
                 and title_supported and number.start() <= 4200):
             nearby = text[max(0, number.start()-200):number.end()+450]

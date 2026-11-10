@@ -226,6 +226,11 @@ def extract_source_facts(docs: list[dict]) -> list[dict]:
         ("BUDGET", r"(?i)(?:цена не указана|сумма не задана|начальная цена|стоимость)"),
         ("BUYER", r"(?i)(?:заказчик|организатор закупки)"),
         ("ELIGIBILITY", r"(?i)(?:требовани[ея] к участник|условия участи|квалификац)"),
+        ("SUBMISSION", r"(?i)(?:порядок подачи заявк|подать заявк|подача предложени|заявки принимаются)"),
+        ("DOCUMENTS", r"(?i)(?:перечень документов|документы для участи|заявка должна содержать)"),
+        ("PAYMENT", r"(?i)(?:условия оплаты|оплата после|аванс(?:ов)?ый платеж|безналичн)"),
+        ("GUARANTEE", r"(?i)(?:обеспечение заявк|обеспечение исполнени|банковская гарантия)"),
+        ("EVALUATION", r"(?i)(?:критерии оценки|критерии отбора|оценка заявок)"),
         ("LOCATION", r"(?i)(?:регион|удалённо|офис\s*\(|область|москва)"),
     )
     facts = []
@@ -235,7 +240,7 @@ def extract_source_facts(docs: list[dict]) -> list[dict]:
         if type(text) is not str:
             continue
         for category, pattern in patterns:
-            if len(facts) >= 10:
+            if len(facts) >= 16:
                 break
             match = re.search(pattern, text)
             if not match:

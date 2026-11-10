@@ -356,8 +356,18 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                 "checked_at": stamp,
                 "origin": "LEGAL_NAME_AND_INN_ON_PUBLIC_PAGE_NOT_FNS",
             })
-        # Independently displayed public telephone remains a candidate.
-        company_contacts.extend(_contacts(page, host, stamp))
+        # The public company's own phone is allowed ONLY after its legal
+        # name and checksum-valid INN were read together on this exact page.
+        # Previously _contacts() omitted the provenance marker, so V11's
+        # strict checked_public_contacts() silently dropped every phone.
+        # Never reclassify the general corporate line as the tender manager.
+        for contact in _contacts(page, host, stamp):
+            if contact.get("type") == "phone":
+                company_contacts.append({
+                    **contact,
+                    "origin": "LEGAL_NAME_AND_INN_ON_PUBLIC_PAGE_NOT_FNS",
+                    "role": "публичный телефон компании; тендерный ответственный не подтверждён",
+                })
         results.append({"inn": inn, "url": raw, "contacts": company_contacts[:6]})
     if not results or len({x["inn"] for x in results}) != 1:
         return None

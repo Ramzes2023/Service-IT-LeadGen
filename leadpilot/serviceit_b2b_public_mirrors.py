@@ -66,7 +66,7 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
             r"лот\s*№\s*)[:\s№-]*$", prefix) is not None
         if title_exact and platform and procurement and number_labeled:
             nearby = text[max(0,number.start()-200):number.end()+350]
-            return head[:1450] + " Источник и номер: " + nearby
+            return head[:3100] + " Источник и номер: " + nearby
     # Code/abbreviation words (1С, ИБ) may be short but meaningful.
     if re.search(r"(?i)\b1[сc]\b", subject):
         important.add("1с")
@@ -136,11 +136,33 @@ def from_public_page(client: httpx.Client, url: str, tender_id: str,
     }
 
 
+def _detail_score(excerpt: str) -> int:
+    """Rank already fetched evidence richness; never infer a missing fact."""
+    if not isinstance(excerpt, str):
+        return 0
+    s = excerpt.casefold()
+    terms = (
+        (r"(?iu)\\bзаказчик(?:и)?\\b.{0,90}\\b(?:ооо|пао|ао|общество)", 9),
+        (r"(?iu)\\bинн(?:-кпп)?\\b", 6),
+        (r"(?iu)(?:окончание подачи заявок|подача заявок до|срок подачи)", 5),
+        (r"(?iu)(?:условия оплаты|отсрочка платежа|постоплата)", 4),
+        (r"(?iu)(?:обеспечение заявки|банковская гарантия|аванс)", 3),
+        (r"(?iu)(?:документы участника|подгрузка документации|заявка)", 2),
+        (r"(?iu)(?:объекты закупки|место поставки|количество)", 2),
+    )
+    return sum(weight for pattern, weight in terms if re.search(pattern, s))
+
+
 def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
                         key: str, *, allow_mirrors=MIRRORS):
-    """One numeric query per mirror; max five candidate independent GETs.
+    """Choose up to TWO richest independently fetched public source pages.
 
-    Does not trust Brave snippets, images or auto answers as procurement facts.
+    One verified Tendum hint is no longer allowed to suppress a richer
+    Kontur or Synapse source that actually contains the labelled buyer,
+    deadline and participation rules. Search snippets NEVER become evidence.
+    Every page still passes HTTPS/public DNS/robots/no redirects and exact
+    tender ID plus procurement title checks. Up to 3 Brave searches and 8
+    independently fetched candidates across all hosts (bounded cost).
     """
     if (type(key) is not str or not key.isascii()
             or not 12 <= len(key) <= 200 or "\n" in key or "\r" in key
@@ -150,35 +172,31 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
             or not allow_mirrors <= MIRRORS):
         return None
     from .serviceit_independent_company_research import SEARCH_URL
-    # One already independently verified public mirror URL is a hint, NOT
-    # trusted content: the same DNS, HTTPS, robots and exact-ID/title checks
-    # always run again. All other procurement IDs use Brave discovery.
+    candidates = []
+    checked = set()
     known = {"4673595": "https://tendem.ru/tenders/16548471"}
     if "tendem.ru" in allow_mirrors and tender_id in known:
+        url = known[tender_id]
+        checked.add(url)
         try:
-            page = from_public_page(
-                client, known[tender_id], tender_id, subject)
-            if page:
-                return {
-                    "status": "PUBLIC_PAGES_INSPECTED",
-                    "pages": [{"url": page["url"],
-                               "excerpt": page["excerpt"][:3500]}],
-                    "contacts": [], "model_excerpt": _safe_model_excerpt(
-                        page["excerpt"]),
-                    "checked_at": page["checked_at"],
-                    "company_site_candidate": "",
-                    "employer_named_in_source": "",
-                    "browser_rendered_unverified": False,
-                    "independent_company_research": None,
-                    "discovery": "INDEPENDENT_PUBLIC_MIRROR_REVERIFIED",
-                }
+            row = from_public_page(client, url, tender_id, subject)
+            if row:
+                candidates.append(row)
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
             pass
-    for mirror in sorted(allow_mirrors):
+
+    # Prefer the source with detailed verified buyer/INN/terms over an
+    # earlier brief catalogue listing. Never accept the Brave text as proof.
+    hosts = [x for x in (
+        "zakupki.kontur.ru", "tendem.ru", "synapsenet.ru")
+        if x in allow_mirrors]
+    budget = 8
+    for mirror in hosts:
         try:
             res = client.get(
-                SEARCH_URL, params={"q": 'site:' + mirror + ' "' +
-                                    tender_id + '"', "count": MAX_CANDIDATES},
+                SEARCH_URL,
+                params={"q": 'site:' + mirror + ' "' + tender_id + '"',
+                        "count": MAX_CANDIDATES},
                 headers={"X-Subscription-Token": key,
                          "Accept": "application/json",
                          "Cache-Control": "no-cache"},
@@ -187,36 +205,42 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
                     or not 0 < len(res.content) <= 160000
                     or "application/json" not in res.headers.get("content-type", "")):
                 continue
-            body = res.json()
-            candidates = body.get("web", {}).get("results", [])
-            if not isinstance(candidates, list) or len(candidates) > 20:
+            data = res.json().get("web", {}).get("results", [])
+            if type(data) is not list or len(data) > 20:
                 continue
         except (httpx.HTTPError, ValueError, TypeError, AttributeError):
             continue
-        for hit in candidates[:MAX_CANDIDATES]:
-            if type(hit) is not dict:
+        for hit in data[:MAX_CANDIDATES]:
+            if len(checked) >= budget:
+                break
+            if type(hit) is not dict or type(hit.get("url")) is not str:
                 continue
-            url = hit.get("url")
+            url = hit["url"]
+            if url in checked:
+                continue
+            checked.add(url)
             try:
-                # An allowlisted URL alone is not evidence. Confirm the exact
-                # number and at least two distinctive technical/title terms.
-                item = from_public_page(
+                result = from_public_page(
                     client, url, tender_id, subject, mirror_host=mirror)
-                if item is None:
-                    continue
-                return {
-                    "status": "PUBLIC_PAGES_INSPECTED",
-                    "pages": [{"url": item["url"],
-                               "excerpt": item["excerpt"][:3500]}],
-                    "contacts": [], "model_excerpt": _safe_model_excerpt(
-                        item["excerpt"]),
-                    "checked_at": item["checked_at"],
-                    "company_site_candidate": "",
-                    "employer_named_in_source": "",
-                    "browser_rendered_unverified": False,
-                    "independent_company_research": None,
-                    "discovery": "BRAVE_INDEPENDENT_MIRROR_EXACT_ID_AND_TERMS",
-                }
+                if result:
+                    candidates.append(result)
             except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
                 continue
-    return None
+
+    if not candidates:
+        return None
+    best = sorted(candidates, key=lambda p: (
+        -_detail_score(p["excerpt"]), -len(p["excerpt"]), p["url"]))[:2]
+    return {
+        "status": "PUBLIC_PAGES_INSPECTED",
+        "pages": [{"url": x["url"], "excerpt": x["excerpt"][:4700]}
+                  for x in best],
+        "contacts": [],
+        "model_excerpt": _safe_model_excerpt(best[0]["excerpt"]),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "company_site_candidate": "",
+        "employer_named_in_source": "",
+        "browser_rendered_unverified": False,
+        "independent_company_research": None,
+        "discovery": "BRAVE_PUBLIC_MIRRORS_TWO_INDEPENDENT_DETAIL_PAGES",
+    }

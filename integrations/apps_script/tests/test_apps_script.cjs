@@ -46,6 +46,7 @@ function environment(options={}) {
   const calls = {list:0,get:0,dispatch:[],logs:[],triggers:[]};
   let account = options.account || EMAIL;
   let currentMessage = options.message || message();
+  let mailboxMessages = options.messages || null;
   let responseCode = options.responseCode || 202;
   let uuid = 0;
   const context = {
@@ -65,14 +66,15 @@ function environment(options={}) {
             assert.match(args.q,/from:\(b2b-center\.ru\)/);
             assert.strictEqual(args.maxResults,100);
             calls.list++;
-            return {messages:[{id:currentMessage.id}]};
+            return {messages:(mailboxMessages || [currentMessage]).map(m=>({id:m.id}))};
           },
           get: (_user, id, args) => {
             assert.strictEqual(_user,'me');
-            assert.strictEqual(id,currentMessage.id);
-            assert.strictEqual(args.format,'full');
+            const selected=(mailboxMessages || [currentMessage]).find(m=>m.id===id);
+            assert(selected, 'message not in mock Gmail');
+            assert(['full','raw'].includes(args.format));
             calls.get++;
-            return currentMessage;
+            return args.format==='raw' ? {id:selected.id,raw:selected._raw||''} : selected;
           }
         }
       }
@@ -106,7 +108,8 @@ function environment(options={}) {
     Utilities: {
       Charset:{UTF_8:'utf8'},
       base64DecodeWebSafe: value => [...Buffer.from(value,'base64url')],
-      newBlob: bytes => ({getDataAsString:()=>Buffer.from(bytes).toString('utf8')}),
+      newBlob: bytes => ({getDataAsString:()=>Buffer.from(bytes).toString('utf8'),getBytes:()=>[...Buffer.from(bytes)]}),
+      base64Decode:value=>[...Buffer.from(value,'base64')],
       computeHmacSha256Signature:(value,key)=>{
         return [...crypto.createHmac('sha256',key).update(value).digest()]
           .map(x=>x>127?x-256:x);
@@ -169,7 +172,7 @@ function environment(options={}) {
   return {
     context,properties,calls,
     setAccount:value=>{account=value;},
-    setMessage:value=>{currentMessage=value;},
+    setMessage:value=>{currentMessage=value;mailboxMessages=null;},
     setResponseCode:value=>{responseCode=value;}
   };
 }

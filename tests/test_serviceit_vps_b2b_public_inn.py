@@ -11,7 +11,9 @@ def test_public_inn_worker_source_has_no_model_or_outreach_invocation():
     from pathlib import Path
     src=(Path(__file__).resolve().parents[1] /
          "leadpilot/serviceit_vps_b2b_public_inn.py").read_text("utf8")
-    assert 'NAMESPACE = "B2B_PUBLIC_INN_V1"' in src
+    assert 'NAMESPACE = "B2B_PUBLIC_INN_V2"' in src
+    assert "postpone_public_research" in src
+    assert "B2B_PUBLIC_INN_V1" not in src
     assert "source_findings" in src
     assert "source_backed_company_inn_update" in src
     assert 'fence.finalize(card, "UNCERTAIN")' in src

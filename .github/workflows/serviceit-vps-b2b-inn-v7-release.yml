@@ -56,7 +56,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-contacts/known_hosts"
           chmod 0600 "$RUNNER_TEMP/serviceit-contacts/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-contacts/known_hosts" >/dev/null
-      - name: Send only reviewed eight module files and offline deploy script
+      - name: Stage exact five code modules and deployment script
         shell: bash
         run: |
           set -euo pipefail
@@ -93,7 +93,7 @@ jobs:
           done
           scp -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
             ops/serviceit_vps_b2b_inn_v7_activate.py "$dest:$target/activate.py"
-      - name: Offline image build, guarded live coordinator-only enable
+      - name: Guarded offline image overlay, rollback and safe status
         shell: bash
         run: |
           set -euo pipefail
@@ -101,27 +101,40 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-contacts/known_hosts"
             -o BatchMode=yes -o ConnectTimeout=15)
           mapfile -t shas < "$RUNNER_TEMP/serviceit-contacts/shas"
-          [[ "${#shas[@]}" == 1 ]]
+          mapfile -t oldshas < "$RUNNER_TEMP/serviceit-contacts/old-shas"
+          [[ "${#shas[@]}" == 5 && "${#oldshas[@]}" == 5 ]]
           scriptsha="$(cat "$RUNNER_TEMP/serviceit-contacts/script-sha")"
-          oldsha="$(cat "$RUNNER_TEMP/serviceit-contacts/old-sha")"
-          for value in "$scriptsha" "$oldsha" "${shas[@]}"; do
-            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          checked=()
+          for value in "${oldshas[@]}"; do
+            [[ "$value" == MISSING || "$value" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$value'")
           done
+          for value in "${shas[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$value'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${checked[*]}"
+          set +e
           ssh -T -i "$RUNNER_TEMP/serviceit-contacts/id" "${opts[@]}" \
-            "$VPS_USER@$VPS_HOST" \
-            "bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '$oldsha' '${shas[0]}'" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
             > "$RUNNER_TEMP/serviceit-contacts/status" <<'REMOTE'
           set -euo pipefail
           runid="$1"; scriptsha="$2"; shift 2
-          [[ "$runid" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
-          for digest in "$@"; do [[ "$digest" =~ ^[a-f0-9]{64}$ ]]; done
-          script="$HOME/serviceit/staging/b2b-contacts-$runid/activate.py"
+          [[ "$runid" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ && "$#" == 10 ]]
+          for digest in "$@"; do
+            [[ "$digest" == MISSING || "$digest" =~ ^[a-f0-9]{64}$ ]]
+          done
+          script="$HOME/serviceit/staging/b2b-inn-v7-$runid/activate.py"
           [[ -f "$script" && ! -L "$script" ]]
           printf '%s  %s\n' "$scriptsha" "$script" | sha256sum --check --status
           python3 "$script" "$runid" "$@"
           REMOTE
-          grep -E '^B2B_INN_V7_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' \
-            "$RUNNER_TEMP/serviceit-contacts/status" | head -35
+          remote_rc=$?
+          set -e
+          safe="$(grep -E '^B2B_INN_V7_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$RUNNER_TEMP/serviceit-contacts/status" 2>/dev/null | head -35 || true)"
+          if [[ -n "$safe" ]]; then printf '%s\n' "$safe"; else echo "B2B_INN_V7_STATUS_ABSENT=YES"; fi
+          [[ "$remote_rc" == 0 ]]
           grep -qx 'B2B_INN_V7_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/serviceit-contacts/status"
       - name: Write sanitized outcome to project issue
         if: always()
@@ -131,5 +144,5 @@ jobs:
           file="$RUNNER_TEMP/serviceit-contacts/status"
           safe="$(grep -E '^B2B_INN_V7_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$file" 2>/dev/null | head -35 || true)"
           [[ -n "$safe" ]] || safe='B2B_INN_V7_VPS_ACTIVATION_UNVERIFIED=YES'
-          body="$(printf 'B2B buyer V6 public legal requisites and opt-in extra Brave search:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core container, no source or auxiliary restarts. No CRM data or secrets in logs. Check actual 9-field Bitrix readback separately.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          body="$(printf 'B2B V7 one-use public buyer INN handoff:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core container, no source or auxiliary restarts. No CRM data or secrets in logs. Validate public INN and FNS real-card readback separately.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
           gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

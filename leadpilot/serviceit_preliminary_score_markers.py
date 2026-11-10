@@ -15,6 +15,17 @@ from .serviceit_kanban_presentation import (
 VERSION = "svc-prelim-v1-FNS-UNVERIFIED"
 DUP_STATUSES = ("ИНН НЕТ", "ТОЛЬКО ВИДИМЫЕ", "НЕ ПРОВЕРЕНЫ")
 
+# Bitrix24 field UF_CRM_13_SVCIT_AI_SCORE_BADGE silently drops
+# supplemental-plane (four-byte) colored circle emoji on our live portal.
+# These distinct BMP symbols survive the same field's text validation.
+SAFE_PRIORITY = ((80, "✅"), (60, "⚠"), (0, "❌"))
+
+
+def safe_score_color(score):
+    if type(score) is not int or not 0 <= score <= 100:
+        raise ValueError("PROVISIONAL_NUMBER_INVALID")
+    return next(symbol for cutoff, symbol in SAFE_PRIORITY if score >= cutoff)
+
 
 def provisional_payload(score, duplicate_status):
     if type(score) is not int or not 0 <= score <= 100:
@@ -22,7 +33,7 @@ def provisional_payload(score, duplicate_status):
     if duplicate_status not in DUP_STATUSES:
         raise ValueError("PROVISIONAL_DUPLICATE_STATUS_INVALID")
     text = (
-        f"{score_color(score)} {score}/100 · ПРЕДВАРИТЕЛЬНО · "
+        f"{safe_score_color(score)} {score}/100 · ПРЕДВАРИТЕЛЬНО · "
         f"ФНС: НЕ ПРОВЕРЕНА · Дубли: {duplicate_status} · "
         "STOP: СВОЙ СПИСОК · Контакт: НЕ РАЗРЕШЁН"
     )
@@ -51,9 +62,13 @@ def is_exact_own_provisional(item):
         # V1 already exists on live cards with a neutral magnifying-glass
         # icon. Keep exact legacy recognition for future safe upgrades,
         # but display priority colors on every NEW provisional score.
-        legacy = colored.replace(score_color(score), "🔎", 1)
+        legacy = colored.replace(safe_score_color(score), "🔎", 1)
+        older_color = colored.replace(safe_score_color(score),
+                                      score_color(score), 1)
         return (
             colored,
+            older_color,
+            older_color.replace("STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),
             colored.replace("STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),
             legacy,
             legacy.replace("STOP: СВОЙ СПИСОК", "STOP: НЕ НАСТРОЕН"),

@@ -355,7 +355,12 @@ def run(env: dict, *, client: httpx.Client, now: datetime | None = None,
                 and params.get("useOriginalUfNames") == "N"
                 and params.get("select") == ["id", "categoryId", "createdTime"]
                 and (params.get("filter", {}).get("categoryId") == 21
-                     or (probe_only and params.get("filter") == {"id": 3}))
+                     or (probe_only
+                         and type(params.get("filter")) is dict
+                         and set(params["filter"]) == {"id"}
+                         and type(params["filter"]["id"]) is int
+                         and (params["filter"]["id"] == 3 or
+                              MIN_CARD <= params["filter"]["id"] <= MAX_CARD)))
                 and params.get("start") in (0, 50, 100, 150),
                 "POLL_READONLY_METHOD_REQUIRED")
         # Only read-only item.list can retry on temporary 5xx/network errors.

@@ -101,21 +101,101 @@ def host_allowlist(env):
     return hosts
 
 
-def source_findings(item, env, client):
+
+def brave_notice_page(client, tender_id, allowed, key, browser=None):
+    """One search for a public tender ID, independently validate indexed links.
+
+    Search titles and snippets are never accepted as evidence and never sent
+    to the model. Every candidate must be on the official allowlisted B2B host
+    and contain the exact published tender ID in separately fetched page text.
+    """
+    if (not key or not isinstance(key, str) or not 12 <= len(key) <= 200
+            or not key.isascii() or "\n" in key or "\r" in key
+            or not isinstance(tender_id, str)
+            or not re.fullmatch(r"\d{5,12}", tender_id)):
+        return None
+    from .serviceit_independent_company_research import SEARCH_URL
+    try:
+        response = client.get(
+            SEARCH_URL,
+            params={"q": "site:b2b-center.ru " + tender_id,
+                    "count": 5, "country": "RU",
+                    "search_lang": "ru", "safesearch": "strict"},
+            headers={"X-Subscription-Token": key,
+                     "Accept": "application/json",
+                     "Cache-Control": "no-cache"},
+            follow_redirects=False, timeout=10.0,
+        )
+        if (response.status_code != 200
+                or not 0 < len(response.content) <= 160000
+                or "application/json" not in response.headers.get("content-type", "")):
+            return None
+        payload = response.json()
+        rows = payload.get("web", {}).get("results", [])
+        if not isinstance(rows, list) or len(rows) > 20:
+            return None
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        return None
+    for hit in rows[:5]:
+        if not isinstance(hit, dict):
+            continue
+        candidate = hit.get("url")
+        try:
+            host = _host(candidate, frozenset({"b2b-center.ru"}))
+            if host not in ("b2b-center.ru", "www.b2b-center.ru"):
+                continue
+            try:
+                page = _page(client, candidate, allowed)
+            except (ResearchBlocked, httpx.HTTPError, ValueError):
+                page = browser(candidate) if browser is not None else None
+            if not isinstance(page, dict):
+                continue
+            body = page.get("text", "")
+            if (not isinstance(body, str) or
+                    re.search(r"(?<!\d)" + tender_id + r"(?!\d)", body) is None):
+                continue
+            return {
+                "status": "PUBLIC_PAGES_INSPECTED",
+                "pages": [{
+                    "url": candidate,
+                    "excerpt": " ".join(body.split())[:500],
+                }],
+                "contacts": [],
+                "model_excerpt": _safe_model_excerpt(body),
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "company_site_candidate": "",
+                "employer_named_in_source": "",
+                "browser_rendered_unverified": bool(page.get("browser_unverified")),
+                "independent_company_research": None,
+                "discovery": "BRAVE_EXACT_ID_PAGE_INDEPENDENTLY_READ",
+            }
+        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+            continue
+    return None
+
+
+def source_findings(item, notice, env, client):
     hosts = host_allowlist(env)
     browser = None
     if (env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
             and env.get("SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED") == "YES"):
         from .serviceit_vps_browser_client import render_approved_url
         browser = lambda url: render_approved_url(url, hosts, client=client)
+    key = secret_file(env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)
     results = research_public(
         item, client, hosts,
         deep_search_enabled=env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") == "YES",
-        deep_search_key=secret_file(
-            env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True),
+        deep_search_key=key,
         deep_llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
         browser_render=browser,
     )
+    # Original marketplace publication may require login. Brave is a URL
+    # discovery fallback, not permission to bypass access controls.
+    if results.get("status") != "PUBLIC_PAGES_INSPECTED":
+        candidate = brave_notice_page(
+            client, notice["tender_id"], hosts, key, browser)
+        if candidate is not None:
+            return candidate
     return results
 
 
@@ -200,7 +280,7 @@ def run_once(env, client, connection):
     url, title = safe_notice(notice, card, source_id, item)
     # Read-only public search/JS fetch can fail; it is never a reason to
     # suppress the task or classify an unverified buyer as qualified.
-    findings = source_findings(item, env, client)
+    findings = source_findings(item, notice, env, client)
     allowed = model_safe_source_title(title, findings)
     fence = PostgresNativeFence(connection, RECEIPT)
     if fence.reserve(card) != "RESERVED":

@@ -25,6 +25,37 @@ MIRRORS = frozenset(("tendem.ru", "zakupki.kontur.ru", "synapsenet.ru"))
 MAX_CANDIDATES = 5
 ID_RX = r"(?<!\d){id}(?!\d)"
 
+# Email subjects often have service tags absent from the public tender title.
+# Two meaningful word families can match "Предоставление IT-специалистов"
+# with "Оказание услуг по предоставлению ИТ-специалистов", but ONLY after
+# separately fetched evidence binds the exact ID to B2B-Center and the
+# procurement label. IDs from OTHER trading platforms must not be mixed.
+_TITLE_ROOTS = (
+    "предоставл", "специалист", "разработч", "аналитик", "сервер",
+    "аутсорс", "внедрен", "сопровожд", "оборудован", "интеграц",
+    "закупк", "поставк", "обслуживан", "безопасност", "программ",
+    "информацион", "поддержк", "тестирован", "процессор",
+)
+
+
+def _meaningful_title_roots(value: str) -> frozenset[str]:
+    if type(value) is not str:
+        return frozenset()
+    normalized = value.casefold().replace("ё", "е")
+    normalized = re.sub(r"(?i)(?<![a-zа-я])it(?![a-zа-я])", "ит", normalized)
+    normalized = re.sub(r"(?i)(?<![a-zа-я0-9])1c(?![a-zа-я0-9])",
+                        "1с", normalized)
+    words = re.findall(r"[a-zа-я0-9]{2,}", normalized)
+    roots = {root for word in words for root in _TITLE_ROOTS
+             if word.startswith(root)}
+    if "1с" in words:
+        roots.add("1с")
+    if "devops" in words:
+        roots.add("devops")
+    return frozenset(roots)
+
+
+
 
 def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
     """Extract text AROUND the exact tender ID, not the first 7k characters.
@@ -51,9 +82,11 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
     # the exact source-number label, platform, and procurement context.
     # A number in an unrelated footer link or a search snippet is insufficient.
     exact = list(re.finditer(ID_RX.format(id=tender_id), text))
-    head = text[:3100]
+    head = text[:4200]
     normal = lambda v: " ".join(v.casefold().replace("ё", "е").split())
     title_exact = 24 <= len(subject.strip()) <= 240 and normal(subject) in normal(head)
+    title_overlap = len(_meaningful_title_roots(subject) &
+                        _meaningful_title_roots(head)) >= 2
     platform = "b2b-center" in head.casefold()
     procurement = any(x in head.casefold() for x in
                       ("запрос котировок", "запрос цен", "запрос предложений",
@@ -62,11 +95,18 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         prefix = text[max(0,number.start()-90):number.start()]
         number_labeled = re.search(
             r"(?iu)(?:номер\s+у\s+источника|закупка\s*(?:№\s*)?|"
-            r"запрос\s+(?:цен|предложений)\s*№\s*|"
+            r"запрос\s+(?:цен|предложений|котировок)\s*№\s*|"
             r"лот\s*№\s*)[:\s№-]*$", prefix) is not None
-        if title_exact and platform and procurement and number_labeled:
-            nearby = text[max(0,number.start()-200):number.end()+350]
-            return head[:3100] + " Источник и номер: " + nearby
+        # A category list can contain an unrelated purchase with this ID.
+        # Relaxed title matching demands BOTH a labelled exact B2B number
+        # and 2 procurement topic roots in an independently read page.
+        near = text[max(0, number.start()-240):number.end()+300]
+        b2b_near_id = "b2b-center" in near.casefold()
+        title_supported = title_exact or (title_overlap and b2b_near_id)
+        if (platform and procurement and number_labeled
+                and title_supported and number.start() <= 4200):
+            nearby = text[max(0, number.start()-200):number.end()+450]
+            return head[:3700] + " Источник и номер: " + nearby
     # Code/abbreviation words (1С, ИБ) may be short but meaningful.
     if re.search(r"(?i)\b1[сc]\b", subject):
         important.add("1с")

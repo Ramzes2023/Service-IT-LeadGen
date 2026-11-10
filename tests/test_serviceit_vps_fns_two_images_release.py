@@ -10,7 +10,7 @@ def test_two_image_rollback_activation_security():
     assert set(cfg["SERVICES"])=={"auxiliaries","fns-msp"}
     assert cfg["SERVICES"]["auxiliaries"][1]=="serviceit_vps_native_aux.py"
     assert cfg["SERVICES"]["fns-msp"][1]=="serviceit_vps_native_msp.py"
-    for token in ("docker\",\"cp","--network","none","--read-only","--no-deps",
+    for token in ('["docker","cp"', "--network","none","--read-only","--no-deps",
                   "COMPOSE_NON_IMAGE_SETTINGS_CHANGED","LIVE_",
                   "FNS_ONLY_ROLLBACK","FNS_ONLY_OTHER_IMAGES_UNCHANGED",
                   "FNS_ONLY_CRM_WRITES_BY_INSTALLER=NO"):

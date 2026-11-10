@@ -130,6 +130,15 @@ def source_backed_company_inn_update(item: dict, findings: dict) -> dict | None:
     url = urlsplit(public["public_source"])
     if url.scheme != "https" or not url.hostname:
         return None
+    # A tender mirror is NOT an independently fetched company website.
+    tender_hosts = {
+        urlsplit(p["url"]).hostname
+        for p in (findings.get("pages") or [])[:3]
+        if isinstance(p, dict) and isinstance(p.get("url"), str)
+        and p["url"].startswith("https://")
+    }
+    if url.hostname in tender_hosts:
+        return None
     from .serviceit_public_evidence_research import MARKETPLACES
     if any(url.hostname == host or url.hostname.endswith("." + host)
            for host in MARKETPLACES):

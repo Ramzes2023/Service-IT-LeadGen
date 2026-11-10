@@ -1,0 +1,99 @@
+name: ServiceIT VPS B2B V6 exact source and opt-in READONLY (#368)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v6-live-source-readonly
+  cancel-in-progress: false
+jobs:
+  source-readonly:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V6_SHA_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Read exact old/current source SHA from immutable reviewed commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e c563d116724be9c5a758c0f326bd9d2a9ca8a8f7^{commit}
+          git cat-file -e 6124478aad06967e2d2f83e9d0ef097afefed3b4^{commit}
+          git show c563d116724be9c5a758c0f326bd9d2a9ca8a8f7:leadpilot/serviceit_vps_b2b_deep_research.py | sha256sum | cut -d ' ' -f 1 > "$RUNNER_TEMP/v5-sha"
+          git show 6124478aad06967e2d2f83e9d0ef097afefed3b4:leadpilot/serviceit_vps_b2b_deep_research.py | sha256sum | cut -d ' ' -f 1 > "$RUNNER_TEMP/v6-sha"
+          [[ "$(cat "$RUNNER_TEMP/v5-sha")" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$(cat "$RUNNER_TEMP/v6-sha")" =~ ^[a-f0-9]{64}$ ]]
+      - name: Pinned nonroot SSH, read exact live coordinator module SHA and safe flags only
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v6-sha"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v6-sha/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v6-sha/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/v6-sha/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v6-sha/known_hosts" >/dev/null
+          old="$(cat "$RUNNER_TEMP/v5-sha")"; new="$(cat "$RUNNER_TEMP/v6-sha")"
+          ssh -T -i "$RUNNER_TEMP/v6-sha/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v6-sha/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            "python3 - '$old' '$new'" <<'PY'
+          import hashlib, subprocess, sys
+          from pathlib import Path
+          old,new=sys.argv[1:]
+          C="serviceit-leadgen-vps-coordinator-1"
+          def docker(*args):
+              try:
+                  p=subprocess.run(("docker",*args),capture_output=True,text=True,
+                                   timeout=20,check=False)
+                  return p.returncode,p.stdout.strip()
+              except (OSError,subprocess.TimeoutExpired):
+                  return 99,""
+          rc,val=docker("inspect","-f","{{.State.Running}}:{{.State.Health.Status}}",C)
+          print("B2B_COORDINATOR="+("HEALTHY" if rc==0 and val=="true:healthy"
+                                     else "NOT_HEALTHY_OR_UNVERIFIED"))
+          code=("import hashlib,os;"
+                "from pathlib import Path;"
+                "p=Path('/app/leadpilot/serviceit_vps_b2b_deep_research.py');"
+                "print(hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else 'MISSING');"
+                "print(os.environ.get('SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED','NO'));"
+                "print(os.environ.get('SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED','NO'))")
+          rc,out=docker("exec",C,"python","-B","-c",code)
+          vals=out.splitlines()
+          live=vals[0] if rc==0 and len(vals)==3 else "UNVERIFIED"
+          print("B2B_SOURCE="+("V5_PREVIOUS" if live==old else
+                               "V6_SOURCE_PRESENT" if live==new else "OTHER_OR_UNVERIFIED"))
+          print("B2B_DEEP_RESEARCH_ENABLED="+(
+              vals[1] if len(vals)==3 and vals[1] in ("YES","NO") else "UNVERIFIED"))
+          print("B2B_EXTRA_BRAVE_ENABLED="+(
+              vals[2] if len(vals)==3 and vals[2] in ("YES","NO") else "UNVERIFIED"))
+          path=Path.home()/"serviceit/config/native-five-minute-core-image.compose.yml"
+          if path.is_file() and not path.is_symlink():
+              txt=path.read_text("utf8")
+              flag="SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED"
+              print("B2B_COMPOSE_EXTRA="+("YES" if flag in txt else "NO"))
+          else:
+              print("B2B_COMPOSE_EXTRA=UNVERIFIED")
+          print("B2B_READONLY=YES;CRM_WRITES=0;PG_WRITES=0;RESTARTS=0")
+          PY

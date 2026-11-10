@@ -17,3 +17,10 @@ def test_score_cycle_diagnostics_do_not_mutate():
     assert "NATIVE_AUX_CYCLE_BLOCKED" in s
     assert "classify_preliminary(i,datetime.now(timezone.utc))" in s
     assert "crm.item.update" not in s
+
+
+def test_ai_status_diagnostic_bounded_to_public_fixed_machine_code():
+    s=(Path(__file__).resolve().parents[1]/".github/workflows/serviceit-vps-b2b-inn-color-score-readonly.yml").read_text("utf8")
+    assert "INN_SCORE_CARD_" in s and "_AI_CODE=" in s
+    assert "re.fullmatch(r'[A-Z0-9_]{4,85}',raw_status)" in s
+    assert "crm.item.update" not in s

@@ -1,4 +1,4 @@
-name: ServiceIT B2B V8 exact AI evidence research guarded live release
+name: ServiceIT B2B V8 RouterAI only guarded live release
 on:
   issue_comment:
     types: [created]
@@ -39,7 +39,6 @@ jobs:
           set -euo pipefail
           python -m py_compile ops/serviceit_vps_b2b_evidence_v8_activate.py
           python -m py_compile \
-            leadpilot/serviceit_vps_b2b_deep_research.py \
             leadpilot/serviceit_b2b_routerai_deep.py
           [[ "$VPS_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
@@ -50,7 +49,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/serviceit-contacts/known_hosts"
           chmod 0600 "$RUNNER_TEMP/serviceit-contacts/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/serviceit-contacts/known_hosts" >/dev/null
-      - name: Stage exact five code modules and deployment script
+      - name: Stage one RouterAI source module and deployment script
         shell: bash
         run: |
           set -euo pipefail
@@ -59,16 +58,15 @@ jobs:
             -o BatchMode=yes -o ConnectTimeout=15)
           dest="$VPS_USER@$VPS_HOST"
           target="serviceit/staging/b2b-evidence-v8-$GITHUB_RUN_ID"
-          names=(serviceit_vps_b2b_deep_research.py serviceit_b2b_routerai_deep.py)
-          # Assert these exact modules remain unchanged since reviewed PR #385.
+          names=(serviceit_b2b_routerai_deep.py)
+          # The INN V8 release already installed the newest public research module.
+          # Patch RouterAI only. Never revert the concurrent buyer/INN fixes.
           git cat-file -e 0655587324289efdede8860fdf69e07a25bf5477^{commit}
           git diff --quiet 0655587324289efdede8860fdf69e07a25bf5477 HEAD -- \
-            leadpilot/serviceit_vps_b2b_deep_research.py \
             leadpilot/serviceit_b2b_routerai_deep.py
           # Independent running-container SHA attestations: owner-only
           # read-only VPS run #42869749111. Reject any competing live edits.
           printf '%s\n' \
-            'e8afe5439609a342c9e43a01cc389acd8857bebce4fe074318d7ec32d0a07b81' \
             '54690407408513d3430ac9ea57b90eb4bb7cd9a6eac390e8d869fed68a7f07c3' \
             > "$RUNNER_TEMP/serviceit-contacts/old-shas"
           : > "$RUNNER_TEMP/serviceit-contacts/shas"
@@ -95,7 +93,7 @@ jobs:
             -o BatchMode=yes -o ConnectTimeout=15)
           mapfile -t shas < "$RUNNER_TEMP/serviceit-contacts/shas"
           mapfile -t oldshas < "$RUNNER_TEMP/serviceit-contacts/old-shas"
-          [[ "${#shas[@]}" == 2 && "${#oldshas[@]}" == 2 ]]
+          [[ "${#shas[@]}" == 1 && "${#oldshas[@]}" == 1 ]]
           scriptsha="$(cat "$RUNNER_TEMP/serviceit-contacts/script-sha")"
           [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
           checked=()
@@ -114,7 +112,7 @@ jobs:
             > "$RUNNER_TEMP/serviceit-contacts/status" <<'REMOTE'
           set -euo pipefail
           runid="$1"; scriptsha="$2"; shift 2
-          [[ "$runid" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ && "$#" == 4 ]]
+          [[ "$runid" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ && "$#" == 2 ]]
           for digest in "$@"; do
             [[ "$digest" == MISSING || "$digest" =~ ^[a-f0-9]{64}$ ]]
           done
@@ -137,5 +135,5 @@ jobs:
           file="$RUNNER_TEMP/serviceit-contacts/status"
           safe="$(grep -E '^B2B_EVIDENCE_V8_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED|READY_FOR_FIVE_MINUTE_WORKER)$' "$file" 2>/dev/null | head -35 || true)"
           [[ -n "$safe" ]] || safe='B2B_EVIDENCE_V8_VPS_ACTIVATION_UNVERIFIED=YES'
-          body="$(printf 'B2B V8 cited research and full HTML identity matcher:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core container, no source/auxiliary restarts and no CRM writes by deploy. Readback separately; V8 does not replay completed V4 AI receipt.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          body="$(printf 'B2B V8 RouterAI-only release after INN V8 (preserved):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly core container, no source/auxiliary restarts and no CRM writes by deploy. Readback separately; V8 does not replay completed V4 AI receipt.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
           gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

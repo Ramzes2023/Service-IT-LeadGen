@@ -179,8 +179,8 @@ def pin_image(content, expected_old, target):
     archived for rollback.
     """
     require(isinstance(content, str)
-            and 'services:\\n  coordinator:\\n' in content
-            and '    pull_policy: never\\n' in content,
+            and 'services:\n  coordinator:\n' in content
+            and '    pull_policy: never\n' in content,
             "IMMUTABLE_PIN_FORMAT_CHANGED")
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", expected_old)
             and re.fullmatch(r"sha256:[0-9a-f]{64}", target)
@@ -193,12 +193,12 @@ def pin_image(content, expected_old, target):
     # Preserve old Compose runtime semantics via the separate model-diff
     # preflight, not by concatenating YAML to an unknown trailing section.
     return (
-        'services:\\n'
-        '  coordinator:\\n'
-        '    image: "' + target + '"\\n'
-        '    pull_policy: never\\n'
-        '    environment:\\n'
-        '      ' + TDI_FLAG + ': "YES"\\n'
+        'services:\n'
+        '  coordinator:\n'
+        '    image: "' + target + '"\n'
+        '    pull_policy: never\n'
+        '    environment:\n'
+        '      ' + TDI_FLAG + ': "YES"\n'
     )
 
 

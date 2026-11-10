@@ -55,7 +55,7 @@ def test_v7_owner_scoped_workflow_pins_actual_live_sha_manifest():
         "d640f68e000aef521eff440967618b34f6feb233b65a8a379ab66fc8f6fe5f9d",
         "ed581c4b27fd5d2a948a51ef8f23b0d32e956a161c019eec3e25559fe5e0207a",
         "5bcef8732b8d11c3af744b6eef3b570859a2f0424596f36d4d59ca89347e34e9",
-        '"MISSING"'
+        "'MISSING'"
     ):
         assert marker in workflow
     assert "remote_rc=$?" in workflow

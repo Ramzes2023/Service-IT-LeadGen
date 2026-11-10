@@ -38,7 +38,7 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/mirror/hosts" -o BatchMode=yes \
             "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' <<'PY'
           import httpx,re
-          from leadpilot.serviceit_public_evidence_research import _page,ResearchBlocked
+          from leadpilot.serviceit_public_evidence_research import _page,_get,_robots,VisibleText,ResearchBlocked
           checks=(
             ('KONTUR','https://zakupki.kontur.ru/4673595_4','zakupki.kontur.ru'),
             ('TENDEM','https://tendem.ru/tenders/16548471','tendem.ru'),
@@ -51,8 +51,19 @@ jobs:
                 print('MIRROR_'+label+'_HTTP_AND_ROBOTS=YES')
                 print('MIRROR_'+label+'_NUMBER_IN_TEXT='+('YES' if re.search(r'(?<!\d)4673595(?!\d)',text) else 'NO'))
                 print('MIRROR_'+label+'_TEXT_CHARS='+str(min(len(text),7000)))
-              except (ResearchBlocked,httpx.HTTPError,ValueError):
+                raw=_get(client,url,frozenset((host,)))
+                parse=VisibleText()
+                parse.feed(raw)
+                whole=" ".join(parse.parts)
+                m=re.search(r'(?<!\d)4673595(?!\d)',whole)
+                print('MIRROR_'+label+'_FULL_CHARS='+str(min(len(whole),50000)))
+                print('MIRROR_'+label+'_NUMBER_IN_FULL='+('YES' if m else 'NO'))
+                print('MIRROR_'+label+'_NUMBER_OFFSET='+str(min(m.start(),50000) if m else 0))
+              except (ResearchBlocked,httpx.HTTPError,ValueError) as exc:
                 print('MIRROR_'+label+'_HTTP_AND_ROBOTS=NO')
                 print('MIRROR_'+label+'_NUMBER_IN_TEXT=NO')
+                reason=str(exc) if isinstance(exc,ResearchBlocked) else 'NETWORK_OR_HTTP'
+                print('MIRROR_'+label+'_BLOCK='+(
+                  reason if re.fullmatch(r'[A-Z0-9_]{4,80}',reason) else 'OTHER'))
           print('MIRROR_PROBE_DONE=YES')
           PY

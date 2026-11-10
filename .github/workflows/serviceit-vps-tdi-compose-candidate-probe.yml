@@ -1,0 +1,97 @@
+name: ServiceIT TDI Docker Compose candidate config failure READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-tdi-compose-probe
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_TDI_COMPOSE_PROBE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pinned SSH and protected compose config only, no up or writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/tdi-compose"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tdi-compose/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tdi-compose/hosts"
+          chmod 0600 "$RUNNER_TEMP/tdi-compose/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tdi-compose/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/tdi-compose/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tdi-compose/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            > "$RUNNER_TEMP/tdi-compose/result" <<'PY'
+          import os,json,subprocess,re
+          from pathlib import Path
+          home=Path.home()
+          root=home/'serviceit'
+          env=root/'config/vps.env'
+          pin=root/'config/native-five-minute-core-image.compose.yml'
+          stage=root/'staging/b2b-tdi-release-42907858637/preflight.compose.yml'
+          print('TDI_COMPOSE_CANDIDATE_EXISTS='+('YES' if stage.is_file() else 'NO'),flush=True)
+          if not stage.is_file() or stage.is_symlink():
+              raise SystemExit(0)
+          txt=stage.read_text('utf8')
+          print('TDI_COMPOSE_FLAG_PRESENT='+('YES' if 'SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED' in txt else 'NO'))
+          print('TDI_COMPOSE_FLAG_NESTING='+('YES' if re.search(r'(?m)^    environment:\n      SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED: "YES"$',
+              txt) else 'NO'))
+          image=subprocess.run(['docker','inspect','-f','{{index .Config.Labels "com.docker.compose.project.config_files"}}',
+              'serviceit-leadgen-vps-coordinator-1'],capture_output=True,text=True,timeout=20)
+          if image.returncode: raise SystemExit(2)
+          paths=[Path(x.strip()) for x in image.stdout.strip().split(',') if x.strip()]
+          print('TDI_COMPOSE_PIN_IN_PATHS='+('YES' if pin in paths else 'NO'))
+          if pin not in paths or not env.is_file(): raise SystemExit(0)
+          def run(files):
+              cmd=['docker','compose','--env-file',str(env)]
+              for path in files: cmd+=['-f',str(path)]
+              cmd+=['config','--format','json']
+              return subprocess.run(cmd,capture_output=True,text=True,timeout=40)
+          def reason(stderr):
+              s=stderr.lower()
+              if 'permission denied' in s:return 'PERMISSION'
+              if 'no such file' in s or 'not found' in s:return 'MISSING_FILE'
+              if 'mapping key' in s or 'yaml' in s or 'parsing' in s:return 'YAML_PARSE'
+              if 'invalid interpolation' in s:return 'INTERPOLATION'
+              if 'invalid type' in s:return 'INVALID_TYPE'
+              if 'additional property' in s or 'additional properties' in s:return 'UNSUPPORTED_KEY'
+              if 'service' in s and 'invalid' in s:return 'INVALID_SERVICE'
+              if 'already exists' in s:return 'DUPLICATE'
+              return 'OTHER'
+          current=run(paths)
+          candidate=run([x for x in paths if x!=pin]+[stage])
+          print('TDI_COMPOSE_BASE_OK='+('YES' if current.returncode==0 else 'NO'))
+          print('TDI_COMPOSE_CANDIDATE_OK='+('YES' if candidate.returncode==0 else 'NO'))
+          print('TDI_COMPOSE_CANDIDATE_REASON='+('OK' if candidate.returncode==0 else reason(candidate.stderr)))
+          if current.returncode==0 and candidate.returncode==0:
+              old=json.loads(current.stdout)['services']['coordinator']
+              new=json.loads(candidate.stdout)['services']['coordinator']
+              expected=dict(old.get('environment',{}))
+              expected['SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED']='YES'
+              print('TDI_COMPOSE_ENV_ONLY_ADD='+('YES' if new.get('environment')==expected else 'NO'))
+              print('TDI_COMPOSE_NEW_IMAGE='+('YES' if new.get('image')!=old.get('image') else 'NO'))
+          PY
+          grep -E '^TDI_COMPOSE_[A-Z_]+=(YES|NO|OK|PERMISSION|MISSING_FILE|YAML_PARSE|INTERPOLATION|INVALID_TYPE|UNSUPPORTED_KEY|INVALID_SERVICE|DUPLICATE|OTHER)$' "$RUNNER_TEMP/tdi-compose/result"

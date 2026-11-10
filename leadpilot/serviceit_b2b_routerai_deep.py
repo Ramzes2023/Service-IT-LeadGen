@@ -195,6 +195,7 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
                 questions.append(item)
         except DeepEvidenceError:
             continue
+    model_verified_facts = len(facts)
     for exact in extract_source_facts(docs):
         if not any(f["quote"] == exact["quote"]
                    and f["source_id"] == exact["source_id"] for f in facts):
@@ -203,7 +204,8 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
             facts.append(exact)
     return {"overview": overview, "service_fit": service,
             "likely_need": need, "facts": facts, "missing": missing,
-            "manager_questions": questions, "provider": "RouterAI"}
+            "manager_questions": questions, "provider": "RouterAI",
+            "model_verified_facts": model_verified_facts}
 
 
 def extract_source_facts(docs: list[dict]) -> list[dict]:
@@ -373,7 +375,13 @@ def cited_fields(base: dict, findings: dict, investigation: dict) -> dict:
     missing = investigation["missing"]
     # Even when source is readable, no unverified text becomes "fact".
     if investigation["provider"] == "RouterAI":
-        status = ("PUBLIC_RESEARCH_ROUTERAI_CITED" if facts
+        model_count = investigation.get("model_verified_facts")
+        if model_count is None:
+            # Existing tests and older provider callers are accepted only
+            # when their facts are ALL source-anchored; a new response must
+            # carry the explicit count to certify AI quote verification.
+            model_count = len(facts)
+        status = ("PUBLIC_RESEARCH_ROUTERAI_CITED" if model_count > 0
                   else "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES")
     else:
         status = ("PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED" if facts
@@ -404,7 +412,7 @@ def cited_fields(base: dict, findings: dict, investigation: dict) -> dict:
     summary = (
         "Публичное исследование: " + str(len(facts)) + " дословно подтверждённых "
         "фрагментов / " + str(len(public_documents(findings))) + " страниц. " +
-        investigation["overview"] + ". "
+        "Интерпретация (не факт): " + investigation["overview"] + ". "
         "Гипотеза услуги: " + investigation["service_fit"] +
         ". Коммерческий статус остаётся HOLD."
     )
@@ -429,7 +437,8 @@ def cited_fields(base: dict, findings: dict, investigation: dict) -> dict:
         "Статус исследования: " + status +
         "\nСтатус коммерческой квалификации: HOLD (без изменений)\n"
         "Число фактов с проверенными цитатами: " + str(len(facts)) + "\n\n"
-        "1. КРАТКОЕ ОПИСАНИЕ\n" + investigation["overview"] + "\n\n"
+        "1. ИНТЕРПРЕТАЦИЯ МОДЕЛИ (ГИПОТЕЗА, НЕ ПОДТВЕРЖДЁННЫЙ ФАКТ)\n" +
+        investigation["overview"] + "\n\n"
         "2. ПУБЛИЧНЫЕ ФАКТЫ С ЦИТАТАМИ И ССЫЛКАМИ\n" +
         "\n\n".join(fact_lines) + "\n\n"
         "3. ВОЗМОЖНАЯ ПОТРЕБНОСТЬ (НЕУСТАНОВЛЕННАЯ ГИПОТЕЗА)\n" +

@@ -45,3 +45,12 @@ def test_existing_fns_writer_flag_is_preserved_not_toggled():
     assert 'env.get("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED") in ("YES","NO")' in code
     assert "FNS_WRITER_ALREADY_ENABLED" not in code
     assert "COMPOSE_LIVE_ENV_DRIFT" in code
+
+
+def test_aux_success_requires_full_cycle_not_12_second_health_flag():
+    s=(ROOT/"ops/serviceit_vps_fns_calibration_two_images_activate.py").read_text("utf8")
+    assert 'for attempt in range(36)' in s
+    assert '"NATIVE_AUX_CYCLE" in statuses' in s
+    assert '"NATIVE_AUX_BLOCKED" in statuses' in s
+    assert '"AUX_RESTARTED_DURING_ACCEPTANCE"' in s
+    assert '"AUX_NATIVE_CYCLE_NOT_OBSERVED"' in s

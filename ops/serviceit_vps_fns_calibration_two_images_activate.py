@@ -167,16 +167,29 @@ def wait_image(service,img,expected_sha,started):
     # Require at least one complete live cycle after deployment; never
     # accept merely an import/flags-only healthcheck.
     if service=="auxiliaries":
-        logs=run(["docker","logs","--since",started,container],timeout=15,check=False)
-        statuses=set()
-        if logs.returncode==0:
-            for line in logs.stdout.decode("utf8","replace").splitlines():
-                try:datum=json.loads(line)
-                except (ValueError,TypeError):continue
-                if isinstance(datum,dict) and isinstance(datum.get("status"),str):
-                    statuses.add(datum["status"])
-        need("NATIVE_AUX_CYCLE" in statuses and "NATIVE_AUX_BLOCKED" not in statuses,
-             "AUX_NATIVE_FIRST_CYCLE_FAILED")
+        # Four real CRM cards can require many sequential REST reads. A
+        # transient healthy flag is insufficient, but demanding a completed
+        # five-minute AUX cycle within only 12 seconds is also incorrect.
+        # Observe up to 3 minutes while requiring stable restart-count.
+        for attempt in range(36):
+            need(health(container)
+                 and inspect(container,"{{.RestartCount}}")==first,
+                 "AUX_RESTARTED_DURING_ACCEPTANCE")
+            logs=run(["docker","logs","--since",started,container],
+                     timeout=15,check=False)
+            statuses=set()
+            if logs.returncode==0:
+                for line in logs.stdout.decode("utf8","replace").splitlines():
+                    try:datum=json.loads(line)
+                    except (ValueError,TypeError):continue
+                    if isinstance(datum,dict) and isinstance(datum.get("status"),str):
+                        statuses.add(datum["status"])
+            if "NATIVE_AUX_BLOCKED" in statuses:
+                raise Blocked("AUX_NATIVE_RUNTIME_BLOCKED")
+            if "NATIVE_AUX_CYCLE" in statuses:
+                return
+            if attempt!=35:time.sleep(5)
+        raise Blocked("AUX_NATIVE_CYCLE_NOT_OBSERVED")
 
 def main():
     need(os.geteuid()!=0,"NONROOT_REQUIRED")

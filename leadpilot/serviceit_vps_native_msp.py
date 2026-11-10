@@ -118,6 +118,25 @@ def scratch_ready() -> None:
         raise VpsBlocked("NATIVE_FNS_DISK_NOT_WRITABLE")
 
 
+def calibrate_msp_verified_card(client, base, connection):
+    """Independent positive control from a persisted VERIFIED 1062/21 B2B.
+
+    Never trust an empty list as proof. CRM item.get is strictly read-only
+    and validates real item/category/date; no historical ID 3 dependency.
+    """
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT card_id FROM serviceit_vps_b2b_inbox "
+            "WHERE state='VERIFIED' AND card_id IS NOT NULL "
+            "ORDER BY received_at,source_id LIMIT 1")
+        row = cur.fetchone()
+    if not row or type(row[0]) is not int or row[0] < 8:
+        raise VpsBlocked("NATIVE_FNS_NO_VERIFIED_POSITIVE_CONTROL")
+    exact = read_item(client, base, row[0])
+    date_value(exact.get("createdTime"))
+    return True
+
+
 def run_once(env, *, client: httpx.Client, connection,
              now: datetime | None = None) -> dict:
     out = {"status": "NATIVE_FNS_DISABLED", "crm_writes": 0,
@@ -134,10 +153,9 @@ def run_once(env, *, client: httpx.Client, connection,
             env["SERVICEIT_VPS_NATIVE_ACTIVATION_UTC"],
     }, now)
     read_only_list = lambda m,p: list_only(client, base, m,p)
-    # FNS daily collector uses the same exact VERIFIED native source control
-    # as the auxiliary Bitrix writer; historical card #3 may be absent.
-    from .serviceit_vps_native_aux import calibrate_verified_live_card
-    calibrate_verified_live_card(client, base, connection)
+    # FNS daily collector calibrates its OWN immutable runtime image.
+    # The MSP container and AUX image are intentionally different releases.
+    calibrate_msp_verified_card(client, base, connection)
     cards = discover(read_only_list, start, now)
     out["new_cards_seen"] = len(cards)
     if not cards:

@@ -61,8 +61,8 @@ jobs:
           target="serviceit/staging/b2b-evidence-v8-$GITHUB_RUN_ID"
           names=(serviceit_vps_b2b_deep_research.py serviceit_b2b_routerai_deep.py)
           # Assert these exact modules remain unchanged since reviewed PR #385.
-          git cat-file -e 9997c78bad8594d82def78ea688e7930e0fc5e72^{commit}
-          git diff --quiet 9997c78bad8594d82def78ea688e7930e0fc5e72 HEAD -- \
+          git cat-file -e 0655587324289efdede8860fdf69e07a25bf5477^{commit}
+          git diff --quiet 0655587324289efdede8860fdf69e07a25bf5477 HEAD -- \
             leadpilot/serviceit_vps_b2b_deep_research.py \
             leadpilot/serviceit_b2b_routerai_deep.py
           # Independent running-container SHA attestations: owner-only

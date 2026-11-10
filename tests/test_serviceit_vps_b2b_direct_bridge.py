@@ -136,7 +136,7 @@ def test_one_real_hold_requires_pg_reservation_before_crm_add(monkeypatch):
         pytest.fail("unexpected CRM call")
     monkeypatch.setattr(bridge, "bitrix_call", fake_call)
     assert bridge.deliver_one(object(),None,"secret") == "ONE_REAL_HOLD_QUEUED"
-    assert called == ["RESERVE", "ADD", "GET", "CONFIRM", "NATIVE_QUEUE"]
+    assert called == ["RESERVE", "ADD", "GET", "NATIVE_QUEUE", "CONFIRM"]
 
 
 def test_post_timeout_is_ambiguous_never_automatically_retried(monkeypatch):
@@ -176,6 +176,7 @@ def test_continuous_four_items_without_manual_restart(monkeypatch):
     monkeypatch.setattr(bridge, "ReadOnlyBitrix", lambda *a, **kw: object())
     monkeypatch.setattr(bridge, "secret_file", lambda *a: "synthetic")
     monkeypatch.setattr(bridge, "enabled", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "reconcile_uncertain", lambda *args: 0)
     seq = iter([
         "ONE_REAL_HOLD_QUEUED", "EXISTING",
         "ONE_REAL_HOLD_QUEUED", "ONE_REAL_HOLD_QUEUED",
@@ -206,9 +207,66 @@ def test_rolling_throttle_only_defers_not_terminates_service(monkeypatch):
     monkeypatch.setattr(bridge, "ReadOnlyBitrix", lambda *a, **kw: object())
     monkeypatch.setattr(bridge, "secret_file", lambda *a: "synthetic")
     monkeypatch.setattr(bridge, "enabled", lambda *a, **kw: True)
+    monkeypatch.setattr(bridge, "reconcile_uncertain", lambda *args: 0)
     monkeypatch.setattr(bridge, "deliver_one",
                         lambda *a: "DAILY_BUDGET_THROTTLED")
     result = bridge.worker_once({}, client=object())
     assert result["batch_processed"] == 1
     assert result["new_holds"] == 0
     assert result["backlog_throttled"] is True
+
+
+def test_rewritten_native_title_does_not_invalidate_exact_source_receipt():
+    payload = bridge.hold_payload(NOTICE, bridge.classify_services(NOTICE["subject"]))
+    fields = payload["fields"]
+    for key in bridge.AI_FIELDS:
+        fields.pop(key)
+    card = {"id": 44, "entityTypeId": 1062, **fields}
+    card["title"] = "📑 ТЕНДЕР · B2B — отображение Канбана"
+    assert bridge.initial_readback_matches(card, 44, fields) is True
+    card[bridge.SIGNAL] = "B2B-CENTER-0000000"
+    assert bridge.initial_readback_matches(card, 44, fields) is False
+    card[bridge.SIGNAL] = SOURCE
+    card["UF_CRM_13_SVCIT_EVIDENCE_STATUS"] = "VERIFIED"
+    assert bridge.initial_readback_matches(card, 44, fields) is False
+
+
+def test_uncertain_existing_card_auto_recovers_once_no_second_crm_post(monkeypatch):
+    events = []
+    monkeypatch.setattr(bridge, "read_uncertain", lambda conn: [(SOURCE, NOTICE)])
+    monkeypatch.setattr(bridge, "validate_webhook", lambda token: "https://example.invalid/rest")
+    monkeypatch.setattr(bridge, "positive_duplicate_control", lambda *a: True)
+    monkeypatch.setattr(bridge, "exact_duplicate", lambda *a: [{"id": 44}])
+    payload = bridge.hold_payload(NOTICE, bridge.classify_services(NOTICE["subject"]))
+    fields = payload["fields"]
+    for key in bridge.AI_FIELDS:
+        fields.pop(key)
+    actual = {"id": 44, "entityTypeId": 1062, **fields,
+              "title": "Тендер | новое автоматическое оформление"}
+    def only_read(client, base, method, params):
+        assert method == "crm.item.get", "no crm.item.add on uncertain receipts"
+        events.append("GET")
+        return {"result": {"item": actual}}
+    monkeypatch.setattr(bridge, "bitrix_call", only_read)
+    monkeypatch.setattr(bridge, "insert_new",
+                        lambda c, cid: events.append("QUEUE") or True)
+    monkeypatch.setattr(bridge, "confirm",
+                        lambda c, src, cid: events.append("CONFIRM") or None)
+    assert bridge.reconcile_uncertain(object(), object(), "secret") == 1
+    assert events == ["GET", "QUEUE", "CONFIRM"]
+
+
+def test_uncertain_missing_or_ambiguous_crm_source_is_never_reposted(monkeypatch):
+    monkeypatch.setattr(bridge, "read_uncertain", lambda conn: [(SOURCE, NOTICE)])
+    monkeypatch.setattr(bridge, "validate_webhook", lambda token: "https://example.invalid/rest")
+    monkeypatch.setattr(bridge, "positive_duplicate_control", lambda *a: True)
+    monkeypatch.setattr(bridge, "bitrix_call",
+                        lambda *a: pytest.fail("no CRM GET/POST without unique source"))
+    monkeypatch.setattr(bridge, "confirm",
+                        lambda *a: pytest.fail("uncertain receipt remains fenced"))
+    monkeypatch.setattr(bridge, "insert_new",
+                        lambda *a: pytest.fail("ambiguous record never enqueued"))
+    for matches in ([], [{"id": 41}, {"id": 42}]):
+        monkeypatch.setattr(bridge, "exact_duplicate", lambda *a: matches)
+        assert bridge.reconcile_uncertain(object(), object(), "secret") == 0
+

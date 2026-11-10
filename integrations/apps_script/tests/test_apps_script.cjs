@@ -434,4 +434,39 @@ test('standalone V8 refuses missing owner approval or invalid HMAC',()=>{
     /SERVICEIT_PRIVATE_CONFIG_BLOCKED/);
 });
 
+
+test('read-only diagnostic identifies quarantined valid email without any writes',()=>{
+  const e=environment({properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'
+  }});
+  const before=JSON.stringify(e.properties);
+  const result=e.context.diagnoseB2BCenterReadOnly();
+  assert.strictEqual(result.status,'SERVICEIT_B2B_REVIEW_DIAGNOSTIC');
+  assert.strictEqual(result.flagged_messages,1);
+  assert.strictEqual(result.inspected_messages,1);
+  assert.strictEqual(result.samples[0].phase,'PARSED');
+  assert.strictEqual(result.samples[0].recognized_tenders,1);
+  assert.strictEqual(result.vps_posts,0);
+  assert.strictEqual(result.crm_writes,0);
+  assert.strictEqual(e.calls.get,1);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(JSON.stringify(e.properties),before);
+  assert(!JSON.stringify(result).includes(MID));
+  assert(!JSON.stringify(result).includes(SECRET));
+});
+
+test('read-only diagnostic reports safe error code and preserves REVIEW_REQUIRED',()=>{
+  const e=environment({properties:{
+    ['SERVICEIT_EMAIL_'+MID]:'REVIEW_REQUIRED'
+  },message:message(MID,{auth:'mx.google.com; dkim=fail; dmarc=fail'})});
+  const before=JSON.stringify(e.properties);
+  const result=e.context.diagnoseB2BCenterReadOnly();
+  assert.strictEqual(result.samples[0].phase,'PARSE');
+  assert.strictEqual(result.samples[0].code,'SERVICEIT_GMAIL_DKIM_DMARC_NOT_VERIFIED');
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(JSON.stringify(e.properties),before);
+  assert(!JSON.stringify(result).includes(MID));
+});
+
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');

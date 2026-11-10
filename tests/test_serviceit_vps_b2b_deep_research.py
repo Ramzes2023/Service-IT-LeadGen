@@ -43,7 +43,7 @@ def findings():
         "pages": [{"url": NOTICE["source_url"],
                    "excerpt": "Закупка 4673595. Требуются IT-специалисты 1С и DevOps."}],
         "checked_at": "2026-11-10T12:00:00+00:00",
-        "contacts": [], "model_excerpt": "",
+        "contacts": [], "model_excerpt": "Закупка 4673595. Предоставление IT-специалистов, включая 1С, DevOps и ИБ.",
         "independent_company_research": None,
     }
 
@@ -73,6 +73,9 @@ def test_model_only_when_source_has_at_least_one_read_public_page():
     assert research.model_safe_source_title(
         NOTICE["subject"], {"status": "PUBLIC_SOURCE_NOT_READABLE", "pages": []}) == ""
     assert research.model_safe_source_title(NOTICE["subject"], findings()) == NOTICE["subject"]
+    mismatch = dict(findings(), model_excerpt="На сайте опубликована закупка 4673595 на сопровождение серверов и 1С")
+    assert research.model_safe_source_title(NOTICE["subject"], mismatch) == mismatch["model_excerpt"]
+    assert research.model_safe_source_title(NOTICE["subject"], dict(findings(), model_excerpt="Вход в личный кабинет")) == ""
 
 
 def test_cited_research_not_hypothetical_text_overwrites_only_nine_fields():

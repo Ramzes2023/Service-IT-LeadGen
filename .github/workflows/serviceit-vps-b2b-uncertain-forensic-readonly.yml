@@ -1,0 +1,132 @@
+name: ServiceIT B2B POST_UNCERTAIN exact CRM forensic (READ ONLY)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-uncertain-forensic-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_UNCERTAIN_FORENSIC_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pinned SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-uncertain"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-uncertain/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-uncertain/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-uncertain/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-uncertain/known_hosts" >/dev/null
+      - name: Compare POST_UNCERTAIN to exact live Bitrix items, no writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-uncertain/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-uncertain/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > "$RUNNER_TEMP/b2b-uncertain/status" <<'PY'
+          import subprocess,re
+          code = """
+          import os,json,httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.b2b_github_to_bitrix import exact_duplicate,bitrix_call,hold_payload,SIGNAL
+          from leadpilot.b2b_email_opportunity_bridge import classify_services
+          from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS
+          env=dict(os.environ)
+          with db(env) as connection:
+              with connection.cursor() as cur:
+                  cur.execute("SELECT source_id,notice_json FROM serviceit_vps_b2b_inbox WHERE state='POST_UNCERTAIN' ORDER BY write_started_at LIMIT 9")
+                  uncertain=cur.fetchall()
+          print('B2B_FORENSIC_UNCERTAIN_COUNT='+str(len(uncertain)),flush=True)
+          if len(uncertain)>8:
+              print('B2B_FORENSIC_TOO_MANY=YES',flush=True)
+              raise SystemExit(2)
+          if not uncertain:
+              print('B2B_FORENSIC_NO_UNCERTAIN=YES',flush=True)
+              raise SystemExit(0)
+          base=validate_webhook(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
+              assert positive_duplicate_control(client,base)
+              print('B2B_FORENSIC_SOURCE_GATE=YES',flush=True)
+              for source,raw in uncertain:
+                  notice=raw if isinstance(raw,dict) else json.loads(raw)
+                  rows=exact_duplicate(client,base,source)
+                  if not rows:
+                      print('B2B_FORENSIC_MATCH_NONE=YES',flush=True)
+                      continue
+                  if len(rows)!=1:
+                      print('B2B_FORENSIC_MATCH_MULTIPLE=YES',flush=True)
+                      continue
+                  print('B2B_FORENSIC_MATCH_ONE=YES',flush=True)
+                  card=rows[0]['id']
+                  actual=bitrix_call(client,base,'crm.item.get',
+                     {'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['result'].get('item')
+                  assert isinstance(actual,dict) and str(actual.get('id'))==str(card)
+                  assert str(actual.get('entityTypeId'))=='1062' and str(actual.get('categoryId'))=='21'
+                  assert actual.get(SIGNAL)==source
+                  expected=hold_payload(notice,classify_services(notice['subject']))['fields']
+                  for name in AI_FIELDS:
+                      expected.pop(name,None)
+                  mismatch=[key for key,value in expected.items() if actual.get(key)!=value]
+                  if not mismatch:
+                      print('B2B_FORENSIC_ALL_INITIAL_FIELDS_MATCH=YES',flush=True)
+                  else:
+                      print('B2B_FORENSIC_INITIAL_FIELDS_MISMATCH=YES',flush=True)
+                      for key in mismatch[:20]:
+                          if isinstance(key,str) and __import__('re').fullmatch(r'[a-zA-Z0-9_]{1,120}',key):
+                              print('B2B_FORENSIC_MISMATCH_'+key.upper()+'=YES',flush=True)
+          print('B2B_FORENSIC_DONE=YES',flush=True)
+          """
+          # Audit code runs INSIDE the existing non-root worker with its own
+          # mounted secrets; no secret enters the runner or this host script.
+          compile(code,'<b2b-uncertain-readonly>','exec')
+          p=subprocess.run(['docker','exec','serviceit-b2b-vps-writer-1',
+                    'python','-c',code],stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                    text=True,timeout=130)
+          for line in p.stdout.splitlines():
+              if re.fullmatch(r'B2B_FORENSIC_[A-Z0-9_]+=(?:YES|NO|[0-9]+)',line):
+                  print(line,flush=True)
+          if p.returncode!=0:
+              print('B2B_FORENSIC_BLOCKED=YES',flush=True)
+              raise SystemExit(2)
+          PY
+          grep -E '^B2B_FORENSIC_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$RUNNER_TEMP/b2b-uncertain/status"
+          grep -qx 'B2B_FORENSIC_DONE=YES' "$RUNNER_TEMP/b2b-uncertain/status" ||
+            grep -qx 'B2B_FORENSIC_NO_UNCERTAIN=YES' "$RUNNER_TEMP/b2b-uncertain/status"
+      - name: Publish only fixed field names and aggregate checks to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-uncertain/status"
+          summary="$(grep -E '^B2B_FORENSIC_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$f" 2>/dev/null | head -30 || true)"
+          [[ -n "$summary" ]] || summary="B2B_FORENSIC_UNVERIFIED=YES"
+          msg="$(printf 'B2B POST_UNCERTAIN CRM reconciliation forensic (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo Gmail, CRM, PG, Caddy or container mutations. No source or card IDs published.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

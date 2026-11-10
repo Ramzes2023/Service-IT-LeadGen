@@ -1,0 +1,91 @@
+name: ServiceIT B2B AUX task authorization READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-auxiliary-task-gates-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_AUX_TASK_GATES_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pinned SSH to existing production auxiliaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/aux-check"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/aux-check/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/aux-check/known_hosts"
+          chmod 600 "$RUNNER_TEMP/aux-check/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/aux-check/known_hosts" >/dev/null
+      - name: Live auxiliary flags and task PG receipts, no mutations
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/aux-check/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/aux-check/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-auxiliaries-1 python -B -' \
+            > "$RUNNER_TEMP/aux-check/status" <<'PY'
+          import os
+          import re
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_vps_native_aux import enabled, ai_receipt_allows_task
+          env = dict(os.environ)
+          flags = enabled(env)
+          for name, value in flags.items():
+              print('B2B_AUX_' + name.upper() + '=' + ('YES' if value else 'NO'), flush=True)
+          ok = (env.get('SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED') ==
+                'YES_1062_21_INTERNAL_MANAGER' and
+                env.get('SERVICEIT_VPS_TASK_ASSIGNEE_ID') == '605')
+          print('B2B_AUX_TASK_APPROVED_605=' + ('YES' if ok else 'NO'), flush=True)
+          with db(env) as connection:
+              with connection.cursor() as cur:
+                  cur.execute("SELECT card_id FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL LIMIT 3")
+                  rows = cur.fetchall()
+                  cur.execute("SELECT status,count(*) FROM serviceit_vps_native_receipts WHERE namespace='TASK_V1' GROUP BY status")
+                  statuses = cur.fetchall()
+              print('B2B_AUX_VERIFIED_CARDS=' + str(len(rows)), flush=True)
+              print('B2B_AUX_CURRENT_AI_TASK_GATE_ALLOW=' +
+                    str(sum(bool(ai_receipt_allows_task(connection, int(card))) for (card,) in rows)), flush=True)
+              for status, count in statuses:
+                  if isinstance(status,str) and re.fullmatch(r'[A-Z0-9_]{2,40}',status):
+                      print('B2B_AUX_TASK_RECEIPT_' + status + '=' + str(min(int(count),10000)),flush=True)
+          print('B2B_AUX_AUDIT_DONE=YES',flush=True)
+          PY
+          grep -E '^B2B_AUX_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$RUNNER_TEMP/aux-check/status" | head -40
+          grep -qx 'B2B_AUX_AUDIT_DONE=YES' "$RUNNER_TEMP/aux-check/status"
+      - name: Report sanitized status to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/aux-check/status"
+          summary="$(grep -E '^B2B_AUX_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$f" 2>/dev/null | head -40 || true)"
+          [[ -n "$summary" ]] || summary='B2B_AUX_UNVERIFIED=YES'
+          msg="$(printf 'B2B exact existing AUX task source flags (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo task/CRM/PG writes, no identifiers, customer text, credentials or raw environment values.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

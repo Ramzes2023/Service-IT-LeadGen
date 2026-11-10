@@ -112,6 +112,8 @@ jobs:
                   for key in keys:
                       suffix=key.removeprefix(PREFIX)
                       print('B2B_NINE_CARD_'+str(position)+'_'+suffix+'_GENERATED_LEN='+str(len(generated[key])),flush=True)
+                      print('B2B_NINE_CARD_'+str(position)+'_'+suffix+'_NON_BMP='+str(sum(ord(ch)>65535 for ch in generated[key])),flush=True)
+                      print('B2B_NINE_CARD_'+str(position)+'_'+suffix+'_CARRIAGE_RETURN='+str(generated[key].count(chr(13))),flush=True)
                   if isinstance(names,list) and len(names)==9 and salt is not None and digest is not None:
                       observed={name:item.get(name) for name in names}
                       exact=digested(observed,bytes(salt))==bytes(digest)

@@ -1,0 +1,118 @@
+name: ServiceIT B2B four actual task INN FNS links READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-four-task-inn-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_FOUR_TASKS_INN_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Prepare pinned non-root host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-linked"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-linked/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-linked/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-linked/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-linked/known_hosts" >/dev/null
+      - name: Two source-verified cards and exact visible Bitrix task links
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-linked/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-linked/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-auxiliaries-1 python -B -' \
+            > "$RUNNER_TEMP/b2b-linked/status" <<'PY'
+          import os,re
+          import httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.bitrix_metadata_audit import validate_webhook
+          from leadpilot.serviceit_stage34_signed_readonly_sidecar import owner_type,visible_tasks
+          from leadpilot.serviceit_enrichment_worker import normalized,validate_identity,PREFIX,AI_FIELDS
+          env=dict(os.environ)
+          with db(env) as connection:
+              with connection.cursor() as cur:
+                  cur.execute("""
+                      SELECT b.card_id,b.source_id,r.status,f.status
+                      FROM serviceit_vps_b2b_inbox b
+                      LEFT JOIN serviceit_vps_native_receipts r
+                        ON r.namespace='TASK_V1' AND r.card_id=b.card_id
+                      LEFT JOIN serviceit_vps_native_receipts f
+                        ON f.namespace='B2B_PUBLIC_INN_V1' AND f.card_id=b.card_id
+                      WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
+                      ORDER BY b.received_at,b.source_id LIMIT 10
+                  """)
+                  rows=cur.fetchall()
+          print('B2B_TASKS_FOUR_PRESENT='+('YES' if len(rows)==4 else 'NO'),flush=True)
+          assert 0 < len(rows) <= 10
+          base=validate_webhook(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
+              symbol=owner_type(client,base)
+              for i,(card,source,receipt,inn_receipt) in enumerate(rows,1):
+                  assert isinstance(source,str) and re.fullmatch(r'B2B-CENTER-[0-9]{5,12}',source)
+                  print('B2B_TASKS_CARD_'+str(i)+'_PG_VERIFIED='+('YES' if receipt=='VERIFIED' else 'NO'),flush=True)
+                  print('B2B_TASKS_CARD_'+str(i)+'_INN_RECEIPT='+('YES' if inn_receipt=='VERIFIED' else 'NO'),flush=True)
+                  response=client.post(base+'/crm.item.get.json',json={
+                      'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'
+                  },timeout=20,follow_redirects=False)
+                  assert response.status_code==200 and 0<len(response.content)<=512000
+                  payload=response.json()
+                  assert isinstance(payload,dict) and 'error' not in payload
+                  item=normalized(payload['result']['item'])
+                  validate_identity(item,card)
+                  assert item.get(PREFIX+'SIGNAL_ID')==source
+                  nine=sum(type(item.get(key)) is str and bool(item.get(key).strip()) for key in AI_FIELDS)
+                  print('B2B_TASKS_CARD_'+str(i)+'_NINE_FIELDS='+('YES' if nine==9 else 'NO'),flush=True)
+                  from leadpilot.bitrix_1062_mapping import _is_valid_inn
+                  inn=item.get(PREFIX+'COMPANY_INN')
+                  print('B2B_TASKS_CARD_'+str(i)+'_INN_VALID='+('YES' if isinstance(inn,str) and _is_valid_inn(inn) else 'NO'),flush=True)
+                  fns=item.get('UF_CRM_13_SVCIT_FNS_MSP_RESULT')
+                  print('B2B_TASKS_CARD_'+str(i)+'_FNS_PRESENT='+('YES' if isinstance(fns,str) and fns.strip() else 'NO'),flush=True)
+                  try:
+                      count=visible_tasks(client,base,symbol+'_'+str(card))
+                  except Exception:
+                      count=-1
+                  print('B2B_TASKS_CARD_'+str(i)+'_ONE_VISIBLE='+('YES' if count==1 else 'NO'),flush=True)
+                  print('B2B_TASKS_CARD_'+str(i)+'_NO_DUPLICATE_VISIBLE='+('YES' if count<=1 else 'NO'),flush=True)
+          print('B2B_TASKS_BITRIX_READBACK_DONE=YES',flush=True)
+          PY
+          grep -E '^B2B_TASKS_[A-Z0-9_]+=(YES|NO)$' "$RUNNER_TEMP/b2b-linked/status" | head -48
+          grep -qx 'B2B_TASKS_BITRIX_READBACK_DONE=YES' "$RUNNER_TEMP/b2b-linked/status"
+      - name: Publish only exact yes/no statuses, not card IDs or task data
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-linked/status"
+          summary="$(grep -E '^B2B_TASKS_[A-Z0-9_]+=(YES|NO)$' "$f" 2>/dev/null | head -18 || true)"
+          [[ -n "$summary" ]] || summary='B2B_TASKS_BITRIX_READBACK_UNVERIFIED=YES'
+          msg="$(printf 'B2B four actual task links, public INN and FNS results (READ ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo contact, task, CRM, PG or AI writes, no source/card/task IDs, no names or secrets in output. Webhook visibility is not global task dedup proof.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

@@ -222,8 +222,10 @@ def main():
     print("B2BLIVE_PREWRITE=YES", flush=True)
     # Preserve both old containers and independent snapshots before mutation.
     for name, role in ((RECEIVER, "receiver"), (WRITER, "writer")):
+        print("B2BLIVE_SNAPSHOT_"+role.upper()+"_STARTED=YES", flush=True)
         run(["docker", "commit", "--pause=false", name,
              "serviceit-b2b-rollback:" + role + "-" + ref], timeout=100)
+        print("B2BLIVE_SNAPSHOT_"+role.upper()+"_COMPLETED=YES", flush=True)
     print("B2BLIVE_OLD_SNAPSHOTS=YES", flush=True)
     backups = {}
     try:

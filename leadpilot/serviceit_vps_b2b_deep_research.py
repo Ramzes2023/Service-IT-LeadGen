@@ -189,14 +189,28 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None):
 # PUBLIC procurement text can trigger an additional company web search.
 # An organizer, bidding-platform support, IP/person or inferred CRM name cannot.
 PUBLIC_BUYER_LABEL = re.compile(
-    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)'
-    r'\s*[:—–-]\s*((?:ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
-    r'\s+(?:«[^»]{4,90}»|"[^"]{4,90}"))'
+    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)\b'
+    r'\s*[:—–-]?\s*'
+    r'(?P<form>Общество\s+с\s+ограниченной\s+ответственностью|'
+    r'Публичное\s+акционерное\s+общество|Акционерное\s+общество|'
+    r'ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
+    r'\s*[«"](?P<title>[^»"]{4,90})[»"]'
 )
+FULL_BUYER_FORMS = {
+    "общество с ограниченной ответственностью": "ООО",
+    "публичное акционерное общество": "ПАО",
+    "акционерное общество": "АО",
+}
+
+
+def _canonical_buyer_match(match):
+    form = " ".join(match.group("form").split()).casefold()
+    abbreviation = FULL_BUYER_FORMS.get(form, match.group("form").upper())
+    return abbreviation + " «" + " ".join(match.group("title").split()) + "»"
 
 
 def public_buyer_candidate(findings):
-    """Published name candidate, NOT verified legal identity or authorization."""
+    """Public buyer's legal label, NOT independently verified FNS identity."""
     if not isinstance(findings, dict) or findings.get("status") != "PUBLIC_PAGES_INSPECTED":
         return ""
     for row in (findings.get("pages") or [])[:3]:
@@ -204,7 +218,7 @@ def public_buyer_candidate(findings):
             continue
         found = PUBLIC_BUYER_LABEL.search(" ".join(row["excerpt"].split()))
         if found:
-            return " ".join(found.group(1).split())
+            return _canonical_buyer_match(found)
     return ""
 
 
@@ -407,7 +421,7 @@ def published_buyer_inn_evidence(findings):
         if not isinstance(excerpt, str) or not isinstance(url, str):
             continue
         for match in PUBLIC_BUYER_LABEL.finditer(" ".join(excerpt.split())):
-            if " ".join(match.group(1).split()) != buyer:
+            if _canonical_buyer_match(match) != buyer:
                 continue
             tail = " ".join(excerpt.split())[match.end():match.end()+260]
             # Avoid mixing an unrelated organizer / platform legal identifier.

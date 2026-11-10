@@ -80,9 +80,17 @@ def eligible_one(connection):
               AND NOT EXISTS (
                 SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts r
                 WHERE r.card_id=b.card_id)
-              AND EXISTS (
-                SELECT 1 FROM serviceit_vps_b2b_dossier_v10_receipts prior
-                WHERE prior.card_id=b.card_id AND prior.status='VERIFIED'
+              AND (
+                EXISTS (
+                  SELECT 1 FROM serviceit_vps_b2b_dossier_v10_receipts prior
+                  WHERE prior.card_id=b.card_id AND prior.status='VERIFIED'
+                )
+                OR EXISTS (
+                  SELECT 1 FROM serviceit_vps_native_receipts research
+                  WHERE research.card_id=b.card_id
+                    AND research.namespace='B2B_RESEARCH_V4'
+                    AND research.status IN ('VERIFIED','HOLD')
+                )
               )
             ORDER BY b.received_at,b.source_id LIMIT 1
         """)

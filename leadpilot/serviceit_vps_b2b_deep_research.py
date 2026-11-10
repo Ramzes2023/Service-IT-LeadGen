@@ -222,7 +222,7 @@ def public_buyer_candidate(findings):
     return ""
 
 
-def _public_company_self_declaration(client, buyer, known_pages, token):
+def _public_company_self_declaration(client, buyer, known_pages, token, *, allow_extra_discovery=False):
     """Bounded public-only company/site discovery; not legal FNS verification.
 
     A name match alone is not enough. Require the same legal name AND a
@@ -253,7 +253,8 @@ def _public_company_self_declaration(client, buyer, known_pages, token):
             if isinstance(x, dict) and isinstance(x.get("url"), str)]
     # One extra bounded public search only when earlier company search did not
     # yield readable company pages. Query uses source-PUBLISHED company name.
-    if not urls and isinstance(token, str) and token.isascii() and 12 <= len(token) <= 200:
+    if (allow_extra_discovery and not urls and isinstance(token, str)
+            and token.isascii() and 12 <= len(token) <= 200):
         try:
             response = client.get(
                 SEARCH_URL,
@@ -365,7 +366,8 @@ def followup_public_buyer_research(findings, env, client, key):
         return findings
     independent["company_name_provenance"] = "PUBLIC_BUYER_LABEL_LEGAL_IDENTITY_UNVERIFIED"
     website = _public_company_self_declaration(
-        client, buyer, independent.get("pages") or [], key)
+        client, buyer, independent.get("pages") or [], key,
+        allow_extra_discovery=(env.get("SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED") == "YES"))
     if website:
         independent["public_inn"] = {
             key: website[key] for key in

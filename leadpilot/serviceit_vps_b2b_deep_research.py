@@ -189,14 +189,28 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None):
 # PUBLIC procurement text can trigger an additional company web search.
 # An organizer, bidding-platform support, IP/person or inferred CRM name cannot.
 PUBLIC_BUYER_LABEL = re.compile(
-    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)'
-    r'\s*[:—–-]\s*((?:ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
-    r'\s+(?:«[^»]{4,90}»|"[^"]{4,90}"))'
+    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)\b'
+    r'\s*[:—–-]?\s*'
+    r'(?P<form>Общество\s+с\s+ограниченной\s+ответственностью|'
+    r'Публичное\s+акционерное\s+общество|Акционерное\s+общество|'
+    r'ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
+    r'\s*[«"](?P<title>[^»"]{4,90})[»"]'
 )
+FULL_BUYER_FORMS = {
+    "общество с ограниченной ответственностью": "ООО",
+    "публичное акционерное общество": "ПАО",
+    "акционерное общество": "АО",
+}
+
+
+def _canonical_buyer_match(match):
+    form = " ".join(match.group("form").split()).casefold()
+    abbreviation = FULL_BUYER_FORMS.get(form, match.group("form").upper())
+    return abbreviation + " «" + " ".join(match.group("title").split()) + "»"
 
 
 def public_buyer_candidate(findings):
-    """Published name candidate, NOT verified legal identity or authorization."""
+    """Public buyer's legal label, NOT independently verified FNS identity."""
     if not isinstance(findings, dict) or findings.get("status") != "PUBLIC_PAGES_INSPECTED":
         return ""
     for row in (findings.get("pages") or [])[:3]:
@@ -204,8 +218,123 @@ def public_buyer_candidate(findings):
             continue
         found = PUBLIC_BUYER_LABEL.search(" ".join(row["excerpt"].split()))
         if found:
-            return " ".join(found.group(1).split())
+            return _canonical_buyer_match(found)
     return ""
+
+
+def _public_company_self_declaration(client, buyer, known_pages, token, *, allow_extra_discovery=False):
+    """Bounded public-only company/site discovery; not legal FNS verification.
+
+    A name match alone is not enough. Require the same legal name AND a
+    checksum-valid INN printed together on a separately fetched HTTPS page.
+    Search snippets are candidate URLs only, never evidence. Follow robots,
+    public DNS and no-redirect policy from the shared public page fetcher.
+    """
+    if not buyer or not isinstance(known_pages, list):
+        return None
+    from urllib.parse import urlsplit
+    from .serviceit_public_evidence_research import (
+        _host, _page, EMAIL, _contacts, ResearchBlocked, MARKETPLACES,
+    )
+    from .bitrix_1062_mapping import _is_valid_inn
+    from .serviceit_independent_company_research import SEARCH_URL
+    match = re.fullmatch(r'(ООО|ПАО|АО|ОАО|ЗАО)\s+«([^»]{4,90})»', buyer)
+    if match is None:
+        return None
+    form, name = match.groups()
+    form_long = {"ООО": "общество с ограниченной ответственностью",
+                 "ПАО": "публичное акционерное общество",
+                 "АО": "акционерное общество"}.get(form, form)
+    legal = re.compile(
+        r'(?iu)(?:' + re.escape(form) + '|' +
+        r'\s+'.join(map(re.escape, form_long.split())) +
+        r')\s*[«"]' + re.escape(name) + r'[»"]')
+    urls = [x.get("url") for x in known_pages[:6]
+            if isinstance(x, dict) and isinstance(x.get("url"), str)]
+    # One extra bounded public search only when earlier company search did not
+    # yield readable company pages. Query uses source-PUBLISHED company name.
+    if (allow_extra_discovery and not urls and isinstance(token, str)
+            and token.isascii() and 12 <= len(token) <= 200):
+        try:
+            response = client.get(
+                SEARCH_URL,
+                params={"q": '"' + buyer + '" официальный сайт контакты ИНН',
+                        "count": 5, "country": "RU", "search_lang": "ru"},
+                headers={"X-Subscription-Token": token,
+                         "Accept": "application/json"},
+                follow_redirects=False, timeout=10.0)
+            if (response.status_code == 200 and len(response.content) <= 160000
+                    and "application/json" in response.headers.get("content-type", "")):
+                rows = response.json().get("web", {}).get("results", [])
+                if isinstance(rows, list):
+                    urls = [x.get("url") for x in rows[:5] if isinstance(x, dict)]
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            pass
+    results = []
+    attempted = set()
+    for raw in urls:
+        if len(attempted) >= 5 or len(results) >= 3:
+            break
+        if not isinstance(raw, str) or raw in attempted:
+            continue
+        attempted.add(raw)
+        try:
+            host = _host(raw, frozenset({(urlsplit(raw).hostname or "").lower()}))
+            if any(host == p or host.endswith("." + p)
+                   for p in MARKETPLACES):
+                continue
+            page = _page(client, raw, frozenset({host}))
+            body = " ".join(page["text"].split())
+        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, KeyError):
+            continue
+        valid = []
+        for label in list(legal.finditer(body))[:8]:
+            context = body[label.end():label.end()+480]
+            # Never read the subsidiary's or another organization’s INN.
+            context = re.split(
+                r'(?iu)(?:ООО|ПАО|АО|ОАО|ЗАО|Общество\s+с\s+'
+                r'ограниченной\s+ответственностью)\s*[«"]',
+                context, maxsplit=1)[0]
+            for inn in re.findall(r'(?iu)\bИНН\s*(?:[/№:]|\s){0,6}(\d{10}|\d{12})(?!\d)',
+                                  context):
+                if _is_valid_inn(inn):
+                    valid.append(inn)
+        if len(set(valid)) != 1:
+            continue
+        inn = valid[0]
+        stamp = datetime.now(timezone.utc).isoformat()
+        company_contacts = []
+        site_label = host.split(".")[-2] if "." in host else host
+        for value in EMAIL.findall(body)[:24]:
+            email = value.lower()
+            domain = email.split("@")[-1]
+            # Official-looking public mail can use a different TLD (.ru/.com).
+            # Require the same domain stem as the legally named source website.
+            if domain.split(".")[-2] != site_label:
+                continue
+            local = email.split("@")[0]
+            if local not in {"info", "office", "contact", "sales", "tender",
+                             "procurement", "1c", "support", "partners"}:
+                continue
+            company_contacts.append({
+                "type": "email", "value": email, "url": raw,
+                "role": "публичная корпоративная почта; право обращения не подтверждено",
+                "checked_at": stamp,
+                "origin": "LEGAL_NAME_AND_INN_ON_PUBLIC_PAGE_NOT_FNS",
+            })
+        # Independently displayed public telephone remains a candidate.
+        company_contacts.extend(_contacts(page, host, stamp))
+        results.append({"inn": inn, "url": raw, "contacts": company_contacts[:6]})
+    if not results or len({x["inn"] for x in results}) != 1:
+        return None
+    contacts = {}
+    for row in results:
+        for c in row["contacts"]:
+            contacts[(c["type"], c["value"])] = c
+    return {"inn": results[0]["inn"], "buyer_name": buyer,
+            "public_source": results[0]["url"],
+            "contacts": list(contacts.values())[:8],
+            "fns_verified": False, "provenance": "PUBLIC_CORPORATE_SELF_DECLARATION"}
 
 
 def followup_public_buyer_research(findings, env, client, key):
@@ -236,6 +365,20 @@ def followup_public_buyer_research(findings, env, client, key):
     if not isinstance(independent, dict):
         return findings
     independent["company_name_provenance"] = "PUBLIC_BUYER_LABEL_LEGAL_IDENTITY_UNVERIFIED"
+    website = _public_company_self_declaration(
+        client, buyer, independent.get("pages") or [], key,
+        allow_extra_discovery=(env.get("SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED") == "YES"))
+    if website:
+        independent["public_inn"] = {
+            key: website[key] for key in
+            ("inn", "buyer_name", "public_source", "fns_verified", "provenance")
+        }
+        existing = independent.get("contacts") or []
+        independent["contacts"] = list({
+            (c["type"], c["value"]): c for c in
+            (existing + website["contacts"]) if isinstance(c, dict)
+            and c.get("type") in ("email", "phone") and c.get("value")
+        }.values())[:8]
     result = dict(findings)
     result["independent_company_research"] = independent
     return result
@@ -407,7 +550,7 @@ def published_buyer_inn_evidence(findings):
         if not isinstance(excerpt, str) or not isinstance(url, str):
             continue
         for match in PUBLIC_BUYER_LABEL.finditer(" ".join(excerpt.split())):
-            if " ".join(match.group(1).split()) != buyer:
+            if _canonical_buyer_match(match) != buyer:
                 continue
             tail = " ".join(excerpt.split())[match.end():match.end()+260]
             # Avoid mixing an unrelated organizer / platform legal identifier.
@@ -417,6 +560,14 @@ def published_buyer_inn_evidence(findings):
                     r"(?iu)\bИНН\s*[:№]?\s*(\d{10}|\d{12})(?!\d)", tail):
                 if _is_valid_inn(candidate):
                     found.append((candidate, url))
+    independent = findings.get("independent_company_research")
+    if isinstance(independent, dict):
+        corporate = independent.get("public_inn")
+        if (isinstance(corporate, dict)
+                and corporate.get("buyer_name") == buyer
+                and corporate.get("fns_verified") is False
+                and _is_valid_inn(corporate.get("inn"))):
+            found.append((corporate["inn"], corporate["public_source"]))
     # Conflicting buyer INNs are not an identity. Leave ambiguous candidates out.
     unique = set(v for v, _ in found)
     if len(unique) != 1:

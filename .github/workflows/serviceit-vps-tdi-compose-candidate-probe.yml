@@ -86,6 +86,28 @@ jobs:
           print('TDI_COMPOSE_BASE_OK='+('YES' if current.returncode==0 else 'NO'))
           print('TDI_COMPOSE_CANDIDATE_OK='+('YES' if candidate.returncode==0 else 'NO'))
           print('TDI_COMPOSE_CANDIDATE_REASON='+('OK' if candidate.returncode==0 else reason(candidate.stderr)))
+          # A brand-new minimal YAML tests whether the original pin contains
+          # trailing or duplicate structure; never touch the live Compose pin.
+          import tempfile
+          _match=re.search(r'(?m)^    image: "(sha256:[0-9a-f]{64})"$',txt)
+          if _match:
+              minimal=('services:\n  coordinator:\n    image: "'+_match.group(1)
+                       +'"\n    pull_policy: never\n    environment:\n'
+                       +'      SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED: "YES"\n')
+              with tempfile.NamedTemporaryFile(mode='w',encoding='utf8',
+                   suffix='.yml',prefix='tdi-candidate-',dir=str(stage.parent),
+                   delete=False) as temp:
+                  temp.write(minimal)
+                  alt=Path(temp.name)
+              try:
+                  check=run([x for x in paths if x!=pin]+[alt])
+                  print('TDI_COMPOSE_MINIMAL_OK='+('YES' if check.returncode==0 else 'NO'))
+                  print('TDI_COMPOSE_MINIMAL_REASON='+('OK' if check.returncode==0 else reason(check.stderr)))
+              finally:
+                  alt.unlink(missing_ok=True)
+          else:
+              print('TDI_COMPOSE_MINIMAL_OK=NO')
+              print('TDI_COMPOSE_MINIMAL_REASON=IMAGE_NOT_FOUND')
           if current.returncode==0 and candidate.returncode==0:
               old=json.loads(current.stdout)['services']['coordinator']
               new=json.loads(candidate.stdout)['services']['coordinator']
@@ -94,4 +116,4 @@ jobs:
               print('TDI_COMPOSE_ENV_ONLY_ADD='+('YES' if new.get('environment')==expected else 'NO'))
               print('TDI_COMPOSE_NEW_IMAGE='+('YES' if new.get('image')!=old.get('image') else 'NO'))
           PY
-          grep -E '^TDI_COMPOSE_[A-Z_]+=(YES|NO|OK|PERMISSION|MISSING_FILE|YAML_PARSE|INTERPOLATION|INVALID_TYPE|UNSUPPORTED_KEY|INVALID_SERVICE|DUPLICATE|OTHER)$' "$RUNNER_TEMP/tdi-compose/result"
+          grep -E '^TDI_COMPOSE_[A-Z_]+=(YES|NO|OK|PERMISSION|MISSING_FILE|YAML_PARSE|INTERPOLATION|INVALID_TYPE|UNSUPPORTED_KEY|INVALID_SERVICE|DUPLICATE|OTHER|IMAGE_NOT_FOUND)$' "$RUNNER_TEMP/tdi-compose/result"

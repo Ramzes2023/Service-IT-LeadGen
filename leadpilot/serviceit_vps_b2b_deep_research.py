@@ -207,16 +207,21 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None, *, subject=
     return None
 
 
-# Only a labelled, quoted LEGAL ORGANIZATION in independently verified
-# PUBLIC procurement text can trigger an additional company web search.
-# An organizer, bidding-platform support, IP/person or inferred CRM name cannot.
+# Public tender pages use different LABELS: "Заказчики: ПАО «...»,"
+# or "Заказчик ПАО Московская Биржа ИНН-КПП". Accept only explicitly
+# labelled buyers (never an organizer), a legal form and either quoted
+# name or bounded unquoted name ending BEFORE a known requisites heading.
+# This is public buyer evidence, NOT official FNS/legal confirmation.
 PUBLIC_BUYER_LABEL = re.compile(
-    r'(?iu)\b(?:заказчик|покупатель|наименование\s+заказчика)\b'
+    r'(?iu)\b(?:заказчики|заказчик|покупатель|наименование\s+заказчика)\b'
     r'\s*[:—–-]?\s*'
     r'(?P<form>Общество\s+с\s+ограниченной\s+ответственностью|'
     r'Публичное\s+акционерное\s+общество|Акционерное\s+общество|'
     r'ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
-    r'\s*[«"](?P<title>[^»"]{4,90})[»"]'
+    r'(?:\s*[«"](?P<title>[^»"]{4,90})[»"]|'
+    r'\s+(?P<plain>[А-ЯЁ][А-ЯЁа-яёA-Za-z0-9 .()\-]{4,70}?)'
+    r'(?=\s+(?:ИНН(?:-КПП)?|ОГРН|Документы|Окончание|Порядок|'
+    r'Местонахождение|Подача|Начальная|Регион|Объект|Лоты)\b))'
 )
 FULL_BUYER_FORMS = {
     "общество с ограниченной ответственностью": "ООО",
@@ -228,7 +233,13 @@ FULL_BUYER_FORMS = {
 def _canonical_buyer_match(match):
     form = " ".join(match.group("form").split()).casefold()
     abbreviation = FULL_BUYER_FORMS.get(form, match.group("form").upper())
-    return abbreviation + " «" + " ".join(match.group("title").split()) + "»"
+    title = match.group("title") or match.group("plain")
+    if not title:
+        raise B2BResearchBlocked("PUBLIC_BUYER_TITLE_MISSING")
+    title = " ".join(title.split()).strip(" .,-")
+    if not 4 <= len(title) <= 90:
+        raise B2BResearchBlocked("PUBLIC_BUYER_TITLE_INVALID")
+    return abbreviation + " «" + title + "»"
 
 
 def public_buyer_candidate(findings):
@@ -443,7 +454,7 @@ def source_findings(item, notice, env, client):
         if candidate is not None:
             if mirror is not None:
                 candidate = dict(candidate)
-                candidate["pages"] = candidate["pages"][:2] + mirror["pages"][:1]
+                candidate["pages"] = (candidate["pages"][:1] + mirror["pages"][:2])[:3]
             return followup_public_buyer_research(candidate, env, client, key)
         if mirror is not None:
             return followup_public_buyer_research(mirror, env, client, key)
@@ -464,10 +475,16 @@ def source_findings(item, notice, env, client):
             results["pages"] = (results.get("pages") or [])[:2] + fresh[:1]
             results["brave_exact_id_independent_page"] = True
     if mirror is not None:
-        existing = {x.get("url") for x in results.get("pages", [])}
-        if mirror["pages"][0]["url"] not in existing:
+        prior = (results.get("pages") or [])[:1]
+        existing = {x.get("url") for x in prior}
+        added = [x for x in mirror["pages"]
+                 if isinstance(x, dict) and x.get("url") not in existing][:2]
+        if added:
             results = dict(results)
-            results["pages"] = (results.get("pages") or [])[:2] + mirror["pages"][:1]
+            # Keep the independently confirmed official page, then the two
+            # richest verified mirrors. Do NOT sacrifice a buyer/terms page
+            # to preserve a generic company/site listing.
+            results["pages"] = (prior + added)[:3]
             results["brave_public_mirror_independently_verified"] = True
     return followup_public_buyer_research(results, env, client, key)
 
@@ -583,7 +600,7 @@ def published_buyer_inn_evidence(findings):
             tail = re.split(r"(?iu)\b(?:организатор|оператор|площадка|поставщик)"
                             r"\s*[:—–-]", tail, maxsplit=1)[0]
             for candidate in re.findall(
-                    r"(?iu)\bИНН\s*[:№]?\s*(\d{10}|\d{12})(?!\d)", tail):
+                    r"(?iu)\bИНН(?:\s*[-–]\s*КПП)?\s*[:№]?\s*(\d{10}|\d{12})(?!\d)", tail):
                 if _is_valid_inn(candidate):
                     found.append((candidate, url))
     independent = findings.get("independent_company_research")

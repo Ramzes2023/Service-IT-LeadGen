@@ -43,6 +43,11 @@ def test_vetted_mirror_robots_200_and_real_page_not_index_snippet(monkeypatch):
     seen = []
     def transport(req):
         seen.append((req.url.host, req.url.path))
+        if req.url.host == "api.search.brave.com":
+            # New V11 source ranking checks later mirrors even if one
+            # exact-ID public Tendum page was already fetched.
+            return httpx.Response(200, json={"web": {"results": []}},
+                                  headers={"Content-Type": "application/json"})
         if req.url.path == "/robots.txt":
             return httpx.Response(200, text="User-agent: *\nAllow: /",
                                   headers={"Content-Type": "text/plain"})
@@ -59,7 +64,9 @@ def test_vetted_mirror_robots_200_and_real_page_not_index_snippet(monkeypatch):
     assert found["pages"][0]["url"] == TEND_URL
     assert NUMBER in found["pages"][0]["excerpt"]
     assert "Подача заявок" in found["pages"][0]["excerpt"]
-    assert seen == [("tendem.ru","/robots.txt"),("tendem.ru","/tenders/16548471")]
+    assert seen[:2] == [("tendem.ru","/robots.txt"),("tendem.ru","/tenders/16548471")]
+    assert all(host in ("tendem.ru", "api.search.brave.com") for host, _ in seen)
+    assert sum(host == "api.search.brave.com" for host, _ in seen) <= 3
     assert deep.public_documents(found)
 
 

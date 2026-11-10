@@ -271,6 +271,7 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
     )
     from .bitrix_1062_mapping import _is_valid_inn
     from .serviceit_independent_company_research import SEARCH_URL
+    from .serviceit_b2b_public_mirrors import MIRRORS
     match = re.fullmatch(r'(ООО|ПАО|АО|ОАО|ЗАО)\s+«([^»]{4,90})»', buyer)
     if match is None:
         return None
@@ -314,8 +315,11 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
         attempted.add(raw)
         try:
             host = _host(raw, frozenset({(urlsplit(raw).hostname or "").lower()}))
+            # A tender aggregator prints the procurement's buyer legal name
+            # and INN, but its footer phone belongs to the PLATFORM. It
+            # cannot establish a buyer-owned official company mailbox/phone.
             if any(host == p or host.endswith("." + p)
-                   for p in MARKETPLACES):
+                   for p in (MARKETPLACES | MIRRORS)):
                 continue
             page = _page(client, raw, frozenset({host}))
             body = " ".join(page["text"].split())

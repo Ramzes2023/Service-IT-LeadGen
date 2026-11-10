@@ -339,6 +339,13 @@ function classifyServices_(title) {
   const WORD = "[\\p{L}\\p{N}_]";
   const suffix = WORD + "*";
   const patterns = {
+    // Only an explicit tender to provide IT personnel qualifies; a vacancy,
+    // general recruitment or a generic outsourcing headline is not enough.
+    "IT_STAFFING": new RegExp(
+      "(?:предоставлени|привлечени|аутстаффинг)" + suffix +
+      "\\s+(?:ит|it)[\\s-]*специалист" + suffix,
+      "iu"
+    ),
     "1C": new RegExp("(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:", "iu"),
     "IT_SUPPORT": new RegExp(
       "(?<!" + WORD + ")(?:ит|it)[\\s-]*(?:аутсорс" + suffix + "|поддержк" + suffix + "|обслуживан" + suffix + "|инфраструктур" + suffix + ")" +

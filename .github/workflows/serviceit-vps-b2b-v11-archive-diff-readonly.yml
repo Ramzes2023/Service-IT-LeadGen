@@ -1,0 +1,97 @@
+name: ServiceIT B2B V11 vs archived V10 factual continuity READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v11-diff-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V11_ARCHIVE_DIFF_READONLY_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Compare archived V10 and current verified V11 evidence without exposing fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v11-diff"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v11-diff/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v11-diff/hosts"
+          chmod 0600 "$RUNNER_TEMP/v11-diff/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v11-diff/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/v11-diff/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/v11-diff/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/v11-diff/status" <<'PY'
+          import os,re
+          from leadpilot.serviceit_vps_pg_queue import db
+          from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
+          report = PREFIX+'AI_FULL_REPORT'
+          brief = PREFIX+'AI_MANAGER_BRIEF'
+          categories = {
+              'DEADLINE':r'(?m)^Срок подачи: «',
+              'PARTICIPATION':r'(?m)^Допуск / квалификация: «',
+              'PAYMENT':r'(?m)^Оплата / расчёты: «',
+              'DOCUMENTS':r'(?m)^Документы участника: «',
+              'GUARANTEE':r'(?m)^Обеспечение / гарантии: «',
+              'SELECTION':r'(?m)^Критерии отбора: «',
+          }
+          with db(dict(os.environ)) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("""
+                      SELECT before_fields,after_fields
+                      FROM serviceit_vps_b2b_dossier_v11_receipts
+                      WHERE status='VERIFIED' ORDER BY card_id
+                  """)
+                  rows=cur.fetchall()
+          print('V11_DIFF_FOUR_ARCHIVES=' + ('YES' if len(rows)==4 else 'NO'),flush=True)
+          for idx,(old,new) in enumerate(rows[:4],1):
+              if not isinstance(old,dict) or not isinstance(new,dict):
+                  print(f'V11_DIFF_CARD_{idx}_FIELDS_INVALID=YES',flush=True)
+                  continue
+              prev=old.get(report,'')
+              curr=new.get(report,'')
+              if not isinstance(prev,str) or not isinstance(curr,str):
+                  print(f'V11_DIFF_CARD_{idx}_FIELDS_INVALID=YES',flush=True)
+                  continue
+              prev_quotes=len(re.findall(r'(?m)^\\d{2}\\. [^\\n]{6,180} \\[\\d+\\]$',prev))
+              curr_quotes=len(re.findall(r'(?m)^\\d{2}\\. [^\\n]{6,180} \\[\\d+\\]$',curr))
+              print(f'V11_DIFF_CARD_{idx}_QUOTES_BEFORE={min(prev_quotes,99)}',flush=True)
+              print(f'V11_DIFF_CARD_{idx}_QUOTES_AFTER={min(curr_quotes,99)}',flush=True)
+              old_buyer='Заказчик: не установлен' not in prev and 'Заказчик:' in prev
+              new_buyer='Заказчик: не установлен' not in curr and 'Заказчик:' in curr
+              print(f'V11_DIFF_CARD_{idx}_BUYER_BEFORE='+('YES' if old_buyer else 'NO'),flush=True)
+              print(f'V11_DIFF_CARD_{idx}_BUYER_AFTER='+('YES' if new_buyer else 'NO'),flush=True)
+              for label,regex in categories.items():
+                  before=bool(re.search(regex,prev))
+                  after=bool(re.search(regex,curr))
+                  print(f'V11_DIFF_CARD_{idx}_{label}_BEFORE='+('YES' if before else 'NO'),flush=True)
+                  print(f'V11_DIFF_CARD_{idx}_{label}_AFTER='+('YES' if after else 'NO'),flush=True)
+              print(f'V11_DIFF_CARD_{idx}_SOURCE_LOSS='+('YES' if prev_quotes>curr_quotes else 'NO'),flush=True)
+          PY
+          grep -E '^V11_DIFF_[A-Z0-9_]+=(YES|NO|[0-9]{1,2})
+ \
+            "$RUNNER_TEMP/v11-diff/status" | head -96

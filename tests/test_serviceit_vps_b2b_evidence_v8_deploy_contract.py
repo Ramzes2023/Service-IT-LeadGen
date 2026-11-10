@@ -6,7 +6,7 @@ def test_v8_release_is_two_file_only_and_attested():
     deploy = Path("ops/serviceit_vps_b2b_evidence_v8_activate.py").read_text("utf-8")
     workflow = Path(".github/workflows/serviceit-vps-b2b-evidence-v8-release.yml").read_text("utf-8")
     marker = deploy.split("FILES = (", 1)[1].split(")", 1)[0]
-    assert "serviceit_vps_b2b_deep_research.py" in marker
+    assert "serviceit_vps_b2b_deep_research.py" not in marker
     assert "serviceit_b2b_routerai_deep.py" in marker
     assert "serviceit_vps_worker.py" not in marker
     assert "serviceit_vps_b2b_public_inn.py" not in marker
@@ -22,7 +22,8 @@ def test_v8_release_is_two_file_only_and_attested():
     assert 'make_pin(new_image, active=True, extra=True, inn=True)' in deploy
     assert "CURRENT_V7_INN_WRITER_NOT_ACTIVE" in deploy
     assert 'SERVICEIT_B2B_EVIDENCE_V8_RELEASE_368' in workflow
-    assert 'e8afe5439609a342c9e43a01cc389acd8857bebce4fe074318d7ec32d0a07b81' in workflow
+    assert 'LIVE_INN_V8_DEEP_SHA_REQUIRED' in deploy
+    assert 'fc8b91870fe0c8b6e91e66d136aa06ae052d947d638bbb68d70799d8930ed550' in deploy
     assert '54690407408513d3430ac9ea57b90eb4bb7cd9a6eac390e8d869fed68a7f07c3' in workflow
     assert 'git diff --quiet 0655587324289efdede8860fdf69e07a25bf5477 HEAD' in workflow
     assert 'github.actor == \'Ramzes2023\'' in workflow

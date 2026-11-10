@@ -11,11 +11,10 @@ jobs:
   diagnose:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
-      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
       github.actor == 'Ramzes2023' &&
       github.event.issue.number == 368 &&
       !github.event.issue.pull_request &&
-      github.event.comment.user.login == 'Ramzes2023' &&
       github.event.comment.body == 'SERVICEIT_B2B_V7_INN_CYCLES_READONLY_368'
     runs-on: ubuntu-latest
     timeout-minutes: 8

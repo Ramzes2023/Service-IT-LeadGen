@@ -154,9 +154,9 @@ def test_digest_and_non_ai_gate():
 def test_vps_coordinator_calls_dossier_after_public_inn_only():
     code = Path("leadpilot/serviceit_vps_worker.py").read_text("utf8")
     assert code.index('public_inn = {"status"') < code.index(
-        "from .serviceit_vps_b2b_dossier_v10_worker import worker_once")
-    assert "B2B_DOSSIER_V10_CHECK_FAILED" in code
-    worker = Path("leadpilot/serviceit_vps_b2b_dossier_v10_worker.py").read_text("utf8")
+        "from .serviceit_vps_b2b_dossier_v11_worker import worker_once")
+    assert "B2B_DOSSIER_V11_CHECK_FAILED" in code
+    worker = Path("leadpilot/serviceit_vps_b2b_dossier_v11_worker.py").read_text("utf8")
     assert "pg_try_advisory_lock" in worker
     assert "before_fields JSONB NOT NULL" in worker
     assert "'WRITE_INTENT'" in worker

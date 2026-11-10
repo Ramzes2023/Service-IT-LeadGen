@@ -185,21 +185,21 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 public_inn = public_inn_once(exact_env, client, connection)
             except Exception:
                 public_inn = {"status": "B2B_PUBLIC_INN_CHECK_FAILED", "writes": 0}
-        # V10 runs AFTER source research and public-INN handoff. Its own
-        # PostgreSQL receipt and advisory lock protect exactly one visible
-        # dossier update, including the original four historical B2B cards.
-        # Only reviewed source-backed cards are eligible; no demo, score,
-        # stage, outreach, task or company/contact mutation.
-        dossier = {"status": "B2B_DOSSIER_V10_DISABLED", "crm_writes": 0}
+        # V11 supersedes V10's automatic writer (do not call both).
+        # The four historic V10-verified CRM cards get one independent V11
+        # receipt and archived prior fields; new source-backed cards enter
+        # V11 directly after the public V4 research gate. Both are single
+        # pass, PG-fenced, with NO external outreach, score or task changes.
+        dossier = {"status": "B2B_DOSSIER_V11_DISABLED", "crm_writes": 0}
         if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO") == "YES":
             try:
-                from .serviceit_vps_b2b_dossier_v10_worker import worker_once
+                from .serviceit_vps_b2b_dossier_v11_worker import worker_once
                 dossier = worker_once(env, client, connection)
             except Exception:
-                dossier = {"status": "B2B_DOSSIER_V10_CHECK_FAILED",
+                dossier = {"status": "B2B_DOSSIER_V11_CHECK_FAILED",
                            "crm_writes": 0}
         return {
-            "b2b_dossier_v10": dossier,
+            "b2b_dossier_v11": dossier,
             "b2b_public_inn": public_inn,
             "b2b_research": research,
             "status": "VPS_LIVE_CYCLE_COMPLETE",

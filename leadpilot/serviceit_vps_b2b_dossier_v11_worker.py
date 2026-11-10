@@ -1,0 +1,325 @@
+"""VPS-native V11 evidence dossier worker for historical four and every future B2B.
+
+One verifiable CRM update per exact source-backed card. Previous nine fields
+archived in private PostgreSQL; uncertain writes are NEVER replayed. The
+worker is called by the existing five-minute coordinator after native V4
+research, not by GitHub/cloud CRM writers.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+import re
+import secrets
+
+import httpx
+
+from .ai import config_from_env
+from .bitrix_metadata_audit import validate_webhook
+from .serviceit_b2b_dossier_v11 import compose, original_nine, DossierV11Blocked
+from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
+from .serviceit_b2b_routerai_deep import (
+    public_documents, investigate_routerai, source_only_investigation,
+)
+from .serviceit_enrichment_worker import (
+    Rest, normalized, validate_identity, fingerprint,
+)
+from .serviceit_vps_b2b_deep_research import (
+    safe_notice, source_findings,
+)
+from .serviceit_vps_native_fence import PostgresNativeFence
+from .serviceit_vps_pg_queue import db, secret_file
+from .serviceit_vps_worker import live_permitted
+
+VERSION = "B2B_DOSSIER_V11"
+MAX_CARDS_PER_BATCH = 4
+LOCK_ID = 6754819001
+DDL = """
+CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_dossier_v11_receipts (
+  card_id BIGINT PRIMARY KEY CHECK(card_id BETWEEN 8 AND 2000000000),
+  source_hash CHAR(64) NOT NULL,
+  status TEXT NOT NULL CHECK(status IN (
+    'RESERVED','WRITE_INTENT','VERIFIED','NO_CHANGE','CONFLICT','UNCERTAIN')),
+  before_fields JSONB NOT NULL,
+  after_fields JSONB,
+  salt BYTEA,
+  digest BYTEA,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((salt IS NULL AND digest IS NULL) OR
+         (octet_length(salt)=16 AND octet_length(digest)=32))
+);
+"""
+
+
+class V11Blocked(ValueError):
+    pass
+
+
+def need(value, reason):
+    if not value:
+        raise V11Blocked(reason)
+
+
+def compute_digest(fields, salt):
+    need(type(fields) is dict and set(fields) == AI_FIELDS and
+         type(salt) is bytes and len(salt) == 16, "DIGEST_INPUT_INVALID")
+    raw = json.dumps(fields, sort_keys=True, ensure_ascii=False,
+                     separators=(",", ":")).encode("utf8")
+    return hashlib.sha256(salt + raw).digest()
+
+
+def eligible_one(connection):
+    """Selection is source-verified; no unrelated CRM records or new cards."""
+    with connection.cursor() as cur:
+        cur.execute("""
+            SELECT b.card_id,b.source_id,b.notice_json
+            FROM serviceit_vps_b2b_inbox b
+            WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts r
+                WHERE r.card_id=b.card_id)
+              AND (
+                EXISTS (
+                  SELECT 1 FROM serviceit_vps_b2b_dossier_v10_receipts prior
+                  WHERE prior.card_id=b.card_id AND prior.status='VERIFIED'
+                )
+                OR EXISTS (
+                  SELECT 1 FROM serviceit_vps_native_receipts research
+                  WHERE research.card_id=b.card_id
+                    AND research.namespace='B2B_RESEARCH_V4'
+                    AND research.status IN ('VERIFIED','HOLD')
+                )
+              )
+            ORDER BY b.received_at,b.source_id LIMIT 1
+        """)
+        return cur.fetchone()
+
+
+def reserve(connection, card, source, old):
+    need(type(source) is str and
+         re.fullmatch(r"B2B-CENTER-\d{5,12}", source),
+         "SIGNED_SOURCE_ID_REQUIRED")
+    PostgresNativeFence.validate_card(card)
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute("""
+              INSERT INTO serviceit_vps_b2b_dossier_v11_receipts(
+                card_id,source_hash,status,before_fields)
+              VALUES (%s,%s,'RESERVED',%s::jsonb)
+              ON CONFLICT(card_id) DO NOTHING RETURNING card_id
+            """, (card, hashlib.sha256(source.encode("ascii")).hexdigest(),
+                  json.dumps(old, ensure_ascii=False)))
+            return cur.fetchone() is not None
+
+
+def update_state(connection, card, prev, next_):
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute("""
+               UPDATE serviceit_vps_b2b_dossier_v11_receipts
+               SET status=%s,updated_at=now()
+               WHERE card_id=%s AND status=%s RETURNING card_id
+            """, (next_, card, prev))
+            need(cur.fetchone() is not None, "RECEIPT_STATE_CONFLICT")
+
+
+def before_write(connection, card, fields):
+    salt = secrets.token_bytes(16)
+    digest = compute_digest(fields, salt)
+    with connection.transaction():
+        with connection.cursor() as cur:
+            cur.execute("""
+                UPDATE serviceit_vps_b2b_dossier_v11_receipts
+                SET status='WRITE_INTENT', after_fields=%s::jsonb,
+                    salt=%s,digest=%s,updated_at=now()
+                WHERE card_id=%s AND status='RESERVED'
+                RETURNING card_id
+            """, (json.dumps(fields, ensure_ascii=False), salt, digest, card))
+            need(cur.fetchone() is not None, "WRITE_INTENT_NOT_DURABLE")
+    return salt, digest
+
+
+def non_ai_unchanged(before, after):
+    ignored = set(AI_FIELDS) | {
+        "updatedTime","updatedBy","lastActivityTime","lastActivityBy",
+    }
+    return all(after.get(k) == v for k, v in before.items()
+               if k not in ignored)
+
+
+def worker_once(env, client, connection, *, preview=False):
+    """No payment/outreach/score/stage/task/contacts. Old fields copied into PG."""
+    need(live_permitted(env)
+         and env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES"
+         and env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
+         and env.get("SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED") == "YES"
+         and env.get("SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT", "NO") == "NO",
+         "V11_LIVE_PRIVACY_AND_RESEARCH_GATES_REQUIRED")
+    connection.execute(DDL)
+    # Real PG connection advisory lock serializes explicit 4-card batch and
+    # ongoing five-minute coordinator; no overlap/duplicate paid call.
+    with connection.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,))
+        locked = cur.fetchone()[0]
+    if not locked:
+        return {"status": "V11_ANOTHER_WORKER_ACTIVE", "crm_writes": 0}
+    try:
+        row = eligible_one(connection)
+        if row is None:
+            return {"status": "V11_NO_ELIGIBLE_CARDS", "crm_writes": 0}
+        card, source, notice = row
+        PostgresNativeFence.validate_card(card)
+        webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
+        validate_webhook(webhook)
+        rest = Rest(webhook, client)
+        first = normalized(rest("crm.item.get", {
+            "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+        })["item"])
+        validate_identity(first, card)
+        old = original_nine(first)
+        source_url, title = safe_notice(notice, card, source, first)
+        need(bool(title) and source_url == notice["source_url"],
+             "ORIGINAL_TENDER_IDENTITY_UNVERIFIED")
+        if preview:
+            return {"status": "V11_ELIGIBLE_READONLY", "crm_writes": 0,
+                    "prior_ai_field_count": len(old)}
+
+        # Preserve previous report BEFORE any external model call or CRM write.
+        # If anything after this point is ambiguous, the receipt blocks replay.
+        if not reserve(connection, card, source, old):
+            return {"status": "V11_ALREADY_RESERVED_NO_RETRY", "crm_writes": 0}
+        phase = "RESERVED"
+        invoked = False
+        try:
+            from .serviceit_vps_worker import exact_environment
+            exact = exact_environment(env)
+            try:
+                findings = source_findings(first, notice, exact, client)
+            except Exception:
+                findings = {"status": "PUBLIC_SOURCE_UNVERIFIED", "pages": [],
+                            "checked_at": datetime.now(timezone.utc).isoformat()}
+            report = source_only_investigation(findings)
+            if public_documents(findings):
+                try:
+                    cfg = config_from_env(exact)
+                    need(cfg.provider == "routerai", "ROUTERAI_ONLY")
+                    invoked = True
+                    report = investigate_routerai(client, cfg, findings)
+                except Exception:
+                    # An invalid model response is not authorization to guess.
+                    # Use only independently read literal source phrases.
+                    report = source_only_investigation(findings)
+            fields, coverage = compose(notice, first, findings, report)
+            fresh = normalized(rest("crm.item.get", {
+                "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+            })["item"])
+            validate_identity(fresh, card)
+            need(fingerprint(first) == fingerprint(fresh) and
+                 all(fresh.get(k) == old[k] for k in AI_FIELDS),
+                 "CRM_STALE_PREWRITE_CONFLICT")
+            if fields == old:
+                update_state(connection, card, "RESERVED", "NO_CHANGE")
+                return {"status": "V11_NO_CHANGE", "crm_writes": 0,
+                        "routerai_invoked": invoked}
+            salt, proof = before_write(connection, card, fields)
+            phase = "WRITE_INTENT"
+            rest("crm.item.update", {
+                "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+                "fields": fields,
+            })
+            result = normalized(rest("crm.item.get", {
+                "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+            })["item"])
+            validate_identity(result, card)
+            observed = {key: result.get(key) for key in AI_FIELDS}
+            need(observed == fields and
+                 secrets.compare_digest(compute_digest(observed, salt), proof)
+                 and non_ai_unchanged(fresh, result),
+                 "EXACT_NINE_READBACK_NOT_VERIFIED")
+            update_state(connection, card, "WRITE_INTENT", "VERIFIED")
+            return {"status": "V11_NINE_FIELDS_VERIFIED", "crm_writes": 1,
+                    "routerai_invoked": invoked,
+                    "source_pages": min(coverage["pages"], 9),
+                    "quoted_facts": min(coverage["citations"], 16),
+                    "deadline_public": coverage["deadline_public"],
+                    "public_buyer": coverage["buyer_public"],
+                    "public_contacts": coverage["contacts"]}
+        except Exception:
+            try:
+                update_state(connection, card, phase,
+                             "UNCERTAIN" if phase == "WRITE_INTENT" else "CONFLICT")
+            except Exception:
+                pass
+            return {"status": "V11_BLOCKED_NO_BLIND_REPLAY",
+                    "crm_writes": "UNVERIFIED" if phase == "WRITE_INTENT" else 0,
+                    "routerai_invoked": invoked}
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_ID,))
+
+
+def verify_all(env, client, connection):
+    """Independent existing CRM GET only, no model, source or writes."""
+    base = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
+    validate_webhook(base)
+    rest = Rest(base, client)
+    with connection.cursor() as cur:
+        cur.execute("""
+            SELECT card_id,after_fields,salt,digest
+            FROM serviceit_vps_b2b_dossier_v11_receipts
+            WHERE status='VERIFIED' ORDER BY card_id
+        """)
+        rows = cur.fetchall()
+    need(len(rows) > 0, "NO_VERIFIED_V11_RECEIPTS")
+    verified = 0
+    for card, expected, salt, proof in rows:
+        item = normalized(rest("crm.item.get", {
+            "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
+        })["item"])
+        validate_identity(item, card)
+        values = {key: item.get(key) for key in AI_FIELDS}
+        need(values == expected and
+             secrets.compare_digest(compute_digest(values, bytes(salt)), bytes(proof)),
+             "V11_READBACK_MISMATCH")
+        verified += 1
+    return {"status": "V11_VERIFIED_READBACK", "cards_verified": verified,
+            "crm_writes": 0, "routerai_calls": 0}
+
+
+def main(argv=None):
+    import argparse
+    p = argparse.ArgumentParser()
+    mx = p.add_mutually_exclusive_group(required=True)
+    mx.add_argument("--once", action="store_true")
+    mx.add_argument("--batch-four", action="store_true")
+    mx.add_argument("--preview", action="store_true")
+    mx.add_argument("--verify", action="store_true")
+    a = p.parse_args(argv)
+    env = dict(os.environ)
+    try:
+        with db(env) as c:
+            with httpx.Client(trust_env=False, follow_redirects=False, timeout=24) as client:
+                if a.verify:
+                    outcome = verify_all(env, client, c)
+                elif a.batch_four:
+                    outcomes = [worker_once(env, client, c) for _ in range(MAX_CARDS_PER_BATCH)]
+                    outcome = {"status": "V11_BATCH",
+                               "outcomes": outcomes,
+                               "crm_writes": sum(x.get("crm_writes")==1 for x in outcomes)}
+                else:
+                    outcome = worker_once(env, client, c, preview=a.preview)
+        print(json.dumps(outcome, sort_keys=True, ensure_ascii=False))
+        return 0 if outcome.get("status") not in (
+            "V11_BLOCKED_NO_BLIND_REPLAY",) and all(
+            row.get("status") not in ("V11_BLOCKED_NO_BLIND_REPLAY",)
+            for row in outcome.get("outcomes", [])) else 2
+    except Exception:
+        print(json.dumps({"status": "V11_GLOBAL_BLOCKED",
+                          "no_blind_retry": True}, sort_keys=True))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

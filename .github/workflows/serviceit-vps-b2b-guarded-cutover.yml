@@ -89,5 +89,5 @@ jobs:
           f="$RUNNER_TEMP/b2b-live/status"
           summary="$(grep -E '^B2BLIVE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' "$f" 2>/dev/null | head -25 || true)"
           [[ -n "$summary" ]] || summary="B2BLIVE_DEPLOY_BLOCKED=YES"
-          msg="$(printf 'B2B production cutover status (receiver/writer ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOld containers and snapshots are preserved on a successful cutover; core services untouched. CRM writes only by normal native worker.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          msg="$(printf 'B2B production cutover status (receiver/writer ONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOriginal containers are preserved under rollback names (no Docker commit snapshot); core services untouched. CRM writes only by normal native worker.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
           gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

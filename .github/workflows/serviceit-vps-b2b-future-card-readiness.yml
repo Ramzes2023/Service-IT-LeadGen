@@ -51,14 +51,17 @@ jobs:
           set -euo pipefail
           hash1="$(sha256sum leadpilot/serviceit_b2b_dossier_v11.py | cut -d' ' -f1)"
           hash2="$(sha256sum leadpilot/serviceit_vps_b2b_dossier_v11_worker.py | cut -d' ' -f1)"
-          [[ "$hash1" =~ ^[a-f0-9]{64}$ && "$hash2" =~ ^[a-f0-9]{64}$ ]]
+          hash3="$(sha256sum leadpilot/serviceit_bitrix_poll_fallback.py | cut -d' ' -f1)"
+          hash4="$(sha256sum leadpilot/serviceit_bitrix_batch_worker.py | cut -d' ' -f1)"
+          [[ "$hash1" =~ ^[a-f0-9]{64}$ && "$hash2" =~ ^[a-f0-9]{64}$ &&
+             "$hash3" =~ ^[a-f0-9]{64}$ && "$hash4" =~ ^[a-f0-9]{64}$ ]]
           set +e
           ssh -T -i "$RUNNER_TEMP/future-b2b/id" \
             -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/future-b2b/hosts" \
             -o BatchMode=yes -o ConnectTimeout=15 \
             "$VPS_USER@$VPS_HOST" \
-            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - '$hash1' '$hash2'" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - '$hash1' '$hash2' '$hash3' '$hash4'" \
             < ops/serviceit_vps_b2b_future_card_readiness.py \
             > "$RUNNER_TEMP/future-b2b/status"
           rc=$?

@@ -83,6 +83,17 @@ jobs:
                       is_write=meta.get('isReadOnly') is False
                       print('B2B_NINE_META_'+suffix+'_STRING='+('YES' if is_text else 'NO'),flush=True)
                       print('B2B_NINE_META_'+suffix+'_WRITABLE='+('YES' if is_write else 'NO'),flush=True)
+                      settings=meta.get('settings')
+                      raw=(settings.get('MAX_LENGTH',settings.get('maxLength'))
+                           if isinstance(settings,dict) else None)
+                      if raw is None:
+                          raw=meta.get('maxLength',meta.get('max_length'))
+                      if type(raw) is int and 0<=raw<=100000:
+                          print('B2B_NINE_META_'+suffix+'_MAX_LENGTH='+str(raw),flush=True)
+                      elif isinstance(raw,str) and raw.isdecimal() and len(raw)<=6:
+                          print('B2B_NINE_META_'+suffix+'_MAX_LENGTH='+raw,flush=True)
+                      else:
+                          print('B2B_NINE_META_'+suffix+'_MAX_LENGTH_UNAVAILABLE=YES',flush=True)
               print('B2B_NINE_METADATA_DONE=YES',flush=True)
               for position,(card,source,queue,native,names,salt,digest) in enumerate(rows,1):
                   item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':int(card),'useOriginalUfNames':'Y'})['item'])

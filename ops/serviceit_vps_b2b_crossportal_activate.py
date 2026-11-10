@@ -228,7 +228,24 @@ with db(dict(os.environ)) as conn:
 """
     pending = output(["docker","exec",CORE,"python","-B","-c",active])
     require(pending.isdigit(), "CURRENT_V11_INFLIGHT_UNVERIFIED")
-    return count + int(old_count) + int(pending)
+    # TDI may be activated by a DIFFERENT project chat. Never restart
+    # the coordinator during its source download, model intent or CRM note.
+    tdi = """
+import os
+from leadpilot.serviceit_vps_pg_queue import db
+with db(dict(os.environ)) as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.serviceit_vps_b2b_tender_doc_receipts')")
+        if cur.fetchone()[0] is None:
+            print(0)
+        else:
+            cur.execute("SELECT count(*) FROM serviceit_vps_b2b_tender_doc_receipts "
+                        "WHERE status IN ('RESERVED','AI_INTENT','WRITE_INTENT')")
+            print(int(cur.fetchone()[0]))
+"""
+    tdi_count = output(["docker","exec",CORE,"python","-B","-c",tdi])
+    require(tdi_count.isdigit(), "TDI_INFLIGHT_UNVERIFIED")
+    return count + int(old_count) + int(pending) + int(tdi_count)
 
 
 def wait_healthy(expected_image, expected_hashes):

@@ -81,11 +81,20 @@ def test_canonical_tdi_pin_is_clean_yaml_and_never_appends_old_tail():
         '"\n    pull_policy: never\n'
         '  another-service:\n    image: "placeholder"\n'
     )
-    rendered = pin_image(existing, old, target)
+    carry = {
+        "SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED": "YES",
+        "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED": "YES",
+        "SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED": "NO",
+    }
+    rendered = pin_image(existing, old, target, carry)
     assert rendered == (
         'services:\n  coordinator:\n    image: "' + target +
         '"\n    pull_policy: never\n'
-        '    environment:\n      ' + TDI_FLAG + ': "YES"\n'
+        '    environment:\n'
+        '      SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED: "YES"\n'
+        '      SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED: "YES"\n'
+        '      SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED: "NO"\n'
+        '      ' + TDI_FLAG + ': "YES"\n'
     )
     assert rendered.count('image:') == 1
     assert "another-service" not in rendered
@@ -101,7 +110,11 @@ def test_canonical_tdi_pin_rejects_an_existing_enablement():
     original = ('services:\n  coordinator:\n    image: "' + old +
                 '"\n    pull_policy: never\n')
     with pytest.raises(ReleaseBlocked):
-        pin_image(original + "    " + TDI_FLAG + ": YES\n", old, target)
+        pin_image(original + "    " + TDI_FLAG + ": YES\n",
+                  old, target,
+                  {"SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED": "YES",
+                   "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED": "YES",
+                   "SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED": "YES"})
 
 
 def test_four_card_acceptance_verifies_real_bitrix_file_metadata():
@@ -115,3 +128,22 @@ def test_four_card_acceptance_verifies_real_bitrix_file_metadata():
     assert "Файлы для прикрепления к карточке:" in batch
     assert "SERVICEIT_B2B_TDI_FOUR_BATCH_368" in batch
     assert "workflow_dispatch" not in batch
+
+
+def test_preserved_flags_fail_closed_without_exact_boolean_live_keys():
+    import pytest
+    from ops.serviceit_vps_b2b_tdi_activate import (
+        pin_image, ReleaseBlocked, PRESERVE_CORE_FLAGS,
+    )
+    old = "sha256:" + "a" * 64
+    new = "sha256:" + "b" * 64
+    pin = 'services:\n  coordinator:\n    image: "' + old + '"\n    pull_policy: never\n'
+    valid = dict.fromkeys(PRESERVE_CORE_FLAGS, "YES")
+    assert all(('      ' + key + ': "YES"') in pin_image(pin, old, new, valid)
+               for key in PRESERVE_CORE_FLAGS)
+    with pytest.raises(ReleaseBlocked):
+        pin_image(pin, old, new, {PRESERVE_CORE_FLAGS[0]: "YES"})
+    with pytest.raises(ReleaseBlocked):
+        pin_image(pin, old, new, {**valid, PRESERVE_CORE_FLAGS[1]: "unexpected"})
+    with pytest.raises(ReleaseBlocked):
+        pin_image(pin, old, new, {**valid, "UNREVIEWED_ENV_FLAG": "YES"})

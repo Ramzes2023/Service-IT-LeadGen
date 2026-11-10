@@ -1,0 +1,122 @@
+name: ServiceIT B2B four-card evidence transport pinpoint READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-deep-transport-diag
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_DEEP_TRANSPORT_DIAG_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Establish exact nonroot VPS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/deep-probe"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/deep-probe/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/deep-probe/hosts"
+          chmod 0600 "$RUNNER_TEMP/deep-probe/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/deep-probe/hosts" >/dev/null
+      - name: Identify external search and public source blockers per exact card, no CRM writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/deep-probe/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/deep-probe/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            > "$RUNNER_TEMP/deep-probe/report" <<'PY'
+          import os,re,httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.serviceit_b2b_routerai_deep import public_documents
+          from leadpilot.serviceit_vps_b2b_deep_research import (
+              safe_notice,source_findings,host_allowlist)
+          from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity,PREFIX
+          from leadpilot.serviceit_public_evidence_research import _page,ResearchBlocked
+          from leadpilot.serviceit_independent_company_research import SEARCH_URL
+          env=dict(os.environ)
+          with db(env) as c:
+              with c.cursor() as cur:
+                  cur.execute("SELECT card_id,source_id,notice_json FROM serviceit_vps_b2b_inbox WHERE state='VERIFIED' AND card_id IS NOT NULL ORDER BY received_at LIMIT 8")
+                  rows=cur.fetchall()
+          print('PROBE_CARDS='+str(len(rows)))
+          hosts=host_allowlist(env)
+          token=secret_file(env,'SERVICEIT_BRAVE_SEARCH_API_KEY',optional=True)
+          print('PROBE_BRAVE_KEY_PRESENT='+('YES' if bool(token) else 'NO'))
+          with httpx.Client(trust_env=False, follow_redirects=False, timeout=16) as client:
+              rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
+              for n,(card,sid,notice) in enumerate(rows,1):
+                  item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':int(card),'useOriginalUfNames':'Y'})['item'])
+                  validate_identity(item,int(card))
+                  safe_notice(notice,int(card),sid,item)
+                  ref=notice['tender_id']
+                  try:
+                      source=_page(client,notice['source_url'],hosts)
+                      print('PROBE_'+str(n)+'_SOURCE_HTTP_READ=YES')
+                      public=source.get('text','')
+                      print('PROBE_'+str(n)+'_SOURCE_ID_IN_TEXT='+('YES' if re.search(r'(?<!\d)'+ref+r'(?!\d)',public) else 'NO'))
+                      print('PROBE_'+str(n)+'_SOURCE_TEXT_CHARS='+str(min(len(public),7000)))
+                  except (ResearchBlocked,httpx.HTTPError,ValueError):
+                      print('PROBE_'+str(n)+'_SOURCE_HTTP_READ=NO')
+                  if token:
+                      try:
+                          r=client.get(SEARCH_URL,params={'q':'site:b2b-center.ru '+ref,'count':5},
+                             headers={'X-Subscription-Token':token,'Accept':'application/json'},
+                             timeout=12,follow_redirects=False)
+                          code=r.status_code if r.status_code in (200,400,401,402,403,422,429,500,503) else 0
+                          print('PROBE_'+str(n)+'_BRAVE_HTTP='+str(code))
+                          if code==200:
+                              body=r.json()
+                              hits=body.get('web',{}).get('results',[])
+                              print('PROBE_'+str(n)+'_BRAVE_HITS='+str(min(len(hits),20) if isinstance(hits,list) else 0))
+                      except (httpx.HTTPError,ValueError,TypeError):
+                          print('PROBE_'+str(n)+'_BRAVE_HTTP=0')
+                  try:
+                      result=source_findings(item,notice,env,client)
+                      label=result.get('status','')
+                      label=label if re.fullmatch(r'[A-Z0-9_]{4,100}',label) else 'OTHER'
+                      print('PROBE_'+str(n)+'_FINDINGS_STATUS='+label)
+                      print('PROBE_'+str(n)+'_PAGES='+str(min(len(result.get('pages') or []),5)))
+                      print('PROBE_'+str(n)+'_MODEL_DOCS='+str(min(len(public_documents(result)),5)))
+                  except Exception:
+                      print('PROBE_'+str(n)+'_FINDINGS_STATUS=ERROR')
+          print('PROBE_DONE=YES')
+          PY
+          grep -E '^PROBE_[A-Z0-9_]+=(YES|NO|ERROR|OTHER|[A-Z0-9_]{4,100}|[0-9]+)$' \
+            "$RUNNER_TEMP/deep-probe/report" | head -65
+          grep -qx 'PROBE_DONE=YES' "$RUNNER_TEMP/deep-probe/report"
+      - name: Publish only sanitized transport outcomes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/deep-probe/report"
+          summary="$(grep -E '^PROBE_[A-Z0-9_]+=(YES|NO|ERROR|OTHER|[A-Z0-9_]{4,100}|[0-9]+)$' "$file" 2>/dev/null | head -65 || true)"
+          [[ -n "$summary" ]] || summary="PROBE_UNVERIFIED=YES"
+          body="$(printf 'B2B live public source / Brave / Chromium reason diagnostics (no writes):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nOnly abstract status codes/lengths; no tender IDs, titles, URLs, CRM contacts, tokens or page text.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$body" >/dev/null || true

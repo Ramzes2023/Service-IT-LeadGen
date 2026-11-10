@@ -107,3 +107,38 @@ def test_no_guessing_contacts_or_buyer_on_coincidental_id():
                "B2B-Center другие закупки: лот № 4673595 "
                "ООО «Посторонний клиент»")
     assert mirrors.matched_excerpt(catalog, "4673595", USER_SUBJECT) == ""
+
+
+def test_real_public_kontur_buyer_and_checksum_valid_inn_flow_to_dossier():
+    from leadpilot.serviceit_vps_b2b_deep_research import (
+        public_buyer_candidate, published_buyer_inn_evidence,
+    )
+    excerpt=mirrors.matched_excerpt(PUBLIC_4673595, "4673595", USER_SUBJECT)
+    findings={
+        "status":"PUBLIC_PAGES_INSPECTED",
+        "pages":[{"url":"https://zakupki.kontur.ru/4673595_4",
+                  "excerpt":excerpt}],
+    }
+    buyer=public_buyer_candidate(findings)
+    assert buyer=="ООО «Глобус-ИТ»"
+    candidate=published_buyer_inn_evidence(findings)
+    assert candidate is not None
+    assert candidate["inn"]=="5260365605"
+    assert candidate["fns_verified"] is False
+    assert candidate["buyer_name"]==buyer
+
+
+def test_unrelated_marketplace_cannot_assert_buyer_inn():
+    from leadpilot.serviceit_vps_b2b_deep_research import (
+        public_buyer_candidate, published_buyer_inn_evidence,
+    )
+    wrong=mirrors.matched_excerpt(
+        "Контур.Закупки Оказание услуг по предоставлению ИТ-специалистов "
+        "Запрос цен № 4673595 опубликован на Росэлторг "
+        "Заказчик ООО «Другой» ИНН-КПП 5260365605",
+        "4673595", USER_SUBJECT)
+    assert not wrong
+    findings={"status":"PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
+              "pages":[]}
+    assert not public_buyer_candidate(findings)
+    assert published_buyer_inn_evidence(findings) is None

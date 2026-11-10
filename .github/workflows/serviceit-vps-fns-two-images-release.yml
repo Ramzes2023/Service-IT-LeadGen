@@ -1,0 +1,107 @@
+name: ServiceIT FNS-only real-card calibration two-image guarded VPS release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-fns-native-two-image-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_FNS_TWO_IMAGES_RELEASE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Attest immutable pre-fix and reviewed FNS-only source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/fns-two"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/fns-two/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/fns-two/hosts"
+          chmod 600 "$RUNNER_TEMP/fns-two/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/fns-two/hosts" >/dev/null
+          git cat-file -e e081445429856bfd988a6fc9ad3c94a9592476c0^{commit}
+          git cat-file -e 127befa6e86916982325ddf39a6acb5424f6641e^{commit}
+          git diff --quiet 127befa6e86916982325ddf39a6acb5424f6641e HEAD -- \
+            leadpilot/serviceit_vps_native_aux.py \
+            leadpilot/serviceit_vps_native_msp.py
+          python -m py_compile ops/serviceit_vps_fns_calibration_two_images_activate.py \
+            leadpilot/serviceit_vps_native_aux.py leadpilot/serviceit_vps_native_msp.py
+          for name in serviceit_vps_native_aux.py serviceit_vps_native_msp.py; do
+            git show e081445429856bfd988a6fc9ad3c94a9592476c0:leadpilot/"$name" | \
+              sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/fns-two/old"
+            sha256sum leadpilot/"$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/fns-two/new"
+          done
+      - name: Stage exact 2 FNS-only modules and SHA-verified activator
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/fns-two/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/fns-native-calibration-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/fns-two/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/fns-two/id" "${opts[@]}" \
+            leadpilot/serviceit_vps_native_aux.py \
+            leadpilot/serviceit_vps_native_msp.py \
+            "$target:$stage/"
+          scp -i "$RUNNER_TEMP/fns-two/id" "${opts[@]}" \
+            ops/serviceit_vps_fns_calibration_two_images_activate.py \
+            "$target:$stage/activate.py"
+      - name: Guarded one-image-at-a-time patch with rollback and no CRM writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/fns-two/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          olda="$(sed -n '1p' "$RUNNER_TEMP/fns-two/old")"
+          oldm="$(sed -n '2p' "$RUNNER_TEMP/fns-two/old")"
+          newa="$(sed -n '1p' "$RUNNER_TEMP/fns-two/new")"
+          newm="$(sed -n '2p' "$RUNNER_TEMP/fns-two/new")"
+          scriptsha="$(sha256sum ops/serviceit_vps_fns_calibration_two_images_activate.py | cut -d' ' -f1)"
+          ssh -T -i "$RUNNER_TEMP/fns-two/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$GITHUB_RUN_ID' '$olda' '$oldm' '$newa' '$newm' '$scriptsha'" \
+            > "$RUNNER_TEMP/fns-two/summary" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; olda="$2"; oldm="$3"; newa="$4"; newm="$5"; sha="$6"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          for val in "$olda" "$oldm" "$newa" "$newm" "$sha"; do
+            [[ "$val" =~ ^[a-f0-9]{64}$ ]]
+          done
+          script="$HOME/serviceit/staging/fns-native-calibration-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$olda" "$oldm" "$newa" "$newm"
+          REMOTE
+          grep -E '^FNS_ONLY_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|FAILED)$' \
+            "$RUNNER_TEMP/fns-two/summary" | head -30
+          grep -qx 'FNS_ONLY_AUXILIARIES_PATCH=YES' "$RUNNER_TEMP/fns-two/summary"
+          grep -qx 'FNS_ONLY_FNS_MSP_PATCH=YES' "$RUNNER_TEMP/fns-two/summary"
+          grep -qx 'FNS_ONLY_OTHER_IMAGES_UNCHANGED=YES' "$RUNNER_TEMP/fns-two/summary"
+          grep -qx 'FNS_ONLY_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/fns-two/summary"

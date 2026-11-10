@@ -191,7 +191,7 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None, *, subject=
                 "status": "PUBLIC_PAGES_INSPECTED",
                 "pages": [{
                     "url": candidate,
-                    "excerpt": " ".join(body.split())[:1800],
+                    "excerpt": " ".join(body.split())[:4000],
                 }],
                 "contacts": [],
                 "model_excerpt": _safe_model_excerpt(body),
@@ -421,7 +421,7 @@ def source_findings(item, notice, env, client):
         deep_search_key=key,
         deep_llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
         browser_render=browser,
-        detail_excerpt_chars=1800,
+        detail_excerpt_chars=4000,
     )
     # Original marketplace publication may require login. Brave is a URL
     # discovery fallback, not permission to bypass access controls.

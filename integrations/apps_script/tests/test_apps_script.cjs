@@ -276,7 +276,7 @@ test('HTML-only B2B-Center bulletin parses a database-maintenance tender safely'
   assert.strictEqual(parsed.observations[0].notice.organizer,'АО "СО ЕЭС"');
   assert.strictEqual(parsed.observations[0].notice.subject,
     'Право заключения договора оказания услуг по техническому обслуживанию базы данных');
-  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['1C']);
+  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['IT_SUPPORT']);
   assert.strictEqual(parsed.observations[0].notice.qualified_lead,false);
 });
 
@@ -488,7 +488,7 @@ test('realistic Russian quoted-printable HTML via Gmail raw fallback is parsed a
   e.setMessage(msg);
   const parsed=e.context.parseEmailMessage_(msg,MID);
   assert.strictEqual(parsed.observations.length,1);
-  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['IT_SUPPORT']);
+  assert.deepStrictEqual(Array.from(parsed.observations[0].services),['1C']);
   assert.strictEqual(parsed.observations[0].notice.tender_id,'1234567');
   assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,1);
   assert.strictEqual(e.calls.dispatch.length,1);

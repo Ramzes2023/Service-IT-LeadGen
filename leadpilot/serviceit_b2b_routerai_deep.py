@@ -325,7 +325,7 @@ def investigate_routerai(client: httpx.Client, config, findings: dict) -> dict:
                   "messages": [{"role": "system", "content": _SYSTEM},
                                {"role": "user", "content": prompt}],
                   "response_format": {"type": "json_object"},
-                  "temperature": 0, "max_tokens": 6800},
+                  "temperature": 0, "max_tokens": 6200},
             headers={"Authorization": "Bearer " + config.key,
                      "Accept": "application/json"},
             follow_redirects=False, timeout=100.0)

@@ -1,0 +1,122 @@
+name: ServiceIT TDI sandbox Docker run failure detail READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-tdi-docker-run-diagnostic
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_TDI_DOCKER_RUN_PROBE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Pinned SSH and local Docker image smoke only
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/tdi-run-probe"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tdi-run-probe/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tdi-run-probe/hosts"
+          chmod 0600 "$RUNNER_TEMP/tdi-run-probe/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tdi-run-probe/hosts" >/dev/null
+          ssh -T -i "$RUNNER_TEMP/tdi-run-probe/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/tdi-run-probe/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            > "$RUNNER_TEMP/tdi-run-probe/probe" <<'PY'
+          from pathlib import Path
+          import hashlib,subprocess,re
+          id='42905624749'
+          stage=Path.home()/'serviceit/staging'/('b2b-tdi-release-'+id)
+          tag='serviceit-tdi-evidence:'+id
+          files=('serviceit_vps_worker.py','serviceit_b2b_tender_documents.py',
+                 'serviceit_vps_b2b_document_worker.py')
+          def call(args,timeout=50):
+              try:
+                  return subprocess.run(args,capture_output=True,text=True,timeout=timeout)
+              except Exception:
+                  return None
+          def reason(result):
+              if result is None: return 'COMMAND_TIMEOUT'
+              if result.returncode==0: return 'OK'
+              t=result.stderr.lower()
+              if 'assertionerror' in t: return 'PY_ASSERTION'
+              if 'modulenotfounderror' in t: return 'MISSING_MODULE'
+              if 'importerror' in t: return 'IMPORT_FAILED'
+              if 'syntaxerror' in t: return 'PY_SYNTAX'
+              if any(w in t for w in ('cgroup','pids','memory','permission denied','operation not permitted')):
+                  return 'CONTAINER_RESOURCE_DENIED'
+              if any(w in t for w in ('no such image','manifest unknown','unable to find image','pull access denied')):
+                  return 'IMAGE_UNAVAILABLE'
+              if any(w in t for w in ('read-only file system','cannot write')):
+                  return 'READONLY_FILE'
+              if 'exec format error' in t: return 'BAD_ARCH'
+              return 'OTHER'
+          print('TDI_RUN_STAGE_PRESENT='+('YES' if stage.is_dir() else 'NO'))
+          actual=call(['docker','image','inspect','-f','{{.Id}}',tag])
+          ok=actual is not None and actual.returncode==0 and re.fullmatch(
+              r'sha256:[0-9a-f]{64}',actual.stdout.strip())
+          print('TDI_RUN_IMAGE_PRESENT='+('YES' if ok else 'NO'))
+          if not ok or not all((stage/x).is_file() for x in files):
+              raise SystemExit(0)
+          sha=actual.stdout.strip()
+          hashes=[hashlib.sha256((stage/f).read_bytes()).hexdigest() for f in files]
+          simple="print('TDI_RUN_PYTHON_OK')"
+          exact="""
+          import hashlib,sys
+          from pathlib import Path
+          files=sys.argv[1:4]; shas=sys.argv[4:]
+          assert len(files)==len(shas)==3
+          for name,value in zip(files,shas):
+              assert hashlib.sha256((Path('/app/leadpilot')/name).read_bytes()).hexdigest()==value
+          from pypdf import PdfReader
+          from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS
+          from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
+          from leadpilot.serviceit_vps_b2b_document_worker import worker_once, build_report
+          from leadpilot.serviceit_vps_b2b_dossier_v11_worker import verify_all
+          assert INTERVAL_SECONDS==300
+          assert all(callable(x) for x in
+              (PdfReader,inspect_public_documents,worker_once,build_report,verify_all))
+          print('TDI_RUN_EXACT_OK')
+          """
+          # No Docker restart, Compose operation, Bitrix or PostgreSQL connection.
+          for label,image,resource,program in (
+              ('TAG_BASIC',tag,False,simple),
+              ('ID_BASIC',sha,False,simple),
+              ('ID_RESTRICTED',sha,True,simple),
+              ('TAG_EXACT',tag,True,exact),
+              ('ID_EXACT',sha,True,exact),
+          ):
+              cmd=['docker','run','--rm','--network','none','--pull','never',
+                   '--read-only','--user','10001:10001','--cap-drop','ALL']
+              if resource: cmd+=['--pids-limit','64','--memory','512m']
+              cmd+=['--entrypoint','python',image,'-B','-c',
+                    program]+(list(files)+hashes if program==exact else [])
+              result=call(cmd)
+              success=(result is not None and result.returncode==0 and
+                       ('TDI_RUN_EXACT_OK' if program==exact else 'TDI_RUN_PYTHON_OK') in result.stdout)
+              print('TDI_RUN_'+label+'='+('YES' if success else 'NO'))
+              print('TDI_RUN_'+label+'_REASON='+reason(result))
+          PY
+          grep -E '^TDI_RUN_[A-Z_]+=(YES|NO|OK|OTHER|COMMAND_TIMEOUT|PY_ASSERTION|MISSING_MODULE|IMPORT_FAILED|PY_SYNTAX|CONTAINER_RESOURCE_DENIED|IMAGE_UNAVAILABLE|READONLY_FILE|BAD_ARCH)$' "$RUNNER_TEMP/tdi-run-probe/probe"

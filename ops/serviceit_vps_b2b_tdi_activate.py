@@ -240,7 +240,7 @@ with db(dict(os.environ)) as conn:
     return count + int(old_count) + int(v11_count)
 
 
-def wait_healthy(expected_image, expected_hashes):
+def wait_healthy(expected_image, expected_hashes, *, tdi_expected=True):
     for _ in range(32):
         if healthy(CORE):
             break
@@ -253,8 +253,11 @@ def wait_healthy(expected_image, expected_hashes):
     require(all(actual.get(k) == v for k, v in GATES.items()),
             "CORE_LIVE_GATES_CHANGED")
     # Bitrix comment writer must run ONLY in explicitly approved new pin.
-    require(actual.get(TDI_FLAG) == "YES",
-            "TDI_OPT_IN_NOT_VISIBLE_IN_CONTAINER")
+    if tdi_expected:
+        require(actual.get(TDI_FLAG) == "YES",
+                "TDI_OPT_IN_NOT_VISIBLE_IN_CONTAINER")
+    else:
+        require(TDI_FLAG not in actual, "TDI_ROLLBACK_FLAG_STILL_PRESENT")
 
 
 def run(run_id, new_hashes):
@@ -419,7 +422,7 @@ print('TDI_OFFLINE_SMOKE_PASS')
                     call(compose(paths, "up", "-d", "--no-deps", "--no-build",
                                  "--pull", "never", "--force-recreate",
                                  "coordinator"), timeout=180)
-                    wait_healthy(old_image, AUDITED_OLD_SHAS)
+                    wait_healthy(old_image, AUDITED_OLD_SHAS, tdi_expected=False)
                     print("TDI_RELEASE_ROLLBACK=YES", flush=True)
                 except Exception:
                     print("TDI_RELEASE_ROLLBACK=UNVERIFIED", flush=True)

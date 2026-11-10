@@ -57,10 +57,15 @@ def list_only(client: httpx.Client, base: str, method: str, args: dict) -> dict:
             and args.get("start") in (0, 50, 100, 150),
             "BATCH_LIST_SCOPE_INVALID")
     filters = args.get("filter")
-    require(type(filters) is dict and (
-            filters == {"id": 3}
-            or (filters.get("categoryId") == 21
-                and set(filters) == {"categoryId", ">=createdTime"})),
+    exact_id = filters.get("id") if type(filters) is dict else None
+    safe_id = (type(filters) is dict and set(filters) == {"id"}
+               and type(exact_id) is int
+               and (exact_id == 3 or 8 <= exact_id <= 2_000_000_000))
+    category_control = filters == {"categoryId": 21}
+    window = (type(filters) is dict
+              and filters.get("categoryId") == 21
+              and set(filters) == {"categoryId", ">=createdTime"})
+    require(safe_id or category_control or window,
             "BATCH_LIST_FILTER_INVALID")
     response = client.post(
         base + "/crm.item.list.json", json=args,

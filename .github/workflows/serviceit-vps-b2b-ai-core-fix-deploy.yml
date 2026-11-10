@@ -46,7 +46,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-ai-core/known_hosts"
           chmod 600 "$RUNNER_TEMP/b2b-ai-core/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-ai-core/known_hosts" >/dev/null
-          git show 5a5955ba8ee98c0ee6c1b8f228fee25cf14af335:leadpilot/serviceit_windows_autofill.py > "$RUNNER_TEMP/b2b-ai-core/baseline.py"
+          git show 3bf41127c9e2fa218baf4180f5f545a1f9214575:leadpilot/serviceit_windows_autofill.py > "$RUNNER_TEMP/b2b-ai-core/baseline.py"
           sha256sum "$RUNNER_TEMP/b2b-ai-core/baseline.py" | cut -d ' ' -f 1 > "$RUNNER_TEMP/b2b-ai-core/old"
           sha256sum leadpilot/serviceit_windows_autofill.py | cut -d ' ' -f 1 > "$RUNNER_TEMP/b2b-ai-core/new"
           sha256sum ops/serviceit_vps_b2b_ai_core_activate.py | cut -d ' ' -f 1 > "$RUNNER_TEMP/b2b-ai-core/script"

@@ -1,0 +1,71 @@
+name: ServiceIT B2B BMP-safe exact two-card nine-field recovery (LIVE)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-bmp-two-card-recovery
+  cancel-in-progress: false
+jobs:
+  restore:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_BMP_RESTORE_TWO_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify fixed two-card repair script and trusted VPS SSH host
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_bmp_recover_two.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-bmp-two"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-bmp-two/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-bmp-two/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-bmp-two/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-bmp-two/known_hosts" >/dev/null
+      - name: Confirm exact two original B2B cards and replace only missing BMP-safe reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-bmp-two/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-bmp-two/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            < ops/serviceit_vps_b2b_bmp_recover_two.py \
+            > "$RUNNER_TEMP/b2b-bmp-two/status"
+          grep -E '^B2B_BMP_[A-Z0-9_]+=(YES|NO|[0-9]+)$' \
+            "$RUNNER_TEMP/b2b-bmp-two/status" | head -25
+          grep -qx 'B2B_BMP_RECOVERY_COMPLETE=YES' "$RUNNER_TEMP/b2b-bmp-two/status"
+      - name: Publish sanitized receipt outcomes to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-bmp-two/status"
+          summary="$(grep -E '^B2B_BMP_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$f" 2>/dev/null | head -25 || true)"
+          [[ -n "$summary" ]] || summary='B2B_BMP_RESULT_UNVERIFIED=YES'
+          msg="$(printf 'B2B existing two cards: verified emoji-free 9 fields via fresh PG one-use receipt:\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo crm.item.add, model calls, contacts, tasks, score, outreach or changed source. No card/source IDs, PII or report content in logs. Ambiguous outcome always blocks repeat.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

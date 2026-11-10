@@ -165,9 +165,30 @@ def preliminary_fields(item):
         + "НАЗНАЧЕНИЕ ЗАДАЧИ: только после подтверждения сотрудника/прав/дедупликации\n"
         + "────────────────────────────────\n"
         + fields[PREFIX + "AI_FULL_REPORT"])
-    _must(set(fields) == AI_FIELDS and all(type(x) is str and 0 < len(x) <= 12000
-                                          for x in fields.values()),
-          "REVIEW_FIELDS_INVALID")
+    # Production Bitrix24 accepted the first six BMP-only custom fields but
+    # silently discarded exactly the three fields containing supplementary-
+    # plane emoji (U+10000+), even when sent alone. Keep every word of the
+    # manager report; only remove decorative non-BMP glyphs / joiner markers
+    # before writing ANY of the nine text fields to CRM.
+    safe_icons = {
+        0x1F4D1: "▣",  # tender
+        0x1F465: "◉",  # vacancy
+        0x1F3AF: "◆",  # direct service
+        0x1F50E: "⌕",  # inspection
+    }
+    fields = {
+        key: "".join(
+            safe_icons.get(ord(ch), "•") if ord(ch) > 0xFFFF else ch
+            for ch in value
+            if ord(ch) not in (0xFE0F, 0x200D, 0x20E3)
+        )
+        for key, value in fields.items()
+    }
+    _must(set(fields) == AI_FIELDS and all(
+        type(x) is str and 0 < len(x) <= 12000 and
+        all(ord(ch) <= 0xFFFF for ch in x)
+        for x in fields.values()),
+        "REVIEW_FIELDS_INVALID")
     return fields
 
 

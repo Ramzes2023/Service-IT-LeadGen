@@ -196,8 +196,8 @@ def test_new_card_worker_writes_three_type_badges_into_existing_nine_fields_only
     }
     fields=preliminary_fields(base)
     assert set(fields)==AI_FIELDS
-    assert fields[PREFIX+"AI_SUMMARY"].startswith("📑 ТЕНДЕР")
-    assert fields[PREFIX+"AI_MANAGER_BRIEF"].startswith("📑 ТЕНДЕР")
+    assert fields[PREFIX+"AI_SUMMARY"].startswith("▣ ТЕНДЕР")
+    assert fields[PREFIX+"AI_MANAGER_BRIEF"].startswith("▣ ТЕНДЕР")
     assert "Задача в Bitrix ещё НЕ создана" in fields[PREFIX+"AI_MANAGER_BRIEF"]
     assert "Lead Score: НЕ РАССЧИТАН" in fields[PREFIX+"AI_FULL_REPORT"]
     assert "GigaChat: NOT_RUN" in fields[PREFIX+"AI_FULL_REPORT"]
@@ -206,11 +206,11 @@ def test_new_card_worker_writes_three_type_badges_into_existing_nine_fields_only
     base["title"]="Вакансия: программист 1С"
     base[PREFIX+"SIGNAL_SOURCE"]="Работа России"
     base[PREFIX+"SIGNAL_KIND"]="1c_vacancy"
-    assert preliminary_fields(base)[PREFIX+"AI_SUMMARY"].startswith("👥 ВАКАНСИЯ")
+    assert preliminary_fields(base)[PREFIX+"AI_SUMMARY"].startswith("◉ ВАКАНСИЯ")
     base["title"]="Ищем подрядчика на услуги 1С"
     base[PREFIX+"SIGNAL_SOURCE"]="Входящая форма"
     base[PREFIX+"SIGNAL_KIND"]="direct_request"
-    assert preliminary_fields(base)[PREFIX+"AI_SUMMARY"].startswith("🎯 ПРЯМАЯ УСЛУГА")
+    assert preliminary_fields(base)[PREFIX+"AI_SUMMARY"].startswith("◆ ПРЯМАЯ УСЛУГА")
 
 
 def test_no_unapproved_automatic_tasks_or_contact_network_code():
@@ -244,7 +244,7 @@ def test_existing_new_card_recruitment_description_explicit_outsourcing_ban():
          PREFIX+"REGION":"Москва"}
     report=preliminary_fields(obj)
     assert set(report)==AI_FIELDS
-    assert report[PREFIX+"AI_SUMMARY"].startswith("👥 ВАКАНСИЯ")
+    assert report[PREFIX+"AI_SUMMARY"].startswith("◉ ВАКАНСИЯ")
     assert "Не звонить и не писать" in report[PREFIX+"AI_NEXT_ACTION"]
     assert "ДА — НЕ КОНТАКТИРОВАТЬ" in report[PREFIX+"AI_FULL_REPORT"]
     assert "Задача в Bitrix ещё НЕ создана" in report[PREFIX+"AI_MANAGER_BRIEF"]

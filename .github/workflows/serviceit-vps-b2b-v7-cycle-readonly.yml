@@ -72,16 +72,16 @@ jobs:
           for i,code in enumerate(last[-4:],1):
               print("V7_LAST_"+str(i)+"="+code)
           check = """
-import os
-from leadpilot.serviceit_vps_pg_queue import db
-with db(dict(os.environ)) as conn:
-    with conn.transaction():
-        with conn.cursor() as cur:
-            cur.execute('SET TRANSACTION READ ONLY')
-            cur.execute("SELECT status,COUNT(*) FROM serviceit_vps_native_receipts WHERE namespace='B2B_PUBLIC_INN_V1' GROUP BY status")
-            for status,n in cur.fetchall():
-                if status in ('RESERVED','WRITE_INTENT','HOLD','UNCERTAIN','VERIFIED','NEEDS_REVIEW'):
-                    print('V7_RECEIPT_'+status+'='+str(min(n,999)))
+          import os
+          from leadpilot.serviceit_vps_pg_queue import db
+          with db(dict(os.environ)) as conn:
+              with conn.transaction():
+                  with conn.cursor() as cur:
+                      cur.execute('SET TRANSACTION READ ONLY')
+                      cur.execute("SELECT status,COUNT(*) FROM serviceit_vps_native_receipts WHERE namespace='B2B_PUBLIC_INN_V1' GROUP BY status")
+                      for status,n in cur.fetchall():
+                          if status in ('RESERVED','WRITE_INTENT','HOLD','UNCERTAIN','VERIFIED','NEEDS_REVIEW'):
+                              print('V7_RECEIPT_'+status+'='+str(min(n,999)))
 """
           cp=subprocess.run(["docker","exec",C,"python","-B","-c",check],
                             text=True,capture_output=True,timeout=30,check=False)

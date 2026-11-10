@@ -1,0 +1,158 @@
+name: ServiceIT B2B native AI REVIEW reason READ ONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-ai-review-diagnostic
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 314 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.body == 'SERVICEIT_B2B_AI_REVIEW_READONLY_314'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      GH_TOKEN: "${{ github.token }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - name: Pin SSH host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/b2b-ai-reasons"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/b2b-ai-reasons/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-ai-reasons/known_hosts"
+          chmod 600 "$RUNNER_TEMP/b2b-ai-reasons/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-ai-reasons/known_hosts" >/dev/null
+      - name: Exact production B2B queue and worker preflight with zero mutations
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-ai-reasons/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-ai-reasons/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > "$RUNNER_TEMP/b2b-ai-reasons/status" <<'PY'
+          import subprocess,re
+          code = """
+          from datetime import datetime,timezone,timedelta
+          import os,re,httpx
+          from leadpilot.serviceit_vps_pg_queue import db,secret_file
+          from leadpilot.serviceit_vps_worker import live_permitted,exact_environment
+          from leadpilot.serviceit_enrichment_worker import (
+              Rest,normalized,validate_identity,FIELDS,AI_FIELDS,PREFIX,schema_limits
+          )
+          from leadpilot.serviceit_bitrix_event_queue_readonly_worker import classify_item
+          from leadpilot.serviceit_windows_autofill import preliminary_fields
+          from leadpilot.serviceit_bitrix_poll_fallback import after_activation,date_value
+          env=dict(os.environ)
+          print('B2B_REASONS_LIVE_PERMITTED='+('YES' if live_permitted(env) else 'NO'),flush=True)
+          try:
+              exact_environment(env)
+              print('B2B_REASONS_EXACT_ENV=YES',flush=True)
+          except Exception:
+              print('B2B_REASONS_EXACT_ENV=NO',flush=True)
+          with db(env) as c:
+              with c.cursor() as cur:
+                  cur.execute("SELECT b.card_id, q.status, q.last_result, r.status, coalesce(cardinality(r.field_names),0) FROM serviceit_vps_b2b_inbox b LEFT JOIN serviceit_vps_new_cards q ON q.card_id=b.card_id LEFT JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='AI_NINE_V1' WHERE b.state='VERIFIED' ORDER BY b.received_at LIMIT 7")
+                  rows=cur.fetchall()
+          print('B2B_REASONS_CARDS='+str(len(rows)),flush=True)
+          if len(rows)>6:
+              print('B2B_REASONS_TOO_MANY=YES',flush=True)
+              raise SystemExit(2)
+          with httpx.Client(trust_env=False,follow_redirects=False,timeout=20) as client:
+              rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
+              try:
+                  limits=schema_limits(rest)
+                  print('B2B_REASONS_SCHEMA=YES',flush=True)
+              except Exception as exc:
+                  s=str(exc.args[0]) if exc.args else ''
+                  print('B2B_REASONS_SCHEMA=NO',flush=True)
+                  if re.fullmatch(r'[A-Z0-9_]{3,75}',s):
+                      print('B2B_REASONS_SCHEMA_CODE_'+s+'=YES',flush=True)
+                  limits={}
+              for card,status,result,native,fields_count in rows:
+                  # No IDs, names, source content or title are ever printed.
+                  if not isinstance(card,int):
+                      print('B2B_REASONS_MISSING_CARD_ID=YES',flush=True)
+                      continue
+                  for label,choice in [('QUEUE',status),('RESULT',result),('NATIVE',native)]:
+                      text=choice if isinstance(choice,str) else 'MISSING'
+                      if re.fullmatch(r'[A-Z0-9_]{2,90}',text):
+                          print('B2B_REASONS_'+label+'_'+text+'=YES',flush=True)
+                  print('B2B_REASONS_FENCE_FIELD_COUNT='+str(fields_count),flush=True)
+                  item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':int(card),'useOriginalUfNames':'Y'})['item'])
+                  validate_identity(item,int(card))
+                  print('B2B_REASONS_EXACT_ITEM=YES',flush=True)
+                  print('B2B_REASONS_MISSING_REQUIRED_FIELDS='+str(len(FIELDS-set(item))),flush=True)
+                  print('B2B_REASONS_EXISTING_SCORE='+('YES' if any(item.get(k) not in (None,'') for k in FIELDS-AI_FIELDS) else 'NO'),flush=True)
+                  print('B2B_REASONS_EXISTING_AI_COUNT='+str(sum(item.get(k) not in (None,'') for k in AI_FIELDS)),flush=True)
+                  try:
+                      decision=classify_item(item,requested_id=int(card))
+                      kind=decision.get('source_kind','')
+                      print('B2B_REASONS_B2B_CLASSIFIED='+('YES' if kind=='b2b_center_hold' else 'NO'),flush=True)
+                      print('B2B_REASONS_CLASSIFIER_REVIEW='+('YES' if decision.get('decision','').endswith('REVIEW') else 'NO'),flush=True)
+                  except Exception as exc:
+                      code=str(exc.args[0]) if exc.args else ''
+                      print('B2B_REASONS_CLASSIFIER=NO',flush=True)
+                      if re.fullmatch(r'[A-Z0-9_]{3,75}',code):
+                          print('B2B_REASONS_CLASSIFIER_CODE_'+code+'=YES',flush=True)
+                  try:
+                      generated=preliminary_fields(item)
+                      print('B2B_REASONS_PRELIM_FIELDS='+('YES' if set(generated)==AI_FIELDS else 'NO'),flush=True)
+                      if limits:
+                          print('B2B_REASONS_LIMITS_PASS='+('YES' if all(len(val)<=limits[key] for key,val in generated.items()) else 'NO'),flush=True)
+                  except Exception as exc:
+                      code=str(exc.args[0]) if exc.args else ''
+                      print('B2B_REASONS_PRELIM=NO',flush=True)
+                      if re.fullmatch(r'[A-Z0-9_]{3,75}',code):
+                          print('B2B_REASONS_PRELIM_CODE_'+code+'=YES',flush=True)
+                  try:
+                      activation=env['SERVICEIT_VPS_NATIVE_ACTIVATION_UTC']
+                      now=datetime.now(timezone.utc)
+                      start=after_activation({**env,'SERVICEIT_BITRIX_POLL_START_UTC':activation},now)
+                      date=date_value(item.get('createdTime'))
+                      print('B2B_REASONS_CARD_AFTER_ACTIVATION='+('YES' if start<=date<=now+timedelta(minutes=2) else 'NO'),flush=True)
+                  except Exception:
+                      print('B2B_REASONS_CARD_AFTER_ACTIVATION=NO',flush=True)
+          print('B2B_REASONS_DONE=YES',flush=True)
+          """
+          compile(code,'<b2b-ai-readonly>','exec')
+          p=subprocess.run(['docker','exec','serviceit-leadgen-vps-coordinator-1',
+              'python','-c',code],stdin=subprocess.DEVNULL,
+              stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=175)
+          for line in p.stdout.splitlines():
+              if re.fullmatch(r'B2B_REASONS_[A-Z0-9_]+=(?:YES|NO|[0-9]+)',line):
+                  print(line,flush=True)
+          if p.returncode:
+              print('B2B_REASONS_BLOCKED=YES',flush=True)
+              raise SystemExit(2)
+          PY
+          grep -E '^B2B_REASONS_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$RUNNER_TEMP/b2b-ai-reasons/status"
+          grep -qx 'B2B_REASONS_DONE=YES' "$RUNNER_TEMP/b2b-ai-reasons/status"
+      - name: Write only anonymized flags to Issue 314
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/b2b-ai-reasons/status"
+          summary="$(grep -E '^B2B_REASONS_[A-Z0-9_]+=(YES|NO|[0-9]+)$' "$f" 2>/dev/null | head -60 || true)"
+          [[ -n "$summary" ]] || summary='B2B_REASONS_UNKNOWN=YES'
+          msg="$(printf 'B2B native AI exact-card REVIEW cause (READONLY):\n\n%s\n\nRun https://github.com/%s/actions/runs/%s\n\nNo CRM, PG, Docker or private data writes; only boolean codes and counts.' "$summary" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/314/comments" -X POST --raw-field "body=$msg" >/dev/null || true

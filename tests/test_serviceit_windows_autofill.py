@@ -62,7 +62,7 @@ def test_unverified_card_gets_all_nine_honest_report_fields():
     fields = preliminary_fields({"id": 101})
     assert set(fields) == AI_FIELDS
     assert fields[PREFIX + "AI_STATUS"] == "NOT_RUN_SOURCE_UNVERIFIED"
-    assert "GigaChat: NOT_RUN" in fields[PREFIX + "AI_FULL_REPORT"]
+    assert "RouterAI: NOT_RUN" in fields[PREFIX + "AI_FULL_REPORT"]
     assert "Lead Score: НЕ РАССЧИТАН" in fields[PREFIX + "AI_FULL_REPORT"]
     assert all(0 < len(value) <= 12000 for value in fields.values())
 

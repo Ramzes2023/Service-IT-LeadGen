@@ -141,8 +141,11 @@ def check_container_flags(container,service):
         need(env.get(k,v if k.endswith("_INTAKE_ENABLED") else None)==v,
              "LIVE_FLAG_UNEXPECTED")
     if service=="auxiliaries":
-        need(env.get("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED","NO")=="NO",
-             "FNS_WRITER_ALREADY_ENABLED")
+        # Another owner-approved FNS-only release may have enabled the
+        # writer already. NEVER toggle it during this two-image code patch.
+        # The exact live environment is compared against Compose below.
+        need(env.get("SERVICEIT_VPS_FNS_CRM_RESULT_ENABLED") in ("YES","NO"),
+             "FNS_WRITER_FLAG_INVALID")
     if service=="fns-msp":
         need(env.get("SERVICEIT_VPS_FNS_MSP_ENABLED")=="YES",
              "FNS_COLLECTOR_NOT_ENABLED")

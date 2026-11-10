@@ -159,12 +159,55 @@ def _visible_url(url):
     return url
 
 
-def _evidence(docs):
-    """Already verified downloaded bytes; never use search result snippets."""
-    return {"status": "PUBLIC_PAGES_INSPECTED",
-            "pages": [{"url": d["url"], "excerpt": d["text"][:4500]}
-                      for d in docs[:3]]}
+def _priority_excerpt(text):
+    """Cover late deadlines, geography and tender conditions within model limits.
 
+    The HTTP extractor retains up to 24k source characters; RouterAI has
+    a much smaller per-document window. Sample exact source substrings
+    across distinct procurement categories instead of silently reading
+    only page one. All resulting quotes must still match the full text.
+    """
+    if len(text) <= 4500:
+        return text
+    patterns = (
+        r"(?i)(?:предмет закупки|техническое задание|объем работ|объём работ)",
+        r"(?i)(?:срок подачи|окончани[ея] подачи|дедлайн|подач[аи] заявок до)",
+        r"(?i)(?:место исполнени[яю]|адрес оказания|географи[яи]|регион)",
+        r"(?i)(?:критери[ий] оценки|критери[ий] отбора|порядок оценки)",
+        r"(?i)(?:требования к участник|квалификационн|опыт выполнени)",
+        r"(?i)(?:порядок подачи|состав заявк|перечень документов)",
+        r"(?i)(?:условия оплаты|порядок оплаты|аванс|отсрочк)",
+        r"(?i)(?:обеспечение заявки|банковская гарантия)",
+        r"(?i)(?:заказчик|наименование организации|реквизиты)",
+        r"(?i)(?:\bинн\b|\bкпп\b|огрн)",
+        r"(?i)(?:срок исполнени|срок поставки|дата поставки)",
+        r"(?i)(?:начальная цена|максимальная цена|стоимость договора)",
+    )
+    spans = [(0, 650)]
+    size = 650
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match is None:
+            continue
+        left, right = max(0, match.start() - 95), min(len(text), match.end() + 255)
+        if any(left < end and right > begin for begin, end in spans):
+            continue
+        if size + (right - left) + 5 > 4300:
+            continue
+        spans.append((left, right))
+        size += right - left + 5
+    tail = (max(0, len(text) - 320), len(text))
+    if not any(tail[0] < end and tail[1] > begin for begin, end in spans):
+        spans.append(tail)
+    return " … ".join(text[left:right] for left, right in spans)[:4500]
+
+
+def _evidence(docs):
+    """Independently downloaded bytes, with late condition coverage."""
+    return {"status": "PUBLIC_PAGES_INSPECTED",
+            "pages": [{"url": d["url"],
+                       "excerpt": _priority_excerpt(d["text"])}
+                      for d in docs[:3]]}
 
 def _model_research(client, env, docs):
     env = exact_environment(env)
@@ -182,92 +225,112 @@ def _model_research(client, env, docs):
 
 
 def build_report(notice, docs, reports):
+    """Facts-first manager dossier: no repeated empty template categories."""
     need(docs and len(docs) <= 6, "TDI_SOURCE_DOCS_REQUIRED")
     tender_id = notice["tender_id"]
     titles = {
-        "SCOPE": "Предмет и объём", "TECHNOLOGY": "Техническое задание",
-        "BUYER": "Заказчик", "DEADLINE": "Срок подачи",
-        "BUDGET": "Цена / НМЦ", "ELIGIBILITY": "Требования к участию",
-        "SUBMISSION": "Подача предложения",
-        "DOCUMENTS": "Состав заявки", "PAYMENT": "Оплата",
-        "GUARANTEE": "Обеспечение", "EVALUATION": "Критерии выбора",
-        "LOCATION": "Место исполнения", "DELIVERY": "Срок исполнения",
-        "OTHER": "Прочие условия",
+        "SCOPE": "Предмет и объём работ",
+        "TECHNOLOGY": "Техническое задание / компетенции",
+        "BUYER": "Заказчик по документу",
+        "DEADLINE": "Срок подачи заявки",
+        "LOCATION": "Регион / место исполнения",
+        "DELIVERY": "Срок выполнения",
+        "BUDGET": "Цена / бюджет",
+        "ELIGIBILITY": "Требования к участнику",
+        "SUBMISSION": "Порядок подачи предложения",
+        "DOCUMENTS": "Перечень документов заявки",
+        "EVALUATION": "Критерии оценки и выбора",
+        "PAYMENT": "Оплата",
+        "GUARANTEE": "Обеспечение / гарантии",
+        "OTHER": "Дополнительные условия",
     }
-    facts = []
-    model_yes = 0
-    for report in reports:
-        model_yes += int(report.get("provider") == "RouterAI")
-        for row in report.get("facts", [])[:16]:
-            if row.get("category") not in titles:
+    grouped = {key: [] for key in titles}
+    model_used = False
+    for row in reports:
+        model_used = model_used or row.get("provider") == "RouterAI"
+        for fact in row.get("facts", [])[:16]:
+            if not isinstance(fact, dict) or fact.get("category") not in grouped:
                 continue
-            quote, url = row.get("quote"), row.get("url")
+            quote, url = fact.get("quote"), fact.get("url")
             if (not isinstance(quote, str) or not isinstance(url, str)
-                    or not any(d["url"] == url and quote in d["text"]
-                               for d in docs)):
+                    or not any(doc["url"] == url and quote in doc["text"]
+                               for doc in docs)):
                 continue
-            identity = (row["category"], quote, url)
-            if identity not in facts:
-                facts.append(identity)
-    selected = facts[:24]
+            category = fact["category"]
+            if (quote, url) not in grouped[category] and len(grouped[category]) < 2:
+                grouped[category].append((quote, url))
+    covered = sum(bool(grouped[category]) for category in titles)
+    evidence_count = sum(len(x) for x in grouped.values())
     inn_candidate = published_buyer_inn_evidence(_evidence(docs))
-    lines = [
-        "ТЕНДЕРНЫЕ ДОКУМЕНТЫ | ДОПОЛНЕНИЕ К ДОСЬЕ V11",
-        "Закупка B2B-Center №" + tender_id,
-        "Скачано и прочитано: " + str(len(docs)) + " файла(ов)",
-        "Подтверждено цитатами: " + str(len(selected)),
-        "Анализ RouterAI: " + ("выполнен" if model_yes else
-                              "недоступен, извлечение из первоисточников"),
-        "ФНС и право контакта: НЕ проверялись этим модулем.",
-        "",
-        "01 | ПРОЧИТАННЫЕ ПРИЛОЖЕНИЯ",
-    ]
-    for i, doc in enumerate(docs, 1):
-        lines.append(str(i) + ". " + doc["kind"][1:].upper() + " | " +
-                     str(doc["bytes"]) + " байт | sha256 " +
-                     doc["sha256"][:12])
-        lines.append(_visible_url(doc["url"]))
-    lines += ["", "02 | УСЛОВИЯ И ТРЕБОВАНИЯ ПО ДОКУМЕНТАМ"]
-    for category, title in titles.items():
-        group = [(q, u) for k, q, u in selected if k == category]
-        lines.append(title.upper() + ":")
-        if not group:
-            lines.append("Не найдено подтверждённых цитат в прочитанных документах.")
-        for quote, url in group[:3]:
-            idx = next(i for i, d in enumerate(docs, 1) if d["url"] == url)
-            lines.append("  [" + str(idx) + "] «" + quote[:240] + "»")
-    lines += ["", "03 | ЗАКАЗЧИК И ИНН"]
-    if inn_candidate:
-        lines += [
-            "Публично названный заказчик: " + inn_candidate["buyer_name"],
-            "ИНН из документа (контрольная сумма): " + inn_candidate["inn"],
-            "Статус: КАНДИДАТ, не подтверждён ФНС и независимым сайтом.",
-            "Компания в поле ИНН автоматически НЕ подставлялась.",
+    def render(quote_limit, citations_per_group):
+        lines = [
+            "СЕРВИС ИТ | ДОКУМЕНТАЛЬНОЕ ДОСЬЕ B2B-CENTER",
+            "Дополнение к V11 · Закупка №" + tender_id,
+            "Прочитано: " + str(len(docs)) + " файла(ов) · " +
+            str(covered) + " разделов с доказательствами · " +
+            str(evidence_count) + " подтверждённых цитат",
+            "RouterAI: " + ("цитаты проверены" if model_used
+                            else "недоступен; использованы исходные тексты"),
+            "",
+            "01 | ФАКТЫ, УСЛОВИЯ И ТРЕБОВАНИЯ ПО ДОКУМЕНТАМ",
         ]
-    else:
+        for category, title in titles.items():
+            quotes = grouped[category]
+            if not quotes:
+                continue
+            lines.append(title.upper())
+            for quote, url in quotes[:citations_per_group]:
+                index = next(i for i, doc in enumerate(docs, 1)
+                             if doc["url"] == url)
+                lines.append("  [" + str(index) + "] «" +
+                             quote[:quote_limit] + "»")
+        missing = [title for category, title in titles.items()
+                   if not grouped[category]]
         lines += [
-            "Юридические реквизиты однозначно не установлены.",
-            "Не подставлять ИНН организатора, электронной площадки или посредника.",
+            "",
+            "02 | ЧТО ЕЩЁ НЕ ПОДТВЕРЖДЕНО",
+            ("Нет подтверждённых цитат: " + "; ".join(missing)
+             if missing else
+             "Все проверяемые разделы имеют цитаты; актуальность ещё требуется уточнить."),
+            "Отсутствие цитаты не означает отсутствие требования в закупке.",
+            "",
+            "03 | ЗАКАЗЧИК И ИНН",
         ]
-    lines += [
-        "", "04 | ИСТОЧНИК И ОГРАНИЧЕНИЯ",
-        "Данные получены из самостоятельно скачанных общедоступных файлов; "
-        "цитаты сверены с извлечённым текстом. Требования могут измениться.",
-        "PDF-сканы без текстового слоя и документы, требующие личный кабинет, "
-        "не считаются прочитанными. Условия заявки и дедлайн следует проверять "
-        "по актуальной редакции извещения перед участием.",
-        "Отдельное исследование: существующие поля V11, Score, ИНН, "
-        "HOLD, задачи и контакты не изменялись.",
-    ]
-    report = "\n".join(lines)
-    if len(report) > MAX_REPORT:
-        # Keep source register and priority fields rather than chopping them.
-        lines = [line for line in lines if not line.startswith("  [")][:]
-        lines.insert(0, "Подробные цитаты сокращены из-за лимита Bitrix24.")
-        report = "\n".join(lines)
-    need(100 <= len(report) <= MAX_REPORT, "TDI_REPORT_OVERSIZED")
-    return "".join("•" if ord(c) > 0xffff else c for c in report)
-
+        if inn_candidate:
+            lines += [
+                "Юрлицо, указанное в документе: " + inn_candidate["buyer_name"],
+                "ИНН из документа (контрольная сумма): " + inn_candidate["inn"],
+                "Статус: кандидат; ФНС не проверена.",
+                "В основное поле ИНН Битрикс ничего не записывалось.",
+            ]
+        else:
+            lines += [
+                "Юрлицо и достоверный ИНН документами не установлены.",
+                "ИНН площадки/посредника заказчику не присваивался.",
+            ]
+        lines += ["", "04 | ПРОЧИТАННЫЕ ДОКУМЕНТЫ И ПЕРВОИСТОЧНИКИ"]
+        for i, doc in enumerate(docs, 1):
+            lines.append("[" + str(i) + "] " + doc["kind"][1:].upper() +
+                         " · " + str(doc["bytes"]) + " байт · SHA256 " +
+                         doc["sha256"][:12])
+            lines.append(_visible_url(doc["url"]))
+        lines += [
+            "",
+            "05 | ГРАНИЦЫ ПРОВЕРКИ",
+            "Проверены дословные фрагменты скачанных публичных файлов. "
+            "Сканированные PDF без текста и закрытые вложения не прочитаны. "
+            "Перед участием перепроверить действующую редакцию, сроки и условия.",
+            "Досье V11, Score, ФНС, ИНН, HOLD, задачи и контакты не изменялись. "
+            "Никакой автоматической отправки предложений.",
+        ]
+        return "\n".join(lines)
+    result = render(210, 2)
+    if len(result) > MAX_REPORT:
+        result = render(130, 1)
+    if len(result) > MAX_REPORT:
+        result = render(75, 1)
+    need(100 <= len(result) <= MAX_REPORT, "TDI_REPORT_OVERSIZED")
+    return "".join("•" if ord(char) > 0xffff else char for char in result)
 
 def run_once(env, client, connection, *, preview=False):
     if env.get(ENABLED, "NO") != "YES":

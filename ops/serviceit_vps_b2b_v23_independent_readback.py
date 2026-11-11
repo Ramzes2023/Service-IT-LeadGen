@@ -82,7 +82,6 @@ def main():
                     "entityTypeId":1062,"id":card,"useOriginalUfNames":"Y"})["item"])
                 validate_identity(current,card)
                 assert original_nine(current)==after
-                assert current.get("ufCrm"+ "") is not None or True
                 # Verify CRM's own immutable B2B original notice URL and ID.
                 from leadpilot.serviceit_vps_b2b_deep_research import safe_notice
                 url,title=safe_notice(notice,card,source,current)

@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_inn_field_v43_receipts (
 """
 SAFE = re.compile(r"[A-Z0-9_]{1,90}\Z")
 MODES = frozenset(("preview","apply","readback"))
+RUNTIME_MODULES = (
+    "serviceit_enrichment_worker.py",
+    "serviceit_b2b_v20_versioned.py",
+    "serviceit_b2b_dossier_consistency_worker_v37.py",
+    "serviceit_vps_worker.py",
+)
 
 
 def out(key,value):
@@ -259,10 +265,23 @@ def check_one(conn,rest,card,mode):
 
 
 def main():
-    if len(sys.argv)!=2 or sys.argv[1] not in MODES:
+    if len(sys.argv)!=2+len(RUNTIME_MODULES) or sys.argv[1] not in MODES:
         out("INVALID_ARGS","YES")
         return 2
     mode=sys.argv[1]
+    expected=sys.argv[2:]
+    if any(re.fullmatch(r"[a-f0-9]{64}",h) is None for h in expected):
+        out("INVALID_MODULE_HASH","YES")
+        return 2
+    from pathlib import Path
+    actual=[
+        hashlib.sha256((Path("/app/leadpilot")/name).read_bytes()).hexdigest()
+        for name in RUNTIME_MODULES
+    ]
+    if actual!=expected:
+        out("RUNTIME_MODULE_SHA_MATCH","NO")
+        return 2
+    out("RUNTIME_MODULE_SHA_MATCH","YES")
     env=dict(os.environ)
     need(live_permitted(env),"VPS_NOT_LIVE")
     exact=exact_environment(env)

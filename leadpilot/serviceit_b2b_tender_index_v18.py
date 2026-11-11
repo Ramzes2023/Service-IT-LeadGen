@@ -162,6 +162,12 @@ def _safe_index_candidate(url, title, text, tender_id, subject):
         if label not in ("BUYER","INN","DEADLINE","LOCATION","BUDGET"):
             if re.search(r"@|https?://|(?:\+7|8)\D{0,3}\d{3}", clean, re.I):
                 continue
+            # An index page can concatenate several tenders. If this
+            # conditional line names ANOTHER 5-12 digit tender number,
+            # don't attach its requirements to the requested procedure.
+            other_ids = re.findall(r"(?<!\d)\d{5,12}(?!\d)",clean)
+            if any(x != tender_id for x in other_ids):
+                continue
         if (label, clean) not in {(x["category"],x["quote"]) for x in quotes}:
             quotes.append({"category": label, "quote": clean})
     return {"url": url, "host": host, "claims": quotes[:14],

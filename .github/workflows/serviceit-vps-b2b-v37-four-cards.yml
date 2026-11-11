@@ -52,7 +52,7 @@ jobs:
             serviceit_b2b_dossier_consistency_v37.py
             serviceit_b2b_dossier_consistency_worker_v37.py)
           blobs=(5e240eb920d6b33880303fa08c84699bcd4d19dd
-            e3a401240a085bd36b1a05df1d298f504929f598
+            d1e612e9b0ee0d9cfe7cf925b3a3b7871e53628b
             9bacd24eec860598fcf56ddb291c968e256092c5)
           : > "$RUNNER_TEMP/v37-four/shas"
           for i in "${!names[@]}"; do

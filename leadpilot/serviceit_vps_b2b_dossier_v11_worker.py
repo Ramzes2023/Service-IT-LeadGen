@@ -33,6 +33,39 @@ from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import db, secret_file
 from .serviceit_vps_worker import live_permitted
 
+def dossier_document_sources(client, findings, tender_id):
+    """Add up to two readable public files to the initial dossier input."""
+    from urllib.parse import urlsplit
+    from .serviceit_b2b_tender_documents import inspect_public_documents
+    from .serviceit_b2b_routerai_deep import MAX_PAGES
+    from .serviceit_vps_b2b_document_worker import _priority_excerpt
+
+    if findings.get("status") != "PUBLIC_PAGES_INSPECTED":
+        return findings, {}
+    original = list(findings.get("pages") or [])
+    try:
+        evidence = inspect_public_documents(
+            client, findings, tender_id, max_pages=4, max_downloads=2)
+    except Exception:
+        return findings, {}
+    additions = []
+    originals = {}
+    known = {p.get("url") for p in original if isinstance(p, dict)}
+    for document in evidence["documents"]:
+        url = document["url"]
+        parsed = urlsplit(url)
+        # Never expose signed or expiring links in a dossier.
+        if parsed.query or parsed.fragment or len(url) > 600 or url in known:
+            continue
+        text = document["text"]
+        additions.append({"url": url, "excerpt": _priority_excerpt(text)})
+        originals[url] = text
+        known.add(url)
+    if not additions:
+        return findings, {}
+    return {**findings, "pages": original[:MAX_PAGES - len(additions)] + additions}, originals
+
+
 VERSION = "B2B_DOSSIER_V11"
 MAX_CARDS_PER_BATCH = 4
 LOCK_ID = 6754819001
@@ -201,6 +234,10 @@ def worker_once(env, client, connection, *, preview=False):
             except Exception:
                 findings = {"status": "PUBLIC_SOURCE_UNVERIFIED", "pages": [],
                             "checked_at": datetime.now(timezone.utc).isoformat()}
+            document_texts = {}
+            if env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED") == "YES":
+                findings, document_texts = dossier_document_sources(
+                    client, findings, notice["tender_id"])
             report = source_only_investigation(findings)
             if public_documents(findings):
                 try:
@@ -212,6 +249,12 @@ def worker_once(env, client, connection, *, preview=False):
                     # An invalid model response is not authorization to guess.
                     # Use only independently read literal source phrases.
                     report = source_only_investigation(findings)
+            if document_texts:
+                report = {**report, "facts": [
+                    fact for fact in report.get("facts", [])
+                    if fact.get("url") not in document_texts
+                    or fact["quote"] in document_texts[fact["url"]]
+                ]}
             fields, coverage = compose(
                 notice, first, {**findings, "indexed_candidates": []}, report)
             fresh = normalized(rest("crm.item.get", {

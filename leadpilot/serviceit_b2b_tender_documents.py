@@ -54,7 +54,7 @@ def public_market_url(url):
     return host
 
 
-def candidate_links(client, findings, tender_id):
+def candidate_links(client, findings, tender_id, *, max_pages=6):
     """Follow hrefs ONLY on already verified, exact-ID tender detail pages."""
     fail(type(tender_id) is str and SAFE_ID.fullmatch(tender_id),
          "DOCUMENT_TENDER_ID_INVALID")
@@ -63,7 +63,7 @@ def candidate_links(client, findings, tender_id):
          "DOCUMENT_SOURCE_NOT_VERIFIED")
     candidates, seen = [], set()
     exact = re.compile(r"(?<!\d)" + tender_id + r"(?!\d)")
-    for page in (findings.get("pages") or [])[:3]:
+    for page in (findings.get("pages") or [])[:max_pages]:
         if not isinstance(page, dict):
             continue
         url, excerpt = page.get("url"), page.get("excerpt")
@@ -293,11 +293,11 @@ def extract_text(data, kind):
     raise TenderDocumentBlocked("DOCUMENT_KIND_UNSUPPORTED")
 
 
-def inspect_public_documents(client, findings, tender_id):
+def inspect_public_documents(client, findings, tender_id, *, max_pages=6, max_downloads=MAX_LINKS):
     """No raw document saved; returned evidence only from verified HTTP bytes."""
-    candidates = candidate_links(client, findings, tender_id)
+    candidates = candidate_links(client, findings, tender_id, max_pages=max_pages)
     documents, reasons = [], {}
-    for row in candidates:
+    for row in candidates[:max_downloads]:
         if len(documents) >= MAX_FILES:
             break
         try:

@@ -1,0 +1,120 @@
+name: ServiceIT VPS B2B V36 guarded dossier quality coordinator release
+on:
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v36-search-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' && github.actor == 'Ramzes2023' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issue_comment' && github.event.issue.number == 489 &&
+        !github.event.issue.pull_request && github.event.comment.user.login == 'Ramzes2023' &&
+        github.event.comment.body == 'SERVICEIT_B2B_V36_DOCUMENT_DOSSIER_RELEASE_489'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify reviewed NEW V36 and pinned pre-V36 OLD source hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed="$GITHUB_SHA"
+          old='0a0fddd1cc0eb7ed5337e35f0250ba535dc8295c'
+          git cat-file -e "$reviewed^{commit}"
+          git cat-file -e "$old^{commit}"
+          names=(serviceit_b2b_tender_documents.py serviceit_vps_b2b_dossier_v11_worker.py)
+          install -d -m 0700 "$RUNNER_TEMP/v36-release"
+          : > "$RUNNER_TEMP/v36-release/new-hashes"
+          : > "$RUNNER_TEMP/v36-release/old-hashes"
+          blobs=(b8a4d9297b868f6a6ab9a141df5dbbd2da6328a7 9b6d8b8a5eea6c770eb2fa6ea1e0d8ee58d364af)
+          for i in "${!names[@]}"; do
+            name="${names[i]}"
+            [[ "$(git hash-object "leadpilot/$name")" == "${blobs[i]}" ]]
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v36-release/new-hashes"
+            git show "$old:leadpilot/$name" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/v36-release/old-hashes"
+          done
+          script=ops/serviceit_vps_b2b_v36_quality_release.py
+          python -m py_compile "$script"
+          sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v36-release/script-sha"
+          [[ "$(wc -l < "$RUNNER_TEMP/v36-release/new-hashes")" == 2 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v36-release/old-hashes")" == 2 ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v36-release/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v36-release/hosts"
+          chmod 0600 "$RUNNER_TEMP/v36-release/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v36-release/hosts" >/dev/null
+      - name: Transfer exactly one nonsecret file plus release controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v36-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-v36-onefile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v36-release/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_b2b_tender_documents.py serviceit_vps_b2b_dossier_v11_worker.py; do
+            scp -i "$RUNNER_TEMP/v36-release/id" "${opts[@]}" \
+              "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$RUNNER_TEMP/v36-release/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v36_quality_release.py "$target:$stage/activate.py"
+      - name: Offline smoke new one module and swap coordinator only with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v36-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t new < "$RUNNER_TEMP/v36-release/new-hashes"
+          mapfile -t old < "$RUNNER_TEMP/v36-release/old-hashes"
+          [[ "${#new[@]}" == 2 && "${#old[@]}" == 2 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/v36-release/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          args=()
+          for v in "${new[@]}" "${old[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$v'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${args[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v36-release/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/v36-release/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 4 ]]
+          for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-v36-onefile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^V36_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v36-release/status" | head -30 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V36_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v36-release/status"
+          grep -qx 'V36_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v36-release/status"

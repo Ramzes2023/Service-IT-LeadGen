@@ -180,13 +180,21 @@ def eligible(conn, target_ids=None):
                     'NONSTANDARD_REPORT')
                    AND last.updated_at < now() - interval '24 hours')
                OR (last.status='UNCERTAIN'
-                   AND last.updated_at < now() - interval '15 minutes'))
+                   AND last.updated_at < now() - interval '15 minutes')
+               -- A prior company conflict is never auto-replayed by the
+               -- five-minute coordinator. Only an owner-scoped explicit
+               -- signed-card apply may re-evaluate after code correction.
+               OR (last.status='CONFLICT'
+                   AND %s::BIGINT[] IS NOT NULL
+                   AND b.card_id=ANY(%s::BIGINT[])))
              AND NOT EXISTS(
                SELECT 1 FROM serviceit_vps_native_receipts n
                WHERE n.card_id=b.card_id AND n.status IN ('RESERVED','WRITE_INTENT'))
            ORDER BY COALESCE(last.updated_at,b.received_at),
                     b.received_at,b.source_id LIMIT 1
         """,(targets if target_ids is not None else None,
+              targets if target_ids is not None else None,
+              targets if target_ids is not None else None,
               targets if target_ids is not None else None))
         return cur.fetchone()
 

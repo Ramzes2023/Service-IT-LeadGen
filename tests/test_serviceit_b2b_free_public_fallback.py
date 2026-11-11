@@ -139,3 +139,33 @@ def test_native_reader_keeps_success_without_free_vendor_call(monkeypatch):
                         lambda finding, *a, **k: finding)
     got = research.source_findings({}, NOTICE, ENV, Mock())
     assert got["pages"][0]["url"] == TENDER
+
+
+
+def test_existing_brave_index_hint_avoids_free_search(monkeypatch):
+    monkeypatch.setattr(free, "secret_file", lambda *a, **k: "Z"*30)
+    monkeypatch.setattr(free, "discover_free_public_urls",
+                        lambda *a, **k: pytest.fail("repeated search"))
+    urls = []
+    monkeypatch.setattr(free, "fetch_remote_public_evidence",
+                        lambda client, **kw: (urls.extend(kw["urls"]) or EVIDENCE))
+    result = free.read_free_public_mirror(
+        NOTICE, ENV, Mock(), index_hints=[
+            {"evidence_level": "INDEX_ONLY_UNVERIFIED", "url": TENDER},
+            {"evidence_level": "INDEX_ONLY_UNVERIFIED", "url": B2B},
+        ])
+    assert urls == [TENDER]
+    assert result["status"] == "PUBLIC_PAGES_INSPECTED"
+
+
+def test_untrusted_hint_is_rejected_and_falls_back_to_free_discovery(monkeypatch):
+    monkeypatch.setattr(free, "secret_file", lambda *a, **k: "Z"*30)
+    calls = []
+    monkeypatch.setattr(free, "discover_free_public_urls",
+                        lambda *a, **k: (calls.append("search") or []))
+    assert free.read_free_public_mirror(
+        NOTICE, ENV, Mock(), index_hints=[
+            {"evidence_level": "INDEX_ONLY_UNVERIFIED", "url": "https://evil.invalid/4673595"},
+            {"evidence_level": "INDEX_ONLY_UNVERIFIED", "url": B2B},
+        ]) is None
+    assert calls == ["search"]

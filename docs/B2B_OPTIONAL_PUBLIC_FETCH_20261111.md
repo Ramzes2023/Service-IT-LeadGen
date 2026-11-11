@@ -54,3 +54,54 @@ Never commit secrets, cards or customer data to GitHub.
 
 This PR itself does NOT satisfy live VPS deployment, new-card automation or
 Bitrix24 acceptance. All core work in parallel chats remains untouched.
+
+
+## Free-only versioned additions
+
+The optional provider publicly states that **TinyFish Search and Fetch are
+free within published limits**; paid Agent, Browser and Monitor are NOT used:
+https://www.tinyfish.ai/blog/search-and-fetch-are-now-free-for-every-agent-everywhere
+
+- discover_free_public_urls() performs one fixed-host Search query by the exact
+  source-published tender number and title, limited to approved public
+  Tendum/B2B origins. The search index is NEVER evidence.
+- free_public_search_and_fetch() passes at most two approved URLs to the
+  existing Fetch adapter, or skips Search when the original source message
+  supplies a reviewed exact public link.
+- The adapter also returns structured_facts from the verified full-page text.
+  The deterministic extractor runs without any extra API or LLM calls.
+- extract_tender_facts() distinguishes buyer from marketplace organizer,
+  published budget from absent budget, delivery place from company legal
+  address, true submission deadline from generic listing cutoff, and public
+  documents from login-only documents.
+- attach_corporate_profile() requires an independently confirmed corporate
+  website and matching published legal name. It checks INN / OGRN digits and
+  records source URLs for publicly displayed address, business phones and
+  emails. This remains SELF-REPORTED, not official FNS/registry verification.
+- If no public sources are available, no buyer/INN/contacts/budget is invented.
+
+This module does not scrape the corporate website on its own. The existing
+independent company research or approved FNS/open-data validator must furnish
+the real website text; matching a business's name in web search is not enough.
+Commercial vendor databases and anonymous B2B scraping are not prerequisites.
+The source operator must verify that using each third-party fetch is permitted.
+
+## Zero-new-cost rollout gates
+
+1. Create a separate **free** Search/Fetch API key at
+   https://agent.tinyfish.ai/api-keys (not a paid browser/agent key).
+   Set a strict vendor-side request budget; do not enable wallet auto-reload.
+2. Store the key as a private Docker secret on the SERVICEIT VPS. Do not put
+   it into a GitHub repository, Bitrix custom field, workflow log, or chat.
+3. Review data-source terms / robots. The source read fails closed on denied
+   origin access. Unavailable Kontur and Synapse remain unavailable.
+4. Connect only the new read-only evidence result to the *current* V19/V20
+   coordinator after reviewing its exact live SHA and PostgreSQL tables.
+   Existing RouterAI and the single Bitrix writer remain unchanged.
+5. Add a per-card budget, immutable deduplicated source receipt, and a
+   separately authorized exact CRM write/readback. Do not replay any
+   POST_UNCERTAIN, change HOLD, tasks or scoring, or claim live deployment
+   before independent readback of the four production records.
+
+Automated production usage is **not enabled by this PR**. In particular,
+ChatGPT's connected TinyFish plugin credentials cannot be exported to VPS.

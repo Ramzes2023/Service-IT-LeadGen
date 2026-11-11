@@ -2,6 +2,7 @@
 import httpx
 from leadpilot.serviceit_b2b_remote_public_fetch import (
     approved_url, verified_excerpt, fetch_remote_public_evidence,
+    discover_free_public_urls, free_public_search_and_fetch,
 )
 
 ID = "4673595"
@@ -88,3 +89,74 @@ def test_no_key_and_only_approved_public_detail_urls():
                       trust_env=False) as c:
         assert fetch_remote_public_evidence(
             c, urls=[TENDEM], tender_id=ID, subject=TITLE, api_key="") is None
+
+
+
+def test_free_search_discovers_hints_but_fetch_still_checks_source():
+    public_text = ("Запрос котировок B2B-Center\n" + TITLE +
+                   "\nЗаказчик ООО ГЛОБУС-ИТ\n"
+                   "Номер у источника: " + ID + "\n"
+                   "Подача заявок до 23.11.2026 17:00 МСК")
+    called = []
+
+    def transport(req):
+        called.append(req.method)
+        if req.method == "GET":
+            assert req.url.host == "api.search.tinyfish.ai"
+            assert req.headers["x-api-key"] == KEY
+            return httpx.Response(200, json={
+                "results": [
+                    {"url": "https://evil.invalid/tenders/1",
+                     "title": TITLE, "snippet": ID},
+                    {"url": TENDEM, "title": TITLE,
+                     "snippet": "B2B-Center " + ID},
+                    {"url": TENDEM, "title": TITLE, "snippet": ID},
+                ]}, headers={"content-type": "application/json"})
+        assert req.method == "POST"
+        assert req.url.host == "api.fetch.tinyfish.ai"
+        return httpx.Response(200, json={"results": [
+            {"url": TENDEM, "final_url": TENDEM, "text": public_text}
+        ], "errors": []}, headers={"content-type": "application/json"})
+
+    with httpx.Client(transport=httpx.MockTransport(transport),
+                      trust_env=False, follow_redirects=False) as client:
+        result = free_public_search_and_fetch(
+            client, tender_id=ID, subject=TITLE, api_key=KEY)
+    assert called == ["GET", "POST"]
+    assert result is not None
+    assert result["pages"][0]["url"] == TENDEM
+    assert result["structured_facts"][0]["buyer"]["value"] == "ООО ГЛОБУС-ИТ"
+
+
+def test_free_search_result_never_counts_as_evidence_if_fetch_blocked():
+    def transport(req):
+        if req.method == "GET":
+            return httpx.Response(200, json={"results": [
+                {"url": TENDEM, "title": TITLE, "snippet": ID}
+            ]}, headers={"content-type": "application/json"})
+        return httpx.Response(200, json={"results": [], "errors": [
+            {"url": TENDEM, "error": "bot_blocked"}
+        ]}, headers={"content-type": "application/json"})
+    with httpx.Client(transport=httpx.MockTransport(transport),
+                      trust_env=False) as client:
+        assert free_public_search_and_fetch(
+            client, tender_id=ID, subject=TITLE, api_key=KEY) is None
+
+
+def test_exact_url_skips_search_and_untrusted_url_never_sent():
+    trace = []
+    def transport(req):
+        trace.append(req.method)
+        return httpx.Response(200, json={"results": [
+            {"url": TENDEM, "final_url": TENDEM, "text": TEXT}
+        ]}, headers={"content-type": "application/json"})
+    with httpx.Client(transport=httpx.MockTransport(transport),
+                      trust_env=False) as client:
+        assert free_public_search_and_fetch(
+            client, tender_id=ID, subject=TITLE, api_key=KEY,
+            approved_source_url="https://evil.invalid/private") is None
+        assert trace == []
+        assert free_public_search_and_fetch(
+            client, tender_id=ID, subject=TITLE, api_key=KEY,
+            approved_source_url=TENDEM) is not None
+        assert trace == ["POST"]

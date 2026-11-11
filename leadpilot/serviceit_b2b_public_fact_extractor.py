@@ -173,7 +173,7 @@ def attach_corporate_profile(tender: dict, *, company_url: str, company_text: st
             continue
         # Multiple legal entities on the same line cannot be disambiguated
         # by a nearby INN. Prefer a dedicated legal-entity header/row.
-        if len(re.findall(r"(?iu)\\b(?:ООО|ПАО|АО)\\s*[«\\\"]", row)) > 1:
+        if len(re.findall(r'(?iu)\b(?:ООО|ПАО|АО)\s*[«"]', row)) > 1:
             continue
         local_rows = rows[i:i + 7]
         nearby = " ".join(local_rows)[:900]
@@ -194,7 +194,7 @@ def attach_corporate_profile(tender: dict, *, company_url: str, company_text: st
             out["buyer_legal_address"] = _cite(
                 legal_address, company_url, "OFFICIAL_WEBSITE_SELF_REPORTED_ADDRESS")
         phone_pattern = re.compile(
-            r"(?<!\\d)(?:\\+7|8)[ -]*\\(?\\d{3}\\)?[ -]*\\d{3}[ -]*\\d{2}[ -]*\\d{2}(?!\\d)")
+            r"(?<!\d)(?:\+7|8)[ -]*\(?\d{3}\)?[ -]*\d{3}[ -]*\d{2}[ -]*\d{2}(?!\d)")
         out["company_public_phones"] = [
             _cite(phone, company_url, "OFFICIAL_WEBSITE_PUBLIC_CONTACT_NO_OUTREACH")
             for phone in list(dict.fromkeys(phone_pattern.findall(company_text)))[:6]]

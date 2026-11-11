@@ -12,7 +12,7 @@ import re
 DATE = re.compile(r"(?<!\d)\d{1,2}[./]\d{1,2}[./]20\d{2}(?:\s*(?:до\s*)?\d{1,2}:\d{2})?")
 AMOUNT = re.compile(r"(?<!\d)(\d{1,3}(?:[\s\u00a0]\d{3})+(?:[,.]\d{1,2})?|\d{4,12})(?!\d)")
 EMAIL = re.compile(r"(?i)(?<![\w.@])[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}(?![\w.@])")
-BUYER = re.compile(r"(?iu)(?:^|\n)\s*(?:заказчик|организатор)\s*[:—–-]?\s*((?:общество с ограниченной ответственностью|публичное акционерное общество|акционерное общество|ООО|ПАО|АО)\s*[«\"']?[^<>\n]{3,160})")
+BUYER = re.compile(r"(?iu)(?:^|\n)\s*заказчик\s*[:—–-]?\s*((?:общество с ограниченной ответственностью|публичное акционерное общество|акционерное общество|ООО|ПАО|АО)\s*[«\"']?[^<>\n]{3,160})")
 LABELS = {
     "submission_deadline": ("окончание приёма заявок", "окончание приема заявок", "подача заявок", "срок подачи заявок"),
     "delivery_address": ("адрес поставки / оказания услуг", "место поставки", "адрес поставки", "место оказания услуг"),
@@ -171,7 +171,12 @@ def attach_corporate_profile(tender: dict, *, company_url: str, company_text: st
         head = row.casefold().replace("ё", "е")
         if not re.match(r"(?iu)^(?:полное наименование(?: организации)?\s*[:—-]?|(?:ооо|пао|ао|общество с ограниченной ответственностью|публичное акционерное общество)\b|©\s*\d{4}\s+(?:ооо|пао|ао)\b)", head):
             continue
-        nearby = " ".join(rows[i:i + 5])[:700]
+        # Multiple legal entities on the same line cannot be disambiguated
+        # by a nearby INN. Prefer a dedicated legal-entity header/row.
+        if len(re.findall(r"(?iu)\\b(?:ООО|ПАО|АО)\\s*[«\\\"]", row)) > 1:
+            continue
+        local_rows = rows[i:i + 7]
+        nearby = " ".join(local_rows)[:900]
         inn = re.search(r"(?iu)\bИНН\s*[:№-]?\s*(\d{10}(?:\d{2})?)\b", nearby)
         ogrn = re.search(r"(?iu)\bОГРН(?:ИП)?\s*[:№-]?\s*(\d{13}(?:\d{2})?)\b", nearby)
         if not inn or not valid_inn(inn.group(1)):
@@ -182,6 +187,17 @@ def attach_corporate_profile(tender: dict, *, company_url: str, company_text: st
         out["company_public_emails"] = [
             _cite(email.lower(), company_url, "OFFICIAL_WEBSITE_PUBLIC_CONTACT_NO_OUTREACH")
             for email in list(dict.fromkeys(EMAIL.findall(company_text)))[:6]]
+        legal_address = next((entry.split(":", 1)[-1].strip()
+                              for entry in local_rows
+                              if entry.casefold().startswith("юридический адрес:")), "")
+        if legal_address and 15 <= len(legal_address) <= 270:
+            out["buyer_legal_address"] = _cite(
+                legal_address, company_url, "OFFICIAL_WEBSITE_SELF_REPORTED_ADDRESS")
+        phone_pattern = re.compile(
+            r"(?<!\\d)(?:\\+7|8)[ -]*\\(?\\d{3}\\)?[ -]*\\d{3}[ -]*\\d{2}[ -]*\\d{2}(?!\\d)")
+        out["company_public_phones"] = [
+            _cite(phone, company_url, "OFFICIAL_WEBSITE_PUBLIC_CONTACT_NO_OUTREACH")
+            for phone in list(dict.fromkeys(phone_pattern.findall(company_text)))[:6]]
         out["fns_registry_status"] = "NOT_CHECKED"
         break
     return out

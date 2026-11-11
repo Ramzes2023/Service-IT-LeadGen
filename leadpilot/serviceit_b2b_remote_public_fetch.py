@@ -151,7 +151,12 @@ def discover_free_public_urls(client: httpx.Client, *, tender_id: str,
         response = client.get(
             SEARCH_API,
             params={
-                "query": '"' + tender_id + '" "' + subject.replace('"', "")[:130] + '"',
+                # Indexers may abbreviate long supplier-notice titles or
+                # tokenize Russian punctuation differently. Discover by the
+                # exact immutable number only; NEVER trust the Search hit as
+                # a fact. The separately fetched full public page still must
+                # pass the strict same-ID AND subject validation below.
+                "query": '"' + tender_id + '"',
                 "include_domains": "tendem.ru,b2b-center.ru",
                 "location": "RU", "language": "ru",
                 "page": 0,

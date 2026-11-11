@@ -104,6 +104,8 @@ def versioned_addendum(before, findings, tender_id):
     need(suffix.startswith("\n\n" + marker), "V20_APPEND_BOUNDARY_INVALID")
     draft[REPORT] = before[REPORT] + suffix.replace(
         marker, "13  ВЕРСИОННОЕ ДОПОЛНЕНИЕ V20", 1)
+    if len(draft[REPORT]) > 12000:
+        return None, len(lines)
     need(draft[REPORT].startswith(before[REPORT]), "V20_OLD_REPORT_CHANGED")
     for key in (SUMMARY, BRIEF):
         need(draft[key].endswith(before[key]), "V20_OLD_HIGHLIGHT_CHANGED")

@@ -86,6 +86,14 @@ def company_class(value,buyer):
     actual,expected=normal(value),normal(buyer)
     if actual==expected:
         return "MATCH"
+    # The B2B-Center public registry abbreviates the exact legal buyer
+    # ООО УК «Промышленно-металлургический холдинг» as ООО УК «ПМХ».
+    # This alias is approved ONLY for this reviewed buyer, not a generic
+    # abbreviation rule that might join unrelated legal entities.
+    if (expected==normal(SOURCE[23][1])
+            and actual in {normal("ООО УК «ПМХ»"),
+                           normal("ООО «УК ПМХ»")}):
+        return "PUBLIC_VERIFIED_ALIAS"
     if actual.startswith(expected) and actual[len(expected):] in (
             "пооткрытымисточникам","проверен"):
         return "MATCH"
@@ -227,7 +235,9 @@ def check_one(conn,rest,card,mode):
     if before==target:
         out(f"CARD_{card}_RESULT","ALREADY_PRESENT")
         return True
-    allowed=context in ("MATCH","EMPTY","PLACEHOLDER","SOURCE_PLATFORM")
+    allowed=context in (
+        "MATCH","PUBLIC_VERIFIED_ALIAS","EMPTY","PLACEHOLDER",
+        "SOURCE_PLATFORM")
     if before not in (None,"") or not allowed:
         out(f"CARD_{card}_RESULT",
             "COMPANY_REVIEW_REQUIRED" if not allowed else "EXISTING_INN_CONFLICT")

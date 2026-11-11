@@ -25,6 +25,9 @@ def test_company_name_is_not_silently_overwritten_by_inn_helper():
     assert company_class("ПАО «Не тот покупатель»",SOURCE[19][1])=="DIFFERENT_LEGAL_ENTITY"
     assert company_class(SOURCE[19][1],SOURCE[19][1])=="MATCH"
     assert company_class("B2B-Center",SOURCE[19][1])=="PLACEHOLDER"
+    assert company_class("ООО УК «ПМХ»",SOURCE[23][1])=="PUBLIC_VERIFIED_ALIAS"
+    assert company_class("ООО «УК ПМХ»",SOURCE[23][1])=="PUBLIC_VERIFIED_ALIAS"
+    assert company_class("ООО УК «ПМХ»",SOURCE[19][1])=="DIFFERENT_LEGAL_ENTITY"
     assert company_class("заказчик не установлен",SOURCE[19][1])=="PLACEHOLDER"
     assert company_class("",SOURCE[19][1])=="EMPTY"
 

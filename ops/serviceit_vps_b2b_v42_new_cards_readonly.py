@@ -63,8 +63,8 @@ def receipt(conn,table,card):
     rows=conn.execute(
         "SELECT status FROM "+table+
         " WHERE card_id=%s ORDER BY "+(
-            "attempt_no DESC" if table.endswith(("retry_attempts","consistency_v37_receipts","v20_revision_receipts","v19_research_receipts")) else
-            "updated_at DESC" if table.endswith("tender_doc_receipts") else
+            "attempt_no DESC" if table.endswith(("retry_attempts","consistency_v37_receipts","v20_revision_receipts")) else
+            "updated_at DESC" if table.endswith(("tender_doc_receipts","v19_research_receipts")) else
             "card_id DESC")+
         " LIMIT 1", (card,)).fetchone()
     return status(rows[0]) if rows else "NO_RECEIPT"

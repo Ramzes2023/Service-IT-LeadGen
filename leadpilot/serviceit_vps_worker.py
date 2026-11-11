@@ -208,7 +208,18 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 tender_docs = docs_once(exact_env, client, connection)
             except Exception:
                 tender_docs = {"status": "TDI_CHECK_FAILED", "crm_writes": 0}
+        # V19 additive, one-use supplement for prior V11-signed cards.
+        # Disabled until exact four-card no-write preview and guarded release.
+        # Shared V11 advisory lock, independent PG receipt, no blind replay.
+        v19 = {"status": "B2B_V19_ADDITIVE_DISABLED", "crm_writes": 0}
+        if exact_env.get("SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED") == "YES":
+            try:
+                from .serviceit_b2b_v19_backfill import run_once as backfill_once
+                v19 = backfill_once(exact_env, client, connection)
+            except Exception:
+                v19 = {"status": "B2B_V19_ADDITIVE_CHECK_FAILED", "crm_writes": 0}
         return {
+            "b2b_v19_additive": v19,
             "b2b_tender_documents": tender_docs,
             "b2b_dossier_v11": dossier,
             "b2b_public_inn": public_inn,
@@ -218,7 +229,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             "poll": polled["status"],
             "queue_counts": metrics(connection),
             "max_new_cards_per_cycle": MAX_ITEMS,
-            "historical_cards_touched": False,
+            "historical_cards_touched": v19.get("crm_writes") == 1,
         }
 
 

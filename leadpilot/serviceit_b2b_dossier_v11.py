@@ -322,7 +322,7 @@ def compose(notice, old_item, findings, investigation):
     # from confirmed facts / public INN / FNS / commercial score.
     indexed = (findings.get("indexed_candidates") or []) if isinstance(findings, dict) else []
     indexed_lines = []
-    if not docs and isinstance(indexed, list):
+    if isinstance(indexed, list):
         for entry in indexed[:3]:
             if not isinstance(entry, dict) or entry.get("evidence_level") != "INDEX_ONLY_UNVERIFIED":
                 continue
@@ -339,22 +339,27 @@ def compose(notice, old_item, findings, investigation):
                 indexed_lines.append(claim["category"] + " (ИНДЕКС, НЕ ПОДТВЕРЖДЕНО): "
                                      + tidy(quote, 250) + " | " + url)
             if not entry.get("claims"):
-                indexed_lines.append("Найдена индексированная страница (содержание "
-                                     "ещё не проверено): " + url)
+                indexed_lines.append("Индекс содержит подходящий номер и тему; "
+                                     "подтвердить содержание страницы: " + url)
+            if entry.get("title_match") == "EXACT_ID_TOPIC_PLATFORM_NOT_CONFIRMED":
+                indexed_lines.append("ВНИМАНИЕ: принадлежность страницы процедуре "
+                                     "B2B-Center не подтверждена: " + url)
         indexed_lines = list(dict.fromkeys(indexed_lines))[:8]
     if indexed_lines:
         # When the actual website cannot be read, don't bury the potentially
         # useful source leads beneath repetitive filler.
         start = sections.index("06  ЧТО ПОКА НЕ ДОКАЗАНО")
         end = sections.index("07  ДОСЛОВНЫЕ ФРАГМЕНТЫ И ССЫЛКИ")
-        sections[start:end] = [
-            "06  СВЕДЕНИЯ ПОИСКОВОГО ИНДЕКСА — ТРЕБУЮТ ПОДТВЕРЖДЕНИЯ",
-            "Выписки из Brave LLM Context. НЕ являются прочитанным "
-            "первоисточником или сведениями ФНС. Нельзя принимать решение "
-            "о контакте, цене или участии без подтверждения.",
+        # Preserve the independently VERIFIED evidence and missing-data
+        # section even when a weak-but-relevant indexed lead also exists.
+        # V18 mistakenly discarded all Context results whenever ONE unrelated
+        # public page happened to be readable.
+        sections[end:end] = [
+            "06A  ДОПОЛНИТЕЛЬНЫЕ НАХОДКИ BRAVE — НЕ ПРОВЕРЕНЫ",
+            "Индексированные фрагменты не являются отдельно прочитанным "
+            "первоисточником или реестром ФНС. Сверить номер, заказчика "
+            "и актуальность у площадки перед коммерческим решением.",
             *indexed_lines, "",
-            "Пробелы: доступная оригинальная документация, юридическая "
-            "сверка заказчика и коммерческие условия.", "",
         ]
         lead = ("ИНДЕКС BRAVE (проверить у заказчика): "
                 + " | ".join(indexed_lines[:2]))[:900]

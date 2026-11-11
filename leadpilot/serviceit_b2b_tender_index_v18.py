@@ -57,8 +57,13 @@ def _title_terms(s):
             "приобретение", "для", "нужд", "поставка", "оборудования",
             "предоставление", "компании", "тендер", "предварительный",
             "квалификационный", "отбор", "коммерческий", "договор"}
-    return {w[:6] for w in re.findall(r"(?iu)[\w]{4,}", s.casefold())
-            if w not in stop}
+    words = {w[:6] for w in re.findall(r"(?iu)[\w]{4,}", s.casefold())
+             if w not in stop}
+    # Three-letter buyer acronyms (МКБ, РЖД, ВТБ) are often distinctive.
+    acronyms = re.findall(r"(?u)(?<![\w])[А-ЯЁA-Z]{3,6}(?![\w])", s)
+    words.update(w.casefold()[:6] for w in acronyms
+                 if w.casefold() not in stop)
+    return words
 
 
 def _safe_index_candidate(url, title, text, tender_id, subject):
@@ -87,7 +92,10 @@ def _safe_index_candidate(url, title, text, tender_id, subject):
     # subject/detail; Kontur URL alone is not sufficient.
     platform = ("b2b-center" in (title+" "+text[:4400]).casefold()
                 or host == "b2b-center.ru" or host.endswith(".b2b-center.ru"))
-    if not platform:
+    # An aggregator's exact-ID URL and matching subject may remain a useful
+    # lead when the indexed snippet omits B2B origin. Keep provenance
+    # explicitly unconfirmed; do not promote it to verified buyer/price/FNS.
+    if not platform and not exact.search(url):
         return None
     # Search context might contain prompt-injection. Never execute or
     # forward its instructions as model facts. Only bounded labelled quotes.
@@ -103,7 +111,8 @@ def _safe_index_candidate(url, title, text, tender_id, subject):
         quotes.append({"category": label, "quote": clean})
     return {"url": url, "host": host, "claims": quotes[:5],
             "evidence_level": "INDEX_ONLY_UNVERIFIED",
-            "title_match": "EXACT_ID_AND_TOPIC_AND_PLATFORM"}
+            "title_match": ("EXACT_ID_AND_TOPIC_AND_PLATFORM" if platform else
+                            "EXACT_ID_TOPIC_PLATFORM_NOT_CONFIRMED")}
 
 
 def tender_index_context(client, tender_id, subject, token):

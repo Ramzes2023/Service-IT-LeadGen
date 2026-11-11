@@ -36,9 +36,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git cat-file -e '8e935fbc64650cda84e8af23dfd662e27c5ca808^{commit}'
+          git cat-file -e '9e8b0808c8ce539ebf89e193408bcd5fa72ff0e3^{commit}'
           script=ops/serviceit_vps_b2b_v19_second_card_postread.py
-          git diff --quiet 8e935fbc64650cda84e8af23dfd662e27c5ca808 HEAD -- "$script"
+          git diff --quiet 9e8b0808c8ce539ebf89e193408bcd5fa72ff0e3 HEAD -- "$script"
           python -m py_compile "$script"
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]

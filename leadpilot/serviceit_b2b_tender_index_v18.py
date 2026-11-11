@@ -42,6 +42,35 @@ FIELDS = (
     ("BUDGET", re.compile(
         r"(?iu)(?:начальная\s+цена|максимальная\s+цена|бюджет\s+закупки)"
         r"\s*[:：—-]\s*([^\n.]{3,70})")),
+    # Additional categories are only indexed RESEARCH LEADS, never evidence
+    # of an actual contractual duty or approved participation.
+    ("PROCEDURE", re.compile(
+        r"(?iu)(?:тип закупки|способ закупки|вид процедуры|форма закупки)"
+        r"\s*[:：—-]\s*([^\n.;]{8,140})")),
+    ("TECHNOLOGY", re.compile(
+        r"(?iu)(?:технические требования|техническое задание|спецификация)"
+        r"\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("ELIGIBILITY", re.compile(
+        r"(?iu)(?:требования к участник(?:ам|у)|квалификационные требования|"
+        r"условия участия)\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("EVALUATION", re.compile(
+        r"(?iu)(?:критерии оценки|критерии отбора|порядок оценки заявок)"
+        r"\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("SUBMISSION", re.compile(
+        r"(?iu)(?:порядок подачи заявок|способ подачи заявки)"
+        r"\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("DOCUMENTS", re.compile(
+        r"(?iu)(?:перечень документов|документы для участия|"
+        r"состав заявки)\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("PAYMENT", re.compile(
+        r"(?iu)(?:условия оплаты|порядок расчетов|порядок расчётов)"
+        r"\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("GUARANTEE", re.compile(
+        r"(?iu)(?:обеспечение заявки|обеспечение договора|"
+        r"банковская гарантия)\s*[:：—-]\s*([^\n.;]{10,155})")),
+    ("DELIVERY", re.compile(
+        r"(?iu)(?:срок поставки|срок исполнения|срок оказания услуг)"
+        r"\s*[:：—-]\s*([^\n.;]{10,155})")),
 )
 
 
@@ -99,17 +128,43 @@ def _safe_index_candidate(url, title, text, tender_id, subject):
         return None
     # Search context might contain prompt-injection. Never execute or
     # forward its instructions as model facts. Only bounded labelled quotes.
+    # A search index can aggregate many tenders on one page. Extract labels
+    # only close to the exact tender number and matching topic. An exact
+    # detail URL + title may supply a text block without the ID repeated.
+    anchored = []
+    for id_match in list(exact.finditer(text[:6000]))[:6]:
+        local = text[max(0, id_match.start()-250):id_match.end()+1700]
+        if (_title_terms(subject) & _title_terms(local)):
+            anchored.append(local)
+    if not anchored and exact.search(title) and exact.search(url):
+        anchored.append(text[:2500])
+    details = "\n".join(anchored)[:6000]
     quotes = []
+    # Clearly stated PКО is NOT a contract award. Capture its actual wording
+    # as an indexed warning; never synthesize a value from the site type.
+    kind_rx = re.compile(
+        r"(?iu)(?:предварительный\s+квалификационный\s+отбор|"
+        r"запрос\s+предложений|запрос\s+цен|аукцион)"
+        r"\s*№\s*" + re.escape(tender_id) + r"(?!\d)")
+    kind = kind_rx.search(title + "\n" + details)
+    if kind:
+        quotes.append({"category":"PROCEDURE",
+                       "quote":" ".join(kind.group(0).split())[:MAX_QUOTE]})
     for label, rx in FIELDS:
-        match = rx.search(text[:6000])
+        match = rx.search(details)
         if not match:
             continue
         clean = " ".join(match.group(0).split())[:MAX_QUOTE]
         if re.search(r"[<>\x00-\x1f]|ignore\s+previous|system\s*:", clean, re.I):
             continue
-        # Explicit amount "не указана" is NOT 0 or a monetary price.
-        quotes.append({"category": label, "quote": clean})
-    return {"url": url, "host": host, "claims": quotes[:5],
+        # Conditional labels must not accidentally copy a private email/phone
+        # or external instruction from an untrusted search snippet.
+        if label not in ("BUYER","INN","DEADLINE","LOCATION","BUDGET"):
+            if re.search(r"@|https?://|(?:\+7|8)\D{0,3}\d{3}", clean, re.I):
+                continue
+        if (label, clean) not in {(x["category"],x["quote"]) for x in quotes}:
+            quotes.append({"category": label, "quote": clean})
+    return {"url": url, "host": host, "claims": quotes[:14],
             "evidence_level": "INDEX_ONLY_UNVERIFIED",
             "title_match": ("EXACT_ID_AND_TOPIC_AND_PLATFORM" if platform else
                             "EXACT_ID_TOPIC_PLATFORM_NOT_CONFIRMED")}

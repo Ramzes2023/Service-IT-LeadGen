@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           install -d -m 0700 "$RUNNER_TEMP/v42-newcards"
           python -m py_compile ops/serviceit_vps_b2b_v42_new_cards_readonly.py
-          [[ "$(git hash-object ops/serviceit_vps_b2b_v42_new_cards_readonly.py)" == "fbd6f996b324d077287fa8030857c4ef2c381a5c" ]]
+          [[ "$(git hash-object ops/serviceit_vps_b2b_v42_new_cards_readonly.py)" == "21e7337a11cc379fb51da01ea18cbe0d50e9ddf3" ]]
           : > "$RUNNER_TEMP/v42-newcards/shas"
           names=(serviceit_vps_worker.py serviceit_enrichment_worker.py
             serviceit_b2b_dossier_consistency_worker_v37.py)

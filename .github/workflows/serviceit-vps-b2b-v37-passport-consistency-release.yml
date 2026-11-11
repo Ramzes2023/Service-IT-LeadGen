@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed='1184e8840d585bd1162910d545cdfa8667197818'
+          reviewed="$GITHUB_SHA"
           old='1184e8840d585bd1162910d545cdfa8667197818'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
@@ -43,7 +43,12 @@ jobs:
           install -d -m 0700 "$RUNNER_TEMP/v37-release"
           : > "$RUNNER_TEMP/v37-release/new-hashes"
           : > "$RUNNER_TEMP/v37-release/old-hashes"
-          for name in "${names[@]}"; do
+          blobs=(5e240eb920d6b33880303fa08c84699bcd4d19dd
+            e3a401240a085bd36b1a05df1d298f504929f598
+            9bacd24eec860598fcf56ddb291c968e256092c5)
+          for i in "${!names[@]}"; do
+            name="${names[$i]}"
+            [[ "$(git hash-object "leadpilot/$name")" == "${blobs[$i]}" ]]
             git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
             python -m py_compile "leadpilot/$name"
             sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v37-release/new-hashes"

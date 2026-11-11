@@ -1,0 +1,124 @@
+name: ServiceIT TinyFish public Tendem-only activation with rollback
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-vps-five-minute-coordinator-image-change
+  cancel-in-progress: false
+jobs:
+  enable:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_TINYFISH_TENDEM_ONLY_ENABLE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Pin exact source, OFF overlay and owner SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_tinyfish_tendem_enable.py
+          names=(
+            serviceit_b2b_free_public_fallback.py
+            serviceit_b2b_remote_public_fetch.py
+            serviceit_b2b_public_fact_extractor.py
+            serviceit_vps_b2b_deep_research.py
+          )
+          install -d -m 0700 "$RUNNER_TEMP/tendem-on"
+          : > "$RUNNER_TEMP/tendem-on/code-shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 \
+              >> "$RUNNER_TEMP/tendem-on/code-shas"
+          done
+          sha256sum deploy/serviceit-vps-tinyfish-free.compose.yml | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/tendem-on/overlay-sha"
+          sha256sum ops/serviceit_vps_b2b_tinyfish_tendem_enable.py | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/tendem-on/script-sha"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tendem-on/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tendem-on/hosts"
+          chmod 0600 "$RUNNER_TEMP/tendem-on/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tendem-on/hosts" >/dev/null
+
+      - name: Stage one no-secret activation controller, no production changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/tendem-on/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/tinyfish-tendem-enable-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/tendem-on/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/tendem-on/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_tinyfish_tendem_enable.py "$target:$stage/activate.py"
+
+      - name: Guarded exact two-flag Compose activation, coordinator only
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/tendem-on/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          script_sha="$(cat "$RUNNER_TEMP/tendem-on/script-sha")"
+          overlay_sha="$(cat "$RUNNER_TEMP/tendem-on/overlay-sha")"
+          mapfile -t code_shas < "$RUNNER_TEMP/tendem-on/code-shas"
+          [[ "$script_sha" =~ ^[a-f0-9]{64}$ &&
+             "$overlay_sha" =~ ^[a-f0-9]{64}$ &&
+             "${#code_shas[@]}" == 4 ]]
+          args=()
+          for s in "${code_shas[@]}"; do
+            [[ "$s" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$s'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$script_sha' '$overlay_sha' ${args[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/tendem-on/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/tendem-on/report" 2>/dev/null <<'REMOTE'
+          set -euo pipefail
+          id="$1"; script_sha="$2"; overlay_sha="$3"; shift 3
+          [[ "$id" =~ ^[0-9]{7,16}$ &&
+             "$script_sha" =~ ^[a-f0-9]{64}$ &&
+             "$overlay_sha" =~ ^[a-f0-9]{64}$ &&
+             "$#" == 4 ]]
+          for s in "$@"; do [[ "$s" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/tinyfish-tendem-enable-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$script_sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$script_sha" "$overlay_sha" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^TINYFISH_TENDEM_ENABLE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/tendem-on/report" | head -20 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'TINYFISH_TENDEM_ENABLE_LIVE=YES' "$RUNNER_TEMP/tendem-on/report"
+          grep -qx 'TINYFISH_TENDEM_ENABLE_CODE=EXACT' "$RUNNER_TEMP/tendem-on/report"
+          grep -qx 'TINYFISH_TENDEM_ENABLE_TENDEM=YES' "$RUNNER_TEMP/tendem-on/report"
+          grep -qx 'TINYFISH_TENDEM_ENABLE_B2B_CENTER=NO' "$RUNNER_TEMP/tendem-on/report"
+          grep -qx 'TINYFISH_TENDEM_ENABLE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/tendem-on/report"
+          grep -qx 'TINYFISH_TENDEM_ENABLE_ROLLBACK=NOT_NEEDED' "$RUNNER_TEMP/tendem-on/report"

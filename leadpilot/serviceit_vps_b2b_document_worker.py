@@ -278,13 +278,21 @@ def _model_research(client, env, docs):
     env = exact_environment(env)
     cfg = config_from_env(env)
     need(cfg.provider == "routerai", "TDI_ROUTERAI_ONLY")
+    # Cover every retained character, not only keyword-selected excerpts.
+    # Overlap preserves requirements spanning a window boundary. Existing
+    # six-file / 24k-character caps bound this to at most 12 model calls.
+    chunks = []
+    for doc in docs[:6]:
+        text = doc["text"][:24000]
+        for start in range(0, len(text), 4000):
+            chunks.append({"url": doc["url"], "excerpt": text[start:start + 4500]})
     reports = []
-    for start in range(0, len(docs), 3):
-        group = _evidence(docs[start:start + 3])
+    for start in range(0, len(chunks), 3):
+        group = {"status": "PUBLIC_PAGES_INSPECTED",
+                 "pages": chunks[start:start + 3]}
         try:
             reports.append(investigate_routerai(client, cfg, group))
         except Exception:
-            # A failed or ungrounded model is NOT licence to invent facts.
             reports.append(source_only_investigation(group))
     return reports
 

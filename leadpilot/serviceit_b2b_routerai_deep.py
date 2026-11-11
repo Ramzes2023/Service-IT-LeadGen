@@ -17,7 +17,7 @@ import httpx
 from .serviceit_ai_report import plain
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 
-MAX_PAGES = 3
+MAX_PAGES = 6
 MAX_DOCUMENT_CHARS = 4800
 MAX_REPORT = 12000
 QUESTION_SECTIONS = (
@@ -56,6 +56,19 @@ class DeepEvidenceError(ValueError):
     pass
 
 
+def _public_plain(text, limit):
+    """Allow procurement instruction nouns, retaining all other text guards.
+
+    Validation uses a surrogate only; evidence always retains original wording.
+    Imperatives to ignore instructions and role delimiters remain rejected.
+    """
+    checked = re.sub(r"(?iu)\bинструкци[а-яё]*\b", "документ", text)
+    plain(checked, limit)
+    if len(text) > limit:
+        raise ValueError("REPORT_UNSAFE_TEXT")
+    return text.strip()
+
+
 def _clean_public_segment(text):
     """Conservative text-only privacy/injection boundary, no rewriting facts."""
     if type(text) is not str:
@@ -64,7 +77,8 @@ def _clean_public_segment(text):
     if not 15 <= len(text) <= 450:
         return ""
     try:
-        return plain(text, 450)
+        _public_plain(text, 450)
+        return text
     except ValueError:
         return ""
 
@@ -96,7 +110,7 @@ def public_documents(findings: dict) -> list[dict]:
         # Split on major punctuation, retaining original wording. A segment
         # containing contact details, a prompt-injection or arbitrary URLs is
         # dropped in its entirety, not transformed into a misleading quote.
-        segments = re.split(r"(?<=[.!?;])\s+|[\r\n]+", excerpt[:7200])
+        segments = re.split(r"(?<=[.!?])\s+|[;\r\n]+", excerpt[:7200])
         safe = []
         for segment in segments:
             segment = segment.strip()
@@ -130,7 +144,7 @@ def _must_plain(value, limit):
     if type(value) is not str:
         raise DeepEvidenceError("MODEL_INVALID_TEXT")
     try:
-        return plain(value, limit)
+        return _public_plain(value, limit)
     except ValueError:
         raise DeepEvidenceError("MODEL_UNSAFE_TEXT") from None
 

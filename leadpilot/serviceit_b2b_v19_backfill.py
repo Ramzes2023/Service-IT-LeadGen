@@ -117,13 +117,15 @@ def novel_evidence(findings, previous_report):
     found = []
     docs, cited = evidence_rows(findings, source_only_investigation(findings))
     # Keep independently read quotations FIRST and source URL unchanged.
-    for row in cited[:MAX_FACTS]:
+    for row in cited:
         quote = tidy(row.get("quote"), MAX_LINE)
         url = row.get("url")
         if not quote or type(url) is not str or quote in previous_report:
             continue
         found.append("ПРОЧИТАННЫЙ ИСТОЧНИК / " + row["category"] +
                      ": " + quote + " [" + url + "]")
+        if len(found) >= MAX_FACTS:
+            break
     indexed = (findings.get("indexed_candidates") or []) if type(findings) is dict else []
     for entry in indexed[:3]:
         if type(entry) is not dict or entry.get("evidence_level") != "INDEX_ONLY_UNVERIFIED":

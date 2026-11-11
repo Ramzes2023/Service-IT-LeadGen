@@ -117,7 +117,7 @@ def test_supplement_has_no_side_effect_when_disabled(monkeypatch, changes):
         PRIMARY, NOTICE, {**ENV, **changes}, Mock()) is PRIMARY
 
 
-def test_sufficient_primary_conditions_skip_duplicate_provider(monkeypatch):
+def test_rich_primary_still_runs_approved_provider(monkeypatch):
     rich = {**PRIMARY, "pages": [{
         "url": B2B_URL,
         "excerpt": "Тендер 4673595. Заказчик: ООО «А». "
@@ -126,10 +126,10 @@ def test_sufficient_primary_conditions_skip_duplicate_provider(monkeypatch):
     }]}
     monkeypatch.setattr(
         free, "read_free_public_mirror",
-        lambda *a, **k: pytest.fail("rich primary re-fetched"),
+        lambda *a, **k: FREE,
     )
     assert research._supplement_thin_public_evidence(
-        rich, NOTICE, ENV, Mock()) is rich
+        rich, NOTICE, ENV, Mock())["free_public_supplemented"] is True
 
 
 def test_native_mirror_branch_uses_approved_supplement_once(monkeypatch):

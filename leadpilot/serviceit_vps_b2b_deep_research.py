@@ -40,7 +40,7 @@ RESEARCHABLE_STATES = frozenset((
     "PUBLIC_RESEARCH_SOURCE_CITED_AI_UNVERIFIED",
     "PUBLIC_RESEARCH_SOURCE_NO_QUOTES_AI_UNVERIFIED",
 ))
-MAX_PAGES = 3
+MAX_PAGES = 6
 SOURCE_ID = re.compile(r"B2B-CENTER-(\d{5,12})\Z")
 MODEL_ALLOWED = frozenset(("tender-opportunity",))
 SKIP_AI = "NOT_RUN_SOURCE_UNVERIFIED"
@@ -448,7 +448,7 @@ def _supplement_thin_public_evidence(candidate, notice, env, client, *, index_hi
     pages = [p for p in candidate["pages"] if isinstance(p, dict)
              and isinstance(p.get("url"), str)
              and isinstance(p.get("excerpt"), str)]
-    if not pages or len(pages) >= MAX_PAGES:
+    if not pages:
         return candidate
     if (env.get("SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED") != "YES"
             or env.get("SERVICEIT_B2B_TENDEM_PUBLIC_EXTRACTION_APPROVED") != "YES"):
@@ -458,17 +458,7 @@ def _supplement_thin_public_evidence(candidate, notice, env, client, *, index_hi
     if any(p["url"].startswith(("https://tendem.ru/tenders/",
                                 "https://www.tendem.ru/tenders/")) for p in pages):
         return candidate
-    corpus = " ".join(p["excerpt"][:4700] for p in pages).casefold()
-    categories = (
-        ("заказчик", "покупател"),
-        ("срок", "дедлайн", "подач заяв"),
-        ("документ", "техническ", "спецификац", "требован"),
-        ("цена", "стоимост", "бюджет", "оплат"),
-        ("регион", "достав", "адрес", "место постав"),
-        ("участи", "критери", "квалификац", "обеспечени"),
-    )
-    if sum(any(word in corpus for word in group) for group in categories) >= 3:
-        return candidate
+    # Keywords and missing-value labels never prove dossier completeness.
     from .serviceit_b2b_free_public_fallback import read_free_public_mirror
     free = read_free_public_mirror(
         notice, env, client, index_hints=index_hints)
@@ -488,7 +478,7 @@ def _supplement_thin_public_evidence(candidate, notice, env, client, *, index_hi
                  and approved_url(p["url"])
                  and exact.search(p["excerpt"])
                  and p["url"] not in seen]
-    additions = additions[:MAX_PAGES-len(pages)]
+    additions = additions[:1]
     if not additions:
         return candidate
     updated = dict(candidate)
@@ -594,15 +584,21 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             # The stage remains incomplete and is eligible for the normal
             # V19 24-hour source retry. Never log credentials or vendor text.
             tinyfish = None
-    key = secret_file(env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)
-    results = research_public(
-        item, client, hosts,
+    def optional(call, *args, **kwargs):
+        try:
+            return call(*args, **kwargs)
+        except Exception:
+            return None
+
+    key = optional(secret_file, env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True) or ""
+    results = optional(
+        research_public, item, client, hosts,
         deep_search_enabled=env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") == "YES",
         deep_search_key=key,
         deep_llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
         browser_render=browser,
         detail_excerpt_chars=4000,
-    )
+    ) or {"status": "PUBLIC_RESEARCH_INCOMPLETE", "pages": []}
     # Original marketplace publication may require login. Brave is a URL
     # discovery fallback, not permission to bypass access controls.
     # An HTTP 200 login shell or generic index page is NOT evidence of
@@ -621,12 +617,12 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
         from .serviceit_b2b_tender_index_v18 import tender_index_context
         # Exactly ONE additional official Brave Context request. Failure to
         # reach it never prevents other public research or existing intake.
-        index = tender_index_context(
+        index = optional(tender_index_context,
             client, notice["tender_id"], notice["subject"], key)
-    mirror = (brave_mirror_search(
+    mirror = (optional(brave_mirror_search,
         client, notice["tender_id"], notice["subject"], key,
         browser=browser, index=index) if v18
-        else brave_mirror_search(
+        else optional(brave_mirror_search,
             client, notice["tender_id"], notice["subject"], key))
 
     def with_index(candidate):
@@ -641,7 +637,7 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             "NO_VERIFIED_PUBLIC_PAGE_RETRYABLE")
         # Re-run the ordinary verified-buyer follow-up only after all safely
         # merged public sources, so the model/CRM dossier sees both providers.
-        result = followup_public_buyer_research(result, env, client, key)
+        result = optional(followup_public_buyer_research, result, env, client, key) or result
         if v18:
             hints = (index.get("candidates") or []) if isinstance(index, dict) else []
             # Brave search hits are URL hints only; never factual proof.
@@ -652,7 +648,7 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
         return result
 
     if not page_proof:
-        candidate = brave_notice_page(
+        candidate = optional(brave_notice_page,
             client, notice["tender_id"], hosts, key, browser,
             subject=notice["subject"])
         if candidate is not None:
@@ -671,7 +667,7 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
     # Even when original publication can be read, Brave can independently
     # discover a richer PUBLIC mirror/detail page with the exact same ID.
     # Count at most one extra independently fetched page; never trust snippets.
-    extra = brave_notice_page(
+    extra = optional(brave_notice_page,
         client, notice["tender_id"], hosts, key, browser,
         subject=notice["subject"])
     if extra is not None:

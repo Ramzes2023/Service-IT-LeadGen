@@ -11,7 +11,7 @@ def test_original_public_four_audit_unaffected_and_v16_guarded():
     assert "SERVICEIT_B2B_V16_FOUR_REAL_PREVIEW_READONLY_368" in t
     assert "github.actor == 'Ramzes2023'" in t
     assert "github.event.comment.user.login == 'Ramzes2023'" in t
-    assert t.count("github.event.issue.number == 368") == 3
+    assert t.count("github.event.issue.number == 368") == 4
     assert "serviceit_vps_b2b_crossportal_four_v16_preview.py" in t
     assert "StrictHostKeyChecking=yes" in t
     assert "UserKnownHostsFile=" in t

@@ -1,5 +1,8 @@
 name: ServiceIT B2B V36 and V37 production acceptance
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-v36-v37-acceptance.yml]
   workflow_run:
     workflows: [ServiceIT VPS B2B V36 guarded dossier quality coordinator release]
     types: [completed]
@@ -13,11 +16,12 @@ jobs:
   preview:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
-      github.event.workflow_run.conclusion == 'success' &&
+      ((github.event_name == 'push' && github.actor == 'Ramzes2023') ||
+       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.actor.login == 'Ramzes2023' &&
-      github.event.workflow_run.head_sha == 'bdd6bdc0bbec7768c082f5551574522227dbe37b'
+      github.event.workflow_run.head_sha == 'bdd6bdc0bbec7768c082f5551574522227dbe37b'))
     runs-on: ubuntu-latest
     timeout-minutes: 18
     environment: serviceit-vps-readonly

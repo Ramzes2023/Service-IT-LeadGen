@@ -1,0 +1,79 @@
+name: ServiceIT VPS V22 four real B2B primary source facts read-only preview
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v22-four-source-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V22_FOUR_PRIMARY_READONLY_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin exact reviewed read-only audit source and strict VPS host
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='c0b586000aadd26206f3b810b2d94cbad2d01cf4'
+          git cat-file -e "$reviewed^{commit}"
+          script=ops/serviceit_vps_b2b_v22_four_primary_readonly.py
+          git diff --quiet "$reviewed" HEAD -- "$script"
+          python -m py_compile "$script"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v22-four"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v22-four/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v22-four/hosts"
+          chmod 0600 "$RUNNER_TEMP/v22-four/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v22-four/hosts" >/dev/null
+      - name: Read four signed original B2B public pages and Bitrix snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v22-four/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          checked=()
+          for file in serviceit_b2b_tender_index_v18.py serviceit_b2b_v19_backfill.py serviceit_b2b_routerai_deep.py; do
+            sha="$(sha256sum "leadpilot/$file" | cut -d' ' -f1)"
+            [[ "$sha" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$sha'")
+          done
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v22-four/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - ${checked[*]}" \
+            < ops/serviceit_vps_b2b_v22_four_primary_readonly.py \
+            > "$RUNNER_TEMP/v22-four/status" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V22_FOUR_[A-Z0-9_]+=(YES|NO|[0-9]{1,3}|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v22-four/status" | head -60 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V22_FOUR_SOURCE_SHA_AND_LIVE_GATES=YES' "$RUNNER_TEMP/v22-four/status"
+          grep -qx 'V22_FOUR_SIGNED_FOUR=YES' "$RUNNER_TEMP/v22-four/status"
+          grep -qx 'V22_FOUR_CRM_WRITES=NO' "$RUNNER_TEMP/v22-four/status"
+          grep -qx 'V22_FOUR_PG_WRITES=NO' "$RUNNER_TEMP/v22-four/status"
+          grep -qx 'V22_FOUR_BRAVE_ROUTERAI_CALLS=NO' "$RUNNER_TEMP/v22-four/status"

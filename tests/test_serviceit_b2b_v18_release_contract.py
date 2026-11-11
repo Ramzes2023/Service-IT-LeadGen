@@ -17,10 +17,15 @@ def test_v18_has_real_search_capabilities_without_missing_legal_gates():
         ast.parse(path.read_text("utf8"))
     s=DEEP.read_text("utf8")
     assert "SERVICEIT_B2B_V18_SEARCH_ENABLED" in s
-    assert "tender_index_context(" in s
+    optional_providers = {
+        node.args[0].id for node in ast.walk(ast.parse(s))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "optional" and node.args
+        and isinstance(node.args[0], ast.Name)
+    }
+    assert {"tender_index_context", "brave_mirror_search"} <= optional_providers
     assert "enable_v18 is True" in s
     assert '"INDEX_ONLY_UNVERIFIED"' in INDEX.read_text("utf8")
-    assert "brave_mirror_search(" in s
     s=WORKER.read_text("utf8")
     assert "enable_v18=True" in s
     s=CORE.read_text("utf8")

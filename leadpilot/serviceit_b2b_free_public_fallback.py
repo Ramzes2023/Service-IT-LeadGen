@@ -82,7 +82,9 @@ def read_free_public_mirror(notice: dict, env: dict, client, *, index_hints=None
                 break
         if not urls:
             candidates = discover_free_public_urls(
-                client, tender_id=tender_id, subject=subject, api_key=api_key)
+                client, tender_id=tender_id, subject=subject, api_key=api_key,
+                include_tendem=env.get(T_EN) == "YES",
+                include_b2b=env.get(B_EN) == "YES")
             urls = [url for url in candidates if _permitted(url, env)]
             urls = urls[:MAX_URLS_PER_RESEARCH]
     if not urls:

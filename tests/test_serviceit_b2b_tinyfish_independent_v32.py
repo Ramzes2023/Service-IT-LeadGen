@@ -119,7 +119,7 @@ def test_unapproved_or_wrong_id_never_becomes_evidence(monkeypatch, remote):
         "NO_VERIFIED_PUBLIC_PAGE_RETRYABLE")
 
 
-def test_tinyfish_deduplicates_and_preserves_three_page_cap(monkeypatch):
+def test_tinyfish_adds_verified_fourth_page(monkeypatch):
     base_pages = [{"url": PRIMARY_URL, "excerpt": "Тендер 4673971"}]
     env, calls = _arrange(
         monkeypatch, primary={"status": "PUBLIC_PAGES_INSPECTED",
@@ -130,8 +130,9 @@ def test_tinyfish_deduplicates_and_preserves_three_page_cap(monkeypatch):
                                    "excerpt": "Дополнения"}]}, remote=REMOTE)
     result = research.source_findings({}, NOTICE, env, Mock())
     assert calls == [(ID, [])]
-    assert len(result["pages"]) == research.MAX_PAGES
-    assert result["tinyfish_verified_page_limit"] is True
+    assert len(result["pages"]) == 4
+    assert result["pages"][-1]["url"] == REMOTE["pages"][0]["url"]
+    assert result["tinyfish_verified_page_limit"] is False
     assert result["tinyfish_independent_stage"] == "VERIFIED"
 
 

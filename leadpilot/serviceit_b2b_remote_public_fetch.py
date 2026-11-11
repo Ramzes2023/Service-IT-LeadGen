@@ -135,7 +135,9 @@ SEARCH_API = "https://api.search.tinyfish.ai"
 
 
 def discover_free_public_urls(client: httpx.Client, *, tender_id: str,
-                              subject: str, api_key: str) -> list[str]:
+                              subject: str, api_key: str,
+                              include_tendem: bool = True,
+                              include_b2b: bool = True) -> list[str]:
     """Optional free-tier URL discovery; index output is NEVER factual proof.
 
     Search and Fetch are vendor-advertised free within published rate limits.
@@ -147,6 +149,14 @@ def discover_free_public_urls(client: httpx.Client, *, tender_id: str,
             or type(api_key) is not str or not 16 <= len(api_key) <= 256
             or not api_key.isascii() or "\n" in api_key or "\r" in api_key):
         return []
+    domains = [
+        domain for domain, enabled in (
+            ("tendem.ru", include_tendem), ("b2b-center.ru", include_b2b))
+        if enabled is True
+    ]
+    if not domains:
+        return []
+    allowed_hosts = {*domains, *("www." + domain for domain in domains)}
     try:
         response = client.get(
             SEARCH_API,
@@ -157,7 +167,7 @@ def discover_free_public_urls(client: httpx.Client, *, tender_id: str,
                 # a fact. The separately fetched full public page still must
                 # pass the strict same-ID AND subject validation below.
                 "query": '"' + tender_id + '"',
-                "include_domains": "tendem.ru,b2b-center.ru",
+                "include_domains": ",".join(domains),
                 "location": "RU", "language": "ru",
                 "page": 0,
             },
@@ -178,7 +188,7 @@ def discover_free_public_urls(client: httpx.Client, *, tender_id: str,
         candidate = row.get("url")
         title = row.get("title")
         snippet = row.get("snippet")
-        if not approved_url(candidate):
+        if not approved_url(candidate) or urlsplit(candidate).hostname not in allowed_hosts:
             continue
         if (type(title) is not str or type(snippet) is not str
                 or not re.search(r"(?<!\d)" + tender_id + r"(?!\d)",

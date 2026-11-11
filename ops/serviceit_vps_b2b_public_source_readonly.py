@@ -42,6 +42,8 @@ def provider(request):
 
 def trace(tid, item, notice, env):
     calls, responses, metrics = Counter(), Counter(), Counter()
+    exact = re.compile(r"(?<!\d)" + tid + r"(?!\d)")
+    fields = re.compile(r"заказчик|организатор|срок подачи|окончание подачи|место поставки|начальная цена|техническое задание", re.I)
 
     def requested(request):
         calls[provider(request)] += 1
@@ -51,14 +53,16 @@ def trace(tid, item, notice, env):
         responses[name, response.status_code] += 1
         if name == "B2B_DETAIL" and response.status_code == 200:
             response.read()
-            if len(response.content) <= MAX_HTML:
+            metrics["DETAIL_BYTES"] += len(response.content)
+            metrics["DETAIL_EXCEEDS_LIMIT"] += len(response.content) > MAX_HTML
+            if len(response.content) <= 2000000:
                 try:
                     parser = VisibleText()
                     parser.feed(response.text)
                     visible = " ".join(parser.parts)
-                    exact = re.compile(r"(?<!\d)" + tid + r"(?!\d)")
                     metrics["DETAIL_VISIBLE_CHARS"] += len(visible)
                     metrics["DETAIL_VISIBLE_EXACT_ID"] += bool(exact.search(visible))
+                    metrics["DETAIL_VISIBLE_FIELD_LABELS"] += len(set(fields.findall(visible.casefold())))
                     metrics["DETAIL_RAW_EXACT_ID"] += bool(exact.search(response.text))
                     metrics["DETAIL_VISIBLE_EXCERPT_EXACT_ID"] += bool(exact.search(visible[:4000]))
                 except ValueError:
@@ -69,7 +73,16 @@ def trace(tid, item, notice, env):
                 exact_url = notice.get("source_url", "").encode()
                 if exact_url and exact_url in request.content:
                     metrics[f"OFFICIAL_BROWSER_HTTP_{response.status_code}"] += 1
-            except httpx.RequestNotRead:
+                    if response.status_code == 200:
+                        response.read()
+                        if len(response.content) <= 50000:
+                            body = response.json().get("text", "")
+                            if isinstance(body, str):
+                                metrics["OFFICIAL_BROWSER_TEXT_CHARS"] += len(body)
+                                metrics["OFFICIAL_BROWSER_EXACT_ID"] += bool(exact.search(body))
+                                metrics["OFFICIAL_BROWSER_FIELD_LABELS"] += len(
+                                    set(fields.findall(body.casefold())))
+            except (httpx.HTTPError, ValueError, AttributeError):
                 pass
         if response.status_code != 200 or name not in {
             "TINYFISH_SEARCH", "TINYFISH_FETCH", "BRAVE_WEB",

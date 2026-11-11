@@ -316,6 +316,50 @@ def compose(notice, old_item, findings, investigation):
                  "подтверждения. Brave — только поиск URL, RouterAI — разбор "
                  "дословно подтверждённых фрагментов. Не подтверждены "
                  "покупка/право контакта/статус ЕГРЮЛ без отдельной проверки."]
+    # V18: an indexed extract is useful when direct public HTML is blocked,
+    # but never equate it to a separately verified procurement source.
+    # Preserve exact wording, label low confidence and keep this separate
+    # from confirmed facts / public INN / FNS / commercial score.
+    indexed = (findings.get("indexed_candidates") or []) if isinstance(findings, dict) else []
+    indexed_lines = []
+    if not docs and isinstance(indexed, list):
+        for entry in indexed[:3]:
+            if not isinstance(entry, dict) or entry.get("evidence_level") != "INDEX_ONLY_UNVERIFIED":
+                continue
+            url = entry.get("url", "")
+            if type(url) is not str or not url.startswith("https://") or len(url)>950:
+                continue
+            for claim in (entry.get("claims") or [])[:5]:
+                if not isinstance(claim, dict) or claim.get("category") not in (
+                        "BUYER","INN","DEADLINE","LOCATION","BUDGET"):
+                    continue
+                quote = claim.get("quote", "")
+                if type(quote) is not str or not 3 <= len(quote) <= 250:
+                    continue
+                indexed_lines.append(claim["category"] + " (ИНДЕКС, НЕ ПОДТВЕРЖДЕНО): "
+                                     + tidy(quote, 250) + " | " + url)
+            if not entry.get("claims"):
+                indexed_lines.append("Найдена индексированная страница (содержание "
+                                     "ещё не проверено): " + url)
+        indexed_lines = list(dict.fromkeys(indexed_lines))[:8]
+    if indexed_lines:
+        # When the actual website cannot be read, don't bury the potentially
+        # useful source leads beneath repetitive filler.
+        start = sections.index("06  ЧТО ПОКА НЕ ДОКАЗАНО")
+        end = sections.index("07  ДОСЛОВНЫЕ ФРАГМЕНТЫ И ССЫЛКИ")
+        sections[start:end] = [
+            "06  СВЕДЕНИЯ ПОИСКОВОГО ИНДЕКСА — ТРЕБУЮТ ПОДТВЕРЖДЕНИЯ",
+            "Выписки из Brave LLM Context. НЕ являются прочитанным "
+            "первоисточником или сведениями ФНС. Нельзя принимать решение "
+            "о контакте, цене или участии без подтверждения.",
+            *indexed_lines, "",
+            "Пробелы: доступная оригинальная документация, юридическая "
+            "сверка заказчика и коммерческие условия.", "",
+        ]
+        lead = ("ИНДЕКС BRAVE (проверить у заказчика): "
+                + " | ".join(indexed_lines[:2]))[:900]
+        summary = (lead + "\n" + summary)[:LIMIT_TEXT]
+        brief = (lead + "\n\n" + brief)[:LIMIT_TEXT]
     full = "\n".join(sections)
     # Prefer shedding secondary proof quotes over silently chopping URL, deadline,
     # amount, buyer or manager action mid-word. Preserve the footer/source list.

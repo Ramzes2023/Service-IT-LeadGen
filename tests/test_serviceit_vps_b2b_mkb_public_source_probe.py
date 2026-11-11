@@ -26,7 +26,7 @@ def test_registered_probe_exact_owner_and_no_live_install():
     assert "SERVICEIT_B2B_MKB_4675475_SOURCE_READONLY_368" in text
     assert "github.actor == 'Ramzes2023'" in text
     assert "github.event.comment.user.login == 'Ramzes2023'" in text
-    assert text.count("github.event.issue.number == 368") == 4
+    assert text.count("github.event.issue.number == 368") == 5
     assert "serviceit-vps-readonly" in text
     assert "StrictHostKeyChecking=yes" in text
     assert "UserKnownHostsFile=" in text

@@ -190,7 +190,10 @@ ROLE_DETAIL = re.compile(
     r"тестировщик(?:-консультант)?\s*1[сc]|архитектор\s*1[сc]|"
     r"devops|devsecops|mlops|ml[-\s]*инженер|"
     r"data\s*scientist|tech\s*lead|ai\s*/\s*llm|"
-    r"инженер\s*данных|аналитик\s*ai|системный\s*аналитик)"
+    r"инженер\s*данных|аналитик\s*ai|системный\s*аналитик|"
+    r"системный\s*администратор|сетевой\s*инженер|инженер\s*waf|"
+    r"security\s*champion|инженер\s*иб|"
+    r"аналитик\s*иб|qa[-\s]*инженер|инженер\s*данных)"
 )
 WORK_LOCATION = re.compile(r"(?iu)(?:удал[её]нно|офис|москва|рф)")
 WORK_GRADE = re.compile(r"(?i)\b(?:junior|middle|senior|lead)\b")
@@ -263,20 +266,16 @@ def detailed_public_excerpt(parts: list[str], tender_id: str,
             chosen.append(snippet)
             break
 
-    # The published item matrix may show place-of-work and qualification for
-    # many rows (1C / DevOps / ML etc). Sample distinct role families AND
-    # office-vs-remote modes rather than 15 near-identical developer rows.
-    role_seen = set()
-    roles = []
+    # Preserve breadth across DISTINCT roles: the old first-14-row slice
+    # repeatedly showed Junior/Middle/Senior of 1C and omitted DevSecOps,
+    # networks, WAF, data and other roles farther down a 90+ position table.
+    # This is evidence coverage only, not a claim that each row is a vacancy
+    # or that a "1 чел-час" table quantity is a full-time requirement.
+    per_family = {}
     for i, part in enumerate(parts[:2800]):
         value = " ".join(part.split())
-        if not ROLE_DETAIL.search(value):
-            continue
-        if len(value) > 190:
-            continue
-        # Only candidate rows with a grade or explicit work location count;
-        # a generic navigation phrase is not a procurement requirement.
-        if not WORK_GRADE.search(value) and not WORK_LOCATION.search(value):
+        if (len(value) > 190 or not ROLE_DETAIL.search(value)
+                or not (WORK_GRADE.search(value) or WORK_LOCATION.search(value))):
             continue
         family = WORK_GRADE.split(value, 1)[0].casefold().strip(" ,—-")
         if len(family) < 4:
@@ -284,16 +283,29 @@ def detailed_public_excerpt(parts: list[str], tender_id: str,
         mode = ("офис" if "офис" in value.casefold() else
                 "удалённо" if re.search(r"(?iu)удал[её]нно", value) else
                 "режим не указан")
-        pair = (family, mode)
-        if pair in role_seen:
-            continue
-        role_seen.add(pair)
         count = " ".join(parts[i+1:i+3])
         tail = ("; " + count[:24]) if re.search(
             r"(?iu)\b\d+\s*(?:чел(?:-час)?|шт)\b", count[:32]) else ""
-        roles.append(value + tail)
-        if len(roles) >= 14:
-            break
+        slots = per_family.setdefault(family, {})
+        slots.setdefault(mode, value + tail)
+
+    # One representative for up to 16 different professional families;
+    # alternate modes so the remote/office split stays visible. Reserve two
+    # extra exact source rows for a second mode if both were actually listed.
+    roles = []
+    families = list(per_family)[:16]
+    for index, family in enumerate(families):
+        slots = per_family[family]
+        preferred = "удалённо" if index % 2 == 0 else "офис"
+        entry = slots.get(preferred) or next(iter(slots.values()))
+        roles.append(entry)
+    if families:
+        first = per_family[families[0]]
+        if "офис" in first and first["офис"] not in roles:
+            roles.append(first["офис"])
+        last = per_family[families[-1]]
+        if "удалённо" in last and last["удалённо"] not in roles:
+            roles.append(last["удалённо"])
 
     # Important: quotes remain substrings of fetched text only. No extra
     # inferred deadlines, quantities, eligibility, legal proof or contacts.
@@ -386,6 +398,22 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
         checked.add(url)
         try:
             row = from_public_page(client, url, tender_id, subject)
+            if row:
+                candidates.append(row)
+        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+            pass
+
+    # Fast, bounded candidate for B2B's public Kontur detail route. This
+    # merely GUESSES A URL, never an identity or a fact. The independent
+    # HTTPS/robots fetch and tender-number+title+B2B attribution gates below
+    # must all succeed; a missing, unrelated or blocked URL yields nothing.
+    # Crucially this discovery still works when Brave's search quota fails.
+    if "zakupki.kontur.ru" in allow_mirrors and len(checked) < 8:
+        direct = "https://zakupki.kontur.ru/" + tender_id + "_4"
+        checked.add(direct)
+        try:
+            row = from_public_page(client, direct, tender_id, subject,
+                                   mirror_host="zakupki.kontur.ru")
             if row:
                 candidates.append(row)
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):

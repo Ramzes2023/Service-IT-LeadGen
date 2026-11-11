@@ -271,7 +271,7 @@ def run(run_id, new_hashes):
             and type(new_hashes) is tuple and len(new_hashes) == len(FILES)
             and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in new_hashes),
             "SOURCE_SHA_INPUT_INVALID")
-    stage = ROOT / "staging" / ("b2b-crossportal-release-" + run_id)
+    stage = ROOT / "staging" / ("b2b-rich-detail-release-" + run_id)
     require(stage.is_dir() and not stage.is_symlink()
             and stage.stat().st_uid == os.geteuid(), "STAGE_UNTRUSTED")
     for name, expected in zip(FILES, new_hashes):

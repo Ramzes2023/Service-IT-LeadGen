@@ -32,6 +32,8 @@ OFFICIAL_WORDS = ("сайт компании", "официальный сайт"
 EMAIL = re.compile(r"[A-Za-z0-9_.+\-]{1,64}@[A-Za-z0-9.-]{3,150}\.[A-Za-z]{2,18}")
 SAFE_HOST = re.compile(r"(?:[a-z0-9-]{1,63}\.)+[a-z]{2,20}\Z")
 MAX_HTML = 160000
+MAX_B2B_TENDER_HTML = 512000
+B2B_TENDER_PATH = re.compile(r"/app/market-next/[a-z0-9-]+/tender-[0-9]{5,12}/?\Z")
 MAX_PAGES = 5
 
 
@@ -118,9 +120,14 @@ def _get(client, url, allowed, *, html=True):
     host = _host(url, allowed)
     if not _public_dns(host):
         raise ResearchBlocked("RESEARCH_DNS_UNVERIFIED")
+    # The new marketplace embeds its application bundle in public tender HTML.
+    max_bytes = MAX_HTML
+    if (html and host in {"b2b-center.ru", "www.b2b-center.ru"}
+            and B2B_TENDER_PATH.fullmatch(urlsplit(url).path)):
+        max_bytes = MAX_B2B_TENDER_HTML
     response = client.get(url, follow_redirects=False, timeout=6.0,
                           headers={"User-Agent": AGENT, "Accept": "text/html,text/plain"})
-    if (response.status_code != 200 or len(response.content) > MAX_HTML
+    if (response.status_code != 200 or len(response.content) > max_bytes
             or (html and "text/html" not in response.headers.get("content-type", ""))):
         raise ResearchBlocked("RESEARCH_PAGE_UNAVAILABLE")
     return response.text

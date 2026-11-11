@@ -35,9 +35,7 @@ NEIGHBORS = (
     "serviceit-b2b-vps-writer-1",
 )
 FILES = ('serviceit_b2b_v19_backfill.py', 'serviceit_b2b_v20_versioned.py', 'serviceit_b2b_dossier_v11.py')
-# Exact pre-V21 old module hashes are independently derived from reviewed git
-# baseline by the owner-only workflow and checked against the LIVE container.
-AUDITED_OLD_SHAS = ()
+PUBLIC_HTML_FILES = ("serviceit_public_evidence_research.py",)
 
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
@@ -119,7 +117,7 @@ def env_of(name):
     return dict(x.split("=", 1) for x in values if "=" in x)
 
 
-def runtime_shas():
+def runtime_shas(files):
     code = """
 import hashlib,json
 from pathlib import Path
@@ -132,11 +130,11 @@ for name in files:
 print(json.dumps(out,sort_keys=True))
 """
     raw = output(["docker", "exec", CORE, "python", "-B",
-                  "-c", code, json.dumps(FILES)])
+                  "-c", code, json.dumps(files)])
     result = json.loads(raw)
-    require(type(result) is dict and set(result) == set(FILES),
+    require(type(result) is dict and set(result) == set(files),
             "LIVE_MIRROR_MODULE_SHA_READ_FAILED")
-    return tuple(result[x] for x in FILES)
+    return tuple(result[x] for x in files)
 
 
 def inspect_compose_paths():
@@ -260,7 +258,8 @@ with db(dict(os.environ)) as conn:
     with conn.cursor() as cur:
         pending=0
         for table in ('serviceit_vps_b2b_v19_research_receipts',
-                      'serviceit_vps_b2b_v20_revision_receipts'):
+                      'serviceit_vps_b2b_v20_revision_receipts',
+                      'serviceit_vps_b2b_dossier_consistency_v37_receipts'):
             cur.execute("SELECT to_regclass(%s)",('public.'+table,))
             if cur.fetchone()[0] is None: continue
             cur.execute('SELECT count(*) FROM '+table+
@@ -273,34 +272,33 @@ with db(dict(os.environ)) as conn:
     return count + int(old_count) + int(pending) + int(tdi_count) + int(new_count)
 
 
-def wait_healthy(expected_image, expected_hashes):
+def wait_healthy(expected_image, expected_hashes, files):
     for _ in range(32):
         if healthy(CORE):
             break
         time.sleep(3)
     require(healthy(CORE), "CORE_NOT_HEALTHY_AFTER_UPGRADE")
     require(image(CORE) == expected_image, "CORE_IMAGE_MISMATCH")
-    require(runtime_shas() == expected_hashes,
+    require(runtime_shas(files) == expected_hashes,
             "CORE_MIRROR_SOURCE_SHA_MISMATCH")
     actual = env_of(CORE)
     require(all(actual.get(k) == v for k, v in GATES.items()),
             "CORE_LIVE_GATES_CHANGED")
 
 
-def run(run_id, new_hashes, old_hashes):
-    global AUDITED_OLD_SHAS
+def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
+    label = release.upper().replace("-", "_") + "_RELEASE"
     require(os.geteuid() != 0, "NONROOT_HOST_REQUIRED")
     require(re.fullmatch(r"\d{7,16}", run_id) is not None
-            and type(new_hashes) is tuple and len(new_hashes) == len(FILES)
+            and type(new_hashes) is tuple and len(new_hashes) == len(files)
             and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in new_hashes)
-            and type(old_hashes) is tuple and len(old_hashes) == len(FILES)
+            and type(old_hashes) is tuple and len(old_hashes) == len(files)
             and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in old_hashes),
             "SOURCE_SHA_INPUT_INVALID")
-    AUDITED_OLD_SHAS = old_hashes
-    stage = ROOT / "staging" / ("b2b-v37-onefile-release-" + run_id)
+    stage = ROOT / "staging" / (f"b2b-{release}-onefile-release-" + run_id)
     require(stage.is_dir() and not stage.is_symlink()
             and stage.stat().st_uid == os.geteuid(), "STAGE_UNTRUSTED")
-    for name, expected in zip(FILES, new_hashes):
+    for name, expected in zip(files, new_hashes):
         path = stage / name
         require(path.is_file() and not path.is_symlink()
                 and path.stat().st_uid == os.geteuid()
@@ -323,7 +321,7 @@ def run(run_id, new_hashes, old_hashes):
         neighbor_healthy = {}
         try:
             require(healthy(CORE), "EXISTING_CORE_NOT_HEALTHY")
-            require(runtime_shas() == AUDITED_OLD_SHAS,
+            require(runtime_shas(files) == old_hashes,
                     "EXISTING_CORE_SHA_DRIFT_NO_DEPLOY")
             require(pending_source_writes() == 0,
                     "PENDING_AI_OR_CRM_WRITE_NO_RESTART")
@@ -344,9 +342,9 @@ def run(run_id, new_hashes, old_hashes):
                 if present_image(name):
                     neighbor_images[name] = image(name)
                     neighbor_healthy[name] = healthy(name)
-            print("V37_RELEASE_PREFLIGHT=YES", flush=True)
-            baseline = "serviceit-v37-baseline:" + run_id
-            target = "serviceit-v37-evidence:" + run_id
+            print(label + "_PREFLIGHT=YES", flush=True)
+            baseline = f"serviceit-{release}-baseline:" + run_id
+            target = f"serviceit-{release}-evidence:" + run_id
             require(call(["docker", "image", "inspect", target],
                          check=False).returncode != 0,
                     "IMAGE_TAG_ALREADY_EXISTS")
@@ -354,7 +352,7 @@ def run(run_id, new_hashes, old_hashes):
             build = stage / "build"
             build.mkdir(mode=0o700, exist_ok=False)
             dockerfile = "FROM " + baseline + "\n"
-            for name in FILES:
+            for name in files:
                 (build / name).write_bytes((stage / name).read_bytes())
                 dockerfile += ('COPY --chmod=0444 ' + name
                                + ' /app/leadpilot/' + name + '\n')
@@ -369,8 +367,9 @@ def run(run_id, new_hashes, old_hashes):
             smoke = """
 import hashlib,sys
 from pathlib import Path
-files=sys.argv[1:4]; hashes=sys.argv[4:]
-assert len(files)==len(hashes)==3
+n=(len(sys.argv)-1)//2
+files=sys.argv[1:1+n]; hashes=sys.argv[1+n:]
+assert n and len(files)==len(hashes)
 for file,expected in zip(files,hashes):
     assert hashlib.sha256((Path('/app/leadpilot')/file).read_bytes()).hexdigest()==expected
 from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS
@@ -403,16 +402,28 @@ from leadpilot.serviceit_vps_b2b_dossier_v11_worker import worker_once
 assert callable(v19_run) and callable(v20_run) and callable(worker_once)
 from leadpilot.serviceit_b2b_dossier_v11 import sync_confirmed_passport, REPORT
 assert sync_confirmed_passport({REPORT: 'unchanged'}, {}) == {REPORT: 'unchanged'}
+if files == ['serviceit_public_evidence_research.py']:
+    import httpx
+    from leadpilot import serviceit_public_evidence_research as research
+    research._public_dns=lambda host: True
+    def respond(request):
+        if request.url.path == '/robots.txt':
+            return httpx.Response(200,text='User-agent: *\\nAllow: /')
+        return httpx.Response(200,headers={'Content-Type':'text/html'},
+            text='<script>'+'x'*310000+'</script><p>Закупка №123456</p>')
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        url='https://www.b2b-center.ru/app/market-next/servers/tender-123456/'
+        assert research._page(client,url,frozenset({'b2b-center.ru'}))['text']=='Закупка №123456'
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
                         "--pull", "never", "--read-only", "--user", "10001:10001",
                         "--cap-drop", "ALL", "--pids-limit", "64", "--memory", "512m",
                         "--entrypoint", "python", next_image, "-B", "-c", smoke,
-                        *FILES, *new_hashes], timeout=110)
+                        *files, *new_hashes], timeout=110)
             require(res.stdout.strip() == "V37_OFFLINE_SMOKE_PASS",
                     "MIRROR_OFFLINE_SMOKE_FAILED")
-            print("V37_RELEASE_OFFLINE_SMOKE=YES", flush=True)
+            print(label + "_OFFLINE_SMOKE=YES", flush=True)
             next_pin = pin_image(old_pin, old_image, next_image)
             preflight = stage / "preflight.compose.yml"
             preflight.write_text(next_pin, "utf8")
@@ -426,52 +437,59 @@ print('V37_OFFLINE_SMOKE_PASS')
                         for name, value in before["services"].items()
                         if name != "coordinator"),
                     "MIRROR_ADJACENT_COMPOSE_DRIFT")
+            require(pending_source_writes() == 0,
+                    "PENDING_AI_OR_CRM_WRITE_NO_RESTART")
             atomic_write(PIN, next_pin)
             altered = True
             call(compose(paths, "up", "-d", "--no-deps", "--no-build",
                          "--pull", "never", "--force-recreate", "coordinator"),
                  timeout=190)
-            wait_healthy(next_image, new_hashes)
+            wait_healthy(next_image, new_hashes, files)
             require(all(image(n) == before_id and
                         (not neighbor_healthy[n] or healthy(n))
                         for n, before_id in neighbor_images.items()),
                     "MIRROR_ADJACENT_CONTAINER_CHANGED")
-            print("V37_RELEASE_VPS_LIVE_ENABLED=YES", flush=True)
-            print("V37_RELEASE_CRM_WRITES_BY_INSTALLER=NO", flush=True)
-            print("V37_RELEASE_ROLLBACK=NOT_NEEDED", flush=True)
+            print(label + "_VPS_LIVE_ENABLED=YES", flush=True)
+            print(label + "_CRM_WRITES_BY_INSTALLER=NO", flush=True)
+            print(label + "_ROLLBACK=NOT_NEEDED", flush=True)
             return 0
         except Exception as exc:
             code = str(exc) if isinstance(exc, ReleaseBlocked) else (
                 "UNEXPECTED_FAIL_CLOSED")
             if not re.fullmatch(r"[A-Z0-9_]{4,90}", code):
                 code = "UNEXPECTED_FAIL_CLOSED"
-            print("V37_RELEASE_REASON=" + code, flush=True)
+            print(label + "_REASON=" + code, flush=True)
             if altered and old_pin and old_image and paths:
                 try:
                     atomic_write(PIN, old_pin)
                     call(compose(paths, "up", "-d", "--no-deps", "--no-build",
                                  "--pull", "never", "--force-recreate",
                                  "coordinator"), timeout=180)
-                    wait_healthy(old_image, AUDITED_OLD_SHAS)
-                    print("V37_RELEASE_ROLLBACK=YES", flush=True)
+                    wait_healthy(old_image, old_hashes, files)
+                    print(label + "_ROLLBACK=YES", flush=True)
                 except Exception:
-                    print("V37_RELEASE_ROLLBACK=UNVERIFIED", flush=True)
+                    print(label + "_ROLLBACK=UNVERIFIED", flush=True)
             else:
-                print("V37_RELEASE_ROLLBACK=NOT_NEEDED", flush=True)
-            print("V37_RELEASE_VPS_LIVE_ENABLED=NO", flush=True)
+                print(label + "_ROLLBACK=NOT_NEEDED", flush=True)
+            print(label + "_VPS_LIVE_ENABLED=NO", flush=True)
             return 2
 
 
 def main():
-    if len(sys.argv) != 2 + 2*len(FILES):
-        print("V37_RELEASE_VPS_LIVE_ENABLED=NO", flush=True)
+    args = sys.argv[1:]
+    public_html = args[:1] == ["--public-html"]
+    files = PUBLIC_HTML_FILES if public_html else FILES
+    release = "public-html" if public_html else "v37"
+    if public_html:
+        args = args[1:]
+    n = len(files)
+    if len(args) != 1 + 2*n:
         return 2
     try:
-        n=len(FILES)
-        return run(sys.argv[1],tuple(sys.argv[2:2+n]),
-                   tuple(sys.argv[2+n:]))
+        return run(args[0], tuple(args[1:1+n]), tuple(args[1+n:]),
+                   files=files, release=release)
     except Exception:
-        print("V37_RELEASE_VPS_LIVE_ENABLED=NO", flush=True)
+        print(release.upper().replace("-", "_") + "_RELEASE_VPS_LIVE_ENABLED=NO", flush=True)
         return 2
 
 

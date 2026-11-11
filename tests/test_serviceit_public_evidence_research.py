@@ -12,6 +12,31 @@ def item(kind="it_vacancy", url="https://hh.ru/vacancy/123456"):
     return {PREFIX+"SIGNAL_KIND": kind, PREFIX+"SIGNAL_URL": url}
 
 
+@pytest.mark.parametrize(("host", "path", "size", "accepted"), [
+    ("www.b2b-center.ru", "/app/market-next/servers/tender-123456/", 310000, True),
+    ("www.b2b-center.ru", "/app/market-next/servers/tender-123456/", 520000, False),
+    ("www.b2b-center.ru", "/app/market-next/servers/", 310000, False),
+    ("hh.ru", "/app/market-next/servers/tender-123456/", 310000, False),
+])
+def test_large_public_market_next_tender_html(monkeypatch, host, path, size, accepted):
+    monkeypatch.setattr(research, "_public_dns", lambda _: True)
+    html = "<script>" + "x" * size + "</script><h1>Закупка №123456</h1>"
+
+    def respond(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        return httpx.Response(200, text=html, headers={"content-type": "text/html"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        url = "https://" + host + path
+        allowed = frozenset({host})
+        if accepted:
+            assert research._page(client, url, allowed)["text"] == "Закупка №123456"
+        else:
+            with pytest.raises(research.ResearchBlocked, match="RESEARCH_PAGE_UNAVAILABLE"):
+                research._page(client, url, allowed)
+
+
 def test_public_job_page_resolves_only_allowlisted_corporate_contacts(monkeypatch):
     monkeypatch.setattr(research, "_public_dns", lambda host: True)
     visited = []

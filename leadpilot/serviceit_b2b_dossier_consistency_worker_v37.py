@@ -206,7 +206,15 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
     # Do not permit a pending V36 code-only deployment to change
     # reviewed source evidence/authorizations inside the same call.
     exact=exact_environment(env)
-    conn.execute(DDL)
+    if preview:
+        # A read-only preview must not CREATE TABLE or mutate any receipt.
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass(%s)", ("public." + TABLE,))
+            if cur.fetchone()[0] is None:
+                return {"status": "V37_PREVIEW_LEDGER_NOT_READY",
+                        "crm_writes": 0}
+    else:
+        conn.execute(DDL)
     with conn.cursor() as cur:
         cur.execute("SELECT pg_try_advisory_lock(%s)",(LOCK_ID,))
         locked=bool(cur.fetchone()[0])
@@ -236,7 +244,18 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
         try:
             patch,meta=prepare(notice,first,lines)
         except ReconcileBlocked:
-            return {"status":"V37_PREPARE_CONFLICT_NO_WRITE","crm_writes":0}
+            if preview:
+                return {"status":"V37_PREVIEW_CONFLICT_NO_WRITE",
+                        "crm_writes":0, "card":card, "draft_ready":False}
+            # A persistent legal/company mismatch must NOT starve every
+            # subsequent signed tender for repeated five-minute cycles.
+            # Record only a dedicated PG conflict receipt; never call CRM.
+            if active_card_write(conn,card):
+                return {"status":"V37_NATIVE_WRITE_IN_FLIGHT","crm_writes":0}
+            attempt=reserve(conn,card,source_hash,{})
+            mark(conn,card,attempt,"CONFLICT")
+            return {"status":"V37_PREPARE_CONFLICT_NO_WRITE",
+                    "crm_writes":0}
         if preview:
             return {"status":"V37_READONLY_PREVIEW","crm_writes":0,
                     "card":card,"draft_ready":bool(patch),

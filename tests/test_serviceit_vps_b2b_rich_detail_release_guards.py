@@ -35,6 +35,9 @@ def test_scope_old_live_sha_and_immutable_lock():
     assert "PENDING_AI_OR_CRM_WRITE_NO_RESTART" in script
     assert "serviceit_vps_b2b_tender_doc_receipts" in script
     assert "RICH_OFFLINE_SMOKE_PASS" in script
+    assert '("b2b-rich-detail-release-" + run_id)' in script
+    assert '("b2b-crossportal-release-" + run_id)' not in script
+    assert 'stage="serviceit/staging/b2b-rich-detail-release-$GITHUB_RUN_ID"' in WORKFLOW.read_text("utf8")
     assert "detailed_public_excerpt(parts,'4673595',title)" in script
     assert "'MLOps-инженер, Lead'" in script
     assert "RICH_RELEASE_VPS_LIVE_ENABLED=YES" in script

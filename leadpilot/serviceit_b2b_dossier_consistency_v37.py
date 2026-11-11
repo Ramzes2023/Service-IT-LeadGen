@@ -227,6 +227,14 @@ def prepare(notice, item, verified_lines):
     if old_report.count(anchor) != 1:
         return None, {"status": "NONSTANDARD_REPORT_MANUAL_REVIEW"}
     tail = old_report[old_report.index(anchor):]
+    # V18 indexed leads are explicitly UNVERIFIED. Keep them visible as
+    # historical leads instead of silently deleting the old 06A section.
+    # Do not promote their text into the canonical facts above.
+    prior_index = old_report.find("06A  ДОПОЛНИТЕЛЬНЫЕ НАХОДКИ BRAVE")
+    if 0 <= prior_index < old_report.index(anchor):
+        lead_text = old_report[prior_index:old_report.index(anchor)].strip()
+        if lead_text:
+            tail = lead_text + "\n\n" + tail
     buyer = record["buyer"] or "не установлен по проверенным источникам"
     inn = record["inn"] or (item.get(INN) if _is_valid_inn(item.get(INN)) else "")
     inn_text = (inn + " (публичные реквизиты; текущий статус ФНС отдельно)"

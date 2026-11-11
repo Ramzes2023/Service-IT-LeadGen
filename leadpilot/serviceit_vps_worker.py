@@ -90,6 +90,14 @@ def exact_environment(env: dict) -> dict:
             and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
             and env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21"
         ) else "NO")
+    # V37 reconciles late verified evidence with the passport, known company
+    # and deadline. It is only a fenced signed B2B receipt writer and never
+    # changes score, stage, task, contacts or payment fields.
+    result["SERVICEIT_VPS_B2B_DOSSIER_CONSISTENCY_ENABLED"] = (
+        "YES" if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES"
+        and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
+        and env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21"
+        else "NO")
     result["SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED"] = "YES"
     result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = "NO"
     return result
@@ -243,6 +251,17 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 v20 = v20_once(exact_env, client, connection)
             except Exception:
                 v20 = {"status": "B2B_V20_VERSIONED_CHECK_FAILED", "crm_writes": 0}
+        # V37: reflect previously verified facts in the passport, managerial
+        # summary, open questions and (where independently corroborated)
+        # empty legal CRM fields. The same V11 advisory lock serializes writes.
+        consistency = {"status": "V37_DISABLED", "crm_writes": 0}
+        if exact_env.get("SERVICEIT_VPS_B2B_DOSSIER_CONSISTENCY_ENABLED") == "YES":
+            try:
+                from .serviceit_b2b_dossier_consistency_worker_v37 import (
+                    run_once as consistency_once)
+                consistency = consistency_once(exact_env, client, connection)
+            except Exception:
+                consistency = {"status": "V37_CHECK_FAILED", "crm_writes": 0}
         # Independent bounded public-source retry after the existing CRM
         # writers. Retry receipts are PG-only and do not override any V11,
         # V19, V20 or TDI source/AI decisions.
@@ -255,6 +274,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 tinyfish_retry = {
                     "status": "TINYFISH_RETRY_CHECK_FAILED", "crm_writes": 0}
         return {
+            "b2b_dossier_consistency": consistency,
             "b2b_tinyfish_retry": tinyfish_retry,
             "b2b_v20_versioned": v20,
             "b2b_v19_additive": v19,

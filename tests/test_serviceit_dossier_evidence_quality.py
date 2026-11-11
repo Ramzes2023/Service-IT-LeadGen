@@ -49,7 +49,7 @@ def test_document_analysis_covers_middle_and_end(monkeypatch):
     seen = []
     monkeypatch.setattr(worker, 'exact_environment', lambda e: e)
     monkeypatch.setattr(worker, 'config_from_env', lambda e: Mock(provider='routerai'))
-    monkeypatch.setattr(worker, 'investigate_routerai', lambda c, cfg, group:
+    monkeypatch.setattr(worker, 'investigate_routerai', lambda c, cfg, group, **kwargs:
         seen.extend(group['pages']) or {'facts': []})
     text = ('Начало документа. ' * 650) + 'Уникальное условие середины. ' + ('Продолжение. ' * 650) + 'Конечный срок исполнения 17 ноября.'
     assert len(text) < 24000
@@ -82,3 +82,22 @@ def test_tinyfish_survives_native_provider_failure(monkeypatch):
     assert calls[0] == 'tinyfish' and calls.count('tinyfish') == 1
     assert result['pages'] == fetched['pages']
     assert result['tinyfish_independent_stage'] == 'VERIFIED'
+
+
+def test_unlicensed_search_results_cannot_hide_permitted_mirror():
+    import httpx
+    from leadpilot.serviceit_b2b_remote_public_fetch import discover_free_public_urls
+
+    def transport(request):
+        assert request.url.params['include_domains'] == 'tendem.ru'
+        return httpx.Response(200, json={'results': [
+            {'url': URL, 'title': '4673595', 'snippet': '4673595'},
+            {'url': URL.rstrip('/'), 'title': '4673595', 'snippet': '4673595'},
+            {'url': MIRROR, 'title': '4673595', 'snippet': '4673595'},
+        ]})
+
+    with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+        urls = discover_free_public_urls(
+            client, tender_id='4673595', subject='Предоставление ИТ-специалистов',
+            api_key='Z' * 30, include_b2b=False)
+    assert urls == [MIRROR]

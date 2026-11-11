@@ -393,7 +393,7 @@ def source_only_investigation(findings: dict):
     }
 
 
-def investigate_routerai(client: httpx.Client, config, findings: dict) -> dict:
+def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeout=100.0) -> dict:
     """Single paid RouterAI attempt. Fixed reason codes, no payload logging.
 
     The caller commits a versioned PostgreSQL receipt BEFORE POST. No retries.
@@ -432,7 +432,7 @@ def investigate_routerai(client: httpx.Client, config, findings: dict) -> dict:
                   "temperature": 0, "max_tokens": 6200},
             headers={"Authorization": "Bearer " + config.key,
                      "Accept": "application/json"},
-            follow_redirects=False, timeout=100.0)
+            follow_redirects=False, timeout=timeout)
     except httpx.TimeoutException:
         raise DeepEvidenceError("ROUTERAI_TIMEOUT") from None
     except httpx.HTTPError:

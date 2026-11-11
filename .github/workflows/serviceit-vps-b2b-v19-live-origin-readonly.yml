@@ -1,0 +1,79 @@
+name: ServiceIT V19 VPS coordinator exact live code origin READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-v19-live-module-origin
+  cancel-in-progress: false
+jobs:
+  origin:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V19_LIVE_SHA_READONLY_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin reviewed read-only origin script and host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e '4143dfcded8dae1e87e2239733299df747db7bf7^{commit}'
+          script=ops/serviceit_vps_b2b_v19_live_module_origin.py
+          git diff --quiet 4143dfcded8dae1e87e2239733299df747db7bf7 HEAD -- "$script"
+          python -m py_compile "$script"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v19-origin"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v19-origin/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v19-origin/hosts"
+          chmod 0600 "$RUNNER_TEMP/v19-origin/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v19-origin/hosts" >/dev/null
+          : > "$RUNNER_TEMP/v19-origin/shas"
+          for name in serviceit_b2b_tender_index_v18.py serviceit_b2b_dossier_v11.py serviceit_vps_worker.py serviceit_b2b_v19_backfill.py; do
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v19-origin/shas"
+          done
+      - name: Compare actual production file hashes; no CRM or PG
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v19-origin/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/v19-origin/shas"
+          [[ "${#shas[@]}" == 4 ]]
+          quoted=()
+          for value in "${shas[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+            quoted+=("'$value'")
+          done
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v19-origin/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - ${quoted[*]}" \
+            < ops/serviceit_vps_b2b_v19_live_module_origin.py \
+            > "$RUNNER_TEMP/v19-origin/status" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V19_ORIGIN_[A-Z0-9_]+=(YES|NO|MAIN|V19_FIRST|OTHER|MISSING|[a-f0-9]{64})$' \
+            "$RUNNER_TEMP/v19-origin/status" | head -12 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V19_ORIGIN_CRM_WRITES=0' "$RUNNER_TEMP/v19-origin/status"

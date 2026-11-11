@@ -57,7 +57,8 @@ def test_ambiguous_platform_flag_survives_into_manager_report():
 def test_worker_no_duplicate_or_plaintext_external_api():
     text=Path("leadpilot/serviceit_b2b_v19_backfill.py").read_text("utf8")
     core=Path("leadpilot/serviceit_vps_worker.py").read_text("utf8")
-    assert "ON CONFLICT(card_id) DO NOTHING" in text
+    assert "ON CONFLICT(card_id) DO UPDATE SET" in text
+    assert "updated_at < now()-interval '24 hours'" in text
     assert "WRITE_INTENT" in text and "UNCERTAIN" in text
     assert "pg_try_advisory_lock" in text
     assert "non_ai_unchanged" in text

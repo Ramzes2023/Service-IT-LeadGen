@@ -75,6 +75,10 @@ def exact_environment(env: dict) -> dict:
     result["SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"] = "YES"
     result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"
     result["SERVICEIT_B2B_V18_SEARCH_ENABLED"] = "YES"
+    # V19C: one safe additive follow-up per five-minute cycle. Failed
+    # no-evidence scans retry no sooner than 24h; VERIFIED receipts are
+    # never rewritten. Existing HOLD/STOP, commercial score and tasks intact.
+    result["SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED"] = "YES"
     result["SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED"] = "YES"
     result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = "NO"
     return result

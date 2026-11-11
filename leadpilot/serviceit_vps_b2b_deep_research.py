@@ -506,6 +506,69 @@ def _supplement_thin_public_evidence(candidate, notice, env, client, *, index_hi
     return updated
 
 
+def _merge_independent_tinyfish(candidate, fetched, tender_id):
+    """Merge one independently fetched public page without trusting Search text.
+
+    Existing evidence and its order are preserved. The free provider has
+    already validated the full source page, but we verify HTTPS host and
+    exact signed tender number again at this cross-provider boundary.
+    Never create a second CRM writer or treat a snippet as a verified fact.
+    """
+    if not isinstance(candidate, dict) or not isinstance(fetched, dict):
+        return candidate
+    if (fetched.get("status") != "PUBLIC_PAGES_INSPECTED"
+            or not isinstance(fetched.get("pages"), list)
+            or not isinstance(tender_id, str)
+            or not re.fullmatch(r"\d{5,12}", tender_id)):
+        return candidate
+    from .serviceit_b2b_remote_public_fetch import approved_url
+    exact = re.compile(r"(?<!\d)" + re.escape(tender_id) + r"(?!\d)")
+    verified = []
+    seen = set()
+    for row in fetched["pages"][:2]:
+        if not isinstance(row, dict):
+            continue
+        url, excerpt = row.get("url"), row.get("excerpt")
+        if (not isinstance(url, str) or not approved_url(url)
+                or not isinstance(excerpt, str)
+                or not exact.search(excerpt) or url in seen):
+            continue
+        seen.add(url)
+        verified.append({"url": url, "excerpt": excerpt[:4700]})
+    if not verified:
+        return candidate
+    result = dict(candidate)
+    prior = (list(candidate.get("pages") or [])
+             if candidate.get("status") == "PUBLIC_PAGES_INSPECTED"
+             else [])
+    prior = [p for p in prior[:MAX_PAGES] if isinstance(p, dict)
+             and isinstance(p.get("url"), str)
+             and isinstance(p.get("excerpt"), str)]
+    known = {p["url"] for p in prior}
+    new_rows = [p for p in verified if p["url"] not in known]
+    available = max(0, MAX_PAGES - len(prior))
+    added = new_rows[:available]
+    if added:
+        result["status"] = "PUBLIC_PAGES_INSPECTED"
+        result["pages"] = prior + added
+        trusted_urls = {p["url"] for p in added}
+        facts = [f for f in fetched.get("structured_facts", [])
+                 if isinstance(f, dict) and any(
+                     isinstance(v, dict) and v.get("source_url") in trusted_urls
+                     for v in f.values())] if isinstance(
+                         fetched.get("structured_facts"), list) else []
+        result["structured_facts"] = (list(result.get("structured_facts") or [])
+                                      + facts)
+        if not prior:
+            result["model_excerpt"] = (fetched.get("model_excerpt") or
+                                       _safe_model_excerpt(added[0]["excerpt"]))
+        result["free_public_supplemented"] = True
+    result["tinyfish_independent_verified"] = True
+    result["tinyfish_verified_page_count"] = len(verified)
+    result["tinyfish_verified_page_limit"] = bool(new_rows[available:])
+    return result
+
+
 def source_findings(item, notice, env, client, *, enable_v18=False):
     hosts = host_allowlist(env)
     browser = None
@@ -513,6 +576,24 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             and env.get("SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED") == "YES"):
         from .serviceit_vps_browser_client import render_approved_url
         browser = lambda url: render_approved_url(url, hosts, client=client)
+    # V32: run this approved public provider ONCE on every research invocation,
+    # independently of Brave, native page quality and RouterAI success.
+    # Its own strict gate permits only public/licensed sources. A transient
+    # provider failure must not suppress all other research or allow a write.
+    from .serviceit_b2b_free_public_fallback import read_free_public_mirror
+    tinyfish_authorized = (
+        env.get("SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED") == "YES"
+        and (env.get("SERVICEIT_B2B_TENDEM_PUBLIC_EXTRACTION_APPROVED") == "YES"
+             or env.get("SERVICEIT_B2B_CENTER_PUBLIC_EXTRACTION_LICENSED") == "YES"))
+    tinyfish = None
+    if tinyfish_authorized:
+        try:
+            tinyfish = read_free_public_mirror(
+                notice, env, client, index_hints=[])
+        except Exception:
+            # The stage remains incomplete and is eligible for the normal
+            # V19 24-hour source retry. Never log credentials or vendor text.
+            tinyfish = None
     key = secret_file(env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)
     results = research_public(
         item, client, hosts,
@@ -549,16 +630,25 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             client, notice["tender_id"], notice["subject"], key))
 
     def with_index(candidate):
-        if not v18 or not isinstance(candidate, dict):
+        if not isinstance(candidate, dict):
             return candidate
-        result = dict(candidate)
-        hints = (index.get("candidates") or []) if isinstance(index, dict) else []
-        # Only labelled INDEX_ONLY_UNVERIFIED research hints are retained;
-        # no INN/Score/FNS legal field or confirmed citation is synthesized.
-        result["indexed_candidates"] = hints[:5]
-        result["v18_search_status"] = (
-            index.get("status", "INDEX_NOT_RUN") if isinstance(index, dict)
-            else "INDEX_NOT_RUN")
+        result = _merge_independent_tinyfish(
+            candidate, tinyfish, notice["tender_id"])
+        result = dict(result)
+        result["tinyfish_independent_stage"] = (
+            "DISABLED_BY_SOURCE_POLICY" if not tinyfish_authorized else
+            "VERIFIED" if result.get("tinyfish_independent_verified") else
+            "NO_VERIFIED_PUBLIC_PAGE_RETRYABLE")
+        # Re-run the ordinary verified-buyer follow-up only after all safely
+        # merged public sources, so the model/CRM dossier sees both providers.
+        result = followup_public_buyer_research(result, env, client, key)
+        if v18:
+            hints = (index.get("candidates") or []) if isinstance(index, dict) else []
+            # Brave search hits are URL hints only; never factual proof.
+            result["indexed_candidates"] = hints[:5]
+            result["v18_search_status"] = (
+                index.get("status", "INDEX_NOT_RUN") if isinstance(index, dict)
+                else "INDEX_NOT_RUN")
         return result
 
     if not page_proof:
@@ -569,24 +659,11 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             if mirror is not None:
                 candidate = dict(candidate)
                 candidate["pages"] = (candidate["pages"][:1] + mirror["pages"][:2])[:3]
-            candidate = _supplement_thin_public_evidence(
-                candidate, notice, env, client, index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
-            return with_index(followup_public_buyer_research(candidate, env, client, key))
+            return with_index(candidate)
         if mirror is not None:
-            mirror = _supplement_thin_public_evidence(
-                mirror, notice, env, client, index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
-            return with_index(followup_public_buyer_research(mirror, env, client, key))
-        # Final no-cost, owner-approved SOURCE fallback after ordinary HTTP,
-        # Brave and public mirrors failed. Search snippets never become facts.
-        # There is no second CRM writer or retry loop here: existing V19/V20
-        # PostgreSQL receipts and the V11 advisory lock remain authoritative.
-        from .serviceit_b2b_free_public_fallback import read_free_public_mirror
-        free_result = read_free_public_mirror(
-            notice, env, client,
-            index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
-        if free_result is not None:
-            return with_index(followup_public_buyer_research(
-                free_result, env, client, key))
+            return with_index(mirror)
+        # The independent provider already ran, even though Brave failed.
+        # with_index merges any separately validated TinyFish source evidence.
         return with_index({
             "status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
             "pages": [], "contacts": [], "model_excerpt": "",
@@ -616,9 +693,7 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             # to preserve a generic company/site listing.
             results["pages"] = (prior + added)[:3]
             results["brave_public_mirror_independently_verified"] = True
-    results = _supplement_thin_public_evidence(
-        results, notice, env, client, index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
-    return with_index(followup_public_buyer_research(results, env, client, key))
+    return with_index(results)
 
 
 def model_safe_source_title(title, findings):

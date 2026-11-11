@@ -13,7 +13,11 @@ def test_v9_positive_control_uses_current_crm_item_and_no_historical_id():
     from inspect import getsource
     from leadpilot.serviceit_b2b_positive_control import positive_duplicate_control
     source = getsource(positive_duplicate_control)
-    assert '"id": CANARY_ID' in source
+    # The retired canary is optional; any existing signed B2B card is safe
+    # only after the same exact GET/list identity and negative controls.
+    assert 'for card in dict.fromkeys((CANARY_ID, *FALLBACK_CANARY_IDS))' in source
+    assert '"id": card' in source
+    assert 'B2B_POSITIVE_CONTROL_ITEM_UNAVAILABLE' in source
     assert '"Y"' in source and '"N"' in source
     assert 'exact_duplicate(client, base, ABSENT)' in source
     assert '4665948' not in source

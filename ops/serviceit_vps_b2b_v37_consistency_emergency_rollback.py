@@ -46,6 +46,11 @@ def stage_helper(script_hash):
     return runpy.run_path(str(path))
 
 
+def expected_sources(new_hashes, original_worker_hash):
+    """Match the tuple representation returned by original runtime_shas()."""
+    return tuple(new_hashes), (original_worker_hash, "MISSING", "MISSING")
+
+
 def run(argv):
     require(os.geteuid()!=0, "HOST_NONROOT_REQUIRED")
     require(len(argv)==5 and all(HEX.fullmatch(v) for v in argv),
@@ -73,8 +78,8 @@ def run(argv):
     image_exists=h["present_image"]
     # Existing V37 release runtime_shas() returns a positional tuple,
     # not a name-to-hash dictionary. Compare the exact same data type.
-    expected_live=tuple(new_hashes)
-    expected_base=(original_worker_hash,"MISSING","MISSING")
+    expected_live, expected_base = expected_sources(
+        new_hashes, original_worker_hash)
     # No source staging or rebuilt code: two exact OCI images already exist.
     require(lock.parent.is_dir() and not lock.is_symlink(),
             "HOST_ACTIVATION_LOCK_INVALID")

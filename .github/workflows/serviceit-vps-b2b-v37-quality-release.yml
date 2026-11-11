@@ -1,6 +1,9 @@
 name: ServiceIT VPS B2B V37 guarded dossier quality coordinator release
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-v37-quality-release.yml]
   issue_comment:
     types: [created]
 permissions:
@@ -14,7 +17,7 @@ jobs:
     if: >-
       github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
       github.ref == 'refs/heads/main' && github.actor == 'Ramzes2023' &&
-      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push' ||
        (github.event_name == 'issue_comment' && github.event.issue.number == 489 &&
         !github.event.issue.pull_request && github.event.comment.user.login == 'Ramzes2023' &&
         github.event.comment.body == 'SERVICEIT_B2B_V37_PASSPORT_SYNC_RELEASE_489'))
@@ -27,10 +30,16 @@ jobs:
       VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
       VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - name: Fetch exact reviewed public repository revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init --quiet .
+          git remote add origin https://github.com/Ramzes2023/Service-IT-LeadGen.git
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
       - name: Verify reviewed NEW V37 and pinned pre-V37 OLD source hashes
         shell: bash
         run: |

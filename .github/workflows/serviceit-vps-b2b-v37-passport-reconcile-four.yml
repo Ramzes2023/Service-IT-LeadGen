@@ -17,7 +17,8 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.actor.login == 'Ramzes2023' &&
-      github.event.workflow_run.head_sha == '9683445001fe938cd8a56964665a871a456e5aa9'
+      (github.event.workflow_run.head_sha == '9683445001fe938cd8a56964665a871a456e5aa9' ||
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 18
     environment: serviceit-vps-readonly
@@ -27,11 +28,17 @@ jobs:
       VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
       VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Pin exact nine production modules and no-write probe
+      - name: Fetch exact reviewed public repository revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init --quiet .
+          git remote add origin https://github.com/Ramzes2023/Service-IT-LeadGen.git
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+      - name: Pin exact nine production modules and reconciliation script
         shell: bash
         run: |
           set -euo pipefail

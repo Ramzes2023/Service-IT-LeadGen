@@ -1,6 +1,7 @@
 """Read the four signed dossier receipts and compare them with current CRM."""
 import hashlib
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -64,6 +65,16 @@ def main():
             out(f"TENDER_{tid}_COORDINATOR_QUEUE", row[3] if row else "NO_QUEUE")
             if row and row[1]:
                 out(f"TENDER_{tid}_CARD", row[1])
+                native = conn.execute(
+                    "SELECT status FROM serviceit_vps_native_receipts "
+                    "WHERE card_id=%s AND namespace='B2B_RESEARCH_V4'", (row[1],)
+                ).fetchone()
+                out(f"TENDER_{tid}_RESEARCH", native[0] if native else "NO_RECEIPT")
+                documents = conn.execute(
+                    "SELECT status FROM serviceit_vps_b2b_tender_doc_receipts WHERE card_id=%s",
+                    (row[1],)
+                ).fetchone()
+                out(f"TENDER_{tid}_DOCUMENTS", documents[0] if documents else "NO_RECEIPT")
             try:
                 signal = PREFIX + "SIGNAL_ID"
                 result = rest("crm.item.list", {
@@ -78,8 +89,22 @@ def main():
                     })["item"])
                     validate_identity(current, item["id"])
                     assert current[signal] == source
-                    if "01  ПАСПОРТ ЗАКУПКИ" in (current.get(REPORT) or ""):
+                    report = current.get(REPORT) or ""
+                    if "01  ПАСПОРТ ЗАКУПКИ" in report:
                         out(f"TENDER_{tid}_PASSPORT", "PRESENT")
+                        passport = report.split("01  ПАСПОРТ ЗАКУПКИ", 1)[1].split(
+                            "02  ПРЕДМЕТ И ТЕХНИЧЕСКОЕ ЗАДАНИЕ", 1)[0]
+                        for key, prefix in _PASSPORT_PREFIXES.items():
+                            value = next((line[len(prefix):] for line in passport.splitlines()
+                                          if line.startswith(prefix)), "")
+                            state = "PRESENT" if value and value != _PASSPORT_GAPS[key] else "MISSING"
+                            if key == "DEADLINE" and ("сверить" in value or value.startswith("[АРХИВ")):
+                                state = "EMAIL_OR_ARCHIVE_ONLY"
+                            out(f"TENDER_{tid}_FIELD_{key}", state)
+                        proof = re.search(r"Доказательств: (\d+) цитат / (\d+) ", report)
+                        if proof:
+                            out(f"TENDER_{tid}_CITATIONS", int(proof[1]))
+                            out(f"TENDER_{tid}_SOURCES", int(proof[2]))
                 out(f"TENDER_{tid}_CRM_EXISTS", "YES" if candidates else "NO")
             except Exception:
                 out(f"TENDER_{tid}_CRM_EXISTS", "UNVERIFIED")

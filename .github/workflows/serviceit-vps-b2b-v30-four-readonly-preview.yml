@@ -15,7 +15,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.event_name == 'issue_comment' &&
       github.actor == 'Ramzes2023' &&
-      github.event.issue.number == 589 &&
+      github.event.issue.number == 489 &&
       !github.event.issue.pull_request &&
       github.event.comment.user.login == 'Ramzes2023' &&
       github.event.comment.body == 'SERVICEIT_B2B_V30_FOUR_READONLY_PREVIEW_489'

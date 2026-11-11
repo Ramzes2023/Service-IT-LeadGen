@@ -36,13 +36,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed='5f9972d92f618d4a22cc99e0a935ff9cd09f3978'
+          reviewed='53e69005cf1de7d2cc2155e7abbe6a3e22288c2f'
           git cat-file -e "$reviewed^{commit}"
           names=(serviceit_b2b_public_mirrors.py
             serviceit_b2b_tender_index_v18.py
             serviceit_vps_b2b_deep_research.py
             serviceit_b2b_dossier_v11.py
-            serviceit_vps_worker.py)
+            serviceit_vps_worker.py
+            serviceit_vps_b2b_dossier_v11_worker.py)
           for name in "${names[@]}"; do
             git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
             python -m py_compile "leadpilot/$name"
@@ -63,7 +64,7 @@ jobs:
             sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v18-release/shas"
           done
           sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v18-release/script-sha"
-          [[ "$(wc -l < "$RUNNER_TEMP/v18-release/shas")" == 5 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v18-release/shas")" == 6 ]]
       - name: Transfer only attested modules and installer to locked VPS stage
         shell: bash
         run: |
@@ -79,7 +80,8 @@ jobs:
                       serviceit_b2b_tender_index_v18.py \
                       serviceit_vps_b2b_deep_research.py \
                       serviceit_b2b_dossier_v11.py \
-                      serviceit_vps_worker.py; do
+                      serviceit_vps_worker.py \
+                      serviceit_vps_b2b_dossier_v11_worker.py; do
             scp -i "$RUNNER_TEMP/v18-release/id" "${opts[@]}" \
               "leadpilot/$name" "$target:$stage/"
           done
@@ -93,7 +95,7 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/v18-release/hosts"
             -o BatchMode=yes -o ConnectTimeout=15)
           mapfile -t shas < "$RUNNER_TEMP/v18-release/shas"
-          [[ "${#shas[@]}" == 5 ]]
+          [[ "${#shas[@]}" == 6 ]]
           scriptsha="$(cat "$RUNNER_TEMP/v18-release/script-sha")"
           [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
           checked=()
@@ -108,7 +110,7 @@ jobs:
             > "$RUNNER_TEMP/v18-release/status" <<'REMOTE'
           set -euo pipefail
           id="$1"; sha="$2"; shift 2
-          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 5 ]]
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 6 ]]
           for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
           script="$HOME/serviceit/staging/b2b-v18-multisource-release-$id/activate.py"
           [[ -f "$script" && ! -L "$script" ]]

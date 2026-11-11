@@ -267,6 +267,7 @@ def run_once(env, client, conn, *, preview=False):
             need(url==notice["source_url"] and bool(title),
                  "ORIGINAL_NOTICE_CARD_MISMATCH")
             before=original_nine(first)
+            findings = {}
             try:
                 findings=source_findings(first,notice,exact,client,enable_v18=True)
                 items=novel_evidence(findings,before[REPORT])
@@ -284,7 +285,7 @@ def run_once(env, client, conn, *, preview=False):
                     "new_3_field_draft":bool(draft),
                     "verified_public_pages":min(
                         len((findings or {}).get("pages") or []),9)
-                        if "findings" in locals() else 0,
+                        ,
                 })
                 continue
             if not reserve(conn,card,source,before):

@@ -1,10 +1,12 @@
 """Trace bounded public source discovery for three verified inbox records."""
 import os
+import re
 from collections import Counter
 
 import httpx
 
 from leadpilot.serviceit_b2b_v19_backfill import Rest, normalized, validate_identity
+from leadpilot.serviceit_public_evidence_research import MAX_HTML, VisibleText
 from leadpilot.serviceit_vps_b2b_deep_research import safe_notice, source_findings
 from leadpilot.serviceit_vps_pg_queue import db
 from leadpilot.serviceit_vps_worker import exact_environment
@@ -19,6 +21,8 @@ def out(key, value):
 def provider(request):
     host = request.url.host.removeprefix("www.")
     path = request.url.path
+    if host == "127.0.0.1" and request.url.port == 18785 and path == "/render":
+        return "BROWSER"
     if host == "api.search.brave.com":
         return "BRAVE_CONTEXT" if "context" in path else "BRAVE_WEB"
     if host == "api.search.tinyfish.ai":
@@ -45,6 +49,28 @@ def trace(tid, item, notice, env):
     def received(response):
         name = provider(response.request)
         responses[name, response.status_code] += 1
+        if name == "B2B_DETAIL" and response.status_code == 200:
+            response.read()
+            if len(response.content) <= MAX_HTML:
+                try:
+                    parser = VisibleText()
+                    parser.feed(response.text)
+                    visible = " ".join(parser.parts)
+                    exact = re.compile(r"(?<!\d)" + tid + r"(?!\d)")
+                    metrics["DETAIL_VISIBLE_CHARS"] += len(visible)
+                    metrics["DETAIL_VISIBLE_EXACT_ID"] += bool(exact.search(visible))
+                    metrics["DETAIL_RAW_EXACT_ID"] += bool(exact.search(response.text))
+                    metrics["DETAIL_VISIBLE_EXCERPT_EXACT_ID"] += bool(exact.search(visible[:4000]))
+                except ValueError:
+                    metrics["DETAIL_HTML_PARSE_FAILED"] += 1
+        if name == "BROWSER":
+            try:
+                request = response.request
+                exact_url = notice.get("source_url", "").encode()
+                if exact_url and exact_url in request.content:
+                    metrics[f"OFFICIAL_BROWSER_HTTP_{response.status_code}"] += 1
+            except httpx.RequestNotRead:
+                pass
         if response.status_code != 200 or name not in {
             "TINYFISH_SEARCH", "TINYFISH_FETCH", "BRAVE_WEB",
         }:

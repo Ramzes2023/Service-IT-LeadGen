@@ -148,7 +148,7 @@ def test_robots_disallow_never_fetches_real_detail(monkeypatch):
 def test_when_id_is_at_end_still_retained_with_verified_lot_details():
     intro="Тендем Закупка Оказание услуг по предоставлению ИТ-специалистов "
     parts=[intro,"B2B-Center запрос котировок",
-           "Разработчик 1С, Junior — удалённо (РФ)"] + (
+           "Разработчик 1С, Junior — удалённо (РФ). DevOps-инженеры 1С"] + (
            ["Подробные позиции и условия закупки"]*500)
     parts+=["Номер у источника 4673595"]
     value=mirror.detailed_public_excerpt(parts,ID,TITLE)

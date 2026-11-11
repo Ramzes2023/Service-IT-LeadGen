@@ -432,6 +432,80 @@ def followup_public_buyer_research(findings, env, client, key):
     return result
 
 
+
+def _supplement_thin_public_evidence(candidate, notice, env, client, *, index_hints=None):
+    """Add at most one independently verified approved public detail page.
+
+    Native/Brave often find only an indexed tender headline with no actionable
+    buyer, conditions or documentation. Such a page must not suppress the
+    already-approved free Tendem Search/Fetch fallback. This does NOT turn
+    index text into verified evidence, run another model or write Bitrix.
+    """
+    if (not isinstance(candidate, dict)
+            or candidate.get("status") != "PUBLIC_PAGES_INSPECTED"
+            or not isinstance(candidate.get("pages"), list)):
+        return candidate
+    pages = [p for p in candidate["pages"] if isinstance(p, dict)
+             and isinstance(p.get("url"), str)
+             and isinstance(p.get("excerpt"), str)]
+    if not pages or len(pages) >= MAX_PAGES:
+        return candidate
+    if (env.get("SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED") != "YES"
+            or env.get("SERVICEIT_B2B_TENDEM_PUBLIC_EXTRACTION_APPROVED") != "YES"):
+        return candidate
+    # Existing full independently fetched Tendem detail is already enough:
+    # never query the same vendor again and never demote primary evidence.
+    if any(p["url"].startswith(("https://tendem.ru/tenders/",
+                                "https://www.tendem.ru/tenders/")) for p in pages):
+        return candidate
+    corpus = " ".join(p["excerpt"][:4700] for p in pages).casefold()
+    categories = (
+        ("заказчик", "покупател"),
+        ("срок", "дедлайн", "подач заяв"),
+        ("документ", "техническ", "спецификац", "требован"),
+        ("цена", "стоимост", "бюджет", "оплат"),
+        ("регион", "достав", "адрес", "место постав"),
+        ("участи", "критери", "квалификац", "обеспечени"),
+    )
+    if sum(any(word in corpus for word in group) for group in categories) >= 3:
+        return candidate
+    from .serviceit_b2b_free_public_fallback import read_free_public_mirror
+    free = read_free_public_mirror(
+        notice, env, client, index_hints=index_hints)
+    if (not isinstance(free, dict)
+            or free.get("status") != "PUBLIC_PAGES_INSPECTED"
+            or not isinstance(free.get("pages"), list)):
+        return candidate
+    from .serviceit_b2b_remote_public_fetch import approved_url
+    tender_id = notice.get("tender_id") if isinstance(notice, dict) else None
+    if not isinstance(tender_id, str) or not re.fullmatch(r"\d{5,12}", tender_id):
+        return candidate
+    exact = re.compile(r"(?<!\d)" + re.escape(tender_id) + r"(?!\d)")
+    seen = {p["url"] for p in pages}
+    additions = [p for p in free["pages"]
+                 if isinstance(p, dict) and isinstance(p.get("url"), str)
+                 and isinstance(p.get("excerpt"), str)
+                 and approved_url(p["url"])
+                 and exact.search(p["excerpt"])
+                 and p["url"] not in seen]
+    additions = additions[:MAX_PAGES-len(pages)]
+    if not additions:
+        return candidate
+    updated = dict(candidate)
+    updated["pages"] = pages + additions
+    new_urls = {p["url"] for p in additions}
+    updated["structured_facts"] = (
+        list(candidate.get("structured_facts") or [])
+        + [fact for fact in (free.get("structured_facts") or [])
+           if isinstance(fact, dict) and any(
+               isinstance(field, dict)
+               and field.get("source_url") in new_urls
+               for field in fact.values())]
+    )
+    updated["free_public_supplemented"] = True
+    return updated
+
+
 def source_findings(item, notice, env, client, *, enable_v18=False):
     hosts = host_allowlist(env)
     browser = None
@@ -495,8 +569,12 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             if mirror is not None:
                 candidate = dict(candidate)
                 candidate["pages"] = (candidate["pages"][:1] + mirror["pages"][:2])[:3]
+            candidate = _supplement_thin_public_evidence(
+                candidate, notice, env, client, index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
             return with_index(followup_public_buyer_research(candidate, env, client, key))
         if mirror is not None:
+            mirror = _supplement_thin_public_evidence(
+                mirror, notice, env, client, index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
             return with_index(followup_public_buyer_research(mirror, env, client, key))
         # Final no-cost, owner-approved SOURCE fallback after ordinary HTTP,
         # Brave and public mirrors failed. Search snippets never become facts.
@@ -538,6 +616,8 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             # to preserve a generic company/site listing.
             results["pages"] = (prior + added)[:3]
             results["brave_public_mirror_independently_verified"] = True
+    results = _supplement_thin_public_evidence(
+        results, notice, env, client, index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
     return with_index(followup_public_buyer_research(results, env, client, key))
 
 

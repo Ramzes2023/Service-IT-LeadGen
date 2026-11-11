@@ -298,6 +298,14 @@ def detailed_public_excerpt(parts: list[str], tender_id: str,
     # Important: quotes remain substrings of fetched text only. No extra
     # inferred deadlines, quantities, eligibility, legal proof or contacts.
     base = proof[:1250]
+    # Retain the real ID proof even when a many-thousand-character page
+    # places "Номер у источника" at the very end. The signed B2B notice
+    # number must remain visible in the final evidence, not just in a gate.
+    if re.search(ID_RX.format(id=tender_id), base) is None:
+        number = re.search(ID_RX.format(id=tender_id), proof)
+        if number is not None:
+            nearby = proof[max(0,number.start()-90):number.end()+170]
+            base = proof[:970] + ". " + nearby
     sections = (chosen + (["Позиции закупки: " + "; ".join(roles)]
                           if roles else []))
     result = base

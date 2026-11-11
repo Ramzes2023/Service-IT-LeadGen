@@ -1,0 +1,78 @@
+name: ServiceIT B2B V25 first legacy summary supersession by exact V11 CRM receipt READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v25-first-supersession
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V25_FIRST_SUPERSESSION_READONLY_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Strict reviewed read-only V25 source plus VPS host pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='6f5f8553b58fe5b93f3ac1d8b7580b50a1d57317'
+          git cat-file -e "$reviewed^{commit}"
+          script=ops/serviceit_vps_b2b_v25_first_supersession_readonly.py
+          git diff --quiet "$reviewed" HEAD -- "$script"
+          python -m py_compile "$script"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v25-first"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v25-first/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v25-first/hosts"
+          chmod 0600 "$RUNNER_TEMP/v25-first/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v25-first/hosts" >/dev/null
+      - name: Independently reconcile first signed legacy single-field digest against newer V11
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v25-first/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          pins=()
+          for file in serviceit_vps_native_fence.py serviceit_vps_b2b_dossier_v11_worker.py serviceit_b2b_v19_backfill.py serviceit_vps_worker.py; do
+            sha="$(sha256sum "leadpilot/$file" | cut -d' ' -f1)"
+            [[ "$sha" =~ ^[a-f0-9]{64}$ ]]
+            pins+=("'$sha'")
+          done
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v25-first/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - ${pins[*]}" \
+            < ops/serviceit_vps_b2b_v25_first_supersession_readonly.py \
+            > "$RUNNER_TEMP/v25-first/output" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V25_FIRST_[A-Z0-9_]+=(YES|NO)$' \
+            "$RUNNER_TEMP/v25-first/output" | head -25 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V25_FIRST_EXACT_CODE_AND_GATES=YES' "$RUNNER_TEMP/v25-first/output"
+          grep -qx 'V25_FIRST_SIGNED_FIRST=YES' "$RUNNER_TEMP/v25-first/output"
+          grep -qx 'V25_FIRST_CRM_WRITES=NO' "$RUNNER_TEMP/v25-first/output"
+          grep -qx 'V25_FIRST_PG_WRITES=NO' "$RUNNER_TEMP/v25-first/output"

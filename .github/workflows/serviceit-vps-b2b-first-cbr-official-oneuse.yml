@@ -1,0 +1,77 @@
+name: ServiceIT first signed B2B official CBR one-use guarded CRM addendum
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-first-cbr-oneuse-verified
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_FIRST_CBR_ONEUSE_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate source gates, non-root SSH and oneuse proof in CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          script=ops/serviceit_vps_b2b_first_cbr_official_oneuse.py
+          python -m py_compile "$script"
+          # Global PR CI runs the offline safety tests before merge.
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/cbr-first-oneuse"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/cbr-first-oneuse/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/cbr-first-oneuse/hosts"
+          chmod 0600 "$RUNNER_TEMP/cbr-first-oneuse/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/cbr-first-oneuse/hosts" >/dev/null
+
+      - name: Exactly one first-card official CBR update under PG lock and receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+               -o UserKnownHostsFile="$RUNNER_TEMP/cbr-first-oneuse/hosts"
+               -o BatchMode=yes -o ConnectTimeout=15)
+          set +e
+          ssh -T -i "$RUNNER_TEMP/cbr-first-oneuse/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" \
+            < ops/serviceit_vps_b2b_first_cbr_official_oneuse.py \
+            > "$RUNNER_TEMP/cbr-first-oneuse/result" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^CBR_ONEUSE_[A-Z0-9_]+=(YES|NO|[0-9]{1,3}|[A-Z0-9_]{4,85})$' \
+            "$RUNNER_TEMP/cbr-first-oneuse/result" | head -20 || true
+          [[ "$rc" == 0 ]]
+          grep -Eq '^CBR_ONEUSE_OUTCOME=(OFFICIAL_CBR_ADDITIVE_VERIFIED|ALREADY_IN_DOSSIER|ONEUSE_ALREADY_FENCED|OTHER_WRITER_ACTIVE|NO_DOSSIER_CAPACITY)$' "$RUNNER_TEMP/cbr-first-oneuse/result"
+          if grep -qx 'CBR_ONEUSE_OUTCOME=OFFICIAL_CBR_ADDITIVE_VERIFIED' \
+               "$RUNNER_TEMP/cbr-first-oneuse/result"; then
+            grep -qx 'CBR_ONEUSE_CRM_WRITES=1' "$RUNNER_TEMP/cbr-first-oneuse/result"
+            grep -qx 'CBR_ONEUSE_ONLY_THREE_AI_FIELDS=YES' "$RUNNER_TEMP/cbr-first-oneuse/result"
+          else
+            grep -qx 'CBR_ONEUSE_CRM_WRITES=0' "$RUNNER_TEMP/cbr-first-oneuse/result" || \
+             grep -qx 'CBR_ONEUSE_OUTCOME=OTHER_WRITER_ACTIVE' "$RUNNER_TEMP/cbr-first-oneuse/result"
+          fi

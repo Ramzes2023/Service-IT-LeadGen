@@ -1,0 +1,91 @@
+name: ServiceIT B2B V37 passport reconciliation for four signed cards
+on:
+  workflow_run:
+    workflows: [ServiceIT VPS B2B V37 guarded dossier quality coordinator release]
+    types: [completed]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-dossier-readback-four-real-readonly-preview
+  cancel-in-progress: false
+jobs:
+  preview:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.actor.login == 'Ramzes2023' &&
+      github.event.workflow_run.head_sha == '9683445001fe938cd8a56964665a871a456e5aa9'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin exact nine production modules and no-write probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='9683445001fe938cd8a56964665a871a456e5aa9'
+          git cat-file -e "$reviewed^{commit}"
+          names=(serviceit_b2b_tender_index_v18.py
+            serviceit_b2b_dossier_v11.py
+            serviceit_b2b_v20_versioned.py
+            serviceit_b2b_v19_backfill.py
+            serviceit_vps_b2b_deep_research.py
+            serviceit_b2b_free_public_fallback.py
+            serviceit_b2b_remote_public_fetch.py
+            serviceit_b2b_routerai_deep.py
+            serviceit_vps_b2b_document_worker.py)
+          for name in "${names[@]}"; do
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+          done
+          script=ops/serviceit_vps_b2b_passport_reconcile_four.py
+          python -m py_compile "$script"
+          git cat-file -e "$reviewed^{commit}"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/dossier-readback-four"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/dossier-readback-four/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/dossier-readback-four/hosts"
+          chmod 0600 "$RUNNER_TEMP/dossier-readback-four/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/dossier-readback-four/hosts" >/dev/null
+          : > "$RUNNER_TEMP/dossier-readback-four/shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/dossier-readback-four/shas"
+          done
+      - name: Reconcile verified passport facts on the four signed cards
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/dossier-readback-four/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/dossier-readback-four/shas"
+          [[ "${#shas[@]}" == 9 ]]
+          checked=()
+          for v in "${shas[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$v'")
+          done
+          set +e
+          ssh -T -i "$RUNNER_TEMP/dossier-readback-four/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - ${checked[*]}" \
+            < ops/serviceit_vps_b2b_passport_reconcile_four.py \
+            > "$RUNNER_TEMP/dossier-readback-four/status" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^DOSSIER_READBACK_[A-Z0-9_]{3,62}=(YES|NO|[0-9]{1,3}|[A-Z0-9_]{5,75})$' \
+            "$RUNNER_TEMP/dossier-readback-four/status" | head -45 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'DOSSIER_READBACK_FINISHED=YES' "$RUNNER_TEMP/dossier-readback-four/status"

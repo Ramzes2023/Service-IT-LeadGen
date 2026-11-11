@@ -162,6 +162,153 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
     return ""
 
 
+
+# A marketplace detail page often lists 50-100 tender positions and puts
+# buyer/deadline/geography/requirements AFTER a long navigation/lot matrix.
+# matched_excerpt() intentionally proves identity in a short neighbourhood;
+# that proof alone must not force the AI to see only the first 2-3k chars.
+# This companion extractor runs ONLY AFTER matched_excerpt() succeeds on the
+# independently fetched, robots-approved full page (not a Brave snippet).
+DETAIL_LABELS = (
+    ("заказчик", r"(?iu)^заказчик(?:и)?\s*[:—-]?\s*$", 5),
+    ("инн", r"(?iu)^инн(?:\s*[-–]\s*кпп)?\s*[:—-]?\s*$", 3),
+    ("огрн", r"(?iu)^огрн\s*[:—-]?\s*$", 2),
+    ("срок", r"(?iu)^(?:окончание подачи заявок|конец приема заявок(?: по мск)?|подача заявок до|срок подачи заявок)\s*[:—-]?\s*$", 3),
+    ("цена", r"(?iu)^(?:начальная цена контракта|начальная цена с ндс|начальная цена|цена не указана|сумма не задана)\s*[:—-]?\s*$", 2),
+    ("регион", r"(?iu)^(?:регион|место поставки|местонахождение|адрес)\s*[:—-]?\s*$", 2),
+    ("вид", r"(?iu)^(?:тип закупки|способ закупки|форма закупки)\s*[:—-]?\s*$", 2),
+    ("подача", r"(?iu)^(?:порядок подачи заявок|подача предложений|как подать заявку)\s*[:—-]?\s*$", 2),
+    ("допуск", r"(?iu)^(?:требования к участникам|условия участия|квалификационные требования)\s*[:—-]?\s*$", 2),
+    ("оценка", r"(?iu)^(?:критерии(?: отбора| оценки)?|порядок оценки)\s*[:—-]?\s*$", 2),
+    ("оплата", r"(?iu)^(?:условия оплаты|порядок расчетов|условия расч[её]тов)\s*[:—-]?\s*$", 2),
+    ("гарантии", r"(?iu)^(?:обеспечение заявки|обеспечение договора|гарантии)\s*[:—-]?\s*$", 2),
+    ("тз", r"(?iu)^(?:техническое задание|технические требования|требования к исполнителю)\s*[:—-]?\s*$", 2),
+    ("срок исполнения", r"(?iu)^(?:срок исполнения|срок оказания услуг|период оказания услуг)\s*[:—-]?\s*$", 2),
+)
+ROLE_DETAIL = re.compile(
+    r"(?iu)(?:разработчик\s*1[сc]|аналитик\s*1[сc]|методолог\s*1[сc]|"
+    r"тестировщик(?:-консультант)?\s*1[сc]|архитектор\s*1[сc]|"
+    r"devops|devsecops|mlops|ml[-\s]*инженер|"
+    r"data\s*scientist|tech\s*lead|ai\s*/\s*llm|"
+    r"инженер\s*данных|аналитик\s*ai|системный\s*аналитик)"
+)
+WORK_LOCATION = re.compile(r"(?iu)(?:удал[её]нно|офис|москва|рф)")
+WORK_GRADE = re.compile(r"(?i)\b(?:junior|middle|senior|lead)\b")
+
+
+def detailed_public_excerpt(parts: list[str], tender_id: str,
+                            subject: str) -> str:
+    """Proof-bound, full-page coverage of buyer, conditions and IT role matrix.
+
+    Never consider a page whose exact tender number + public title + B2B
+    marketplace attribution were not independently confirmed. This function
+    is pure. Labels and positions are literal fetched page text, not model
+    interpretations, search snippets or guessed requirements.
+    """
+    if (type(parts) is not list or len(parts) > 8000
+            or any(type(p) is not str for p in parts[:4000])):
+        return ""
+    visible = " ".join(parts)
+    # Search the FULL readable text; source publisher and exact ID are still
+    # mandatory identity gates (including defence against same-number reuse).
+    proof = matched_excerpt(visible, tender_id, subject)
+    if not proof:
+        return ""
+    # Short pages already fit; never drop any verified source content.
+    if len(visible) <= 4700:
+        return visible
+
+    # Keep the opening proof, THEN select evidence from sections which may be
+    # tens of thousands of characters further down than the tender number.
+    # Do not rely on a screen's opening/nav text as the whole dossier.
+    chosen = []
+    used = set()
+    for label, pattern, take in DETAIL_LABELS:
+        for i, part in enumerate(parts[:2800]):
+            value = " ".join(part.split())
+            if not re.fullmatch(pattern, value):
+                continue
+            # A header with no value is NOT an eligibility/contract fact.
+            # The next 1-3 text nodes may hold the actual field value.
+            cells = [value]
+            for next_part in parts[i+1:i+1+take]:
+                clean = " ".join(next_part.split())
+                if not clean:
+                    continue
+                if len(clean) > 380:
+                    clean = clean[:380]
+                cells.append(clean)
+                if len(" ".join(cells)) >= 280:
+                    break
+            snippet = " ".join(cells)[:390]
+            # Never save an unlabelled NAV tab as proof of a requirement.
+            if len(cells) <= 1 or not snippet or label in used:
+                continue
+            if label == "заказчик" and not re.search(
+                    r"(?iu)\b(?:ооо|пао|ао|общество|учреждение)\b", snippet):
+                continue
+            if label == "инн" and not re.search(r"\b\d{10}(?:\d{2})?\b", snippet):
+                continue
+            if label == "срок" and not re.search(
+                    r"\d{1,2}[./]\d{1,2}[./]\d{4}|\d{1,2}\s+"
+                    r"(?:января|февраля|марта|апреля|мая|июня|июля|августа|"
+                    r"сентября|октября|ноября|декабря)", snippet, re.I):
+                continue
+            # "Условия участия" in a sidebar alone is not the condition:
+            # require a contentful next node rather than another header.
+            if label in ("допуск","оценка","подача","оплата","гарантии","тз"):
+                if len(cells) < 2 or len(cells[1]) < 22:
+                    continue
+            used.add(label)
+            chosen.append(snippet)
+            break
+
+    # The published item matrix may show place-of-work and qualification for
+    # many rows (1C / DevOps / ML etc). Sample distinct role families AND
+    # office-vs-remote modes rather than 15 near-identical developer rows.
+    role_seen = set()
+    roles = []
+    for i, part in enumerate(parts[:2800]):
+        value = " ".join(part.split())
+        if not ROLE_DETAIL.search(value):
+            continue
+        if len(value) > 190:
+            continue
+        # Only candidate rows with a grade or explicit work location count;
+        # a generic navigation phrase is not a procurement requirement.
+        if not WORK_GRADE.search(value) and not WORK_LOCATION.search(value):
+            continue
+        family = WORK_GRADE.split(value, 1)[0].casefold().strip(" ,—-")
+        if len(family) < 4:
+            continue
+        mode = ("офис" if "офис" in value.casefold() else
+                "удалённо" if re.search(r"(?iu)удал[её]нно", value) else
+                "режим не указан")
+        pair = (family, mode)
+        if pair in role_seen:
+            continue
+        role_seen.add(pair)
+        count = " ".join(parts[i+1:i+3])
+        tail = ("; " + count[:24]) if re.search(
+            r"(?iu)\b\d+\s*(?:чел(?:-час)?|шт)\b", count[:32]) else ""
+        roles.append(value + tail)
+        if len(roles) >= 14:
+            break
+
+    # Important: quotes remain substrings of fetched text only. No extra
+    # inferred deadlines, quantities, eligibility, legal proof or contacts.
+    base = proof[:1250]
+    sections = (chosen + (["Позиции закупки: " + "; ".join(roles)]
+                          if roles else []))
+    result = base
+    for entry in sections:
+        if entry in result:
+            continue
+        if len(result) + len(entry) + 3 > 4600:
+            continue
+        result += ". " + entry
+    return result[:4600]
+
 def from_public_page(client: httpx.Client, url: str, tender_id: str,
                      subject: str, mirror_host="tendem.ru"):
     if mirror_host not in MIRRORS:
@@ -174,10 +321,10 @@ def from_public_page(client: httpx.Client, url: str, tender_id: str,
     raw = _get(client, url, frozenset((mirror_host,)))
     parser = VisibleText()
     parser.feed(raw)
-    visible = " ".join(parser.parts)
-    # Full HTML visible text is scanned, including pages >7k where the exact
-    # ID may be buried after banners; only the relevant 2.3k window is retained.
-    excerpt = matched_excerpt(visible, tender_id, subject)
+    # Identity proof is unchanged. Long verified public detail pages now
+    # retain distant customer/address/price/deadline and representative
+    # role/office/remote evidence within the existing 4.7k budget.
+    excerpt = detailed_public_excerpt(parser.parts, tender_id, subject)
     if not excerpt:
         return None
     return {

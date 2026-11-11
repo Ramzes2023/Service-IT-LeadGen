@@ -13,6 +13,7 @@ from leadpilot.serviceit_vps_worker import exact_environment, live_permitted
 from leadpilot.serviceit_b2b_dossier_v11 import (
     REPORT, confirmed_passport_values, sync_confirmed_passport,
 )
+from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS
 from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
 from leadpilot.serviceit_vps_b2b_document_worker import LOCK_ID as DOCUMENT_LOCK
 
@@ -70,21 +71,44 @@ def previously_verified_mkb(conn, current, card, notice):
     return expected
 
 
+def blocked_partial_update(conn, card, source_hash, current):
+    """Prove the known local validation failure without rewriting its receipt."""
+    if card != 19:
+        return False
+    row = conn.execute(f"""
+        SELECT status,source_hash,before_fields,after_fields,salt,digest,
+               updated_at >= '2026-11-11 22:02:00+00'::timestamptz
+               AND updated_at < '2026-11-11 22:03:00+00'::timestamptz
+        FROM {v20.TABLE} WHERE card_id=%s ORDER BY attempt_no DESC LIMIT 1
+    """, (card,)).fetchone()
+    if not row:
+        return False
+    status, source, before, desired, salt, digest, known_attempt = row
+    return (status == "UNCERTAIN" and source == source_hash and known_attempt
+            and current == before and isinstance(desired, dict)
+            and set(desired) == AI_FIELDS and salt is not None and digest is not None
+            and 0 < sum(before[key] != desired[key] for key in AI_FIELDS) < len(AI_FIELDS)
+            and secrets.compare_digest(v20.compute_digest(desired, bytes(salt)), bytes(digest)))
+
+
 def apply_one(conn, client, rest, exact, card, source, notice, *, html_recovery=False):
     src_hash = hashlib.sha256(source.encode("ascii")).hexdigest()
     if v19.active_card_write(conn, card):
         return "WRITE_IN_FLIGHT", 0
-    for table in (v19.TABLE, v20.TABLE):
-        prior = conn.execute(
-            f"SELECT status, source_hash FROM {table} WHERE card_id=%s "
-            "ORDER BY updated_at DESC LIMIT 1", (card,)).fetchone()
-        if prior and (prior[0] not in SAFE_PRIOR or prior[1] != src_hash):
-            return "RECEIPT_RECONCILIATION_REQUIRED", 0
     first = read(rest, card)
     url, title = v20.safe_notice(notice, card, source, first)
     if url != notice["source_url"] or not title:
         return "SIGNED_SOURCE_MISMATCH", 0
     before = v20.original_nine(first)
+    for table in (v19.TABLE, v20.TABLE):
+        prior = conn.execute(
+            f"SELECT status, source_hash FROM {table} WHERE card_id=%s "
+            "ORDER BY updated_at DESC LIMIT 1", (card,)).fetchone()
+        if prior and (prior[0] not in SAFE_PRIOR or prior[1] != src_hash):
+            if not (html_recovery and table == v20.TABLE
+                    and blocked_partial_update(conn, card, src_hash, before)):
+                return "RECEIPT_RECONCILIATION_REQUIRED", 0
+            out(f"CARD_{card}_PREVIOUS_LOCAL_REJECTION_VERIFIED", "YES")
     findings = v20.source_findings(first, notice, exact, client, enable_v18=True)
     if html_recovery:
         pages = findings.get("pages", [])
@@ -110,16 +134,22 @@ def apply_one(conn, client, rest, exact, card, source, notice, *, html_recovery=
     try:
         rest("crm.item.update", {
             "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
-            "fields": {key: value for key, value in draft.items() if value != before[key]},
+            "fields": draft,
         })
         after = read(rest, card)
         if (v20.original_nine(after) != draft or not v20.non_ai_unchanged(fresh, after)
                 or not secrets.compare_digest(v20.compute_digest(draft, salt), digest)):
             raise ValueError("READBACK_FAILED")
         v20.transition(conn, card, attempt, "WRITE_INTENT", "VERIFIED")
-    except Exception:
+    except Exception as error:
         v20.transition(conn, card, attempt, "WRITE_INTENT", "UNCERTAIN")
-        raise RuntimeError("WRITE_UNCERTAIN_NO_REPLAY") from None
+        if not html_recovery:
+            raise RuntimeError("WRITE_UNCERTAIN_NO_REPLAY") from None
+        reason = str(error)
+        if reason in {"REST_UPDATE_BLOCKED", "REST_HTTP_UNVERIFIED",
+                      "REST_RESPONSE_UNVERIFIED", "READBACK_FAILED"}:
+            out(f"CARD_{card}_WRITE_REASON", reason)
+        return "WRITE_UNCERTAIN_NO_REPLAY", 0
     if html_recovery:
         report_confirmed(card, after[REPORT], values)
     return "VERIFIED_WRITTEN", count
@@ -135,7 +165,7 @@ def report_confirmed(card, report, values):
 def main():
     args = sys.argv[1:]
     html_recovery = args[:1] == ["--public-html"]
-    files = FILES + ("serviceit_public_evidence_research.py",) if html_recovery else FILES
+    files = FILES + ("serviceit_public_evidence_research.py", "serviceit_enrichment_worker.py") if html_recovery else FILES
     if html_recovery:
         args = args[1:]
     assert [hashlib.sha256((Path("/app/leadpilot") / f).read_bytes()).hexdigest()
@@ -170,15 +200,17 @@ def main():
             assert {row[0] for row in rows} == TARGETS and len(rows) == len(TARGETS)
         rest = v20.Rest(webhook, client)
         writes = 0
+        uncertain = False
         for card, source, notice in rows:
             status, lines = apply_one(conn, client, rest, exact, card, source, notice,
                                       html_recovery=html_recovery)
             out(f"CARD_{card}_STATUS", status)
             out(f"CARD_{card}_NEW_LINES", lines)
             writes += status == "VERIFIED_WRITTEN"
+            uncertain |= status == "WRITE_UNCERTAIN_NO_REPLAY"
         out("CRM_WRITES", writes)
         out("FINISHED", "YES")
-    return 0
+    return 2 if uncertain else 0
 
 if __name__ == "__main__":
     try:

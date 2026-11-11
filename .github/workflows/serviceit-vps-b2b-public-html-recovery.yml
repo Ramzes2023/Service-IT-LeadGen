@@ -45,7 +45,8 @@ jobs:
             serviceit_b2b_remote_public_fetch.py
             serviceit_b2b_routerai_deep.py
             serviceit_vps_b2b_document_worker.py
-            serviceit_public_evidence_research.py)
+            serviceit_public_evidence_research.py
+            serviceit_enrichment_worker.py)
           for name in "${names[@]}"; do
             git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
           done
@@ -72,7 +73,7 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/dossier-readback-four/hosts"
             -o BatchMode=yes -o ConnectTimeout=15)
           mapfile -t shas < "$RUNNER_TEMP/dossier-readback-four/shas"
-          [[ "${#shas[@]}" == 10 ]]
+          [[ "${#shas[@]}" == 11 ]]
           checked=()
           for v in "${shas[@]}"; do
             [[ "$v" =~ ^[a-f0-9]{64}$ ]]

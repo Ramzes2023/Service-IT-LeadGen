@@ -498,6 +498,17 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
             return with_index(followup_public_buyer_research(candidate, env, client, key))
         if mirror is not None:
             return with_index(followup_public_buyer_research(mirror, env, client, key))
+        # Final no-cost, owner-approved SOURCE fallback after ordinary HTTP,
+        # Brave and public mirrors failed. Search snippets never become facts.
+        # There is no second CRM writer or retry loop here: existing V19/V20
+        # PostgreSQL receipts and the V11 advisory lock remain authoritative.
+        from .serviceit_b2b_free_public_fallback import read_free_public_mirror
+        free_result = read_free_public_mirror(
+            notice, env, client,
+            index_hints=(index.get("candidates") or []) if isinstance(index, dict) else [])
+        if free_result is not None:
+            return with_index(followup_public_buyer_research(
+                free_result, env, client, key))
         return with_index({
             "status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
             "pages": [], "contacts": [], "model_excerpt": "",

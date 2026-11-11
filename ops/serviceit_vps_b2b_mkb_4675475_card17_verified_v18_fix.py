@@ -189,17 +189,27 @@ def active_writer(conn):
         # evidence-only update to CRM #17. Any other current or related
         # intent still blocks the update.
         cur.execute("""
-            SELECT count(*) FROM serviceit_vps_native_receipts
-            WHERE status IN ('RESERVED','WRITE_INTENT','AI_INTENT')
-              AND NOT (
+            SELECT count(*) FILTER (WHERE
                 namespace='AI_REPAIR_SUMMARY_V1' AND card_id<>%s
                 AND status='WRITE_INTENT'
                 AND updated_at < now()-interval '24 hours'
                 AND field_names IS NOT NULL AND digest_salt IS NOT NULL
                 AND expected_digest IS NOT NULL
-              )
-        """,(CARD,))
-        count=int(cur.fetchone()[0])
+              ),
+              count(*) FILTER (WHERE NOT (
+                namespace='AI_REPAIR_SUMMARY_V1' AND card_id<>%s
+                AND status='WRITE_INTENT'
+                AND updated_at < now()-interval '24 hours'
+                AND field_names IS NOT NULL AND digest_salt IS NOT NULL
+                AND expected_digest IS NOT NULL
+              ))
+            FROM serviceit_vps_native_receipts
+            WHERE status IN ('RESERVED','WRITE_INTENT','AI_INTENT')
+        """,(CARD,CARD))
+        ignored_old, count = (int(v) for v in cur.fetchone())
+        # Audit proved EXACTLY one old unrelated intent. If it is changed,
+        # disappeared or multiplied, no longer waive this exception.
+        require(ignored_old == 1, "OLD_UNRELATED_RECEIPT_DRIFT")
         for table in ("serviceit_vps_b2b_dossier_v11_receipts",
                       "serviceit_vps_b2b_tender_doc_receipts"):
             cur.execute("SELECT to_regclass(%s)", ("public."+table,))

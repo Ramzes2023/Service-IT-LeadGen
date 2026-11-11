@@ -1,0 +1,186 @@
+"""V18: bounded Brave LLM Context retrieval for exact B2B tender evidence.
+
+Unlike search engine HTML scraping, this uses an official Brave API already
+configured for the VPS. Indexed excerpts are useful RESEARCH LEADS, never
+equivalent to independently fetched primary pages or official FNS data.
+No cookies, CAPTCHA bypass, proxy rotation, contact outreach or CRM writes.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import re
+from urllib.parse import urlsplit
+
+import httpx
+
+from .serviceit_brave_llm_context import CONTEXT_URL
+from .serviceit_public_evidence_research import _host, ResearchBlocked
+
+MARKET_HOSTS = frozenset((
+    "zakupki.kontur.ru", "synapsenet.ru", "tendem.ru", "b2b-center.ru"
+))
+MAX_RESPONSE = 256000
+MAX_INDEX_URLS = 5
+MAX_QUOTE = 250
+
+# Only clearly labelled procurement fields may be surfaced as index claims.
+# Never infer a hidden price, legal identity, seller contact or requirements.
+FIELDS = (
+    ("BUYER", re.compile(
+        r"(?iu)(?:заказчик(?:и)?|закупающ(?:ая|ей)\s+организация)\s*[:：—-]\s*"
+        r"([^\n.]{7,130})")),
+    ("INN", re.compile(
+        r"(?iu)\bИНН(?:\s*[-–]\s*КПП)?\s*[:：—-]?\s*"
+        r"(\d{10}|\d{12})(?!\d)")),
+    ("DEADLINE", re.compile(
+        r"(?iu)(?:окончани[ея]\s+подачи\s+заявок|подача\s+заявок\s+до|"
+        r"срок\s+подачи\s+заявок)\s*[:：—-]?\s*"
+        r"(.{0,55}\d{1,2}[./]\d{1,2}[./]\d{4}.{0,25})")),
+    ("LOCATION", re.compile(
+        r"(?iu)(?:место\s+поставки|адрес\s+поставки|регион\s+поставки)"
+        r"\s*[:：—-]\s*([^\n.]{4,145})")),
+    ("BUDGET", re.compile(
+        r"(?iu)(?:начальная\s+цена|максимальная\s+цена|бюджет\s+закупки)"
+        r"\s*[:：—-]\s*([^\n.]{3,70})")),
+)
+
+
+class IndexUnavailable(ValueError):
+    pass
+
+
+def _title_terms(s):
+    """Small distinct Russian/English title roots, not generic tender words."""
+    if type(s) is not str:
+        return set()
+    stop = {"закупка", "запрос", "цен", "лот", "услуг", "услуги", "оказание",
+            "приобретение", "для", "нужд", "поставка", "оборудования",
+            "предоставление", "компании", "тендер", "предварительный",
+            "квалификационный", "отбор", "коммерческий", "договор"}
+    return {w[:6] for w in re.findall(r"(?iu)[\w]{4,}", s.casefold())
+            if w not in stop}
+
+
+def _safe_index_candidate(url, title, text, tender_id, subject):
+    """Exact number plus subject and marketplace attribution; never a mere ID."""
+    if type(url) is not str or type(title) is not str or type(text) is not str:
+        return None
+    if not 12 <= len(url) <= 950 or len(title) > 400 or len(text) > 24000:
+        return None
+    try:
+        host = _host(url, MARKET_HOSTS)
+    except ResearchBlocked:
+        return None
+    if host not in MARKET_HOSTS and not any(
+            host.endswith("." + x) for x in MARKET_HOSTS):
+        return None
+    exact = re.compile(r"(?<!\d)" + re.escape(tender_id) + r"(?!\d)")
+    if not (exact.search(text) or exact.search(title)):
+        return None
+    overlap = _title_terms(subject) & _title_terms(title + " " + text[:3200])
+    # Only a full title match may waive the two-distinctive-terms requirement.
+    flat = lambda x: " ".join(x.casefold().replace("ё", "е").split())
+    if len(overlap) < 2 and flat(subject) not in flat(title+" "+text[:3200]):
+        return None
+    # A third-party directory might display the exact tender ID yet describe
+    # a different procurement platform. B2B origin must appear in the indexed
+    # subject/detail; Kontur URL alone is not sufficient.
+    platform = ("b2b-center" in (title+" "+text[:4400]).casefold()
+                or host == "b2b-center.ru" or host.endswith(".b2b-center.ru"))
+    if not platform:
+        return None
+    # Search context might contain prompt-injection. Never execute or
+    # forward its instructions as model facts. Only bounded labelled quotes.
+    quotes = []
+    for label, rx in FIELDS:
+        match = rx.search(text[:6000])
+        if not match:
+            continue
+        clean = " ".join(match.group(0).split())[:MAX_QUOTE]
+        if re.search(r"[<>\x00-\x1f]|ignore\s+previous|system\s*:", clean, re.I):
+            continue
+        # Explicit amount "не указана" is NOT 0 or a monetary price.
+        quotes.append({"category": label, "quote": clean})
+    return {"url": url, "host": host, "claims": quotes[:5],
+            "evidence_level": "INDEX_ONLY_UNVERIFIED",
+            "title_match": "EXACT_ID_AND_TOPIC_AND_PLATFORM"}
+
+
+def tender_index_context(client, tender_id, subject, token):
+    """One Brave API request max per tender; no retry after quota or timeout.
+
+    The index can provide the original page's extracted snippets even if
+    this VPS cannot directly read the publisher. Such claims stay labelled
+    INDEX_ONLY_UNVERIFIED, never passed to the legal registry/lead score.
+    """
+    checked = datetime.now(timezone.utc).isoformat()
+    baseline = {"status": "INDEX_UNAVAILABLE", "candidates": [],
+                "checked_at": checked, "search_requests": 0}
+    if (not isinstance(client, httpx.Client)
+            or type(tender_id) is not str
+            or not re.fullmatch(r"\d{5,12}", tender_id)
+            or type(subject) is not str or not 10 <= len(subject) <= 240
+            or type(token) is not str or not 12 <= len(token) <= 200
+            or not token.isascii() or "\n" in token or "\r" in token):
+        return baseline
+    try:
+        response = client.get(
+            CONTEXT_URL,
+            params={"q": '"' + tender_id + '" B2B-Center ' + subject[:110],
+                    "country": "RU", "search_lang": "ru",
+                    "count": 12, "maximum_number_of_urls": 8,
+                    "maximum_number_of_tokens": 4096,
+                    "maximum_number_of_tokens_per_url": 1536,
+                    "context_threshold_mode": "balanced",
+                    "enable_source_metadata": "true"},
+            headers={"X-Subscription-Token": token,
+                     "Accept": "application/json",
+                     "Cache-Control": "no-cache"},
+            timeout=20, follow_redirects=False)
+        baseline["search_requests"] = 1
+        if response.status_code != 200:
+            baseline["status"] = (
+                "INDEX_QUOTA_OR_AUTH" if response.status_code in (401,403,429)
+                else "INDEX_HTTP_UNAVAILABLE")
+            return baseline
+        if not 0 < len(response.content) <= MAX_RESPONSE:
+            baseline["status"] = "INDEX_SIZE_UNSUPPORTED"
+            return baseline
+        if "application/json" not in response.headers.get("content-type",""):
+            baseline["status"] = "INDEX_CONTENT_TYPE_UNSUPPORTED"
+            return baseline
+        payload = response.json()
+    except (httpx.HTTPError, ValueError, TypeError):
+        baseline["status"] = "INDEX_TRANSPORT_UNAVAILABLE"
+        return baseline
+    if type(payload) is not dict or type(payload.get("grounding")) is not dict:
+        baseline["status"] = "INDEX_SCHEMA_UNSUPPORTED"
+        return baseline
+    rows = payload["grounding"].get("generic")
+    sources = payload.get("sources")
+    if (type(rows) is not list or type(sources) is not dict
+            or len(rows) > 60 or len(sources) > 80):
+        baseline["status"] = "INDEX_SCHEMA_UNSUPPORTED"
+        return baseline
+    chosen, seen = [], set()
+    for entry in rows[:24]:
+        if type(entry) is not dict:
+            continue
+        url,title,snips=entry.get("url"),entry.get("title"),entry.get("snippets")
+        if (type(url) is not str or url not in sources or
+                type(sources[url]) is not dict or
+                type(title) is not str or type(snips) is not list
+                or len(snips) > 60 or url in seen):
+            continue
+        text = "\n".join(s for s in snips[:16]
+                         if type(s) is str and len(s) <= 5000)
+        row = _safe_index_candidate(url,title,text,tender_id,subject)
+        if row is None:
+            continue
+        seen.add(url)
+        chosen.append(row)
+        if len(chosen) >= MAX_INDEX_URLS:
+            break
+    baseline["status"] = "INDEX_CANDIDATES" if chosen else "INDEX_NO_EXACT_MATCH"
+    baseline["candidates"] = chosen
+    return baseline

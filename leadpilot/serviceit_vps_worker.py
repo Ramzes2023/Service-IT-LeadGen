@@ -74,6 +74,7 @@ def exact_environment(env: dict) -> dict:
     result["SERVICEIT_PUBLIC_RESEARCH_ENABLED"] = "YES"
     result["SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"] = "YES"
     result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"
+    result["SERVICEIT_B2B_V18_SEARCH_ENABLED"] = "YES"
     result["SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED"] = "YES"
     result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = "NO"
     return result

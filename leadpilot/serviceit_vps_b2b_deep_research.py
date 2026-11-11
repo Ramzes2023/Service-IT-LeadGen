@@ -432,7 +432,7 @@ def followup_public_buyer_research(findings, env, client, key):
     return result
 
 
-def source_findings(item, notice, env, client):
+def source_findings(item, notice, env, client, *, enable_v18=False):
     hosts = host_allowlist(env)
     browser = None
     if (env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
@@ -459,8 +459,34 @@ def source_findings(item, notice, env, client):
                           for p in results.get("pages", [])[:3]
                           if isinstance(p, dict)))
     from .serviceit_b2b_public_mirrors import brave_mirror_search
-    mirror = brave_mirror_search(
-        client, notice["tender_id"], notice["subject"], key)
+    v18 = (enable_v18 is True and
+           env.get("SERVICEIT_B2B_V18_SEARCH_ENABLED") == "YES")
+    index = None
+    if v18 and key and env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES":
+        from .serviceit_b2b_tender_index_v18 import tender_index_context
+        # Exactly ONE additional official Brave Context request. Failure to
+        # reach it never prevents other public research or existing intake.
+        index = tender_index_context(
+            client, notice["tender_id"], notice["subject"], key)
+    mirror = (brave_mirror_search(
+        client, notice["tender_id"], notice["subject"], key,
+        browser=browser, index=index) if v18
+        else brave_mirror_search(
+            client, notice["tender_id"], notice["subject"], key))
+
+    def with_index(candidate):
+        if not v18 or not isinstance(candidate, dict):
+            return candidate
+        result = dict(candidate)
+        hints = (index.get("candidates") or []) if isinstance(index, dict) else []
+        # Only labelled INDEX_ONLY_UNVERIFIED research hints are retained;
+        # no INN/Score/FNS legal field or confirmed citation is synthesized.
+        result["indexed_candidates"] = hints[:5]
+        result["v18_search_status"] = (
+            index.get("status", "INDEX_NOT_RUN") if isinstance(index, dict)
+            else "INDEX_NOT_RUN")
+        return result
+
     if not page_proof:
         candidate = brave_notice_page(
             client, notice["tender_id"], hosts, key, browser,
@@ -469,12 +495,13 @@ def source_findings(item, notice, env, client):
             if mirror is not None:
                 candidate = dict(candidate)
                 candidate["pages"] = (candidate["pages"][:1] + mirror["pages"][:2])[:3]
-            return followup_public_buyer_research(candidate, env, client, key)
+            return with_index(followup_public_buyer_research(candidate, env, client, key))
         if mirror is not None:
-            return followup_public_buyer_research(mirror, env, client, key)
-        return {"status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
-                "pages": [], "contacts": [], "model_excerpt": "",
-                "checked_at": datetime.now(timezone.utc).isoformat()}
+            return with_index(followup_public_buyer_research(mirror, env, client, key))
+        return with_index({
+            "status": "PUBLIC_TENDER_ID_NOT_FOUND_IN_READABLE_PAGES",
+            "pages": [], "contacts": [], "model_excerpt": "",
+            "checked_at": datetime.now(timezone.utc).isoformat()})
     # Even when original publication can be read, Brave can independently
     # discover a richer PUBLIC mirror/detail page with the exact same ID.
     # Count at most one extra independently fetched page; never trust snippets.
@@ -500,7 +527,7 @@ def source_findings(item, notice, env, client):
             # to preserve a generic company/site listing.
             results["pages"] = (prior + added)[:3]
             results["brave_public_mirror_independently_verified"] = True
-    return followup_public_buyer_research(results, env, client, key)
+    return with_index(followup_public_buyer_research(results, env, client, key))
 
 
 def model_safe_source_title(title, findings):

@@ -354,6 +354,38 @@ def from_public_page(client: httpx.Client, url: str, tender_id: str,
     }
 
 
+def _from_page_or_public_browser(client, url, tender_id, subject, mirror,
+                                 browser=None):
+    """Browser may render JS-shell HTML, never bypass denied access/robots.
+
+    Plain public HTTP GET must first succeed with status 200 under approved
+    robots; HTTP 401/403, challenge, robots denial and network failures never
+    trigger a browser retry. Browser text must pass the SAME identity proof.
+    """
+    row = from_public_page(client, url, tender_id, subject,
+                           mirror_host=mirror)
+    if row is not None or browser is None:
+        return row
+    if not callable(browser):
+        return None
+    # A second full public GET is intentional: a 200 HTML JS shell is eligible
+    # for harmless rendering; a blocked HTTP request is not.
+    _robots(client, url, frozenset({mirror}))
+    _get(client, url, frozenset({mirror}))
+    rendered = browser(url)
+    if not isinstance(rendered, dict) or not rendered.get("browser_unverified"):
+        return None
+    text = rendered.get("text")
+    if not isinstance(text, str) or not 30 <= len(text) <= 6000:
+        return None
+    excerpt = detailed_public_excerpt([text], tender_id, subject)
+    if not excerpt:
+        return None
+    return {"url": url, "excerpt": excerpt,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "source_kind": "BROWSER_RENDERED_PUBLIC_PAGE_UNVERIFIED"}
+
+
 def _detail_score(excerpt: str) -> int:
     """Rank already fetched evidence richness; never infer a missing fact."""
     if not isinstance(excerpt, str):
@@ -372,7 +404,8 @@ def _detail_score(excerpt: str) -> int:
 
 
 def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
-                        key: str, *, allow_mirrors=MIRRORS):
+                        key: str, *, allow_mirrors=MIRRORS, browser=None,
+                        index=None):
     """Choose up to TWO richest independently fetched public source pages.
 
     One verified Tendum hint is no longer allowed to suppress a richer
@@ -397,7 +430,8 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
         url = known[tender_id]
         checked.add(url)
         try:
-            row = from_public_page(client, url, tender_id, subject)
+            row = _from_page_or_public_browser(
+                client, url, tender_id, subject, "tendem.ru", browser)
             if row:
                 candidates.append(row)
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
@@ -441,12 +475,40 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
                 continue
             checked.add(url)
             try:
-                result = from_public_page(
-                    client, url, tender_id, subject, mirror_host=mirror)
+                result = _from_page_or_public_browser(
+                    client, url, tender_id, subject, mirror, browser)
                 if result:
                     candidates.append(result)
             except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
                 continue
+
+    # V18 Brave LLM Context supplied exact-ID/title/platform candidates.
+    # These indexed snippets are NEVER accepted as facts: fetch the actual
+    # page with HTTPS/public DNS/robots, or browser-render its approved 200
+    # public HTML shell. Use up to the same eight URLs total across sources.
+    index_rows = (index.get("candidates") or []) if isinstance(index, dict) else []
+    for hint in index_rows[:5]:
+        if len(checked) >= budget:
+            break
+        if not isinstance(hint, dict) or hint.get("evidence_level") != "INDEX_ONLY_UNVERIFIED":
+            continue
+        url = hint.get("url")
+        if type(url) is not str or url in checked:
+            continue
+        from urllib.parse import urlsplit
+        host = (urlsplit(url).hostname or "").lower()
+        origin = next((x for x in allow_mirrors
+                       if host == x or host == "www." + x), None)
+        if origin is None:
+            continue
+        checked.add(url)
+        try:
+            result = _from_page_or_public_browser(
+                client, url, tender_id, subject, origin, browser)
+            if result:
+                candidates.append(result)
+        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+            continue
 
     # Only if the discovery API is inaccessible: bounded candidate for
     # B2B's public Kontur detail route. Normal indexed-source behavior is
@@ -455,17 +517,26 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
     # HTTPS/robots fetch and tender-number+title+B2B attribution gates below
     # must all succeed; a missing, unrelated or blocked URL yields nothing.
     # Crucially this discovery still works when Brave's search quota fails.
-    if (brave_unavailable and "zakupki.kontur.ru" in allow_mirrors
-            and len(checked) < 8):
-        direct = "https://zakupki.kontur.ru/" + tender_id + "_4"
-        checked.add(direct)
-        try:
-            row = from_public_page(client, direct, tender_id, subject,
-                                   mirror_host="zakupki.kontur.ru")
-            if row:
-                candidates.append(row)
-        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
-            pass
+    if ((brave_unavailable or index is not None)
+            and "zakupki.kontur.ru" in allow_mirrors
+            and len(checked) < 8 and not candidates):
+        suffixes = ("4", "40", "459") if index is not None else ("4",)
+        for suffix in suffixes:
+            if len(checked) >= budget:
+                break
+            direct = "https://zakupki.kontur.ru/" + tender_id + "_" + suffix
+            if direct in checked:
+                continue
+            checked.add(direct)
+            try:
+                row = _from_page_or_public_browser(
+                    client, direct, tender_id, subject,
+                    "zakupki.kontur.ru", browser)
+                if row:
+                    candidates.append(row)
+                    break
+            except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+                continue
 
     if not candidates:
         return None

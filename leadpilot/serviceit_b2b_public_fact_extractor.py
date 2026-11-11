@@ -63,7 +63,8 @@ def _find_label(lines: list[str], labels: tuple[str, ...]) -> str | None:
         folded = row.casefold().replace("ё", "е")
         for label in labels:
             normal = label.replace("ё", "е")
-            if folded == normal or folded.startswith(normal + ":"):
+            if (folded == normal or folded.startswith(normal + ":")
+                    or folded.startswith(normal + " ")):
                 tail = row[len(label):].strip(" :—–-")
                 if tail:
                     return tail[:350]
@@ -164,6 +165,11 @@ def attach_corporate_profile(tender: dict, *, company_url: str, company_text: st
     rows = _lines(company_text)
     for i, row in enumerate(rows):
         if buyer_normalized not in _legal_name(row):
+            continue
+        # Mentioning the buyer among clients or suppliers does not prove
+        # that this is the buyer's own corporate identity page.
+        head = row.casefold().replace("ё", "е")
+        if not re.match(r"(?iu)^(?:полное наименование(?: организации)?\s*[:—-]?|(?:ооо|пао|ао|общество с ограниченной ответственностью|публичное акционерное общество)\b|©\s*\d{4}\s+(?:ооо|пао|ао)\b)", head):
             continue
         nearby = " ".join(rows[i:i + 5])[:700]
         inn = re.search(r"(?iu)\bИНН\s*[:№-]?\s*(\d{10}(?:\d{2})?)\b", nearby)

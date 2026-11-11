@@ -50,13 +50,13 @@ def main():
             body = " ".join(parser.parts)
             out("PUBLIC_HTML_READ", "YES" if body else "NO")
             out("EXACT_ID", "YES" if re.search(
-                r"(?<!\\d)" + ID + r"(?!\\d)", body) else "NO")
+                r"(?<!\d)" + ID + r"(?!\d)", body) else "NO")
             out("PUBLIC_TITLE", "YES" if SUBJECT.casefold() in body.casefold()
                 else "NO")
-            near = re.search(r"(?<!\\d)" + ID + r"(?!\\d)", body)
+            near = re.search(r"(?<!\d)" + ID + r"(?!\d)", body)
             right = body[near.end():near.end()+250].casefold() if near else ""
             out("B2B_PROVENANCE", "YES" if re.search(
-                r"опубликован\\w*.{0,180}b2b-center",right) else "NO")
+                r"опубликован\w*.{0,180}b2b-center",right) else "NO")
             out("BUYER_LABEL", "YES" if "заказчик" in body.casefold()
                 else "NO")
             out("INN_LABEL", "YES" if "инн" in body.casefold() else "NO")

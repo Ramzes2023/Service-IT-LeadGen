@@ -39,36 +39,37 @@ def read_one(conn,rest,card):
         return
     status,old,expected,salt,proof=row
     out("CARD_"+str(card)+"_STATUS",status if status in VALID else "INVALID")
-    if card!=11 or status!="UNCERTAIN":
+    if status not in ("UNCERTAIN","VERIFIED","WRITE_INTENT"):
         return
-    if not isinstance(old,dict) or not isinstance(expected,dict):
-        out("CARD_11_PATCH_PERSISTED","NO")
+    key="CARD_"+str(card)
+    if not isinstance(old,dict) or not isinstance(expected,dict) or not expected:
+        out(key+"_PATCH_PERSISTED","NO")
         return
-    out("CARD_11_PATCH_PERSISTED","YES")
+    out(key+"_PATCH_PERSISTED","YES")
     item=normalized(rest("crm.item.get",{
         "entityTypeId":1062,"id":card,
         "useOriginalUfNames":"Y"})["item"])
     validate_identity(item,card)
     equal_after=sum(item.get(k)==v for k,v in expected.items())
     equal_before=sum(item.get(k)==v for k,v in old.items())
-    out("CARD_11_TOTAL_PATCH_FIELDS",len(expected))
-    out("CARD_11_MATCH_EXPECTED_FIELDS",equal_after)
-    out("CARD_11_MATCH_PRIOR_FIELDS",equal_before)
-    out("CARD_11_ALL_EXPECTED_MATCH","YES" if equal_after==len(expected) else "NO")
-    out("CARD_11_ALL_PRIOR_MATCH","YES" if equal_before==len(old) else "NO")
+    out(key+"_TOTAL_PATCH_FIELDS",len(expected))
+    out(key+"_MATCH_EXPECTED_FIELDS",equal_after)
+    out(key+"_MATCH_PRIOR_FIELDS",equal_before)
+    out(key+"_ALL_EXPECTED_MATCH","YES" if equal_after==len(expected) else "NO")
+    out(key+"_ALL_PRIOR_MATCH","YES" if equal_before==len(old) else "NO")
     if isinstance(salt,(bytes,memoryview)) and isinstance(proof,(bytes,memoryview)):
         raw=json.dumps(expected,ensure_ascii=False,sort_keys=True,
                        separators=(",",":")).encode("utf-8")
         digest=hashlib.sha256(bytes(salt)+raw).digest()
-        out("CARD_11_DURABLE_DIGEST_MATCH","YES" if digest==bytes(proof) else "NO")
+        out(key+"_DURABLE_DIGEST_MATCH","YES" if digest==bytes(proof) else "NO")
     else:
-        out("CARD_11_DURABLE_DIGEST_MATCH","NO")
+        out(key+"_DURABLE_DIGEST_MATCH","NO")
     for k,name in ((AI_REPORT,"REPORT"),(INN,"INN"),(REGION,"REGION")):
         if k not in expected:
             continue
-        out("CARD_11_"+name+"_IS_EXPECTED",
+        out(key+"_"+name+"_IS_EXPECTED",
             "YES" if item.get(k)==expected[k] else "NO")
-        out("CARD_11_"+name+"_IS_OLD",
+        out(key+"_"+name+"_IS_OLD",
             "YES" if item.get(k)==old.get(k) else "NO")
 
 

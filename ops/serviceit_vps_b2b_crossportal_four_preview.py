@@ -46,10 +46,10 @@ def assess(env, client):
 
     import hashlib
     expected = {
-        "serviceit_vps_b2b_deep_research.py":
-            "168cc67ecef993e75a0dfd65c16e79ee7a841e9b051fe1eb1bc18cd8d8b9655c",
-        "serviceit_b2b_public_mirrors.py":
-            "e11fb8f76618371e80938516c569fd5aea8757baac8254e02ffa3ec9716ab593",
+        # Two reviewed commit source hashes supplied by the pinned owner-only
+        # workflow; fail closed if the release source has changed.
+        "serviceit_vps_b2b_deep_research.py": sys.argv[1],
+        "serviceit_b2b_public_mirrors.py": sys.argv[2],
         "serviceit_b2b_dossier_v11.py":
             "233c211f75e75d4bfeddbedd9e3b163ddf1e05ee39372bb6010b119f8a88009a",
     }
@@ -153,6 +153,10 @@ def assess(env, client):
 def main():
     env = dict(os.environ)
     try:
+        if len(sys.argv) != 3 or not all(
+            re.fullmatch(r"[0-9a-f]{64}", value) for value in sys.argv[1:]
+        ):
+            raise ValueError("APPROVED_SOURCE_SHA_ARGS_REQUIRED")
         with httpx.Client(trust_env=False,follow_redirects=False,timeout=16) as client:
             ok = assess(env,client)
         say("READONLY_FINISHED", "YES" if ok else "NO")

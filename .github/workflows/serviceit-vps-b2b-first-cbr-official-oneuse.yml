@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           script=ops/serviceit_vps_b2b_first_cbr_official_oneuse.py
           python -m py_compile "$script"
-          python -m pytest -q tests/test_serviceit_vps_b2b_first_cbr_official_oneuse.py
+          # Global PR CI runs the offline safety tests before merge.
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
           [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]

@@ -79,6 +79,17 @@ def exact_environment(env: dict) -> dict:
     # no-evidence scans retry no sooner than 24h; VERIFIED receipts are
     # never rewritten. Existing HOLD/STOP, commercial score and tasks intact.
     result["SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED"] = "YES"
+    # V35: the provider's own durable retries are separate from immutable
+    # V19/V20 receipt states, but inherit existing approved public-source
+    # and privacy gates. No new Compose timer or CRM writer.
+    result["SERVICEIT_VPS_B2B_TINYFISH_RETRY_ENABLED"] = (
+        "YES" if (
+            env.get("SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED") == "YES"
+            and (env.get("SERVICEIT_B2B_TENDEM_PUBLIC_EXTRACTION_APPROVED") == "YES"
+                 or env.get("SERVICEIT_B2B_CENTER_PUBLIC_EXTRACTION_LICENSED") == "YES")
+            and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
+            and env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21"
+        ) else "NO")
     result["SERVICEIT_PRELIMINARY_PUBLIC_TITLE_AI_ENABLED"] = "YES"
     result["SERVICEIT_ROUTERAI_FALLBACK_TO_GIGACHAT"] = "NO"
     return result
@@ -232,7 +243,19 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 v20 = v20_once(exact_env, client, connection)
             except Exception:
                 v20 = {"status": "B2B_V20_VERSIONED_CHECK_FAILED", "crm_writes": 0}
+        # Independent bounded public-source retry after the existing CRM
+        # writers. Retry receipts are PG-only and do not override any V11,
+        # V19, V20 or TDI source/AI decisions.
+        tinyfish_retry = {"status": "TINYFISH_RETRY_DISABLED", "crm_writes": 0}
+        if exact_env.get("SERVICEIT_VPS_B2B_TINYFISH_RETRY_ENABLED") == "YES":
+            try:
+                from .serviceit_vps_b2b_tinyfish_retry import run_once as retry_once
+                tinyfish_retry = retry_once(exact_env, client, connection)
+            except Exception:
+                tinyfish_retry = {
+                    "status": "TINYFISH_RETRY_CHECK_FAILED", "crm_writes": 0}
         return {
+            "b2b_tinyfish_retry": tinyfish_retry,
             "b2b_v20_versioned": v20,
             "b2b_v19_additive": v19,
             "b2b_tender_documents": tender_docs,

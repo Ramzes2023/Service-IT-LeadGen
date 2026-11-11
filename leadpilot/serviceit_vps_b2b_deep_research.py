@@ -432,7 +432,7 @@ def followup_public_buyer_research(findings, env, client, key):
     return result
 
 
-def source_findings(item, notice, env, client):
+def source_findings(item, notice, env, client, *, enable_v18=False):
     hosts = host_allowlist(env)
     browser = None
     if (env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
@@ -459,7 +459,8 @@ def source_findings(item, notice, env, client):
                           for p in results.get("pages", [])[:3]
                           if isinstance(p, dict)))
     from .serviceit_b2b_public_mirrors import brave_mirror_search
-    v18 = env.get("SERVICEIT_B2B_V18_SEARCH_ENABLED") == "YES"
+    v18 = (enable_v18 is True and
+           env.get("SERVICEIT_B2B_V18_SEARCH_ENABLED") == "YES")
     index = None
     if v18 and key and env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES":
         from .serviceit_b2b_tender_index_v18 import tender_index_context

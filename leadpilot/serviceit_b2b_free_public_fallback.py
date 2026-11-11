@@ -33,7 +33,7 @@ def _permitted(url: str, env: dict) -> bool:
     return False
 
 
-def read_free_public_mirror(notice: dict, env: dict, client) -> dict | None:
+def read_free_public_mirror(notice: dict, env: dict, client, *, index_hints=None) -> dict | None:
     """At most 1 Search + 1 Fetch(URL) per bounded native research attempt.
 
     Existing PG receipt/lock controls retries and prevents duplicate Bitrix
@@ -67,10 +67,24 @@ def read_free_public_mirror(notice: dict, env: dict, client) -> dict | None:
             "b2b-center.ru", "www.b2b-center.ru"}:
         urls = [source_url]
     else:
-        candidates = discover_free_public_urls(
-            client, tender_id=tender_id, subject=subject, api_key=api_key)
-        urls = [url for url in candidates if _permitted(url, env)]
-        urls = urls[:MAX_URLS_PER_RESEARCH]
+        # Existing Brave Context already has public URL hints. Reuse those
+        # without repeating a Search API call. They are NEVER treated as
+        # facts unless the full fetched page passes exact ID/title proof.
+        hints = index_hints if type(index_hints) is list else []
+        urls = []
+        for entry in hints[:5]:
+            if type(entry) is not dict or entry.get("evidence_level") != "INDEX_ONLY_UNVERIFIED":
+                continue
+            url = entry.get("url")
+            if _permitted(url, env) and url not in urls:
+                urls.append(url)
+            if len(urls) >= MAX_URLS_PER_RESEARCH:
+                break
+        if not urls:
+            candidates = discover_free_public_urls(
+                client, tender_id=tender_id, subject=subject, api_key=api_key)
+            urls = [url for url in candidates if _permitted(url, env)]
+            urls = urls[:MAX_URLS_PER_RESEARCH]
     if not urls:
         return None
     fetched = fetch_remote_public_evidence(

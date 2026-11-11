@@ -10,6 +10,7 @@ import re
 import httpx
 from .serviceit_b2b_public_mirrors import detailed_public_excerpt
 from .serviceit_public_evidence_research import _safe_model_excerpt
+from .serviceit_b2b_public_fact_extractor import extract_tender_facts
 
 API = "https://api.fetch.tinyfish.ai"
 HOSTS = frozenset(("tendem.ru", "www.tendem.ru",
@@ -102,6 +103,7 @@ def fetch_remote_public_evidence(
             or type(result.get("results")) is not list):
         return None
     pages = []
+    structured_facts = []
     for row in result["results"][:2]:
         if type(row) is not dict:
             continue
@@ -112,11 +114,14 @@ def fetch_remote_public_evidence(
         excerpt = verified_excerpt(url, row.get("text"), tender_id, subject)
         if excerpt:
             pages.append({"url": url, "excerpt": excerpt})
+            structured_facts.append(extract_tender_facts(
+                tender_id=tender_id, title=subject, tender_text=row["text"],
+                source_url=url, verified_source=True))
     if not pages:
         return None
     return {
         "status": "REMOTE_PUBLIC_EVIDENCE_VALIDATED",
-        "pages": pages, "contacts": [],
+        "pages": pages, "structured_facts": structured_facts, "contacts": [],
         "model_excerpt": _safe_model_excerpt(pages[0]["excerpt"]),
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "company_site_candidate": "", "employer_named_in_source": "",

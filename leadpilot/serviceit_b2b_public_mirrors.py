@@ -403,28 +403,13 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
             pass
 
-    # Fast, bounded candidate for B2B's public Kontur detail route. This
-    # merely GUESSES A URL, never an identity or a fact. The independent
-    # HTTPS/robots fetch and tender-number+title+B2B attribution gates below
-    # must all succeed; a missing, unrelated or blocked URL yields nothing.
-    # Crucially this discovery still works when Brave's search quota fails.
-    if "zakupki.kontur.ru" in allow_mirrors and len(checked) < 8:
-        direct = "https://zakupki.kontur.ru/" + tender_id + "_4"
-        checked.add(direct)
-        try:
-            row = from_public_page(client, direct, tender_id, subject,
-                                   mirror_host="zakupki.kontur.ru")
-            if row:
-                candidates.append(row)
-        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
-            pass
-
     # Prefer the source with detailed verified buyer/INN/terms over an
     # earlier brief catalogue listing. Never accept the Brave text as proof.
     hosts = [x for x in (
         "zakupki.kontur.ru", "tendem.ru", "synapsenet.ru")
         if x in allow_mirrors]
     budget = 8
+    brave_unavailable = False
     for mirror in hosts:
         try:
             res = client.get(
@@ -438,11 +423,13 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
             if (res.status_code != 200
                     or not 0 < len(res.content) <= 160000
                     or "application/json" not in res.headers.get("content-type", "")):
+                brave_unavailable |= res.status_code in (401, 403, 429, 500, 502, 503, 504)
                 continue
             data = res.json().get("web", {}).get("results", [])
             if type(data) is not list or len(data) > 20:
                 continue
         except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            brave_unavailable = True
             continue
         for hit in data[:MAX_CANDIDATES]:
             if len(checked) >= budget:
@@ -460,6 +447,25 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
                     candidates.append(result)
             except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
                 continue
+
+    # Only if the discovery API is inaccessible: bounded candidate for
+    # B2B's public Kontur detail route. Normal indexed-source behavior is
+    # unchanged, including strict tests that disallow additional origins. This
+    # merely GUESSES A URL, never an identity or a fact. The independent
+    # HTTPS/robots fetch and tender-number+title+B2B attribution gates below
+    # must all succeed; a missing, unrelated or blocked URL yields nothing.
+    # Crucially this discovery still works when Brave's search quota fails.
+    if (brave_unavailable and "zakupki.kontur.ru" in allow_mirrors
+            and len(checked) < 8):
+        direct = "https://zakupki.kontur.ru/" + tender_id + "_4"
+        checked.add(direct)
+        try:
+            row = from_public_page(client, direct, tender_id, subject,
+                                   mirror_host="zakupki.kontur.ru")
+            if row:
+                candidates.append(row)
+        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+            pass
 
     if not candidates:
         return None

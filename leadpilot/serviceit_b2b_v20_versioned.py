@@ -95,7 +95,7 @@ def selected_one(conn):
 
 def versioned_addendum(before, findings, tender_id):
     """All old AI text survives verbatim, and the new section has V20 label."""
-    lines = novel_evidence(findings, before[REPORT])
+    lines = novel_evidence({**findings, "indexed_candidates": []}, before[REPORT])
     draft = prepare_addendum(before, lines, tender_id)
     if draft is None:
         return None, len(lines)

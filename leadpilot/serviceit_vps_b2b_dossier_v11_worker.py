@@ -212,7 +212,8 @@ def worker_once(env, client, connection, *, preview=False):
                     # An invalid model response is not authorization to guess.
                     # Use only independently read literal source phrases.
                     report = source_only_investigation(findings)
-            fields, coverage = compose(notice, first, findings, report)
+            fields, coverage = compose(
+                notice, first, {**findings, "indexed_candidates": []}, report)
             fresh = normalized(rest("crm.item.get", {
                 "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
             })["item"])

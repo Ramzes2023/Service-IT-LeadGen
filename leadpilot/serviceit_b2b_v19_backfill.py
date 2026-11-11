@@ -302,7 +302,7 @@ def run_once(env, client, conn, *, preview=False):
             findings = {}
             try:
                 findings=source_findings(first,notice,exact,client,enable_v18=True)
-                items=novel_evidence(findings,before[REPORT])
+                items=novel_evidence({**findings, "indexed_candidates": []},before[REPORT])
                 draft=prepare_addendum(before,items,notice["tender_id"])
             except Exception:
                 # A transport/policy failure never authorizes a fabricated CRM

@@ -160,3 +160,36 @@ def test_exact_url_skips_search_and_untrusted_url_never_sent():
             client, tender_id=ID, subject=TITLE, api_key=KEY,
             approved_source_url=TENDEM) is not None
         assert trace == ["POST"]
+
+
+def test_search_long_notice_title_uses_only_signed_tender_number():
+    """An indexer may shorten long Russian titles; full fetched text stays authoritative."""
+    queries = []
+    def transport(request):
+        assert request.method == "GET"
+        assert request.url.host == "api.search.tinyfish.ai"
+        queries.append(request.url.params["query"])
+        assert request.url.params["include_domains"] == "tendem.ru,b2b-center.ru"
+        # Only an ID + short generic snippet: not a verified procurement fact.
+        return httpx.Response(200, json={"results": [{
+            "url": TENDEM, "title": "Коммерческие закупки",
+            "snippet": "Заявка " + ID,
+        }]}, headers={"content-type": "application/json"})
+
+    long_title = ("Приобретение лицензий программного обеспечения для "
+                  "предоставления доступа к серверам 1С новых рабочих мест, "
+                  "закрытие нехватки лицензий на текущий период")
+    with httpx.Client(transport=httpx.MockTransport(transport),
+                      trust_env=False) as client:
+        found = discover_free_public_urls(
+            client, tender_id=ID, subject=long_title, api_key=KEY)
+    assert queries == ['"' + ID + '"']
+    assert found == [TENDEM]
+
+
+def test_id_only_search_hit_cannot_validate_wrong_full_page_subject():
+    """An exact numeric match alone never justifies a public-detail dossier claim."""
+    wrong_text = ("Тендер № " + ID + "\n"
+                  "Услуги по транспортировке металлолома и вывозу отходов. "
+                  "Заказчик ООО Несвязанное юридическое лицо.\n" * 3)
+    assert not verified_excerpt(TENDEM, wrong_text, ID, TITLE)

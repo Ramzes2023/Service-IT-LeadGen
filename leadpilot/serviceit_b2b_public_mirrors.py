@@ -289,11 +289,11 @@ def detailed_public_excerpt(parts: list[str], tender_id: str,
         slots = per_family.setdefault(family, {})
         slots.setdefault(mode, value + tail)
 
-    # One representative for up to 16 different professional families;
+    # One representative for up to 20 different professional families;
     # alternate modes so the remote/office split stays visible. Reserve two
     # extra exact source rows for a second mode if both were actually listed.
     roles = []
-    families = list(per_family)[:16]
+    families = list(per_family)[:20]
     for index, family in enumerate(families):
         slots = per_family[family]
         preferred = "удалённо" if index % 2 == 0 else "офис"

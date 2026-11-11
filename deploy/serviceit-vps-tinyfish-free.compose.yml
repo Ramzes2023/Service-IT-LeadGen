@@ -1,0 +1,20 @@
+# TinyFish free public Search+Fetch: OFF until exact source deploy and rights review.
+# This is an additive Compose overlay for the ALREADY running coordinator only.
+# It does NOT change the current 5-minute loop or launch any writer.
+services:
+  coordinator:
+    environment:
+      SERVICEIT_TINYFISH_API_KEY_FILE: /run/secrets/serviceit_tinyfish_key
+      SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED: "NO"
+      SERVICEIT_B2B_TENDEM_PUBLIC_EXTRACTION_APPROVED: "NO"
+      SERVICEIT_B2B_CENTER_PUBLIC_EXTRACTION_LICENSED: "NO"
+    secrets:
+      - serviceit_pg_password
+      - serviceit_bitrix_webhook
+      - serviceit_routerai_key
+      - serviceit_brave_search_key
+      - serviceit_tinyfish_key
+
+secrets:
+  serviceit_tinyfish_key:
+    file: "${SERVICEIT_VPS_SECRETS_DIR:?private secrets directory required}/tinyfish_api_key"

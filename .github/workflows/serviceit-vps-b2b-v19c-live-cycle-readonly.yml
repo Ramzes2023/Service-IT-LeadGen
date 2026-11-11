@@ -74,7 +74,11 @@ jobs:
             > "$RUNNER_TEMP/v19c-audit/status" 2>/dev/null
           rc=$?
           set -e
-          grep -E '^V19C_LIVE_[A-Z0-9_]+=(YES|NO)$' \
+          grep -E '^V19C_LIVE_[A-Z0-9_]+=(YES|NO|NONE|[0-9]{1,4}|[A-Z0-9_]{4,70}) \
+            "$RUNNER_TEMP/v19c-audit/status" | head -40 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V19C_LIVE_FOLLOWUP_ACTIVE_FOR_CYCLE=YES' "$RUNNER_TEMP/v19c-audit/status"
+ \
             "$RUNNER_TEMP/v19c-audit/status" | head -12 || true
           [[ "$rc" == 0 ]]
           grep -qx 'V19C_LIVE_FOLLOWUP_ACTIVE_FOR_CYCLE=YES' "$RUNNER_TEMP/v19c-audit/status"

@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           git cat-file -e e64c4d71e94cc332b04c6560f989c1e184fdb369^{commit}
-          git diff --quiet 501efb6ad201988af948f43d076fad82f4c1b2a3 HEAD -- ops/serviceit_vps_b2b_crossportal_four_v15.py
+          git diff --quiet e64c4d71e94cc332b04c6560f989c1e184fdb369 HEAD -- ops/serviceit_vps_b2b_crossportal_four_v15.py
           # Verified source commits only: buyer/phone code #466 and full-page
           # Kontur/Synapse/Tendem public detail #474, no unreviewed drift.
           git cat-file -e '3df31e23b990ea043a48a1a159b25e1f494278e9^{commit}'

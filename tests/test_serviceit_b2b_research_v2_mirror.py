@@ -104,6 +104,13 @@ def test_public_snippet_is_never_used_without_page_match(monkeypatch):
         if req.url.path=="/tenders/unrelated":
             return httpx.Response(200,text="<html><body>Нужна офисная мебель</body></html>",
                                   headers={"Content-Type":"text/html"})
+        # V17 permits two bounded exact-ID Kontur discovery attempts when
+        # Brave yields no independently verified source. Wrong pages reject.
+        if req.url.host=="zakupki.kontur.ru" and req.url.path in (
+            "/4673595_4", "/4673595_40", "/4673595_459"):
+            return httpx.Response(200,
+                text="<html><body>Тендер не найден</body></html>",
+                headers={"Content-Type":"text/html"})
         raise AssertionError("Unexpected network")
     with httpx.Client(transport=httpx.MockTransport(transport),
                       trust_env=False,follow_redirects=False) as client:

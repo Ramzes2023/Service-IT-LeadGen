@@ -90,12 +90,14 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
     platform = "b2b-center" in head.casefold()
     procurement = any(x in head.casefold() for x in
                       ("запрос котировок", "запрос цен", "запрос предложений",
-                       "закупка", "тендер"))
+                       "предварительный квалификационный отбор",
+                       "предварительный отбор", "закупка", "тендер"))
     for number in exact[:12]:
         prefix = text[max(0,number.start()-90):number.start()]
         number_labeled = re.search(
             r"(?iu)(?:номер\s+у\s+источника|закупка\s*(?:№\s*)?|"
             r"запрос\s+(?:цен|предложений|котировок)\s*№\s*|"
+            r"предварительный\s+(?:квалификационный\s+)?отбор\s*№\s*|"
             r"лот\s*№\s*)[:\s№-]*$", prefix) is not None
         # A category list can contain an unrelated purchase with this ID.
         # Relaxed title matching demands BOTH a labelled exact B2B number
@@ -115,7 +117,17 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         title_supported = (title_exact or
                            (title_overlap and b2b_publisher
                             and number.start() <= 4200))
-        if platform and procurement and number_labeled and title_supported:
+        is_prequal = bool(re.search(
+            r"(?iu)предварительный\s+(?:квалификационный\s+)?отбор",
+            prefix))
+        # A prequalification notice must bind its exact labelled number to
+        # B2B-Center right next to the source number, not just in a navbar.
+        # Reject explicit different-platform publication before older looser
+        # category-list fallbacks can accidentally pass the same buyer.
+        if is_prequal and number_labeled and title_supported and not b2b_publisher:
+            return ""
+        if (platform and procurement and number_labeled and title_supported
+                and (not is_prequal or b2b_publisher)):
             nearby = text[max(0, number.start()-200):number.end()+450]
             return head[:3700] + " Источник и номер: " + nearby
     # Code/abbreviation words (1С, ИБ) may be short but meaningful.
@@ -448,24 +460,33 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
             except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
                 continue
 
-    # Only if the discovery API is inaccessible: bounded candidate for
-    # B2B's public Kontur detail route. Normal indexed-source behavior is
-    # unchanged, including strict tests that disallow additional origins. This
-    # merely GUESSES A URL, never an identity or a fact. The independent
-    # HTTPS/robots fetch and tender-number+title+B2B attribution gates below
-    # must all succeed; a missing, unrelated or blocked URL yields nothing.
-    # Crucially this discovery still works when Brave's search quota fails.
-    if (brave_unavailable and "zakupki.kontur.ru" in allow_mirrors
-            and len(checked) < 8):
-        direct = "https://zakupki.kontur.ru/" + tender_id + "_4"
-        checked.add(direct)
-        try:
-            row = from_public_page(client, direct, tender_id, subject,
-                                   mirror_host="zakupki.kontur.ru")
-            if row:
-                candidates.append(row)
-        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
-            pass
+    # If Brave is unavailable OR indexes no independently verified page,
+    # try at most three observed public Kontur URL patterns. The suffix varies
+    # between published B2B procedures: an exact number alone cannot tell it.
+    # These URLs are guesses for DISCOVERY, not evidence: from_public_page()
+    # independently enforces HTTPS, public DNS, robots, no redirects, exact
+    # tender ID, matching procurement subject and B2B source attribution.
+    # Keep the previous one-candidate path when a verified Tendum result exists
+    # but Brave is down; do not introduce a broad catalog crawler.
+    if ((brave_unavailable or not candidates)
+            and "zakupki.kontur.ru" in allow_mirrors
+            and len(checked) < budget):
+        suffixes = ("4",) if candidates else ("4", "40", "459")
+        for suffix in suffixes:
+            if len(checked) >= budget:
+                break
+            direct = "https://zakupki.kontur.ru/" + tender_id + "_" + suffix
+            if direct in checked:
+                continue
+            checked.add(direct)
+            try:
+                row = from_public_page(client, direct, tender_id, subject,
+                                       mirror_host="zakupki.kontur.ru")
+                if row:
+                    candidates.append(row)
+                    break
+            except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+                continue
 
     if not candidates:
         return None

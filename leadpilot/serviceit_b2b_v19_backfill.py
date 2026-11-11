@@ -132,9 +132,14 @@ def novel_evidence(findings, previous_report):
         if type(url) is not str or not url.startswith("https://") or len(url)>950:
             continue
         platform = entry.get("title_match") == "EXACT_ID_AND_TOPIC_AND_PLATFORM"
-        for fact in (entry.get("claims") or [])[:MAX_FACTS]:
+        # Scan all bounded indexed categories even if the first five
+        # were already recorded by V19. This makes later conditions and
+        # prequalification type eligible for a V20 *versioned* supplement.
+        for fact in (entry.get("claims") or [])[:14]:
             if type(fact) is not dict or fact.get("category") not in (
-                    "BUYER","INN","DEADLINE","LOCATION","BUDGET"):
+                    "PROCEDURE","BUYER","INN","DEADLINE","LOCATION","BUDGET",
+                    "TECHNOLOGY","ELIGIBILITY","EVALUATION","SUBMISSION",
+                    "DOCUMENTS","PAYMENT","GUARANTEE","DELIVERY"):
                 continue
             quote = tidy(fact.get("quote"),MAX_LINE)
             if not quote or quote in previous_report:

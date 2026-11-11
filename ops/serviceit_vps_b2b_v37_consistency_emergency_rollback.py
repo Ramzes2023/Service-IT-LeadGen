@@ -46,6 +46,11 @@ def stage_helper(script_hash):
     return runpy.run_path(str(path))
 
 
+def expected_sources(new_hashes, original_worker_hash):
+    """Match the tuple representation returned by original runtime_shas()."""
+    return tuple(new_hashes), (original_worker_hash, "MISSING", "MISSING")
+
+
 def run(argv):
     require(os.geteuid()!=0, "HOST_NONROOT_REQUIRED")
     require(len(argv)==5 and all(HEX.fullmatch(v) for v in argv),
@@ -71,12 +76,10 @@ def run(argv):
     wait_healthy=h["wait_healthy"]
     pending=h["pending_source_writes"]
     image_exists=h["present_image"]
-    expected_live=dict(zip(FILES,new_hashes))
-    expected_base={
-        FILES[0]: original_worker_hash,
-        FILES[1]:"MISSING",
-        FILES[2]:"MISSING",
-    }
+    # Existing V37 release runtime_shas() returns a positional tuple,
+    # not a name-to-hash dictionary. Compare the exact same data type.
+    expected_live, expected_base = expected_sources(
+        new_hashes, original_worker_hash)
     # No source staging or rebuilt code: two exact OCI images already exist.
     require(lock.parent.is_dir() and not lock.is_symlink(),
             "HOST_ACTIVATION_LOCK_INVALID")
@@ -134,7 +137,7 @@ print('BASELINE_SHA_OK')
                          "--cap-drop","ALL","--pids-limit","64",
                          "--memory","512m","--entrypoint","python",
                          BASELINE_TAG,"-B","-c",smoke,
-                         *FILES,*expected_base.values()],timeout=100)
+                         *FILES,*expected_base],timeout=100)
             require(result.stdout.strip()=="BASELINE_SHA_OK",
                     "BASELINE_IMAGE_OFFLINE_SHA_INVALID")
             paths=h["inspect_compose_paths"]()

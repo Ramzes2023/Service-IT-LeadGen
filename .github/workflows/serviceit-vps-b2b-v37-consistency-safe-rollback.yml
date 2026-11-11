@@ -1,0 +1,130 @@
+name: ServiceIT V37 only supplemental consistency safe rollback (no CRM writes)
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  safe-rollback:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_V37_CONSISTENCY_SAFE_ROLLBACK_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Attest trusted rollback source and exactly previous V37 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_script=ops/serviceit_vps_b2b_v37_consistency_emergency_rollback.py
+          [[ "$(git hash-object "$source_script")" == 88173c33cb9bcc486f959fd34ac7ef4cad0d9238 ]]
+          [[ "$(git hash-object ops/serviceit_vps_b2b_v37_consistency_release.py)" == 9da0f8922872c20d6c3f76dee8ffa0d19b5047c7 ]]
+          python -m py_compile "$source_script"
+          [[ "$(git hash-object ops/serviceit_vps_b2b_v37_uncertain_readonly.py)" == c97bc4e46f7cfe141d0e45635bf894f1d712955d ]]
+          python -m py_compile ops/serviceit_vps_b2b_v37_uncertain_readonly.py
+          names=(serviceit_vps_worker.py serviceit_b2b_dossier_consistency_v37.py
+            serviceit_b2b_dossier_consistency_worker_v37.py)
+          blobs=(5e240eb920d6b33880303fa08c84699bcd4d19dd
+            c7d0b836a196f440dd19bc0ec2e22a89e570f786
+            98867c22528fa79bbf2220296d4d46b1ac04b1e6)
+          install -d -m 0700 "$RUNNER_TEMP/v37-rollback"
+          : > "$RUNNER_TEMP/v37-rollback/new-shas"
+          for i in "${!names[@]}"; do
+            f="leadpilot/${names[$i]}"
+            [[ "$(git hash-object "$f")" == "${blobs[$i]}" ]]
+            sha256sum "$f" | cut -d' ' -f1 >> "$RUNNER_TEMP/v37-rollback/new-shas"
+          done
+          git show 1184e8840d585bd1162910d545cdfa8667197818:leadpilot/serviceit_vps_worker.py \
+            | sha256sum | cut -d' ' -f1 > "$RUNNER_TEMP/v37-rollback/old-worker-sha"
+          sha256sum ops/serviceit_vps_b2b_v37_consistency_release.py | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/v37-rollback/old-controller-sha"
+          sha256sum "$source_script" | cut -d' ' -f1 > "$RUNNER_TEMP/v37-rollback/rollback-sha"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v37-rollback/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v37-rollback/hosts"
+          chmod 0600 "$RUNNER_TEMP/v37-rollback/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v37-rollback/hosts" >/dev/null
+      - name: Restore prior verified coordinator only after bounded live preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v37-rollback/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/v37-safeguard-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v37-rollback/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/v37-rollback/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v37_consistency_emergency_rollback.py \
+            "$target:$stage/rollback.py"
+          scriptsha="$(cat "$RUNNER_TEMP/v37-rollback/rollback-sha")"
+          mapfile -t new < "$RUNNER_TEMP/v37-rollback/new-shas"
+          old="$(cat "$RUNNER_TEMP/v37-rollback/old-worker-sha")"
+          controller="$(cat "$RUNNER_TEMP/v37-rollback/old-controller-sha")"
+          [[ "${#new[@]}" == 3 ]]
+          for v in "${new[@]}" "$old" "$controller" "$scriptsha"; do
+            [[ "$v" =~ ^[0-9a-f]{64}$ ]]
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '${new[0]}' '${new[1]}' '${new[2]}' '$old' '$controller'"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v37-rollback/id" "${opts[@]}" "$target" "$remote" \
+            > "$RUNNER_TEMP/v37-rollback/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; scriptsha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[0-9a-f]{64}$ && "$#" == 5 ]]
+          for value in "$@"; do [[ "$value" =~ ^[0-9a-f]{64}$ ]]; done
+          path="$HOME/serviceit/staging/v37-safeguard-$id/rollback.py"
+          [[ -f "$path" && ! -L "$path" ]]
+          printf '%s  %s\n' "$scriptsha" "$path" | sha256sum --check --status
+          python3 "$path" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^V37_SAFE_ROLLBACK_[A-Z0-9_]+=(YES|NO|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v37-rollback/status" | head -25 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V37_SAFE_ROLLBACK_PREVIOUS_IMAGE=YES' "$RUNNER_TEMP/v37-rollback/status"
+          grep -qx 'V37_SAFE_ROLLBACK_V36_AND_PRIOR_PRESERVED=YES' "$RUNNER_TEMP/v37-rollback/status"
+          grep -qx 'V37_SAFE_ROLLBACK_CRM_WRITES=NO' "$RUNNER_TEMP/v37-rollback/status"
+      - name: Independently reconcile V37 UNCERTAIN receipt against live CRM after rollback READONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v37-rollback/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v37-rollback/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" \
+            < ops/serviceit_vps_b2b_v37_uncertain_readonly.py \
+            > "$RUNNER_TEMP/v37-rollback/receipt-diagnostic" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V37_UNCERTAIN_AUDIT_[A-Z0-9_]{3,70}=(YES|NO|[0-9]{1,5}|[A-Z0-9_]{3,70})$' \
+            "$RUNNER_TEMP/v37-rollback/receipt-diagnostic" | head -40 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V37_UNCERTAIN_AUDIT_LEDGER_EXISTS=YES' "$RUNNER_TEMP/v37-rollback/receipt-diagnostic"
+          grep -qx 'V37_UNCERTAIN_AUDIT_CRM_WRITES=0' "$RUNNER_TEMP/v37-rollback/receipt-diagnostic"
+          grep -qx 'V37_UNCERTAIN_AUDIT_POSTGRES_WRITES=0' "$RUNNER_TEMP/v37-rollback/receipt-diagnostic"

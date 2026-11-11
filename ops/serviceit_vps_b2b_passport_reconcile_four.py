@@ -164,7 +164,9 @@ def report_confirmed(card, report, values):
 
 def main():
     args = sys.argv[1:]
-    html_recovery = args[:1] == ["--public-html"]
+    card_21_only = args[:1] == ["--public-html-card-21"]
+    html_recovery = card_21_only or args[:1] == ["--public-html"]
+    targets = {21: HTML_RECOVERY[21]} if card_21_only else HTML_RECOVERY
     files = FILES + ("serviceit_public_evidence_research.py", "serviceit_enrichment_worker.py") if html_recovery else FILES
     if html_recovery:
         args = args[1:]
@@ -176,8 +178,20 @@ def main():
     assert env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES"
     webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
     v20.validate_webhook(webhook)
+
+    def trace_official(response):
+        url = response.request.url
+        if url.host not in {"www.b2b-center.ru", "b2b-center.ru"}:
+            return
+        if url.path == "/robots.txt":
+            out("CARD_21_B2B_ROBOTS_HTTP", response.status_code)
+        elif url.path.rstrip("/").endswith("/tender-4676643"):
+            out("CARD_21_OFFICIAL_DETAIL_HTTP", response.status_code)
+
+    hooks = {"response": [trace_official]} if card_21_only else None
     with db(env) as conn, httpx.Client(
-            trust_env=False, follow_redirects=False, timeout=20) as client:
+            trust_env=False, follow_redirects=False, timeout=20,
+            event_hooks=hooks) as client:
         if not conn.execute("SELECT pg_try_advisory_lock(%s)", (v20.LOCK_ID,)).fetchone()[0]:
             out("LOCK_BUSY", "YES")
             return 2
@@ -192,9 +206,9 @@ def main():
                     ON v.card_id=b.card_id AND v.status='VERIFIED'
                 WHERE b.state='VERIFIED' AND b.card_id=ANY(%s)
                 ORDER BY b.card_id
-            """, (list(HTML_RECOVERY),)).fetchall()
-            assert len(rows) == len(HTML_RECOVERY)
-            assert {card: source for card, source, _ in rows} == HTML_RECOVERY
+            """, (list(targets),)).fetchall()
+            assert len(rows) == len(targets)
+            assert {card: source for card, source, _ in rows} == targets
         else:
             rows = [row for row in v19.select_one(conn, preview=True) if row[0] in TARGETS]
             assert {row[0] for row in rows} == TARGETS and len(rows) == len(TARGETS)

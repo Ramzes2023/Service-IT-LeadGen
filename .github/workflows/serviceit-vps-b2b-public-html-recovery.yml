@@ -65,7 +65,7 @@ jobs:
           for name in "${names[@]}"; do
             sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/dossier-readback-four/shas"
           done
-      - name: Refresh two signed cards and verify exact CRM readback
+      - name: Refresh card 21 and verify exact CRM readback
         shell: bash
         run: |
           set -euo pipefail
@@ -81,7 +81,7 @@ jobs:
           done
           set +e
           ssh -T -i "$RUNNER_TEMP/dossier-readback-four/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
-            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --public-html ${checked[*]}" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --public-html-card-21 ${checked[*]}" \
             < ops/serviceit_vps_b2b_passport_reconcile_four.py \
             > "$RUNNER_TEMP/dossier-readback-four/status" 2>/dev/null
           rc=$?

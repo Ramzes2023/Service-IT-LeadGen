@@ -105,10 +105,23 @@ def extract_tender_facts(*, tender_id: str, title: str, tender_text: str,
         buyer = re.split(r"(?i:ИНН|ОГРН|Подача заявок|Срок подачи)", found.group(1))[0].strip(" :—–-")
         if not 4 <= len(buyer) <= 160 or "не указ" in buyer.casefold():
             buyer = None
+    # An organizer can be an agent or ETP participant, not necessarily the
+    # purchasing legal entity. Never silently convert it into buyer.
+    organizer = _find_label(rows, ("организатор",))
+    if not organizer or not re.match(r"(?iu)^(?:ООО|ПАО|АО|Общество|Акционерное)", organizer):
+        legacy = re.search(r"(?iu)организатор\s*:\s*\|\s*((?:ООО|ПАО|АО|Общество|Акционерное)[^|\n]{3,150})\s*\|", joined)
+        organizer = legacy.group(1).strip() if legacy else ""
+    cutoff = _find_label(rows, ("актуально до",))
+    if not cutoff:
+        legacy_cutoff = re.search(r"(?iu)актуально\s+до\s*:\s*\|\s*(\d{1,2}[./]\d{1,2}[./]20\d{2}\s+\d{1,2}:\d{2})", joined)
+        cutoff = legacy_cutoff.group(1) if legacy_cutoff else ""
+    exact_cutoff = DATE.search(cutoff or "")
     details = {
         "tender_id": _cite(tender_id, source_url, "PUBLIC_TENDER_ID"),
         "title": _cite(title, source_url, "PUBLIC_TENDER_TITLE"),
         "buyer": _cite(buyer, source_url, "PUBLIC_PAGE_BUYER_CLAIM"),
+        "organizer": _cite(organizer, source_url, "PUBLIC_PAGE_ORGANIZER_NOT_BUYER_PROOF"),
+        "listed_until": _cite(exact_cutoff.group(0), source_url, "PUBLIC_LISTING_CUTOFF_NOT_APPLY_DEADLINE") if exact_cutoff else None,
         "submission_deadline": None, "budget_rub": None,
         "budget_state": "NOT_PUBLISHED", "delivery_address": None,
         "geography": None, "payment_terms": None, "delivery_terms": None,

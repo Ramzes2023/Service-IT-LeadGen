@@ -126,3 +126,23 @@ def test_early_no_write_gate_and_real_public_amount():
         source_url=TENDER, verified_source=True)
     assert got["budget_rub"]["value"] == "1250000"
     assert got["budget_state"] == "PUBLIC_AMOUNT"
+
+
+
+def test_legacy_b2b_prequalification_organizer_not_buyer():
+    source = """
+# Предварительный квалификационный отбор № 4675475 Приобретение серверного оборудования для нужд МКБ
+| | Приобретение серверного оборудования для нужд МКБ | | Размещено: | 10.11.2026 14:53 | | Актуально до: | 16.11.2026 16:00 | |
+| Организатор: | ПАО «МОСКОВСКИЙ КРЕДИТНЫЙ БАНК» |
+Условия участия Зарегистрируйтесь, чтобы увидеть условия участия
+"""
+    got = extract_tender_facts(
+        tender_id="4675475",
+        title="Приобретение серверного оборудования для нужд МКБ",
+        tender_text=source,
+        source_url="https://www.b2b-center.ru/market/priobretenie-servernogo-oborudovaniia-dlia-nuzhd-mkb/tender-4675475/",
+        verified_source=True)
+    assert got["organizer"]["value"] == "ПАО «МОСКОВСКИЙ КРЕДИТНЫЙ БАНК»"
+    assert got["buyer"] is None
+    assert got["listed_until"]["value"] == "16.11.2026 16:00"
+    assert got["submission_deadline"] is None

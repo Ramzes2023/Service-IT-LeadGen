@@ -129,3 +129,78 @@ def fetch_remote_public_evidence(
         "independent_company_research": None,
         "discovery": "OPT_IN_CLOUD_PUBLIC_PAGE_EXTRACT",
     }
+
+
+SEARCH_API = "https://api.search.tinyfish.ai"
+
+
+def discover_free_public_urls(client: httpx.Client, *, tender_id: str,
+                              subject: str, api_key: str) -> list[str]:
+    """Optional free-tier URL discovery; index output is NEVER factual proof.
+
+    Search and Fetch are vendor-advertised free within published rate limits.
+    No paid browser/agent operations, no CRM/private fields, no captcha solving.
+    """
+    if (type(tender_id) is not str
+            or re.fullmatch(r"\d{5,12}", tender_id) is None
+            or type(subject) is not str or not 10 <= len(subject) <= 240
+            or type(api_key) is not str or not 16 <= len(api_key) <= 256
+            or not api_key.isascii() or "\n" in api_key or "\r" in api_key):
+        return []
+    try:
+        response = client.get(
+            SEARCH_API,
+            params={
+                "query": '"' + tender_id + '" "' + subject.replace('"', "")[:130] + '"',
+                "include_domains": "tendem.ru,b2b-center.ru",
+                "location": "RU", "language": "ru",
+                "page": 0,
+            },
+            headers={"X-API-Key": api_key, "Accept": "application/json"},
+            follow_redirects=False, timeout=14)
+        if (response.status_code != 200 or len(response.content) > 200000
+                or "application/json" not in response.headers.get("content-type", "")):
+            return []
+        payload = response.json()
+    except (httpx.HTTPError, ValueError, TypeError):
+        return []
+    if type(payload) is not dict or type(payload.get("results")) is not list:
+        return []
+    results = []
+    for row in payload["results"][:25]:
+        if type(row) is not dict:
+            continue
+        candidate = row.get("url")
+        title = row.get("title")
+        snippet = row.get("snippet")
+        if not approved_url(candidate):
+            continue
+        if (type(title) is not str or type(snippet) is not str
+                or not re.search(r"(?<!\d)" + tender_id + r"(?!\d)",
+                                 candidate + " " + title + " " + snippet)):
+            continue
+        # A search hit is merely a URL, never a source. Full-page content
+        # is always checked independently by verified_excerpt().
+        if candidate not in results:
+            results.append(candidate)
+    return results[:2]
+
+
+def free_public_search_and_fetch(client: httpx.Client, *, tender_id: str,
+                                 subject: str, api_key: str,
+                                 approved_source_url: str = "") -> dict | None:
+    """One optional source lookup and at most two free-tier page extractions.
+
+    A separately approved exact primary URL (e.g. from a supplier notice)
+    is preferred to search. Fail closed if unavailable; no CRM activity.
+    """
+    if approved_source_url:
+        urls = ([approved_source_url] if approved_url(approved_source_url) else [])
+    else:
+        urls = discover_free_public_urls(
+            client, tender_id=tender_id, subject=subject, api_key=api_key)
+    if not urls:
+        return None
+    return fetch_remote_public_evidence(
+        client, urls=urls, tender_id=tender_id,
+        subject=subject, api_key=api_key)

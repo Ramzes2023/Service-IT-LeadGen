@@ -19,7 +19,7 @@ def test_v18_has_real_search_capabilities_without_missing_legal_gates():
     assert "SERVICEIT_B2B_V18_SEARCH_ENABLED" in s
     assert "tender_index_context(" in s
     assert "enable_v18 is True" in s
-    assert '"INDEX_ONLY_UNVERIFIED"' in s
+    assert '"INDEX_ONLY_UNVERIFIED"' in INDEX.read_text("utf8")
     assert "brave_mirror_search(" in s
     s=WORKER.read_text("utf8")
     assert "enable_v18=True" in s

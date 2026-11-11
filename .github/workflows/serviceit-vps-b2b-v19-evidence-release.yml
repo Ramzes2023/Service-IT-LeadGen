@@ -71,7 +71,7 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/v19-release/hosts"
             -o BatchMode=yes -o ConnectTimeout=15)
           target="$VPS_USER@$VPS_HOST"
-          stage="serviceit/staging/b2b-v19-multisource-release-$GITHUB_RUN_ID"
+          stage="serviceit/staging/b2b-v19-evidence-release-$GITHUB_RUN_ID"
           ssh -T -i "$RUNNER_TEMP/v19-release/id" "${opts[@]}" "$target" \
             "umask 077; install -d -m 0700 '$stage'"
           for name in serviceit_b2b_tender_index_v18.py \
@@ -108,7 +108,7 @@ jobs:
           id="$1"; sha="$2"; shift 2
           [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 4 ]]
           for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
-          script="$HOME/serviceit/staging/b2b-v19-multisource-release-$id/activate.py"
+          script="$HOME/serviceit/staging/b2b-v19-evidence-release-$id/activate.py"
           [[ -f "$script" && ! -L "$script" ]]
           printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
           python3 "$script" "$id" "$@"

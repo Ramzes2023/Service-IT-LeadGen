@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           v18='0bafb328640e60f7b9656e145f4eed96c7dd0dfb'
-          addendum='3dafb4d13595d1b372bae1bfe9ce68794e7480b7'
+          addendum='34341091ed13367731eacc2ef991161e252757be'
           git cat-file -e "$v18^{commit}"
           git cat-file -e "$addendum^{commit}"
           for name in serviceit_b2b_public_mirrors.py \

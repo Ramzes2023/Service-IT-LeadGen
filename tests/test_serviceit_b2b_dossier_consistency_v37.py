@@ -241,3 +241,21 @@ def test_verified_amount_removes_false_budget_gap():
     before_gaps=patch[REPORT].split("06  ЧТО ЕЩЁ ТРЕБУЕТ ПОДТВЕРЖДЕНИЯ")[1].split("07  ")[0]
     assert "• Начальная цена / бюджет" not in before_gaps
     assert "не считать цену нулевой" in patch[REPORT]
+
+
+def test_card13_exact_published_organizer_can_be_corrected_to_legal_buyer():
+    item=_fixture("4672802",**{
+        COMPANY:"АО ГМЗ «Агат»",
+    })
+    patch,meta=prepare(_notice("4672802"),item,[])
+    assert patch[COMPANY]=="ПАО «Агрегат»"
+    assert patch[INN]=="7401000191"
+    assert "Заказчик: ПАО «Агрегат»" in patch[REPORT]
+
+
+def test_card13_arbitrary_different_company_stays_blocked():
+    item=_fixture("4672802",**{
+        COMPANY:"ООО «Другая организация»",
+    })
+    with pytest.raises(ReconcileBlocked,match="EXISTING_COMPANY_CONFLICT"):
+        prepare(_notice("4672802"),item,[])

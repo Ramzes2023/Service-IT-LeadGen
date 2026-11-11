@@ -122,6 +122,10 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
             prefix))
         # A prequalification notice must bind its exact labelled number to
         # B2B-Center right next to the source number, not just in a navbar.
+        # Reject explicit different-platform publication before older looser
+        # category-list fallbacks can accidentally pass the same buyer.
+        if is_prequal and number_labeled and title_supported and not b2b_publisher:
+            return ""
         if (platform and procurement and number_labeled and title_supported
                 and (not is_prequal or b2b_publisher)):
             nearby = text[max(0, number.start()-200):number.end()+450]
@@ -135,20 +139,6 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
         return ""
     matches = list(re.finditer(ID_RX.format(id=tender_id), text))
     for m in matches[:12]:
-        # A nearby B2B-Center attribution is mandatory in relaxed matching.
-        # Navigation menus and unrelated marketplace listings never prove
-        # who published this exact tender; otherwise a matching subject and
-        # number on a different platform can fabricate a customer identity.
-        after_number = text[m.end():m.end()+220].casefold()
-        published_here = bool(re.search(
-            r"(?iu)(?:опубликован\w*|размещен\w*|размещён\w*|"
-            r"площадка\s*[:—-]?).{0,155}\bb2b-center\b",
-            after_number))
-        adjacent = bool(re.match(
-            r"(?iu)^[\s:—-]{0,15}b2b-center\b",
-            after_number))
-        if not (published_here or adjacent):
-            continue
         # Advertiser-related or navigation text elsewhere in page must not
         # satisfy the content match. Keep checks within same local vicinity.
         neighborhood = text[max(0, m.start()-950):min(len(text),m.end()+1700)]

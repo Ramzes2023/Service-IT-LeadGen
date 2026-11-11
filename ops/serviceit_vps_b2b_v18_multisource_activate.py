@@ -40,6 +40,7 @@ FILES = (
     "serviceit_vps_b2b_deep_research.py",
     "serviceit_b2b_dossier_v11.py",
     "serviceit_vps_worker.py",
+    "serviceit_vps_b2b_dossier_v11_worker.py",
 )
 # Approved previous live payload is the exact unmodified B2B public mirror
 # from main before V16 (2026-11-11 V15 merge bfb9c152 base). The installer
@@ -53,6 +54,7 @@ AUDITED_OLD_SHAS = (
     "168cc67ecef993e75a0dfd65c16e79ee7a841e9b051fe1eb1bc18cd8d8b9655c",
     "233c211f75e75d4bfeddbedd9e3b163ddf1e05ee39372bb6010b119f8a88009a",
     "93fa83332e3a177e35b8ffd893bf21e35913fbb0718d7e4e9b6337590f05112c",
+    "c204fcc99f4db9821fa3e9e1209ee0211117c3e04aaa68561c2325965c1f1ffe",
 )
 
 GATES = {
@@ -357,8 +359,8 @@ def run(run_id, new_hashes):
             smoke = """
 import hashlib,sys
 from pathlib import Path
-files=sys.argv[1:6]; hashes=sys.argv[6:]
-assert len(files)==len(hashes)==5
+files=sys.argv[1:7]; hashes=sys.argv[7:]
+assert len(files)==len(hashes)==6
 for name,value in zip(files,hashes):
     assert hashlib.sha256((Path('/app/leadpilot')/name).read_bytes()).hexdigest()==value
 from leadpilot.serviceit_vps_worker import INTERVAL_SECONDS

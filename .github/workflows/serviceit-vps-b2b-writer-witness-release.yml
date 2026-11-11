@@ -1,0 +1,59 @@
+name: ServiceIT B2B writer duplicate witness release
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-writer-witness-release.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-writer-witness-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Deploy pinned writer module and preserve rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init --quiet .
+          git remote add origin https://github.com/Ramzes2023/Service-IT-LeadGen.git
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ && "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ && -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          module=leadpilot/serviceit_b2b_positive_control.py
+          helper=deploy/serviceit-vps-b2b-guarded-cutover.py
+          installer=ops/serviceit_vps_b2b_writer_witness_release.py
+          [[ "$(git hash-object "$module")" == a0856562a1be769f2a1b54aaa096c98725417be3 ]]
+          git diff --quiet 5ef089946e3a4a458da70c77369846ccebcd1f1d HEAD -- "$helper"
+          old=$(git show "5ef089946e3a4a458da70c77369846ccebcd1f1d:$module" | sha256sum | cut -d' ' -f1)
+          new=$(sha256sum "$module" | cut -d' ' -f1)
+          helper_sha=$(sha256sum "$helper" | cut -d' ' -f1)
+          installer_sha=$(sha256sum "$installer" | cut -d' ' -f1)
+          for sha in "$old" "$new" "$helper_sha" "$installer_sha"; do [[ "$sha" =~ ^[a-f0-9]{64}$ ]]; done
+          python -m py_compile "$module" "$installer"
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          printf '%s\n' "$VPS_SSH_KEY" > "$dir/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$dir/hosts"
+          chmod 0600 "$dir/id" "$dir/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$dir/hosts" >/dev/null
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$dir/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-writer-witness-$GITHUB_RUN_ID"
+          ssh -T -i "$dir/id" "${opts[@]}" "$target" "umask 077; mkdir -p '$stage'"
+          scp -i "$dir/id" "${opts[@]}" "$module" "$target:$stage/"
+          scp -i "$dir/id" "${opts[@]}" "$helper" "$target:$stage/cutover.py"
+          scp -i "$dir/id" "${opts[@]}" "$installer" "$target:$stage/install.py"
+          ssh -T -i "$dir/id" "${opts[@]}" "$target"             "test \"\$(sha256sum '$stage/install.py' | cut -d' ' -f1)\" = '$installer_sha' && python3 '$stage/install.py' '$GITHUB_RUN_ID' '$old' '$new' '$helper_sha'"

@@ -1,7 +1,7 @@
 """Fail-closed positive/negative Bitrix 1062/21 source filter control.
 
 Never depend on a deleted historical B2B item. Use independently readable
-existing item 3 as a positive source identity witness, checking both native
+existing items as positive source identity witnesses, checking both native
 field-name formats and exact item GET. Source values never enter logs.
 """
 from __future__ import annotations
@@ -13,17 +13,29 @@ from .b2b_github_to_bitrix import bitrix_call, exact_duplicate, BridgeBlocked
 ENTITY = 1062
 CATEGORY = 21
 CANARY_ID = 3
+FALLBACK_CANARY_IDS = (17, 15, 13, 11)
 ORIGINAL = "UF_CRM_13_SVCIT_SIGNAL_ID"
 CAMEL = "ufCrm13SvcitSignalId"
 ABSENT = "B2B-CENTER-999999999999"
 
 
 def positive_duplicate_control(client, base):
-    found = bitrix_call(client, base, "crm.item.get", {
-        "entityTypeId": ENTITY, "id": CANARY_ID, "useOriginalUfNames": "Y",
-    })["result"].get("item")
+    for card in dict.fromkeys((CANARY_ID, *FALLBACK_CANARY_IDS)):
+        try:
+            found = bitrix_call(client, base, "crm.item.get", {
+                "entityTypeId": ENTITY, "id": card, "useOriginalUfNames": "Y",
+            })["result"].get("item")
+        except BridgeBlocked as error:
+            # A retired control can return HTTP 400. The replacement still
+            # has to pass exact GET, both list formats and the negative test.
+            if str(error) not in {"CRM_TRANSPORT_UNCERTAIN", "CRM_RESULT_UNCERTAIN"}:
+                raise
+            continue
+        break
+    else:
+        raise BridgeBlocked("B2B_POSITIVE_CONTROL_ITEM_UNAVAILABLE")
     if not isinstance(found, dict) or (
-        str(found.get("id")) != str(CANARY_ID)
+        str(found.get("id")) != str(card)
         or str(found.get("entityTypeId")) != str(ENTITY)
         or str(found.get("categoryId")) != str(CATEGORY)
     ):
@@ -45,7 +57,7 @@ def positive_duplicate_control(client, base):
                 or not isinstance(rows, list) or len(rows) != 1):
             raise BridgeBlocked("B2B_POSITIVE_CONTROL_LIST_UNVERIFIED")
         row = rows[0]
-        if (not isinstance(row, dict) or str(row.get("id")) != str(CANARY_ID)
+        if (not isinstance(row, dict) or str(row.get("id")) != str(card)
                 or str(row.get("categoryId")) != str(CATEGORY)
                 or row.get(field) != source):
             raise BridgeBlocked("B2B_POSITIVE_CONTROL_LIST_MISMATCH")

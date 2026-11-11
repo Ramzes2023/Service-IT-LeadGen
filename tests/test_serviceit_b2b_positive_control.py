@@ -59,3 +59,31 @@ def test_unverifiable_positive_or_negative_never_opens_write_gate(kwargs):
     client, _ = client_for(**kwargs)
     with client, pytest.raises(BridgeBlocked):
         positive_duplicate_control(client, "https://example.invalid/rest")
+
+
+
+def test_retired_primary_uses_live_witness_and_keeps_exact_filters():
+    operations = []
+    def respond(request):
+        method = request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
+        data = json.loads(request.content)
+        operations.append(method)
+        if method == "crm.item.get":
+            if data["id"] == 3:
+                return httpx.Response(400, json={"error": "NOT_FOUND"})
+            assert data["id"] == 17
+            return httpx.Response(200, json={"result": {"item": {
+                "id": 17, "entityTypeId": 1062, "categoryId": 21,
+                "UF_CRM_13_SVCIT_SIGNAL_ID": "B2B-CENTER-4675475",
+            }}})
+        assert method == "crm.item.list"
+        field = ("UF_CRM_13_SVCIT_SIGNAL_ID" if data["useOriginalUfNames"] == "Y"
+                 else "ufCrm13SvcitSignalId")
+        source = data["filter"][field]
+        rows = [] if source == "B2B-CENTER-999999999999" else [
+            {"id": 17, "categoryId": 21, field: source}]
+        return httpx.Response(200, json={"result": {"items": rows, "total": len(rows)}})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        assert positive_duplicate_control(client, "https://example.invalid/rest")
+    assert operations == ["crm.item.get", "crm.item.get", *["crm.item.list"] * 3]

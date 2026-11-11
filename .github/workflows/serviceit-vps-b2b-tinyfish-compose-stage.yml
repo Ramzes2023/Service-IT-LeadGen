@@ -1,0 +1,109 @@
+name: ServiceIT TinyFish free-key Docker Compose overlay OFF-only stage
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-vps-tinyfish-compose-only-stage
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_TINYFISH_COMPOSE_STAGE_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Attest no-secret OFF-only overlay and exact stage script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_tinyfish_compose_stage.py
+          python -m pytest -q tests/test_serviceit_vps_b2b_tinyfish_compose_stage.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/tinyfish-stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tinyfish-stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tinyfish-stage/hosts"
+          chmod 0600 "$RUNNER_TEMP/tinyfish-stage/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tinyfish-stage/hosts" >/dev/null
+          sha256sum deploy/serviceit-vps-tinyfish-free.compose.yml | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/tinyfish-stage/overlay.sha"
+          sha256sum ops/serviceit_vps_b2b_tinyfish_compose_stage.py | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/tinyfish-stage/script.sha"
+
+      - name: Transfer two attested no-secret files only, do not restart Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/tinyfish-stage/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/tinyfish-compose-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/tinyfish-stage/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/tinyfish-stage/id" "${opts[@]}" \
+            deploy/serviceit-vps-tinyfish-free.compose.yml "$target:$stage/overlay.yml"
+          scp -i "$RUNNER_TEMP/tinyfish-stage/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_tinyfish_compose_stage.py "$target:$stage/stage.py"
+
+      - name: Compare effective Compose before after; stage OFF-only, zero live changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/tinyfish-stage/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          overlaysha="$(cat "$RUNNER_TEMP/tinyfish-stage/overlay.sha")"
+          scriptsha="$(cat "$RUNNER_TEMP/tinyfish-stage/script.sha")"
+          [[ "$overlaysha" =~ ^[a-f0-9]{64}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '$overlaysha'"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/tinyfish-stage/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/tinyfish-stage/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; scriptsha="$2"; overlaysha="$3"
+          [[ "$id" =~ ^[0-9]{7,16}$ &&
+             "$scriptsha" =~ ^[a-f0-9]{64}$ &&
+             "$overlaysha" =~ ^[a-f0-9]{64}$ ]]
+          stage="$HOME/serviceit/staging/tinyfish-compose-$id"
+          script="$stage/stage.py"
+          overlay="$stage/overlay.yml"
+          [[ -f "$script" && ! -L "$script" && -f "$overlay" && ! -L "$overlay" ]]
+          printf '%s  %s\n' "$scriptsha" "$script" | sha256sum --check --status
+          printf '%s  %s\n' "$overlaysha" "$overlay" | sha256sum --check --status
+          python3 "$script" "$id" "$overlaysha"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^TINYFISH_STAGE_[A-Z0-9_]+=[A-Z0-9_]+$' \
+            "$RUNNER_TEMP/tinyfish-stage/status" | head -10 || true
+          [[ "$rc" == 0 ]]
+          grep -Eq '^TINYFISH_STAGE_RESULT=(CONFIG_ONLY_STAGED|ALREADY_STAGED)$' \
+            "$RUNNER_TEMP/tinyfish-stage/status"
+          grep -qx 'TINYFISH_STAGE_COMPOSE_PREVIEW=PASS' "$RUNNER_TEMP/tinyfish-stage/status"
+          grep -qx 'TINYFISH_STAGE_COORDINATOR_RESTARTED=NO' "$RUNNER_TEMP/tinyfish-stage/status"
+          grep -qx 'TINYFISH_STAGE_CRM_WRITES=NO' "$RUNNER_TEMP/tinyfish-stage/status"
+          grep -qx 'TINYFISH_STAGE_FETCH_ENABLED=NO' "$RUNNER_TEMP/tinyfish-stage/status"

@@ -132,6 +132,14 @@ def test_owner_only_guarded_workflow():
     assert "UserKnownHostsFile=" in w
     assert "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" in w
     assert "serviceit_vps_b2b_crossportal_four_v15.py" in w
+    assert "git diff --quiet e64c4d71e94cc332b04c6560f989c1e184fdb369 HEAD -- ops/serviceit_vps_b2b_crossportal_four_v15.py" in w
+    assert "501efb6ad201988af948f43d076fad82f4c1b2a3" not in w
+    acceptance=Path(".github/workflows/serviceit-vps-b2b-v15-four-readback.yml").read_text("utf8")
+    assert "SERVICEIT_B2B_V15_FOUR_READBACK_368" in acceptance
+    assert "SET TRANSACTION READ ONLY" in acceptance
+    assert "crm.item.get" in acceptance
+    assert "crm.item.update" not in acceptance
+    assert "V15_AUDIT_SAFE_READ=YES" in acceptance
 
 
 def test_v15_does_not_duplicate_facts_already_in_v14_report():

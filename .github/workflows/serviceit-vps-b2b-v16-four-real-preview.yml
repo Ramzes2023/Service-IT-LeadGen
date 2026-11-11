@@ -71,12 +71,7 @@ jobs:
             > "$RUNNER_TEMP/four-preview/status" 2>/dev/null
           remote_rc=$?
           set -e
-          grep -E '^CROSSPORTAL_FOUR_([A-Z0-9_]{3,64})=(YES|NO|ERROR|[0-9]{1,4}) \
-            "$RUNNER_TEMP/four-preview/status" | head -100 || true
-          [[ "$remote_rc" == 0 ]]
-          grep -qx 'CROSSPORTAL_FOUR_READONLY_FINISHED=YES' "$RUNNER_TEMP/four-preview/status"
-          grep -qx 'CROSSPORTAL_FOUR_SIGNED_MATCHING_CARDS=4' "$RUNNER_TEMP/four-preview/status"
- \
+          grep -E '^CROSSPORTAL_FOUR_([A-Z0-9_]{3,64})=(YES|NO|ERROR|[0-9]{1,4})$' \
             "$RUNNER_TEMP/four-preview/status" | head -100 || true
           [[ "$remote_rc" == 0 ]]
           grep -qx 'CROSSPORTAL_FOUR_READONLY_FINISHED=YES' "$RUNNER_TEMP/four-preview/status"

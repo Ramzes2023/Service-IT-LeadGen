@@ -56,6 +56,28 @@ def main():
             "entityTypeId":1062,"useOriginalUfNames":"Y"}))
         fields=meta.get("fields",{}) if isinstance(meta,dict) else {}
         emit("METADATA_READ","YES" if isinstance(fields,dict) else "NO")
+        # Inspect only the approved B2B dossier fields; no customer values
+        # or labels enter the action log.
+        for suffix in (
+            "AI_FULL_REPORT","AI_SUMMARY","AI_MANAGER_BRIEF",
+            "AI_LIMITATIONS","AI_NEXT_ACTION","AI_QUOTE",
+            "AI_HYPOTHESIS","AI_RECOMMENDATION","AI_RESEARCH_STATUS",
+            "COMPANY_INN","COMPANY_NAME","REGION"):
+            code=PREFIX+suffix
+            row=fields.get(code)
+            if not isinstance(row,dict):
+                emit("FIELD_"+suffix+"_EXISTS","NO")
+                continue
+            emit("FIELD_"+suffix+"_EXISTS","YES")
+            emit("FIELD_"+suffix+"_EDITABLE","YES" if (
+                row.get("isReadOnly") is False
+                and row.get("isImmutable") in (None,False)
+                and row.get("isMultiple") in (None,False)
+                ) else "NO")
+            t=row.get("type")
+            kind=t.upper() if t in ("string","integer","double","date","datetime",
+                                   "enumeration","boolean","file") else "OTHER"
+            emit("FIELD_"+suffix+"_TYPE",kind)
         date_codes=[c for c in fields
                     if re.fullmatch(r"[A-Za-z0-9_]{5,80}",c)
                     and any(w in c.upper() for w in
@@ -82,6 +104,13 @@ def main():
                              "COMPANY":"COMPANY_NAME",
                              "REGION":"REGION"}[key]
                 emit("CARD_"+str(card)+"_"+key,status(item.get(code),reference))
+            if card == 13:
+                # A published procurement organizer may have been mistaken
+                # for the legal buyer. Never log the actual company value.
+                organizer="АО ГМЗ «Агат»"
+                current=item.get(PREFIX+"COMPANY_NAME") or ""
+                simple=lambda x: re.sub(r"[^а-яa-z0-9]+","",str(x).casefold())
+                emit("CARD_13_ORGANIZER_ALIAS","YES" if simple(current)==simple(organizer) else "NO")
             report=item.get(PREFIX+"AI_FULL_REPORT") or ""
             emit("CARD_"+str(card)+"_V11",
                  "YES" if "01  ПАСПОРТ ЗАКУПКИ" in report else "NO")

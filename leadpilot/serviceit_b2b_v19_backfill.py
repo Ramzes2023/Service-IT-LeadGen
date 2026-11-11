@@ -17,7 +17,9 @@ from datetime import datetime, timezone
 import httpx
 
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
-from .serviceit_b2b_dossier_v11 import original_nine, evidence_rows, tidy
+from .serviceit_b2b_dossier_v11 import (
+    original_nine, evidence_rows, tidy, confirmed_passport_values, sync_confirmed_passport,
+)
 from .serviceit_b2b_routerai_deep import source_only_investigation
 from .serviceit_vps_b2b_deep_research import safe_notice, source_findings
 from .serviceit_vps_b2b_dossier_v11_worker import (
@@ -304,6 +306,9 @@ def run_once(env, client, conn, *, preview=False):
                 findings=source_findings(first,notice,exact,client,enable_v18=True)
                 items=novel_evidence({**findings, "indexed_candidates": []},before[REPORT])
                 draft=prepare_addendum(before,items,notice["tender_id"])
+                values = confirmed_passport_values(findings, source_only_investigation(findings))
+                synchronized = sync_confirmed_passport(draft or before, values)
+                draft = synchronized if synchronized != before else None
             except Exception:
                 # A transport/policy failure never authorizes a fabricated CRM
                 # fact. Keep the card intact; no paid immediate retry.

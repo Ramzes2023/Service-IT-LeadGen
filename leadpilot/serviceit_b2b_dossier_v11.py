@@ -159,6 +159,93 @@ def _fact(facts, category, limit=175):
     return ""
 
 
+_PASSPORT_PREFIXES = {
+    "BUYER": "Заказчик: ", "INN": "ИНН: ", "DEADLINE": "Срок подачи: ",
+    "LOCATION": "География: ", "BUDGET": "Бюджет: ",
+}
+_PASSPORT_GAPS = {
+    "BUYER": "не установлен", "INN": "нет подтверждённой связки покупатель—ИНН",
+    "DEADLINE": "не найден в доступных источниках", "LOCATION": "не установлена",
+    "BUDGET": "в прочитанных страницах не найден",
+}
+
+
+def sync_confirmed_passport(fields, values):
+    """Project independently confirmed data into an existing V11 report."""
+    report = fields[REPORT]
+    start = report.find("\n01  ПАСПОРТ ЗАКУПКИ\n")
+    end = report.find("\n02  ПРЕДМЕТ И ТЕХНИЧЕСКОЕ ЗАДАНИЕ\n", start)
+    if start < 0 or end < 0:
+        return fields
+    lines = report[start:end].split("\n")
+    promoted = set()
+    for category, prefix in _PASSPORT_PREFIXES.items():
+        value = tidy(values.get(category), 500)
+        if not value:
+            continue
+        for i, line in enumerate(lines):
+            if not line.startswith(prefix):
+                continue
+            old = line[len(prefix):]
+            is_gap = old == _PASSPORT_GAPS[category] or (
+                category == "DEADLINE" and (
+                    old.startswith("[АРХИВ V10,") or old.endswith("(только уведомление; сверить)")))
+            if is_gap:
+                lines[i] = prefix + value
+                promoted.add(category)
+            elif old == value:
+                promoted.add(category)
+            break
+        else:
+            if category == "LOCATION":
+                lines.insert(len(lines) - 1, prefix + value)
+                promoted.add(category)
+    if not promoted:
+        return fields
+    updated = report[:start] + "\n".join(lines) + report[end:]
+    for heading, following, prefix, category in (
+        ("02  ПРЕДМЕТ И ТЕХНИЧЕСКОЕ ЗАДАНИЕ", "03  ДОПУСК И КОММЕРЧЕСКИЕ УСЛОВИЯ", "География: ", "LOCATION"),
+        ("04  КОНТАКТЫ И ЮРИДИЧЕСКАЯ ПРОВЕРКА", "05  НАПРАВЛЕНИЕ И ЗАДАЧИ ДЛЯ МЕНЕДЖЕРА", "ИНН: ", "INN"),
+        ("04  КОНТАКТЫ И ЮРИДИЧЕСКАЯ ПРОВЕРКА", "05  НАПРАВЛЕНИЕ И ЗАДАЧИ ДЛЯ МЕНЕДЖЕРА", "Публичный заказчик: ", "BUYER"),
+    ):
+        a = updated.find("\n" + heading + "\n")
+        b = updated.find("\n" + following + "\n", a)
+        if category in promoted and a >= 0 and b > a:
+            gap = prefix + _PASSPORT_GAPS[category]
+            section = "\n".join(
+                prefix + tidy(values[category], 500) if line == gap else line
+                for line in updated[a:b].split("\n")
+            )
+            updated = updated[:a] + section + updated[b:]
+    a = updated.find("\n06  ЧТО ПОКА НЕ ДОКАЗАНО\n")
+    b = updated.find("\n07  ДОСЛОВНЫЕ ФРАГМЕНТЫ И ССЫЛКИ\n", a)
+    if a >= 0 and b > a:
+        gaps = {"проверенный ИНН / ФНС-МСП" if category == "INN" else LABELS[category]
+                for category in promoted}
+        section = "\n".join(line for line in updated[a:b].split("\n")
+                            if line.removeprefix("• ") not in gaps)
+        updated = updated[:a] + section + updated[b:]
+    return {**fields, REPORT: updated} if len(updated) <= LIMIT_REPORT else fields
+
+
+def confirmed_passport_values(findings, investigation):
+    """Build passport values solely from validated current sources."""
+    _, facts = evidence_rows(findings, investigation)
+    values = {}
+    for category in ("LOCATION", "DEADLINE", "BUDGET"):
+        for fact in facts:
+            if fact["category"] == category:
+                values[category] = "«" + fact["quote"] + "» [" + fact["url"] + "]"
+                break
+    buyer = public_buyer_candidate(findings)
+    if buyer:
+        values["BUYER"] = buyer + " (опубликованные сведения о закупке)"
+        evidence = published_buyer_inn_evidence(findings)
+        if evidence:
+            values["INN"] = evidence["inn"] + " (публичный источник, проверка ФНС отдельно)"
+    return values
+
+
 def compose(notice, old_item, findings, investigation):
     """Nine legible fields with sourced deadlines/participation and routing.
 
@@ -246,6 +333,7 @@ def compose(notice, old_item, findings, investigation):
         "ИНН: " + inn_text,
         "Срок подачи: " + deadline,
         "Бюджет: " + (_fact(facts, "BUDGET") or "в прочитанных страницах не найден"),
+        "География: " + (_fact(facts, "LOCATION") or "не установлена"),
         "",
         "02  ПРЕДМЕТ И ТЕХНИЧЕСКОЕ ЗАДАНИЕ",
         "Что закупается: " + (_fact(facts, "SCOPE", 230) or title + " (по уведомлению)"),

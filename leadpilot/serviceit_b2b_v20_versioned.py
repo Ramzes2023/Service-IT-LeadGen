@@ -20,7 +20,10 @@ from .serviceit_b2b_v19_backfill import (
     REPORT, SUMMARY, BRIEF, V19Blocked, need, novel_evidence,
     prepare_addendum, active_card_write,
 )
-from .serviceit_b2b_dossier_v11 import original_nine
+from .serviceit_b2b_dossier_v11 import (
+    original_nine, confirmed_passport_values, sync_confirmed_passport,
+)
+from .serviceit_b2b_routerai_deep import source_only_investigation
 from .serviceit_enrichment_worker import Rest, normalized, validate_identity, fingerprint
 from .serviceit_vps_b2b_deep_research import safe_notice, source_findings
 from .serviceit_vps_b2b_dossier_v11_worker import (
@@ -97,8 +100,10 @@ def versioned_addendum(before, findings, tender_id):
     """All old AI text survives verbatim, and the new section has V20 label."""
     lines = novel_evidence({**findings, "indexed_candidates": []}, before[REPORT])
     draft = prepare_addendum(before, lines, tender_id)
+    values = confirmed_passport_values(findings, source_only_investigation(findings))
     if draft is None:
-        return None, len(lines)
+        synchronized = sync_confirmed_passport(before, values)
+        return (synchronized if synchronized != before else None), len(lines)
     suffix = draft[REPORT][len(before[REPORT]):]
     marker = "09  ДОПОЛНЕНИЕ V19"
     need(suffix.startswith("\n\n" + marker), "V20_APPEND_BOUNDARY_INVALID")
@@ -109,7 +114,7 @@ def versioned_addendum(before, findings, tender_id):
     need(draft[REPORT].startswith(before[REPORT]), "V20_OLD_REPORT_CHANGED")
     for key in (SUMMARY, BRIEF):
         need(draft[key].endswith(before[key]), "V20_OLD_HIGHLIGHT_CHANGED")
-    return draft, len(lines)
+    return sync_confirmed_passport(draft, values), len(lines)
 
 
 def reserve(conn, card, source_hash, before):

@@ -108,6 +108,21 @@ def _safe_index_candidate(url, title, text, tender_id, subject):
     if host not in MARKET_HOSTS and not any(
             host.endswith("." + x) for x in MARKET_HOSTS):
         return None
+    # Canonical detail URL patterns encode the ORIGINAL marketplace number.
+    # Reject another B2B ID even when an unrelated footer/snippet lists ours.
+    # Do not apply this to Tendum's separate internal aggregator IDs.
+    path = urlsplit(url).path
+    canonical = (
+        (r"^/(\d{5,12})_[0-9]+/?$", host == "zakupki.kontur.ru"),
+        (r"/tender-(\d{5,12})/?$", host == "b2b-center.ru"
+         or host.endswith(".b2b-center.ru")),
+        (r"/b2b/(\d{5,12})(?:--|/|$)", host == "synapsenet.ru"),
+    )
+    for pattern, enabled in canonical:
+        if enabled:
+            match = re.search(pattern, path)
+            if match and match.group(1) != tender_id:
+                return None
     exact = re.compile(r"(?<!\d)" + re.escape(tender_id) + r"(?!\d)")
     if not (exact.search(text) or exact.search(title)):
         return None

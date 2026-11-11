@@ -36,10 +36,10 @@ jobs:
         run: |
           set -euo pipefail
           source_script=ops/serviceit_vps_b2b_v37_consistency_emergency_rollback.py
-          [[ "$(git hash-object "$source_script")" == 88173c33cb9bcc486f959fd34ac7ef4cad0d9238 ]]
+          [[ "$(git hash-object "$source_script")" == ccb3543bd4121c8a82be544146ae3f6d4513d6c8 ]]
           [[ "$(git hash-object ops/serviceit_vps_b2b_v37_consistency_release.py)" == 9da0f8922872c20d6c3f76dee8ffa0d19b5047c7 ]]
           python -m py_compile "$source_script"
-          [[ "$(git hash-object ops/serviceit_vps_b2b_v37_uncertain_readonly.py)" == c97bc4e46f7cfe141d0e45635bf894f1d712955d ]]
+          [[ "$(git hash-object ops/serviceit_vps_b2b_v37_uncertain_readonly.py)" == 9b645dcf548c3894e9284be0a5baceade4d2239c ]]
           python -m py_compile ops/serviceit_vps_b2b_v37_uncertain_readonly.py
           names=(serviceit_vps_worker.py serviceit_b2b_dossier_consistency_v37.py
             serviceit_b2b_dossier_consistency_worker_v37.py)

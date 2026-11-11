@@ -341,6 +341,12 @@ def extract_source_facts(docs: list[dict]) -> list[dict]:
                 continue
             if len(quote) < 12 or quote not in text:
                 continue
+            # A B2B login prompt means "conditions gated", not "the bidder
+            # must register as this tender's substantive eligibility rule".
+            if category == "ELIGIBILITY" and re.search(
+                    r"(?iu)(?:зарегистрируйтесь|войдите|для\s+просмотра|"
+                    r"доступно\s+зарегистрированным)", quote):
+                continue
             key = (doc["source_id"], quote)
             if key in seen:
                 continue

@@ -35,14 +35,14 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='ce72783f27b93484db59b411cb805652c29d6461'
+          old='90d30e26c738dce533a77dc2a9636b86f452e2ea'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
-          names=(serviceit_vps_b2b_deep_research.py serviceit_b2b_public_mirrors.py)
+          names=(serviceit_vps_b2b_deep_research.py serviceit_public_evidence_research.py)
           install -d -m 0700 "$RUNNER_TEMP/v37-release"
           : > "$RUNNER_TEMP/v37-release/new-hashes"
           : > "$RUNNER_TEMP/v37-release/old-hashes"
-          blobs=(01d98c4f33de0b28c31b257ff81a65f308822294 f0cfe2d24151c3dde6a6ffad0eac6c30e5dc4ab6)
+          blobs=(c62deafb7bb12634eda9b557bfe0e9945d8e47c9 f47d578f8aa496142bf8644be9d9e47ea8e9d63a)
           for i in "${!names[@]}"; do
             name="${names[i]}"
             [[ "$(git hash-object "leadpilot/$name")" == "${blobs[i]}" ]]
@@ -74,7 +74,7 @@ jobs:
           stage="serviceit/staging/b2b-public-buyer-onefile-release-$GITHUB_RUN_ID"
           ssh -T -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" "$target" \
             "umask 077; install -d -m 0700 '$stage'"
-          for name in serviceit_vps_b2b_deep_research.py serviceit_b2b_public_mirrors.py; do
+          for name in serviceit_vps_b2b_deep_research.py serviceit_public_evidence_research.py; do
             scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
               "leadpilot/$name" "$target:$stage/"
           done

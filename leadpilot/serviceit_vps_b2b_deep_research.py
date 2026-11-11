@@ -296,10 +296,7 @@ def _linked_b2b_buyer_inn(findings, buyer, client):
         hosts = frozenset({"b2b-center.ru"})
         normalize = lambda text: " ".join(re.findall(r"(?iu)[а-яёa-z0-9]+", text.casefold()))
         try:
-            page = _page(client, url, hosts)
-            if _self_buyer({"url": url, "excerpt": page["text"]}) != buyer:
-                return None
-            for href, label in page["links"]:
+            for href, label in row.get("profile_links", []):
                 if normalize(label) != normalize(buyer):
                     continue
                 profile = urljoin(url, href)

@@ -36,7 +36,7 @@ NEIGHBORS = (
 )
 FILES = ('serviceit_b2b_v19_backfill.py', 'serviceit_b2b_v20_versioned.py', 'serviceit_b2b_dossier_v11.py')
 PUBLIC_HTML_FILES = ("serviceit_public_evidence_research.py",)
-PUBLIC_BUYER_FILES = ("serviceit_vps_b2b_deep_research.py", "serviceit_b2b_public_mirrors.py")
+PUBLIC_BUYER_FILES = ("serviceit_vps_b2b_deep_research.py", "serviceit_public_evidence_research.py")
 
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
@@ -415,7 +415,7 @@ if files == ['serviceit_public_evidence_research.py']:
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         url='https://www.b2b-center.ru/app/market-next/servers/tender-123456/'
         assert research._page(client,url,frozenset({'b2b-center.ru'}))['text']=='Закупка №123456'
-if 'serviceit_b2b_public_mirrors.py' in files:
+if 'serviceit_vps_b2b_deep_research.py' in files:
     from leadpilot.serviceit_vps_b2b_deep_research import published_buyer_inn_evidence
     evidence=published_buyer_inn_evidence({'status':'PUBLIC_PAGES_INSPECTED','pages':[{
         'url':'https://zakupki.kontur.ru/1234567_40',

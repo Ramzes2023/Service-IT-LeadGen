@@ -381,9 +381,16 @@ def research_public(item, client, allow_hosts, *, now=None,
         additional = model_safe_context(independent)
         if additional:
             excerpt = (excerpt[:210] + "\nВнешний контекст: " + additional)[:850]
-    return {"status": "PUBLIC_PAGES_INSPECTED", "pages": [
-                {"url": p["url"], "excerpt": " ".join(p["text"].split())[:detail_excerpt_chars]}
-                for p in pages],
+    excerpts = [{"url": p["url"], "excerpt": " ".join(p["text"].split())[:detail_excerpt_chars]}
+                for p in pages]
+    if (source_host in {"b2b-center.ru", "www.b2b-center.ru"}
+            and B2B_TENDER_PATH.fullmatch(urlsplit(url).path)):
+        excerpts[0]["profile_links"] = [
+            (href, label) for href, label in first["links"]
+            if href.startswith(("/firms/", "https://www.b2b-center.ru/firms/",
+                                "https://b2b-center.ru/firms/"))
+        ][:8]
+    return {"status": "PUBLIC_PAGES_INSPECTED", "pages": excerpts,
             "contacts": list(dedup.values())[:6],
             "model_excerpt": excerpt, "checked_at": stamp,
             "company_site_candidate": corporate or "",

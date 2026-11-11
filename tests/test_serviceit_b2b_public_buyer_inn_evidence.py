@@ -78,14 +78,18 @@ def test_only_explicit_first_party_self_purchase_uses_linked_organizer(monkeypat
 
     url = "https://www.b2b-center.ru/app/market-next/servers/tender-1234567/"
     excerpt = '№ 1234567 Организатор АО "Учебник" Процедура проводится Для собственных нужд'
-    findings = {"status": "PUBLIC_PAGES_INSPECTED", "pages": [{"url": url, "excerpt": excerpt}]}
-    monkeypatch.setattr(b2b, "_page", lambda client, target, hosts: (
-        {"text": excerpt, "links": [("/firms/ao-uchebnik/1234/", 'АО "Учебник"')]}
-        if target == url else
-        {"text": 'Краткое наименование АО "Учебник" Полное наименование '
-                 'Акционерное общество "Учебник" ИНН 1234567894'}
-    ))
-    with httpx.Client() as client:
+    findings = {"status": "PUBLIC_PAGES_INSPECTED", "pages": [{
+        "url": url, "excerpt": excerpt,
+        "profile_links": [("/firms/ao-uchebnik/1234/", 'АО "Учебник"')],
+    }]}
+
+    def company_page(client, target, hosts):
+        assert target == "https://www.b2b-center.ru/firms/ao-uchebnik/1234/"
+        return {"text": 'Краткое наименование АО "Учебник" Полное наименование '
+                        'Акционерное общество "Учебник" ИНН 1234567894'}
+
+    monkeypatch.setattr(b2b, "_page", company_page)
+    with httpx.Client(trust_env=False) as client:
         enriched = b2b.followup_public_buyer_research(
             findings, {"SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED": "YES"}, client, "")
     assert b2b.public_buyer_candidate(enriched) == "АО «Учебник»"

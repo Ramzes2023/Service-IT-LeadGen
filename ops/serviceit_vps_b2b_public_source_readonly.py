@@ -7,7 +7,9 @@ import httpx
 
 from leadpilot.serviceit_b2b_v19_backfill import Rest, normalized, validate_identity
 from leadpilot.serviceit_public_evidence_research import MAX_HTML, VisibleText
-from leadpilot.serviceit_vps_b2b_deep_research import safe_notice, source_findings
+from leadpilot.serviceit_vps_b2b_deep_research import (
+    public_buyer_candidate, published_buyer_inn_evidence, safe_notice, source_findings,
+)
 from leadpilot.serviceit_vps_pg_queue import db
 from leadpilot.serviceit_vps_worker import exact_environment
 
@@ -129,6 +131,8 @@ def trace(tid, item, notice, env):
     out(f"{tid}_BRAVE_CANDIDATES", len(result.get("indexed_candidates") or []))
     out(f"{tid}_TINYFISH", result.get("tinyfish_independent_stage", "UNKNOWN"))
     out(f"{tid}_VERIFIED_PAGES", len(result.get("pages") or []))
+    out(f"{tid}_PUBLIC_BUYER", "YES" if public_buyer_candidate(result) else "NO")
+    out(f"{tid}_PUBLIC_INN", "YES" if published_buyer_inn_evidence(result) else "NO")
 
 
 def main():

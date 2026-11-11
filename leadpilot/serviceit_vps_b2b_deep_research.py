@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -212,16 +213,23 @@ def brave_notice_page(client, tender_id, allowed, key, browser=None, *, subject=
 # labelled buyers (never an organizer), a legal form and either quoted
 # name or bounded unquoted name ending BEFORE a known requisites heading.
 # This is public buyer evidence, NOT official FNS/legal confirmation.
-PUBLIC_BUYER_LABEL = re.compile(
-    r'(?iu)\b(?:заказчики|заказчик|покупатель|наименование\s+заказчика)\b'
-    r'\s*[:—–-]?\s*'
+BUYER_NAME = (
     r'(?P<form>Общество\s+с\s+ограниченной\s+ответственностью|'
     r'Публичное\s+акционерное\s+общество|Акционерное\s+общество|'
     r'ООО|ПАО|АО|ОАО|ЗАО|ФГБУ|ГБУ|МБУ|ФГАУ|ФГАОУ)'
-    r'(?:\s*[«"](?P<title>[^»"]{4,90})[»"]|'
+    r'(?:\s+(?P<descriptor>управляющая\s+компания))?'
+    r'(?:\s*[«"](?P<title>[^»"«]{0,75}(?:«[^«»"]{2,75})?)[»"]|'
     r'\s+(?P<plain>[А-ЯЁ][А-ЯЁа-яёA-Za-z0-9 .()\-]{4,70}?)'
     r'(?=\s+(?:ИНН(?:-КПП)?|ОГРН|Документы|Окончание|Порядок|'
     r'Местонахождение|Подача|Начальная|Регион|Объект|Лоты)\b))'
+)
+PUBLIC_BUYER_LABEL = re.compile(
+    r'(?iu)\b(?:заказчики|заказчик|покупатель|наименование\s+заказчика)\b'
+    r'\s*[:—–-]?\s*' + BUYER_NAME
+)
+PUBLIC_SELF_BUYER = re.compile(
+    r'(?iu)\bорганизатор\s*[:—–-]?\s*' + BUYER_NAME
+    + r'\s+процедура\s+проводится\s*[:—–-]?\s*для\s+собственных\s+нужд\b'
 )
 FULL_BUYER_FORMS = {
     "общество с ограниченной ответственностью": "ООО",
@@ -236,23 +244,81 @@ def _canonical_buyer_match(match):
     title = match.group("title") or match.group("plain")
     if not title:
         raise B2BResearchBlocked("PUBLIC_BUYER_TITLE_MISSING")
-    title = " ".join(title.split()).strip(" .,-")
+    title = " ".join(title.split()).strip(" .,-").replace("«", "„")
+    if "„" in title:
+        title = title.rstrip("“") + "“"
     if not 4 <= len(title) <= 90:
         raise B2BResearchBlocked("PUBLIC_BUYER_TITLE_INVALID")
-    return abbreviation + " «" + title + "»"
+    qualifier = " УК" if match.group("descriptor") else ""
+    return abbreviation + qualifier + " «" + title + "»"
+
+
+def _self_buyer(row):
+    """Use the first-party organizer only when it explicitly buys for itself."""
+    try:
+        url = row.get("url")
+        if _host(url, frozenset({"b2b-center.ru"})) not in {
+                "b2b-center.ru", "www.b2b-center.ru"}:
+            return ""
+        tender = re.fullmatch(r"/app/market-next/[a-z0-9-]+/tender-([0-9]{5,12})/?",
+                             urlsplit(url).path)
+        body = " ".join(row["excerpt"].split())
+        if not tender or not re.search(r"(?<!\d)№\s*" + tender[1] + r"(?!\d)", body):
+            return ""
+        match = PUBLIC_SELF_BUYER.search(body)
+        return _canonical_buyer_match(match) if match else ""
+    except (ResearchBlocked, ValueError, KeyError, AttributeError):
+        return ""
 
 
 def public_buyer_candidate(findings):
     """Public buyer's legal label, NOT independently verified FNS identity."""
     if not isinstance(findings, dict) or findings.get("status") != "PUBLIC_PAGES_INSPECTED":
         return ""
-    for row in (findings.get("pages") or [])[:3]:
+    pages = (findings.get("pages") or [])[:3]
+    for row in pages:
         if not isinstance(row, dict) or not isinstance(row.get("excerpt"), str):
             continue
         found = PUBLIC_BUYER_LABEL.search(" ".join(row["excerpt"].split()))
         if found:
             return _canonical_buyer_match(found)
-    return ""
+    return next((buyer for row in pages if (buyer := _self_buyer(row))), "")
+
+
+def _linked_b2b_buyer_inn(findings, buyer, client):
+    """Read the same organizer's linked public profile for a self-purchase."""
+    from .bitrix_1062_mapping import _is_valid_inn
+
+    for row in findings["pages"][:3]:
+        if _self_buyer(row) != buyer:
+            continue
+        url = row["url"]
+        hosts = frozenset({"b2b-center.ru"})
+        normalize = lambda text: " ".join(re.findall(r"(?iu)[а-яёa-z0-9]+", text.casefold()))
+        try:
+            page = _page(client, url, hosts)
+            if _self_buyer({"url": url, "excerpt": page["text"]}) != buyer:
+                return None
+            for href, label in page["links"]:
+                if normalize(label) != normalize(buyer):
+                    continue
+                profile = urljoin(url, href)
+                target = urlsplit(profile)
+                if (target.hostname != urlsplit(url).hostname or target.query
+                        or not re.fullmatch(r"/firms/[a-z0-9-]+/[0-9]+/?", target.path)):
+                    continue
+                text = _page(client, profile, hosts)["text"]
+                short = re.search(r"(?iu)краткое\s+наименование\s+(.{4,120}?)\s+полное\s+наименование", text)
+                if not short or normalize(short[1]) != normalize(buyer):
+                    return None
+                inn = re.search(r"(?iu)\bИНН\s*[:№]?\s*(\d{10}|\d{12})(?!\d)", text[short.end():short.end()+750])
+                if inn and _is_valid_inn(inn[1]):
+                    return {"inn": inn[1], "buyer_name": buyer, "public_source": profile,
+                            "fns_verified": False, "provenance": "PUBLIC_B2B_LINKED_BUYER_PROFILE"}
+                return None
+        except (ResearchBlocked, httpx.HTTPError, ValueError, KeyError, TypeError):
+            return None
+    return None
 
 
 def _public_company_self_declaration(client, buyer, known_pages, token, *, allow_extra_discovery=False):
@@ -395,11 +461,17 @@ def followup_public_buyer_research(findings, env, client, key):
         return findings
     if not isinstance(findings, dict) or findings.get("status") != "PUBLIC_PAGES_INSPECTED":
         return findings
-    previous = findings.get("independent_company_research")
-    if isinstance(previous, dict) and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY":
-        return findings
     buyer = public_buyer_candidate(findings)
     if not buyer:
+        return findings
+    previous = findings.get("independent_company_research")
+    linked = (None if published_buyer_inn_evidence(findings)
+              else _linked_b2b_buyer_inn(findings, buyer, client))
+    if linked:
+        return {**findings, "independent_company_research": {
+            **(previous if isinstance(previous, dict) else {}), "public_inn": linked,
+        }}
+    if isinstance(previous, dict) and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY":
         return findings
     from .serviceit_independent_company_research import independent_company_research
     try:

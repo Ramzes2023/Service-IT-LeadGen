@@ -57,3 +57,40 @@ def test_public_buyer_inn_is_source_cited_in_nine_ai_fields_not_claimed_fns():
     assert "не разрешать исходящий контакт" in card[PREFIX + "AI_FULL_REPORT"]
     assert all(len(value) <= (12000 if key == PREFIX + "AI_FULL_REPORT" else 4096)
                for key, value in card.items())
+
+
+def test_management_company_and_nested_legal_names():
+    source = {"status": "PUBLIC_PAGES_INSPECTED", "pages": [{
+        "url": "https://zakupki.kontur.ru/1234567_40",
+        "excerpt": "Заказчик Общество с ограниченной ответственностью "
+                   "Управляющая компания «Учебный холдинг» ИНН-КПП 1234567894-770701001",
+    }]}
+    assert b2b.public_buyer_candidate(source) == "ООО УК «Учебный холдинг»"
+    assert b2b.published_buyer_inn_evidence(source)["inn"] == "1234567894"
+    source["pages"][0]["excerpt"] = (
+        "Заказчик Акционерное общество «Издательство «Учебник» ИНН 1234567894"
+    )
+    assert b2b.public_buyer_candidate(source) == "АО «Издательство „Учебник“»"
+
+
+def test_only_explicit_first_party_self_purchase_uses_linked_organizer(monkeypatch):
+    import httpx
+
+    url = "https://www.b2b-center.ru/app/market-next/servers/tender-1234567/"
+    excerpt = '№ 1234567 Организатор АО "Учебник" Процедура проводится Для собственных нужд'
+    findings = {"status": "PUBLIC_PAGES_INSPECTED", "pages": [{"url": url, "excerpt": excerpt}]}
+    monkeypatch.setattr(b2b, "_page", lambda client, target, hosts: (
+        {"text": excerpt, "links": [("/firms/ao-uchebnik/1234/", 'АО "Учебник"')]}
+        if target == url else
+        {"text": 'Краткое наименование АО "Учебник" Полное наименование '
+                 'Акционерное общество "Учебник" ИНН 1234567894'}
+    ))
+    with httpx.Client() as client:
+        enriched = b2b.followup_public_buyer_research(
+            findings, {"SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED": "YES"}, client, "")
+    assert b2b.public_buyer_candidate(enriched) == "АО «Учебник»"
+    assert b2b.published_buyer_inn_evidence(enriched)["inn"] == "1234567894"
+    for wrong in ("№ 1234568", "Для нужд третьего лица"):
+        old = "№ 1234567" if "№" in wrong else "Для собственных нужд"
+        findings["pages"][0]["excerpt"] = excerpt.replace(old, wrong)
+        assert b2b.public_buyer_candidate(findings) == ""

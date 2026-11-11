@@ -35,6 +35,7 @@ _TITLE_ROOTS = (
     "аутсорс", "внедрен", "сопровожд", "оборудован", "интеграц",
     "закупк", "поставк", "обслуживан", "безопасност", "программ",
     "информацион", "поддержк", "тестирован", "процессор",
+    "лиценз", "аудит",
 )
 
 
@@ -90,12 +91,13 @@ def matched_excerpt(text: str, tender_id: str, subject: str = "") -> str:
     platform = "b2b-center" in head.casefold()
     procurement = any(x in head.casefold() for x in
                       ("запрос котировок", "запрос цен", "запрос предложений",
-                       "закупка", "тендер"))
+                       "закупка", "тендер", "квалификационный отбор"))
     for number in exact[:12]:
         prefix = text[max(0,number.start()-90):number.start()]
         number_labeled = re.search(
             r"(?iu)(?:номер\s+у\s+источника|закупка\s*(?:№\s*)?|"
             r"запрос\s+(?:цен|предложений|котировок)\s*№\s*|"
+            r"(?:предварительный\s+)?квалификационный\s+отбор\s*№\s*|"
             r"лот\s*№\s*)[:\s№-]*$", prefix) is not None
         # A category list can contain an unrelated purchase with this ID.
         # Relaxed title matching demands BOTH a labelled exact B2B number
@@ -520,7 +522,7 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
     if ((brave_unavailable or index is not None)
             and "zakupki.kontur.ru" in allow_mirrors
             and len(checked) < 8 and not candidates):
-        suffixes = ("4", "40", "459") if index is not None else ("4",)
+        suffixes = ("4", "40", "459", "458") if index is not None else ("4",)
         for suffix in suffixes:
             if len(checked) >= budget:
                 break

@@ -36,6 +36,7 @@ NEIGHBORS = (
 )
 FILES = ('serviceit_b2b_v19_backfill.py', 'serviceit_b2b_v20_versioned.py', 'serviceit_b2b_dossier_v11.py')
 PUBLIC_HTML_FILES = ("serviceit_public_evidence_research.py",)
+PUBLIC_BUYER_FILES = ("serviceit_vps_b2b_deep_research.py", "serviceit_b2b_public_mirrors.py")
 
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
@@ -414,6 +415,12 @@ if files == ['serviceit_public_evidence_research.py']:
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         url='https://www.b2b-center.ru/app/market-next/servers/tender-123456/'
         assert research._page(client,url,frozenset({'b2b-center.ru'}))['text']=='Закупка №123456'
+if 'serviceit_b2b_public_mirrors.py' in files:
+    from leadpilot.serviceit_vps_b2b_deep_research import published_buyer_inn_evidence
+    evidence=published_buyer_inn_evidence({'status':'PUBLIC_PAGES_INSPECTED','pages':[{
+        'url':'https://zakupki.kontur.ru/1234567_40',
+        'excerpt':'Заказчик Общество с ограниченной ответственностью Управляющая компания «Учебный холдинг» ИНН-КПП 1234567894'}]})
+    assert evidence['buyer_name']=='ООО УК «Учебный холдинг»' and evidence['inn']=='1234567894'
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
@@ -477,10 +484,12 @@ print('V37_OFFLINE_SMOKE_PASS')
 
 def main():
     args = sys.argv[1:]
-    public_html = args[:1] == ["--public-html"]
-    files = PUBLIC_HTML_FILES if public_html else FILES
-    release = "public-html" if public_html else "v37"
-    if public_html:
+    profiles = {
+        "--public-html": (PUBLIC_HTML_FILES, "public-html"),
+        "--public-buyer": (PUBLIC_BUYER_FILES, "public-buyer"),
+    }
+    files, release = profiles.get(args[0] if args else "", (FILES, "v37"))
+    if release != "v37":
         args = args[1:]
     n = len(files)
     if len(args) != 1 + 2*n:

@@ -48,7 +48,7 @@ jobs:
           install -d -m 0700 "$RUNNER_TEMP/v43"
           printf '%s\n' "$mode" > "$RUNNER_TEMP/v43/mode"
           script=ops/serviceit_vps_b2b_v43_inn_field.py
-          [[ "$(git hash-object "$script")" == df62d09355c94e5868368e42a9256c18fcf0229c ]]
+          [[ "$(git hash-object "$script")" == 4fcabbb43c8e72390609fa48a4e10e1edb6f01f7 ]]
           python -m py_compile "$script"
           names=(serviceit_enrichment_worker.py serviceit_b2b_v20_versioned.py
             serviceit_b2b_dossier_consistency_worker_v37.py serviceit_vps_worker.py)

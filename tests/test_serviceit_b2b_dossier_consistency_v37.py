@@ -116,14 +116,21 @@ def test_existing_different_inn_never_overwritten():
             **{INN:"7702077840"}),[])
 
 
-def test_other_existing_company_and_region_not_replaced():
+def test_wrong_organizer_company_fixed_only_for_exact_reviewed_card():
     item=_fixture("4674861",**{
         COMPANY:"ООО «ГРУППА КОМПАНИЙ ФСК»",REGION:"Московская область",
     })
     patch,meta=prepare(_notice("4674861"),item,[])
-    assert COMPANY not in patch and REGION not in patch
+    assert patch[COMPANY]=="ООО «Ева»"
+    assert REGION not in patch
     assert patch[INN]=="7708335695"
     assert "Заказчик: ООО «Ева»" in patch[REPORT]
+
+
+def test_arbitrary_existing_company_conflict_blocks_all_writes():
+    item=_fixture("4674861", **{COMPANY:"ООО «Незнакомый заказчик»"})
+    with pytest.raises(ReconcileBlocked,match="EXISTING_COMPANY_CONFLICT"):
+        prepare(_notice("4674861"),item,[])
 
 
 def test_no_unproven_index_quote_promoted():
@@ -146,7 +153,7 @@ def test_future_card_with_signed_verified_deadline_and_location():
     item=_fixture(tid)
     lines=[
         "ПРОЧИТАННЫЙ ИСТОЧНИК / DEADLINE: Окончание подачи 20.11.2026 18:30 [https://example.com/tenders/4679999]",
-        "ПРОЧИТАННЫЙ ИСТОЧНИК / LOCATION: Москва, ул. Нагатинская, д. 1 [https://example.com/tenders/4679999]",
+        "ПРОЧИТАННЫЙ ИСТОЧНИК / LOCATION: Место поставки: Москва, ул. Нагатинская, д. 1 [https://example.com/tenders/4679999]",
     ]
     patch,meta=prepare(notice,item,lines)
     assert meta["reviewed"] is False
@@ -184,3 +191,53 @@ def test_unverified_brave_index_section_preserved_as_unverified_not_misreported(
     assert patch[REPORT].index("06A  ")<patch[REPORT].index("07  ")
     assert "Индекс может содержать другие процедуры" in patch[REPORT]
     assert "Индекс может содержать другие процедуры" not in patch[PREFIX+"AI_SUMMARY"]
+
+
+def test_publication_date_not_promoted_to_deadline():
+    tid="4679999"
+    notice={"source":"B2B-Center","tender_id":tid,
+            "subject":"Сопровождение серверного оборудования",
+            "source_url":"https://www.b2b-center.ru/market/support/tender-"+tid+"/"}
+    item=_fixture(tid)
+    lines=[
+        "ПРОЧИТАННЫЙ ИСТОЧНИК / DEADLINE: Опубликовано 10.11.2026 14:00. Окончание подачи 20.11.2026 18:30 [https://example.com/tenders/4679999]"
+    ]
+    patch,meta=prepare(notice,item,lines)
+    assert "20.11.2026 18:30 МСК" in patch[REPORT]
+    assert "10.11.2026 14:00 МСК" not in patch[REPORT].split("07  ")[0]
+
+
+def test_legal_address_cannot_be_promoted_to_delivery():
+    tid="4679999"
+    notice={"source":"B2B-Center","tender_id":tid,
+            "subject":"Сопровождение серверного оборудования",
+            "source_url":"https://www.b2b-center.ru/market/support/tender-"+tid+"/"}
+    item=_fixture(tid)
+    lines=["ПРОЧИТАННЫЙ ИСТОЧНИК / LOCATION: Юридический адрес компании: Москва, ул. Ленина, 1 [https://example.com/tenders/4679999]"]
+    patch,meta=prepare(notice,item,lines)
+    assert patch is None and meta["status"]=="NO_ATTESTED_NEW_FACTS"
+
+
+def test_supplier_company_name_not_promoted_to_buyer():
+    tid="4679999"
+    notice={"source":"B2B-Center","tender_id":tid,
+            "subject":"Сопровождение серверного оборудования",
+            "source_url":"https://www.b2b-center.ru/market/support/tender-"+tid+"/"}
+    item=_fixture(tid)
+    lines=["ПРОЧИТАННЫЙ ИСТОЧНИК / BUYER: Организатор ООО «Поставщик», заказчик не указан [https://example.com/tenders/4679999]"]
+    patch,meta=prepare(notice,item,lines)
+    assert patch is None and meta["status"]=="NO_ATTESTED_NEW_FACTS"
+
+
+def test_verified_amount_removes_false_budget_gap():
+    tid="4679999"
+    notice={"source":"B2B-Center","tender_id":tid,
+            "subject":"Сопровождение серверного оборудования",
+            "source_url":"https://www.b2b-center.ru/market/support/tender-"+tid+"/"}
+    item=_fixture(tid)
+    lines=["ПРОЧИТАННЫЙ ИСТОЧНИК / BUDGET: Начальная цена закупки: 1 250 000 руб. с НДС [https://example.com/tenders/4679999]"]
+    patch,meta=prepare(notice,item,lines)
+    assert "Бюджет: Начальная цена закупки: 1 250 000 руб." in patch[REPORT]
+    before_gaps=patch[REPORT].split("06  ЧТО ЕЩЁ ТРЕБУЕТ ПОДТВЕРЖДЕНИЯ")[1].split("07  ")[0]
+    assert "• Начальная цена / бюджет" not in before_gaps
+    assert "не считать цену нулевой" in patch[REPORT]

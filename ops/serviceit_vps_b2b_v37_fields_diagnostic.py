@@ -9,7 +9,17 @@ import os,re,sys
 
 import httpx
 
-from leadpilot.serviceit_b2b_dossier_consistency_v37 import REVIEWED
+# Kept separate from V37 modules so this probe runs BEFORE deployment.
+REVIEWED = {
+    "4673971":{"buyer":"ПАО «Московская Биржа»",
+               "inn":"7702077840","region":"Москва"},
+    "4672802":{"buyer":"ПАО «Агрегат»",
+               "inn":"7401000191","region":"Челябинская область"},
+    "4674861":{"buyer":"ООО «Ева»",
+               "inn":"7708335695","region":"Москва"},
+    "4675475":{"buyer":"ПАО «Московский Кредитный Банк»",
+               "inn":"7734202860","region":"Москва"},
+}
 from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
 from leadpilot.serviceit_enrichment_worker import Rest,normalized,validate_identity
 from leadpilot.serviceit_vps_pg_queue import db,secret_file

@@ -37,8 +37,7 @@ def main():
     out("FIVE_MINUTE_LIVE", "YES" if live_permitted(env) and INTERVAL_SECONDS == 300 else "NO")
     out("TDI_ENABLED", env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED", "NO"))
     out("V19_ENABLED", exact_environment(env).get("SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED", "NO"))
-    from leadpilot.bitrix_metadata_audit import validate_webhook
-    from leadpilot.serviceit_vps_b2b_bridge import exact_duplicate
+    from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
     effective = exact_environment(env)
     out("DEEP_RESEARCH_ENABLED", env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO"))
     out("V35_RETRY_ENABLED", effective.get("SERVICEIT_VPS_B2B_TINYFISH_RETRY_ENABLED", "NO"))
@@ -46,7 +45,7 @@ def main():
     with db(env) as conn, conn.transaction(), httpx.Client(
             trust_env=False, follow_redirects=False, timeout=18) as client:
         conn.execute("SET TRANSACTION READ ONLY")
-        base = validate_webhook(secret_file(env, "SERVICEIT_BITRIX_WEBHOOK"))
+        rest = Rest(secret_file(env, "SERVICEIT_BITRIX_WEBHOOK"), client)
         for state, count in conn.execute(
             "SELECT state,count(*) FROM serviceit_vps_b2b_inbox GROUP BY state"
         ).fetchall():
@@ -62,10 +61,27 @@ def main():
             out(f"TENDER_{tid}_INBOX", row[0] if row else "NOT_RECEIVED")
             out(f"TENDER_{tid}_V11", row[2] if row else "NO_RECEIPT")
             try:
-                out(f"TENDER_{tid}_CRM_EXISTS", "YES" if exact_duplicate(client, base, source) else "NO")
+                signal = PREFIX + "SIGNAL_ID"
+                result = rest("crm.item.list", {
+                    "entityTypeId": 1062, "useOriginalUfNames": "Y",
+                    "filter": {"categoryId": 21, signal: source}, "start": 0,
+                })
+                candidates = result["items"]
+                assert isinstance(candidates, list) and len(candidates) < 50 and "next" not in result
+                for item in candidates:
+                    current = normalized(rest("crm.item.get", {
+                        "entityTypeId": 1062, "useOriginalUfNames": "Y", "id": item["id"],
+                    })["item"])
+                    validate_identity(current, item["id"])
+                    assert current[signal] == source
+                out(f"TENDER_{tid}_CRM_EXISTS", "YES" if candidates else "NO")
             except Exception:
                 out(f"TENDER_{tid}_CRM_EXISTS", "UNVERIFIED")
         out("CRM_WRITES", 0)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as error:
+        out("FAILURE_CLASS", type(error).__name__.upper())
+        raise SystemExit(2) from None

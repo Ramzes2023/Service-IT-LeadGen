@@ -71,12 +71,10 @@ def run(argv):
     wait_healthy=h["wait_healthy"]
     pending=h["pending_source_writes"]
     image_exists=h["present_image"]
-    expected_live=dict(zip(FILES,new_hashes))
-    expected_base={
-        FILES[0]: original_worker_hash,
-        FILES[1]:"MISSING",
-        FILES[2]:"MISSING",
-    }
+    # Existing V37 release runtime_shas() returns a positional tuple,
+    # not a name-to-hash dictionary. Compare the exact same data type.
+    expected_live=tuple(new_hashes)
+    expected_base=(original_worker_hash,"MISSING","MISSING")
     # No source staging or rebuilt code: two exact OCI images already exist.
     require(lock.parent.is_dir() and not lock.is_symlink(),
             "HOST_ACTIVATION_LOCK_INVALID")
@@ -134,7 +132,7 @@ print('BASELINE_SHA_OK')
                          "--cap-drop","ALL","--pids-limit","64",
                          "--memory","512m","--entrypoint","python",
                          BASELINE_TAG,"-B","-c",smoke,
-                         *FILES,*expected_base.values()],timeout=100)
+                         *FILES,*expected_base],timeout=100)
             require(result.stdout.strip()=="BASELINE_SHA_OK",
                     "BASELINE_IMAGE_OFFLINE_SHA_INVALID")
             paths=h["inspect_compose_paths"]()

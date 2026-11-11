@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed='9d02479900484f8d6ee95908cb409b8c2bc0d608'
+          reviewed='4804ecb93e04fafa2d0a36d35133d1b51003f4f2'
           git cat-file -e "$reviewed^{commit}"
           script=ops/serviceit_vps_b2b_v28_first_tendem_readonly.py
           git diff --quiet "$reviewed" HEAD -- "$script"

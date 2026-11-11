@@ -1,0 +1,93 @@
+name: ServiceIT B2B verified FOUR V15 rich public research Bitrix addendum guarded
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: serviceit-b2b-four-v15-oneuse
+  cancel-in-progress: false
+jobs:
+  backfill:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_FOUR_V15_PUBLIC_BACKFILL_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      REPO: "${{ github.repository }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin exact reviewed one-use historical writer source and SSH host
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e e64c4d71e94cc332b04c6560f989c1e184fdb369^{commit}
+          git diff --quiet e64c4d71e94cc332b04c6560f989c1e184fdb369 HEAD -- ops/serviceit_vps_b2b_crossportal_four_v15.py
+          # Verified source commits only: buyer/phone code #466 and full-page
+          # Kontur/Synapse/Tendem public detail #474, no unreviewed drift.
+          git cat-file -e '3df31e23b990ea043a48a1a159b25e1f494278e9^{commit}'
+          git cat-file -e '3ea732bb8200c8e45053f3ce012f580d102a0c69^{commit}'
+          git diff --quiet 3df31e23b990ea043a48a1a159b25e1f494278e9 HEAD -- leadpilot/serviceit_vps_b2b_deep_research.py
+          git diff --quiet 3ea732bb8200c8e45053f3ce012f580d102a0c69 HEAD -- leadpilot/serviceit_b2b_public_mirrors.py
+          python -m py_compile ops/serviceit_vps_b2b_crossportal_four_v15.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/four-v15"
+          {
+            sha256sum leadpilot/serviceit_vps_b2b_deep_research.py | cut -d' ' -f1
+            sha256sum leadpilot/serviceit_b2b_public_mirrors.py | cut -d' ' -f1
+          } > "$RUNNER_TEMP/four-v15/reviewed-shas"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/four-v15/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/four-v15/hosts"
+          chmod 0600 "$RUNNER_TEMP/four-v15/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/four-v15/hosts" >/dev/null
+      - name: One-use four-source research and full-nine-fields CRM safety receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reviewed < "$RUNNER_TEMP/four-v15/reviewed-shas"
+          [[ "${#reviewed[@]}" == 2 ]]
+          [[ "${reviewed[0]}" =~ ^[0-9a-f]{64}$ && "${reviewed[1]}" =~ ^[0-9a-f]{64}$ ]]
+          set +e
+          ssh -T -i "$RUNNER_TEMP/four-v15/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/four-v15/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - '${reviewed[0]}' '${reviewed[1]}'" \
+            < ops/serviceit_vps_b2b_crossportal_four_v15.py \
+            > "$RUNNER_TEMP/four-v15/status" 2>/dev/null
+          remote_rc=$?
+          set -e
+          grep -E '^B2B_PUBLIC_V15_([A-Z0-9_]{3,68})=(YES|NO|VERIFIED|NO_NEW_EVIDENCE|CONFLICT|UNCERTAIN|[0-9]{1,3})$' \
+            "$RUNNER_TEMP/four-v15/status" | head -60 || true
+          [[ "$remote_rc" == 0 ]]
+          grep -qx 'B2B_PUBLIC_V15_HISTORICAL_FOUR=4' "$RUNNER_TEMP/four-v15/status"
+          grep -qx 'B2B_PUBLIC_V15_SAFE_OUTCOME=YES' "$RUNNER_TEMP/four-v15/status"
+      - name: Post redacted fixed-status result to project issue
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/four-v15/status"
+          safe="$(grep -E '^B2B_PUBLIC_V15_([A-Z0-9_]{3,68})=(YES|NO|VERIFIED|NO_NEW_EVIDENCE|CONFLICT|UNCERTAIN|[0-9]{1,3})$' "$file" 2>/dev/null | head -60 || true)"
+          [[ -n "$safe" ]] || safe='B2B_PUBLIC_V15_READBACK_UNVERIFIED=YES'
+          body="$(printf 'Four original signed B2B cards: V15 additive newest-public detail beyond V14, preserving exact V14 snapshots, 9 AI fields and all previous verified evidence. Durable one-use 9-field write with three permitted narrative fields, exact readback and source citations. No new leads/score/tasks/stage/FNS/tender document changes. No customer outreach.\n\n%s\n\nAction https://github.com/%s/actions/runs/%s\n\nAny NO_NEW_EVIDENCE means no fresh public fact survived independent verification, not that the tender has no such data.' "$safe" "$REPO" "$GITHUB_RUN_ID")"
+          gh api "repos/$REPO/issues/368/comments" -X POST --raw-field "body=$body" >/dev/null || true

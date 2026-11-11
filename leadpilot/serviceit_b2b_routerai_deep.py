@@ -236,8 +236,10 @@ def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
         ("PAYMENT", r"(?iu)\bусловия\s+оплаты\s*[:：—-]\s*"
                     r"(?:отсрочка|оплата|предоплата|аванс)"
                     r"[^.;]{5,125}"),
+        # City/street abbreviations like "г.Москва ул. Новохохловская"
+        # contain dots; do not mistake them for an end-of-field marker.
         ("LOCATION", r"(?iu)\bусловия\s+поставки\s*[:：—-]\s*"
-                     r"[^.;]{8,115}"),
+                     r"[^\n]{8,90}"),
         ("EVALUATION", r"(?iu)\bпри\s+выборе\s+победителя\s+учитывается"
                        r"\s*[:：—-]\s*[^.;]{8,110}"),
         ("DOCUMENTS", r"(?iu)\bподгрузка\s+документации\s+к\s+заявке\s+"

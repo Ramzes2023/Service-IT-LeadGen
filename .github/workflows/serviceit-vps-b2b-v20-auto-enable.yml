@@ -1,0 +1,99 @@
+name: ServiceIT VPS B2B V20 owner-only 5-minute versioned evidence AUTO enable
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v20-live-flag-enable
+  cancel-in-progress: false
+jobs:
+  enable:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V20_AUTO_ENABLE_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin reviewed V20 flag-only script and secure host
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='b0173bf748cc240a37368ae19daf4949d7c52be8'
+          git cat-file -e "$reviewed^{commit}"
+          script=ops/serviceit_vps_b2b_v20_auto_enable.py
+          git diff --quiet "$reviewed" HEAD -- "$script"
+          python -m py_compile "$script"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v20-enable"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v20-enable/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v20-enable/hosts"
+          chmod 0600 "$RUNNER_TEMP/v20-enable/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v20-enable/hosts" >/dev/null
+          sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v20-enable/script-sha"
+          sha256sum leadpilot/serviceit_vps_worker.py | cut -d' ' -f1 > "$RUNNER_TEMP/v20-enable/worker-sha"
+          sha256sum leadpilot/serviceit_b2b_v20_versioned.py | cut -d' ' -f1 > "$RUNNER_TEMP/v20-enable/v20-sha"
+      - name: Stage attested no-CRM activation script only
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v20-enable/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-v20-enable-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v20-enable/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/v20-enable/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v20_auto_enable.py "$target:$stage/enable.py"
+      - name: Activate only V20 env flag with atomic compose pin and guarded rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v20-enable/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          sha="$(cat "$RUNNER_TEMP/v20-enable/script-sha")"
+          worker="$(cat "$RUNNER_TEMP/v20-enable/worker-sha")"
+          v20="$(cat "$RUNNER_TEMP/v20-enable/v20-sha")"
+          for s in "$sha" "$worker" "$v20"; do [[ "$s" =~ ^[a-f0-9]{64}$ ]]; done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$sha' '$worker' '$v20'"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v20-enable/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/v20-enable/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; worker="$3"; v20="$4"
+          for value in "$sha" "$worker" "$v20"; do [[ "$value" =~ ^[a-f0-9]{64}$ ]]; done
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          script="$HOME/serviceit/staging/b2b-v20-enable-$id/enable.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$worker" "$v20"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^V20_ENABLE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+               "$RUNNER_TEMP/v20-enable/status" | head -20 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V20_ENABLE_VPS_ACTIVE=YES' "$RUNNER_TEMP/v20-enable/status"
+          grep -qx 'V20_ENABLE_INSTALLER_CRM_WRITES=NO' "$RUNNER_TEMP/v20-enable/status"

@@ -90,7 +90,14 @@ def select_one(connection, *, preview=False):
             WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
               AND b.received_at < now()-interval '20 minutes'
               AND NOT EXISTS (
-                SELECT 1 FROM {TABLE} r WHERE r.card_id=b.card_id)
+                SELECT 1 FROM {TABLE} r
+                WHERE r.card_id=b.card_id AND (
+                  r.status NOT IN ('NO_NEW_EVIDENCE','INSUFFICIENT_CAPACITY')
+                  OR r.updated_at >= now()-interval '24 hours'
+                ))
+              -- A no-evidence result is NOT permanent completion. Retry only
+              -- after >=24h. Already VERIFIED/UNCERTAIN/CONFLICT receipts
+              -- remain immutable and can never be blindly re-applied.
               -- A prior unrelated AI summary write is allowed to remain
               -- unresolved; never touch or replay it. Skip only its card,
               -- so it cannot starve all following pending B2B dossiers.
@@ -213,7 +220,17 @@ def reserve(conn, card, source, before):
             cur.execute(f"""
                 INSERT INTO {TABLE}(card_id,source_hash,status,before_fields)
                 VALUES (%s,%s,'RESERVED',%s::jsonb)
-                ON CONFLICT(card_id) DO NOTHING RETURNING card_id
+                ON CONFLICT(card_id) DO UPDATE SET
+                status='RESERVED',
+                before_fields=EXCLUDED.before_fields,
+                source_hash=EXCLUDED.source_hash,
+                after_fields=NULL,salt=NULL,digest=NULL,
+                updated_at=now()
+              WHERE {TABLE}.source_hash=EXCLUDED.source_hash
+                AND {TABLE}.status IN (
+                  'NO_NEW_EVIDENCE','INSUFFICIENT_CAPACITY')
+                AND {TABLE}.updated_at < now()-interval '24 hours'
+              RETURNING card_id
             """,(card,hashlib.sha256(source.encode("ascii")).hexdigest(),
                   json.dumps(before,ensure_ascii=False)))
             return cur.fetchone() is not None

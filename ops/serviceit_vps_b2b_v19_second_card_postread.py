@@ -25,6 +25,7 @@ def say(label, yes):
 
 def run():
     env=dict(os.environ)
+    say("PERMANENT_V19_AUTOWRITE",env.get("SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED")=="YES")
     if not live_permitted(env):
         say("GATES",False)
         return 2

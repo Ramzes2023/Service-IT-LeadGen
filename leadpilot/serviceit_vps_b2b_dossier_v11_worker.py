@@ -196,7 +196,8 @@ def worker_once(env, client, connection, *, preview=False):
             from .serviceit_vps_worker import exact_environment
             exact = exact_environment(env)
             try:
-                findings = source_findings(first, notice, exact, client)
+                findings = source_findings(first, notice, exact, client,
+                                           enable_v18=True)
             except Exception:
                 findings = {"status": "PUBLIC_SOURCE_UNVERIFIED", "pages": [],
                             "checked_at": datetime.now(timezone.utc).isoformat()}

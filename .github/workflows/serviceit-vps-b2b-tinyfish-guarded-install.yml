@@ -1,0 +1,144 @@
+name: ServiceIT V21 TinyFish free source guarded coordinator-only mount OFF
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-vps-five-minute-coordinator-image-change
+  cancel-in-progress: false
+jobs:
+  release:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 368 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_TINYFISH_GUARDED_OFF_INSTALL_368'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin reviewed source and pre-V21 old source; verify SSH host
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='1624969c138ee81ad9c4f3cc48a2a33c287951f3'
+          old='a815912cd575e18510696e9c98d4053eb0feab3c'
+          git cat-file -e "$reviewed^{commit}"
+          git cat-file -e "$old^{commit}"
+          names=(
+            serviceit_b2b_free_public_fallback.py
+            serviceit_b2b_remote_public_fetch.py
+            serviceit_b2b_public_fact_extractor.py
+            serviceit_vps_b2b_deep_research.py
+          )
+          install -d -m 0700 "$RUNNER_TEMP/tinyfish-off-install"
+          : > "$RUNNER_TEMP/tinyfish-off-install/new"
+          : > "$RUNNER_TEMP/tinyfish-off-install/old"
+          for name in "${names[@]}"; do
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 \
+              >> "$RUNNER_TEMP/tinyfish-off-install/new"
+            if [[ "$name" == serviceit_vps_b2b_deep_research.py ]]; then
+              git show "$old:leadpilot/$name" | sha256sum | cut -d' ' -f1 \
+                >> "$RUNNER_TEMP/tinyfish-off-install/old"
+            else
+              printf 'MISSING\n' >> "$RUNNER_TEMP/tinyfish-off-install/old"
+            fi
+          done
+          script=ops/serviceit_vps_b2b_tinyfish_guarded_install.py
+          python -m py_compile "$script"
+          sha256sum "$script" | cut -d' ' -f1 \
+            > "$RUNNER_TEMP/tinyfish-off-install/scriptsha"
+          [[ "$(wc -l < "$RUNNER_TEMP/tinyfish-off-install/new")" == 4 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/tinyfish-off-install/old")" == 4 ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/tinyfish-off-install/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/tinyfish-off-install/hosts"
+          chmod 0600 "$RUNNER_TEMP/tinyfish-off-install/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/tinyfish-off-install/hosts" >/dev/null
+
+      - name: Transfer only SHA-attested four code files and guarded installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+             -o UserKnownHostsFile="$RUNNER_TEMP/tinyfish-off-install/hosts"
+             -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/tinyfish-v21-fourfile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/tinyfish-off-install/id" "${opts[@]}" \
+            "$target" "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_b2b_free_public_fallback.py \
+              serviceit_b2b_remote_public_fetch.py \
+              serviceit_b2b_public_fact_extractor.py \
+              serviceit_vps_b2b_deep_research.py; do
+            scp -i "$RUNNER_TEMP/tinyfish-off-install/id" "${opts[@]}" \
+              "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$RUNNER_TEMP/tinyfish-off-install/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_tinyfish_guarded_install.py "$target:$stage/activate.py"
+
+      - name: Check current live SHA, in-flight PG intent, offline build and key mount, rollback on failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+             -o UserKnownHostsFile="$RUNNER_TEMP/tinyfish-off-install/hosts"
+             -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t new < "$RUNNER_TEMP/tinyfish-off-install/new"
+          mapfile -t old < "$RUNNER_TEMP/tinyfish-off-install/old"
+          [[ "${#new[@]}" == 4 && "${#old[@]}" == 4 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/tinyfish-off-install/scriptsha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          args=()
+          for x in "${new[@]}" "${old[@]}"; do
+            [[ "$x" == MISSING || "$x" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$x'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${args[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/tinyfish-off-install/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/tinyfish-off-install/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; scriptsha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$scriptsha" =~ ^[a-f0-9]{64}$ && "$#" == 8 ]]
+          for x in "$@"; do [[ "$x" == MISSING || "$x" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/tinyfish-v21-fourfile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$scriptsha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^TINYFISH_INSTALL_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/tinyfish-off-install/status" | head -30 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'TINYFISH_INSTALL_VPS_LIVE_ENABLED=YES' \
+            "$RUNNER_TEMP/tinyfish-off-install/status"
+          grep -qx 'TINYFISH_INSTALL_KEY_MOUNT=YES' \
+            "$RUNNER_TEMP/tinyfish-off-install/status"
+          grep -qx 'TINYFISH_INSTALL_FETCH_ENABLED=NO' \
+            "$RUNNER_TEMP/tinyfish-off-install/status"
+          grep -qx 'TINYFISH_INSTALL_CRM_WRITES_BY_INSTALLER=NO' \
+            "$RUNNER_TEMP/tinyfish-off-install/status"
+          grep -qx 'TINYFISH_INSTALL_ROLLBACK=NOT_NEEDED' \
+            "$RUNNER_TEMP/tinyfish-off-install/status"

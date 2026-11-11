@@ -108,7 +108,11 @@ def _safe_url(s):
     if not isinstance(s, str) or len(s) > 800:
         return False
     p = urlsplit(s)
-    return p.scheme == "https" and bool(p.hostname) and not p.username and not p.password
+    return (p.scheme == "https" and bool(p.hostname)
+            and not p.username and not p.password
+            and p.hostname not in ("localhost", "127.0.0.1", "::1")
+            and len(p.query) <= 100
+            and re.search(r"(?i)(token|password|secret|api_key|signature)=", p.query) is None)
 
 
 def _named_manager(text):
@@ -151,32 +155,52 @@ def _record_from_verified(notice, item, verified):
     record = {"reviewed": False, "buyer": "", "inn": "",
               "deadline": "", "delivery": "", "subject": _text(notice["subject"]),
               "scope": _text(notice["subject"]), "procedure": "",
-              "terms": "", "organizer": "", "documents": "",
+              "terms": "", "organizer": "", "documents": "", "budget": "",
               "region": "", "tender_url": "", "platform_url": notice["source_url"],
               "legal_url": ""}
     if "BUYER" in parsed:
         quote, url = parsed["BUYER"]
         # Do not elevate arbitrary words in a generic quote to a legal entity.
-        if re.search(r"(?iu)\b(?:ПАО|АО|ООО|ОАО)\b", quote):
-            record["buyer"] = _text(quote, 150) + " (из цитаты источника)"
+        legal = re.search(
+            r"(?iu)\b(?:заказчик|покупатель)\s*[:—–-]\s*"
+            r"((?:ПАО|АО|ООО|ОАО)\s+[^,;:]{3,100})", quote)
+        if legal:
+            record["buyer"] = _text(legal.group(1), 140) + " (по цитате источника)"
             record["tender_url"] = url
     if "DEADLINE" in parsed:
         quote, url = parsed["DEADLINE"]
-        date = DAY.search(quote)
-        if date:
-            record["deadline"] = date.group(1)+" "+date.group(2)+" МСК (цитата источника)"
-            record["tender_url"] = record["tender_url"] or url
+        # A cited page may mention its publication date as well as deadline;
+        # take only a date explicitly adjacent to a submission-deadline label.
+        for date in DAY.finditer(quote):
+            context = quote[max(0, date.start()-65):date.start()]
+            if re.search(
+                    r"(?iu)(?:срок\s+подачи|при[её]м\s+заяв|"
+                    r"окончани[ея]|дедлайн|заявки\s+до)", context):
+                record["deadline"] = (
+                    date.group(1)+" "+date.group(2)+" МСК (цитата источника)")
+                record["tender_url"] = record["tender_url"] or url
+                break
     if "LOCATION" in parsed:
         quote, url = parsed["LOCATION"]
-        record["delivery"] = _text(quote, 200) + " (цитата источника)"
-        record["tender_url"] = record["tender_url"] or url
+        if (re.search(r"(?iu)(?:место\s+поставки|адрес\s+поставки|"
+                      r"место\s+исполнения|адрес\s+доставки)", quote)
+                and not re.search(r"(?iu)юридическ\w*\s+адрес", quote)):
+            record["delivery"] = _text(quote, 200) + " (цитата источника)"
+            record["tender_url"] = record["tender_url"] or url
     if "PROCEDURE" in parsed:
         record["procedure"] = _text(parsed["PROCEDURE"][0], 135)
     if "ELIGIBILITY" in parsed:
         record["terms"] = _text(parsed["ELIGIBILITY"][0], 180)
     if "DOCUMENTS" in parsed:
         record["documents"] = _text(parsed["DOCUMENTS"][0], 180)
-    if not any((record["buyer"],record["deadline"],record["delivery"])):
+    if "BUDGET" in parsed:
+        amount, ref = parsed["BUDGET"]
+        if (re.search(r"(?iu)(?:начальн\w*\s+цен|стоимост|бюджет|сумм\w*\s+закупки)", amount)
+                and re.search(r"\d", amount)
+                and not re.search(r"(?iu)(?:не\s+указан|не\s+раскрыт|не\s+задан)", amount)):
+            record["budget"] = _text(amount, 175) + " (цитата источника)"
+            record["tender_url"] = record["tender_url"] or ref
+    if not any((record["buyer"],record["deadline"],record["delivery"],record["budget"])):
         return None
     return record
 
@@ -205,6 +229,7 @@ def reviewed_or_verified(notice, item, verified_lines):
         _need(sum(int(w in original_subject) for w in words[:8]) >= 1,
               "REVIEWED_TENDER_SUBJECT_MISMATCH")
         record["reviewed"] = True
+        record.setdefault("budget", "")
         return record
     return _record_from_verified(notice, item, verified_lines)
 
@@ -241,7 +266,9 @@ def prepare(notice, item, verified_lines):
                 if inn else "не подтверждён")
     deadline = record["deadline"] or "не установлен по проверенным источникам"
     delivery = record["delivery"] or "не установлено"
-    budget = "Не раскрыт в доступной публикации" if record["reviewed"] else "не установлен"
+    budget = (record.get("budget") or
+              ("Не раскрыт в доступной публикации" if record["reviewed"]
+               else "не установлен"))
     unknown = ["Актуальность ЕГРЮЛ / ФНС-МСП и право контакта"]
     if not record["buyer"]:
         unknown.append("Юридически идентифицированный заказчик")
@@ -251,8 +278,9 @@ def prepare(notice, item, verified_lines):
         unknown.append("Срок подачи")
     if not record["delivery"]:
         unknown.append("Место исполнения")
-    unknown += ["Начальная цена / бюджет",
-                "Полная документация, технические условия и допуск",
+    if not record.get("budget"):
+        unknown.append("Начальная цена / бюджет")
+    unknown += ["Полная документация, технические условия и допуск",
                 "Согласование контакта, проверка CRM-дублей и STOP-листа"]
     sections = [
         f"СЕРВИС ИТ | V37 · СОГЛАСОВАННЫЙ ПАСПОРТ | ТЕНДЕР №{tid}",
@@ -348,8 +376,25 @@ def prepare(notice, item, verified_lines):
                 patch[key] = value
             elif prior and key == INN and prior != value:
                 raise ReconcileBlocked("EXISTING_INN_CONFLICT_MANUAL_REVIEW")
-            # Other populated company/region fields are intentionally left
-            # intact. A non-empty different legal name needs human review.
+            elif prior and key == COMPANY:
+                normal = lambda val: re.sub(r"[^а-яa-z0-9]", "", val.casefold())
+                approved_organizer_aliases = {
+                    "4674861": (
+                        "ООО «Группа компаний ФСК»",
+                        "ООО «ГК ФСК»",
+                    )
+                }
+                if normal(prior) == normal(value):
+                    continue
+                aliases = approved_organizer_aliases.get(tid, ())
+                if any(normal(prior) == normal(alias) for alias in aliases):
+                    # The old field mistakenly named the organizer as buyer.
+                    # Only this reviewed exact tender supports that correction.
+                    patch[COMPANY] = value
+                else:
+                    raise ReconcileBlocked("EXISTING_COMPANY_CONFLICT_MANUAL_REVIEW")
+            # Non-empty region stays untouched; it may be a manager-assigned
+            # service region rather than the buyer's registered address.
     if any(key not in AI_FIELDS | {COMPANY,INN,REGION} for key in patch):
         raise ReconcileBlocked("DISALLOWED_CRM_FIELD")
     if len(patch[REPORT])>MAX_REPORT or any(len(v)>MAX_TEXT for k,v in patch.items()

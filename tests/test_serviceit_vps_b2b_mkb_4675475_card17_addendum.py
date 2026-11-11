@@ -55,7 +55,7 @@ def test_registered_owner_oneuse_workflow_no_secret_log_or_bypass():
     s=FLOW.read_text("utf8")
     assert "  mkb_4675475_oneuse_addendum:\n" in s
     assert "SERVICEIT_B2B_MKB_4675475_CARD17_VERIFIED_ADDENDUM_368" in s
-    assert s.count("github.event.issue.number == 368")==5
+    assert s.count("github.event.issue.number == 368")==6
     assert "github.actor == 'Ramzes2023'" in s
     assert "github.event.comment.user.login == 'Ramzes2023'" in s
     assert "!github.event.issue.pull_request" in s

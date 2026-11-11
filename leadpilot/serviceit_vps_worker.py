@@ -222,7 +222,18 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
                 v19 = backfill_once(exact_env, client, connection)
             except Exception:
                 v19 = {"status": "B2B_V19_ADDITIVE_CHECK_FAILED", "crm_writes": 0}
+        # V20 adds immutable sequential receipts only for V19-VERIFIED cards.
+        # Server flag is OFF by default. It uses the SAME V11 advisory lock,
+        # never resets V19 VERIFIED and never changes commercial CRM fields.
+        v20 = {"status": "B2B_V20_VERSIONED_DISABLED", "crm_writes": 0}
+        if exact_env.get("SERVICEIT_VPS_B2B_V20_VERSIONED_ENABLED", "NO") == "YES":
+            try:
+                from .serviceit_b2b_v20_versioned import run_once as v20_once
+                v20 = v20_once(exact_env, client, connection)
+            except Exception:
+                v20 = {"status": "B2B_V20_VERSIONED_CHECK_FAILED", "crm_writes": 0}
         return {
+            "b2b_v20_versioned": v20,
             "b2b_v19_additive": v19,
             "b2b_tender_documents": tender_docs,
             "b2b_dossier_v11": dossier,

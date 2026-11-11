@@ -1,0 +1,127 @@
+name: ServiceIT VPS B2B V20 OFF-by-default versioned evidence module guarded install
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v20-two-file-source-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V20_GUARDED_INSTALL_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin exact V19 source modules and reviewed rollback script
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='e8fd8fac40266d76187ac38817bb8ff5a4158d59'
+          git cat-file -e "$reviewed^{commit}"
+          names=(serviceit_vps_worker.py serviceit_b2b_v20_versioned.py)
+          for name in "${names[@]}"; do
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+          done
+          script=ops/serviceit_vps_b2b_v20_guarded_install.py
+          git diff --quiet "$reviewed" HEAD -- "$script"
+          python -m py_compile "$script"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          # Exact baseline already independently audited live in PR #505.
+          # Old worker code is not reconstructed from current git HEAD.
+          base='1b294a2fbab403e1fefcda971adc85011e475735'
+          git cat-file -e "$base^{commit}"
+          git show "$base:leadpilot/serviceit_vps_worker.py" > "$RUNNER_TEMP/old_worker_reviewed.py"
+          python -m py_compile "$RUNNER_TEMP/old_worker_reviewed.py"
+          install -d -m 0700 "$RUNNER_TEMP/v20-release"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v20-release/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v20-release/hosts"
+          chmod 0600 "$RUNNER_TEMP/v20-release/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v20-release/hosts" >/dev/null
+          : > "$RUNNER_TEMP/v20-release/shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v20-release/shas"
+          done
+          sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v20-release/script-sha"
+          sha256sum "$RUNNER_TEMP/old_worker_reviewed.py" | cut -d' ' -f1 > "$RUNNER_TEMP/v20-release/old-worker-sha"
+          [[ "$(wc -l < "$RUNNER_TEMP/v20-release/shas")" == 2 ]]
+      - name: Transfer only attested modules and installer to locked VPS stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v20-release/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-v20-twofile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v20-release/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_vps_worker.py serviceit_b2b_v20_versioned.py; do
+            scp -i "$RUNNER_TEMP/v20-release/id" "${opts[@]}" \
+              "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$RUNNER_TEMP/v20-release/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v20_guarded_install.py "$target:$stage/activate.py"
+          scp -i "$RUNNER_TEMP/v20-release/id" "${opts[@]}" \
+            "$RUNNER_TEMP/old_worker_reviewed.py" "$target:$stage/old_worker_reviewed.py"
+      - name: Validate source SHA, build offline and safely replace ONLY coordinator
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v20-release/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/v20-release/shas"
+          [[ "${#shas[@]}" == 2 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/v20-release/script-sha")"
+          oldsha="$(cat "$RUNNER_TEMP/v20-release/old-worker-sha")"
+          [[ "$oldsha" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          checked=()
+          for value in "${shas[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$value'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' '$oldsha' ${checked[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v20-release/id" "${opts[@]}" \
+            "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/v20-release/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; old="$3"; shift 3
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$old" =~ ^[a-f0-9]{64}$ && "$#" == 2 ]]
+          for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-v20-twofile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$old" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^V20_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v20-release/status" | head -30 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V20_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v20-release/status"
+          grep -qx 'V20_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v20-release/status"

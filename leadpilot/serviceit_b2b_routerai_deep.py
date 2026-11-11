@@ -211,6 +211,86 @@ def validate_inference(response: dict, docs: list[dict]) -> dict:
             "model_verified_facts": model_verified_facts}
 
 
+def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
+    """Verbatim structured fields on a *fetched* B2B-Center tender detail.
+
+    B2B has distinct layouts: legacy /market/.../tender-ID/ and newer
+    /app/market-next/.../tender-ID/. Their "Организатор" is NOT
+    automatically a verified buyer; registration gates are NOT eligibility
+    conditions. This reader never takes indexed excerpts or email links.
+    """
+    from urllib.parse import urlsplit
+    from .serviceit_public_evidence_research import _host, ResearchBlocked
+
+    fields = (
+        ("OTHER", r"(?iu)\b(?:предварительный\s+квалификационный\s+отбор|"
+                  r"запрос\s+предложений|запрос\s+цен)\s*№\s*{id}(?!\d)"),
+        ("DEADLINE", r"(?iu)\b(?:актуально\s+до|дата\s+окончания\s+подачи\s+"
+                     r"заявок|окончание\s+при[её]ма\s+заявок)\s*[:：—-]?\s*"
+                     r"\d{1,2}[./]\d{1,2}[./]\d{4}\s+\d{1,2}:\d{2}"),
+        ("BUDGET", r"(?iu)\b(?:общая\s+стоимость\s+закупки|общая\s+сумма\s+"
+                   r"закупки)\s*[:：—-]?\s*(?:без\s+указания\s+цены|"
+                   r"не\s+указана(?:,\s*₽)?|сумма\s+не\s+задана)"),
+        ("OTHER", r"(?iu)\bорганизатор\s*[:：—-]?\s*"
+                  r"(?:ПАО|ООО|АО|ОАО|ЗАО)\s*[«\"][^»\"]{3,100}[»\"]"),
+        ("PAYMENT", r"(?iu)\bусловия\s+оплаты\s*[:：—-]\s*"
+                    r"(?:отсрочка|оплата|предоплата|аванс)"
+                    r"[^.;]{5,125}"),
+        ("LOCATION", r"(?iu)\bусловия\s+поставки\s*[:：—-]\s*"
+                     r"[^.;]{8,115}"),
+        ("EVALUATION", r"(?iu)\bпри\s+выборе\s+победителя\s+учитывается"
+                       r"\s*[:：—-]\s*[^.;]{8,110}"),
+        ("DOCUMENTS", r"(?iu)\bподгрузка\s+документации\s+к\s+заявке\s+"
+                      r"обязательна.{0,150}?\bда\b"),
+        ("OTHER", r"(?iu)\bдоступно\s+зарегистрированным\s+"
+                  r"пользователям\s*[:：—-]?\s*"
+                  r"(?:для\s+просмотра\s+)?зарегистрируйтесь"),
+        ("SUBMISSION", r"(?iu)\bпредложения\s+участников\s+подаются\s+"
+                       r"в\s+форме\s+электронного\s+документа"),
+    )
+    out = []
+    for doc in docs[:MAX_PAGES]:
+        if not isinstance(doc, dict):
+            continue
+        url, text = doc.get("url"), doc.get("text")
+        if type(url) is not str or type(text) is not str:
+            continue
+        try:
+            _host(url, frozenset(("b2b-center.ru",)))
+            match = re.search(r"/tender-(\d{5,12})(?:/|$)", urlsplit(url).path)
+            if match is None:
+                continue
+            tid = match.group(1)
+            if re.search(r"(?<!\d)" + tid + r"(?!\d)", text) is None:
+                continue
+        except (ResearchBlocked, ValueError, TypeError):
+            continue
+        seen = set()
+        for category, raw in fields:
+            pattern = raw.replace("{id}", re.escape(tid))
+            found = re.search(pattern, text)
+            if not found:
+                continue
+            quote = found.group(0).strip(" .:;,-")[:220]
+            try:
+                plain_quote = _must_plain(quote, 220)
+            except DeepEvidenceError:
+                continue
+            if (not 12 <= len(plain_quote) <= 220 or plain_quote not in text
+                    or re.search(r"@|https?://|(?<!\d)\d{10,12}(?!\d)",
+                                 plain_quote, re.I)
+                    or (category, plain_quote) in seen):
+                continue
+            seen.add((category, plain_quote))
+            out.append({"source_id":doc["source_id"],"url":url,
+                        "quote":plain_quote,"category":category,
+                        "finding":"Дословная надпись первичной страницы B2B-Center; "
+                                  "организатор не равен проверенному заказчику"})
+            if len(out)>=12:
+                return out
+    return out
+
+
 def extract_source_facts(docs: list[dict]) -> list[dict]:
     """Deterministic verbatim snippets; safe even when RouterAI JSON is bad.
 
@@ -233,8 +313,10 @@ def extract_source_facts(docs: list[dict]) -> list[dict]:
         ("EVALUATION", r"(?i)(?:критерии оценки|критерии отбора|оценка заявок)"),
         ("LOCATION", r"(?i)(?:регион|удалённо|офис\s*\(|область|москва)"),
     )
-    facts = []
-    seen = set()
+    # Explicit B2B fields are more useful than generic site-menu phrases.
+    # Prioritize these verified primary-page labels within the 16-fact cap.
+    facts = b2b_primary_detail_facts(docs)
+    seen = {(row["source_id"],row["quote"]) for row in facts}
     for doc in docs[:MAX_PAGES]:
         text = doc.get("text", "")
         if type(text) is not str:

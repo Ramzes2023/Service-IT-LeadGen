@@ -170,3 +170,17 @@ def test_unusual_report_does_not_overwrite_original():
     item=_fixture("4675475",**{REPORT:"Ручное нестандартное досье"})
     patch,meta=prepare(_notice("4675475"),item,[])
     assert patch is None and meta["status"]=="NONSTANDARD_REPORT_MANUAL_REVIEW"
+
+
+def test_unverified_brave_index_section_preserved_as_unverified_not_misreported():
+    item=_fixture("4675475")
+    item[REPORT]=item[REPORT].replace(
+        "07  ДОСЛОВНЫЕ ФРАГМЕНТЫ И ССЫЛКИ",
+        "06A  ДОПОЛНИТЕЛЬНЫЕ НАХОДКИ BRAVE — НЕ ПРОВЕРЕНЫ\n"
+        "Индекс может содержать другие процедуры. Не переносить в поля.\n\n"
+        "07  ДОСЛОВНЫЕ ФРАГМЕНТЫ И ССЫЛКИ")
+    patch,_=prepare(_notice("4675475"),item,[])
+    assert "06A  ДОПОЛНИТЕЛЬНЫЕ НАХОДКИ BRAVE" in patch[REPORT]
+    assert patch[REPORT].index("06A  ")<patch[REPORT].index("07  ")
+    assert "Индекс может содержать другие процедуры" in patch[REPORT]
+    assert "Индекс может содержать другие процедуры" not in patch[PREFIX+"AI_SUMMARY"]

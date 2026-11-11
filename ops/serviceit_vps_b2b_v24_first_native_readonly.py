@@ -22,7 +22,8 @@ from leadpilot.bitrix_metadata_audit import validate_webhook
 FILES=("serviceit_vps_native_fence.py","serviceit_vps_worker.py",
        "serviceit_b2b_v19_backfill.py")
 ALLOWED=frozenset(("EXACT_TARGET_READBACK","UNCERTAIN_REMAINS",
-                   "ALREADY_FENCED_NO_RETRY","READBACK_ERROR"))
+                   "ALREADY_FENCED_NO_RETRY","READBACK_ERROR",
+                   "LEGACY_NAMESPACE_UNKNOWN"))
 
 def emit(key,value):
     assert re.fullmatch(r"[A-Z0-9_]{3,75}",key)
@@ -66,19 +67,27 @@ def main():
           with httpx.Client(trust_env=False,follow_redirects=False) as client:
             rest=Rest(webhook,client)
             for i,(namespace,status,nfields,salt,digest,age) in enumerate(rows[:8],1):
-              assert namespace in NATIVE_NAMESPACES
-              emit("ROW_"+str(i)+"_NAMESPACE",namespace)
+              # Legacy receipts may predate the current strict native
+              # namespace allowlist. Reveal only a bounded uppercase marker
+              # and never try to mutate or reconcile an unknown writer.
+              safe_ns=re.sub(r"[^A-Z0-9_]", "_",str(namespace))[:48]
+              emit("ROW_"+str(i)+"_NAMESPACE",safe_ns)
+              known=namespace in NATIVE_NAMESPACES
+              emit("ROW_"+str(i)+"_RECOGNIZED","YES" if known else "NO")
               emit("ROW_"+str(i)+"_STATUS",status)
               emit("ROW_"+str(i)+"_FIELD_COUNT",min(99,int(nfields or 0)))
               emit("ROW_"+str(i)+"_DIGEST_READY",
                    "YES" if salt and digest else "NO")
               emit("ROW_"+str(i)+"_OLDER_60MIN",
                    "YES" if float(age)>60 else "NO")
-              try:
-                  result=PostgresNativeFence(
-                      conn,namespace=namespace).reconcile(card,rest)
-              except Exception:
-                  result="READBACK_ERROR"
+              if not known:
+                  result="LEGACY_NAMESPACE_UNKNOWN"
+              else:
+                  try:
+                      result=PostgresNativeFence(
+                          conn,namespace=namespace).reconcile(card,rest)
+                  except Exception:
+                      result="READBACK_ERROR"
               assert result in ALLOWED
               emit("ROW_"+str(i)+"_RECONCILE",result)
     emit("CRM_WRITES","NO")

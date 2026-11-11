@@ -85,6 +85,6 @@ jobs:
           grep -E '^V19_REAL_FOUR_[A-Z0-9_]{3,62}=(YES|NO|[0-9]{1,3}|[A-Z0-9_]{5,75})$' \
             "$RUNNER_TEMP/v19-four/status" | head -45 || true
           [[ "$rc" == 0 ]]
-          grep -qx 'V19_REAL_FOUR_LIVE_SHA=YES' "$RUNNER_TEMP/v19-four/status"
+          grep -qx 'V19_REAL_FOUR_EXACT_FOUR_MODULE_SHAS=YES' "$RUNNER_TEMP/v19-four/status"
           grep -qx 'V19_REAL_FOUR_PREVIEWED=4' "$RUNNER_TEMP/v19-four/status"
           grep -qx 'V19_REAL_FOUR_CRM_WRITES=0' "$RUNNER_TEMP/v19-four/status"

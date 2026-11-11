@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           source_script=ops/serviceit_vps_b2b_v37_consistency_emergency_rollback.py
-          [[ "$(git hash-object "$source_script")" == ccb3543bd4121c8a82be544146ae3f6d4513d6c8 ]]
+          [[ "$(git hash-object "$source_script")" == 8be8fdc62ffcea6dad25534f03c9b1e125704689 ]]
           [[ "$(git hash-object ops/serviceit_vps_b2b_v37_consistency_release.py)" == 9da0f8922872c20d6c3f76dee8ffa0d19b5047c7 ]]
           python -m py_compile "$source_script"
           [[ "$(git hash-object ops/serviceit_vps_b2b_v37_uncertain_readonly.py)" == 9b645dcf548c3894e9284be0a5baceade4d2239c ]]

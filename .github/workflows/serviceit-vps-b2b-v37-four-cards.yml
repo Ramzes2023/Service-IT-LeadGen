@@ -1,0 +1,104 @@
+name: ServiceIT V37 four signed B2B cards passport preview apply readback
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v37-four-cards-exclusive
+  cancel-in-progress: false
+jobs:
+  four-cards:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      (
+        github.event.comment.body == 'SERVICEIT_V37_FOUR_PASSPORT_PREVIEW_489' ||
+        github.event.comment.body == 'SERVICEIT_V37_FOUR_PASSPORT_APPLY_489' ||
+        github.event.comment.body == 'SERVICEIT_V37_FOUR_PASSPORT_READBACK_489'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+      COMMAND: "${{ github.event.comment.body }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Attest exact V37 source, choose fixed owner command
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$COMMAND" in
+            SERVICEIT_V37_FOUR_PASSPORT_PREVIEW_489) mode=preview ;;
+            SERVICEIT_V37_FOUR_PASSPORT_APPLY_489) mode=apply ;;
+            SERVICEIT_V37_FOUR_PASSPORT_READBACK_489) mode=readback ;;
+            *) exit 2 ;;
+          esac
+          install -d -m 0700 "$RUNNER_TEMP/v37-four"
+          printf '%s\n' "$mode" > "$RUNNER_TEMP/v37-four/mode"
+          names=(serviceit_vps_worker.py
+            serviceit_b2b_dossier_consistency_v37.py
+            serviceit_b2b_dossier_consistency_worker_v37.py)
+          blobs=(5e240eb920d6b33880303fa08c84699bcd4d19dd
+            e3a401240a085bd36b1a05df1d298f504929f598
+            9bacd24eec860598fcf56ddb291c968e256092c5)
+          : > "$RUNNER_TEMP/v37-four/shas"
+          for i in "${!names[@]}"; do
+            f="leadpilot/${names[$i]}"
+            [[ "$(git hash-object "$f")" == "${blobs[$i]}" ]]
+            python -m py_compile "$f"
+            sha256sum "$f" | cut -d' ' -f1 >> "$RUNNER_TEMP/v37-four/shas"
+          done
+          python -m py_compile ops/serviceit_vps_b2b_v37_four.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v37-four/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v37-four/hosts"
+          chmod 0600 "$RUNNER_TEMP/v37-four/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v37-four/hosts" >/dev/null
+      - name: Signed four-card safe operation
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v37-four/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/v37-four/shas"
+          [[ "${#shas[@]}" == 3 ]]
+          checked=()
+          for v in "${shas[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$v'")
+          done
+          mode="$(cat "$RUNNER_TEMP/v37-four/mode")"
+          [[ "$mode" =~ ^(preview|apply|readback)$ ]]
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v37-four/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - '$mode' ${checked[*]}" \
+            < ops/serviceit_vps_b2b_v37_four.py \
+            > "$RUNNER_TEMP/v37-four/status" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V37_FOUR_[A-Z0-9_]{3,70}=(YES|NO|[0-9]{1,5}|[A-Z0-9_]{3,70})$' \
+            "$RUNNER_TEMP/v37-four/status" | head -40 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V37_FOUR_RUNTIME_SHAS_MATCH=YES' "$RUNNER_TEMP/v37-four/status"
+          grep -qx 'V37_FOUR_LIVE_CONSISTENCY_ENABLED=YES' "$RUNNER_TEMP/v37-four/status"
+          grep -qx 'V37_FOUR_CARDS_CHECKED=4' "$RUNNER_TEMP/v37-four/status"
+          grep -qx 'V37_FOUR_COMPLETED=YES' "$RUNNER_TEMP/v37-four/status"
+          if [[ "$mode" != apply ]]; then
+            grep -qx 'V37_FOUR_CRM_WRITES=0' "$RUNNER_TEMP/v37-four/status"
+          fi

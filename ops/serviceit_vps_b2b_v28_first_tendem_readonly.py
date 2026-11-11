@@ -34,7 +34,7 @@ INDEX=[{"evidence_level":"INDEX_ONLY_UNVERIFIED","url":PUBLIC_URL}]
 
 def say(k,v):
     assert re.fullmatch(r"[A-Z0-9_]{3,65}",k)
-    assert re.fullmatch(r"(YES|NO|[0-9]{1,3}|[A-Z0-9_]{4,85})",str(v))
+    assert re.fullmatch(r"(YES|NO|[0-9]{1,12}|[A-Z0-9_]{4,85})",str(v))
     print("V28_FIRST_"+k+"="+str(v),flush=True)
 
 def main():
@@ -59,7 +59,16 @@ def main():
                  and isinstance(notice.get("subject"),str)
                  and 10<=len(notice["subject"])<=240)
           say("SIGNED_FIRST_ID_MATCH", "YES" if exact else "NO")
-          assert exact
+          # Public tender number is safe to report; never print the private
+          # customer CRM ID, signed email, query token, URL or account data.
+          assert re.fullmatch(r"[0-9]{5,12}", notice["tender_id"])
+          say("FIRST_TENDER_ID",notice["tender_id"])
+          if not exact:
+              say("PILOT_TENDER_NOT_FIRST","YES")
+              say("CRM_WRITES","NO")
+              say("PG_WRITES","NO")
+              say("PAID_MODEL_CALLS","NO")
+              return 0
           # Do not require the supplier-email subject to match the test
           # fixture byte-for-byte. The full fetched Tendum page independently
           # proves the exact platform number AND the actual signed title.

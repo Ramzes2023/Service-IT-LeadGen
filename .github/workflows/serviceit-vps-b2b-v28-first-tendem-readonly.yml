@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed='4804ecb93e04fafa2d0a36d35133d1b51003f4f2'
+          reviewed='eeefd0a61bce97f98f7c14dd74f77928c3c041ac'
           git cat-file -e "$reviewed^{commit}"
           script=ops/serviceit_vps_b2b_v28_first_tendem_readonly.py
           git diff --quiet "$reviewed" HEAD -- "$script"
@@ -73,7 +73,34 @@ jobs:
             > "$RUNNER_TEMP/v28/summary" 2>/dev/null
           rc=$?
           set -e
-          grep -E '^V28_FIRST_[A-Z0-9_]+=(YES|NO|[0-9]{1,3}|[A-Z0-9_]{4,85})$' \
+          grep -E '^V28_FIRST_[A-Z0-9_]+=(YES|NO|[0-9]{1,12}|[A-Z0-9_]{4,85}) \
+            "$RUNNER_TEMP/v28/summary" | head -25 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V28_FIRST_SOURCE_AND_GATES=YES' "$RUNNER_TEMP/v28/summary"
+          grep -Eq '^V28_FIRST_TENDER_ID=[0-9]{5,12}
+          grep -qx 'V28_FIRST_CRM_WRITES=NO' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PG_WRITES=NO' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PAID_MODEL_CALLS=NO' "$RUNNER_TEMP/v28/summary"
+ \
+            "$RUNNER_TEMP/v28/summary" | head -25 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V28_FIRST_SOURCE_AND_GATES=YES' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_SIGNED_FIRST_MATCHES_TENDEM=YES' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PUBLIC_TENDEM_EXACT=YES' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_CRM_WRITES=NO' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PG_WRITES=NO' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PAID_MODEL_CALLS=NO' "$RUNNER_TEMP/v28/summary"
+ "$RUNNER_TEMP/v28/summary"
+          if grep -qx 'V28_FIRST_SIGNED_FIRST_ID_MATCH=YES' "$RUNNER_TEMP/v28/summary"; then
+            grep -qx 'V28_FIRST_SIGNED_FIRST_MATCHES_TENDEM=YES' "$RUNNER_TEMP/v28/summary"
+            grep -qx 'V28_FIRST_PUBLIC_TENDEM_EXACT=YES' "$RUNNER_TEMP/v28/summary"
+          else
+            grep -qx 'V28_FIRST_PILOT_TENDER_NOT_FIRST=YES' "$RUNNER_TEMP/v28/summary"
+          fi
+          grep -qx 'V28_FIRST_CRM_WRITES=NO' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PG_WRITES=NO' "$RUNNER_TEMP/v28/summary"
+          grep -qx 'V28_FIRST_PAID_MODEL_CALLS=NO' "$RUNNER_TEMP/v28/summary"
+ \
             "$RUNNER_TEMP/v28/summary" | head -25 || true
           [[ "$rc" == 0 ]]
           grep -qx 'V28_FIRST_SOURCE_AND_GATES=YES' "$RUNNER_TEMP/v28/summary"

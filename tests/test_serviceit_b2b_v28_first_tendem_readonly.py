@@ -11,6 +11,9 @@ def test_readonly_exact_source_boundary():
     assert 'source=="B2B-CENTER-"+TENDER' in code
     assert 'notice["tender_id"]==TENDER' in code
     assert 'SIGNED_FIRST_ID_MATCH' in code
+    assert 'FIRST_TENDER_ID' in code
+    assert 'PILOT_TENDER_NOT_FIRST' in code
+    assert 'return 0' in code
     assert 'TITLE.casefold() in notice' not in code
     assert 'env.get(B_EN)=="NO"' in code
     assert 'cur.execute("SET TRANSACTION READ ONLY")' in code

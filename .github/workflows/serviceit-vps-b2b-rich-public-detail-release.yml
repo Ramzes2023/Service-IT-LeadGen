@@ -117,6 +117,8 @@ jobs:
       - name: Report sanitized outcome to issue 368
         if: always()
         shell: bash
+        env:
+          GH_TOKEN: "${{ github.token }}"
         run: |
           set -euo pipefail
           file="$RUNNER_TEMP/b2b-rich-detail/status"

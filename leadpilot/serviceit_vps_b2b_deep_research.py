@@ -478,9 +478,9 @@ def _supplement_thin_public_evidence(candidate, notice, env, client, *, index_hi
         return candidate
     from .serviceit_b2b_remote_public_fetch import approved_url
     tender_id = notice.get("tender_id") if isinstance(notice, dict) else None
-    if not isinstance(tender_id, str) or not re.fullmatch(r"\\d{5,12}", tender_id):
+    if not isinstance(tender_id, str) or not re.fullmatch(r"\d{5,12}", tender_id):
         return candidate
-    exact = re.compile(r"(?<!\\d)" + re.escape(tender_id) + r"(?!\\d)")
+    exact = re.compile(r"(?<!\d)" + re.escape(tender_id) + r"(?!\d)")
     seen = {p["url"] for p in pages}
     additions = [p for p in free["pages"]
                  if isinstance(p, dict) and isinstance(p.get("url"), str)

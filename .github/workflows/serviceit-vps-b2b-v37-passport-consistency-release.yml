@@ -44,8 +44,8 @@ jobs:
           : > "$RUNNER_TEMP/v37-release/new-hashes"
           : > "$RUNNER_TEMP/v37-release/old-hashes"
           blobs=(5e240eb920d6b33880303fa08c84699bcd4d19dd
-            d1e612e9b0ee0d9cfe7cf925b3a3b7871e53628b
-            9bacd24eec860598fcf56ddb291c968e256092c5)
+            c7d0b836a196f440dd19bc0ec2e22a89e570f786
+            98867c22528fa79bbf2220296d4d46b1ac04b1e6)
           for i in "${!names[@]}"; do
             name="${names[$i]}"
             [[ "$(git hash-object "leadpilot/$name")" == "${blobs[$i]}" ]]

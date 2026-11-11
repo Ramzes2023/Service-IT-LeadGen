@@ -1,0 +1,88 @@
+name: ServiceIT V19 one-use source backed update on a REAL existing Bitrix card
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-v19-one-real-additive-update
+  cancel-in-progress: false
+jobs:
+  preview:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'issue_comment' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V19_ONCE_REAL_CARD_EVIDENCE_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin exact six production modules and no-write probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed='ce4624365af93397c3ec124891f4dbb5ebd67415'
+          git cat-file -e "$reviewed^{commit}"
+          names=(serviceit_b2b_v19_backfill.py
+            serviceit_vps_worker.py)
+          for name in "${names[@]}"; do
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+          done
+          script=ops/serviceit_vps_b2b_v19_oneuse_real_apply.py
+          python -m py_compile "$script"
+          git cat-file -e 'ce4624365af93397c3ec124891f4dbb5ebd67415^{commit}'
+          git diff --quiet 1146871c64269074ce8359280a4f8c964d4e7103 HEAD -- "$script"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v19-once"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v19-once/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v19-once/hosts"
+          chmod 0600 "$RUNNER_TEMP/v19-once/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v19-once/hosts" >/dev/null
+          : > "$RUNNER_TEMP/v19-once/shas"
+          for name in "${names[@]}"; do
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v19-once/shas"
+          done
+      - name: Run V19 one real evidence-only update and independently compare nine AI fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v19-once/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t shas < "$RUNNER_TEMP/v19-once/shas"
+          [[ "${#shas[@]}" == 2 ]]
+          checked=()
+          for v in "${shas[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            checked+=("'$v'")
+          done
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v19-once/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - ${checked[*]}" \
+            < ops/serviceit_vps_b2b_v19_oneuse_real_apply.py \
+            > "$RUNNER_TEMP/v19-once/status" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V19_ONCE_[A-Z0-9_]{3,62}=(YES|NO|[0-9]{1,3}|[A-Z0-9_]{5,75})$' \
+            "$RUNNER_TEMP/v19-once/status" | head -45 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V19_ONCE_LIVE_SOURCE_SHA=YES' "$RUNNER_TEMP/v19-once/status"
+          grep -qx 'V19_ONCE_ONE_CRM_WRITE_VERIFIED=YES' "$RUNNER_TEMP/v19-once/status"
+          grep -qx 'V19_ONCE_AUTOMATIC_V19_OFF=YES' "$RUNNER_TEMP/v19-once/status"

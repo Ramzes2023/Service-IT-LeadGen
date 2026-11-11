@@ -91,6 +91,14 @@ def select_one(connection, *, preview=False):
               AND b.received_at < now()-interval '20 minutes'
               AND NOT EXISTS (
                 SELECT 1 FROM {TABLE} r WHERE r.card_id=b.card_id)
+              -- A prior unrelated AI summary write is allowed to remain
+              -- unresolved; never touch or replay it. Skip only its card,
+              -- so it cannot starve all following pending B2B dossiers.
+              AND NOT EXISTS (
+                SELECT 1 FROM serviceit_vps_native_receipts n
+                WHERE n.card_id=b.card_id
+                  AND n.status IN ('RESERVED','WRITE_INTENT')
+              )
             ORDER BY b.received_at,b.source_id LIMIT 1
         """)
         return cur.fetchone()

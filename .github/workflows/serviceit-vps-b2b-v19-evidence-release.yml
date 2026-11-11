@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed='4fe607275fd1f8b8429de671fdad1765f039dc46'
+          reviewed='1146871c64269074ce8359280a4f8c964d4e7103'
           git cat-file -e "$reviewed^{commit}"
           names=(serviceit_b2b_tender_index_v18.py
             serviceit_b2b_dossier_v11.py

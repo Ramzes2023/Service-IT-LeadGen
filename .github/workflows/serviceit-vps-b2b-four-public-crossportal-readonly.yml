@@ -29,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify pure read-only source, pinned host and feature opt-ins
         shell: bash
@@ -38,7 +39,17 @@ jobs:
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
           [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          # Pin the two audited production module sources by their exact
+          # reviewed commits, not by obsolete pre-release hard-coded SHAs.
+          git cat-file -e '3df31e23b990ea043a48a1a159b25e1f494278e9^{commit}'
+          git cat-file -e '3ea732bb8200c8e45053f3ce012f580d102a0c69^{commit}'
+          git diff --quiet 3df31e23b990ea043a48a1a159b25e1f494278e9 HEAD -- leadpilot/serviceit_vps_b2b_deep_research.py
+          git diff --quiet 3ea732bb8200c8e45053f3ce012f580d102a0c69 HEAD -- leadpilot/serviceit_b2b_public_mirrors.py
           install -d -m 0700 "$RUNNER_TEMP/four-preview"
+          {
+            sha256sum leadpilot/serviceit_vps_b2b_deep_research.py | cut -d' ' -f1
+            sha256sum leadpilot/serviceit_b2b_public_mirrors.py | cut -d' ' -f1
+          } > "$RUNNER_TEMP/four-preview/reviewed-shas"
           printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/four-preview/id"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/four-preview/hosts"
           chmod 0600 "$RUNNER_TEMP/four-preview/"*
@@ -47,13 +58,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -t reviewed < "$RUNNER_TEMP/four-preview/reviewed-shas"
+          [[ "${#reviewed[@]}" == 2 ]]
+          [[ "${reviewed[0]}" =~ ^[0-9a-f]{64}$ && "${reviewed[1]}" =~ ^[0-9a-f]{64}$ ]]
           set +e
           ssh -T -i "$RUNNER_TEMP/four-preview/id" \
             -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/four-preview/hosts" \
             -o BatchMode=yes -o ConnectTimeout=15 \
             "$VPS_USER@$VPS_HOST" \
-            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - '${reviewed[0]}' '${reviewed[1]}'" \
             < ops/serviceit_vps_b2b_crossportal_four_preview.py \
             > "$RUNNER_TEMP/four-preview/status" 2>/dev/null
           remote_rc=$?

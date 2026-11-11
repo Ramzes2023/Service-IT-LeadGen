@@ -15,7 +15,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.event_name == 'issue_comment' &&
       github.actor == 'Ramzes2023' &&
-      github.event.issue.number == 189 &&
+      github.event.issue.number == 489 &&
       !github.event.issue.pull_request &&
       github.event.comment.user.login == 'Ramzes2023' &&
       github.event.comment.body == 'SERVICEIT_B2B_V19_QUEUE_SKIP_GUARDED_RELEASE_489'

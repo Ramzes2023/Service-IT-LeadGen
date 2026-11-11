@@ -74,21 +74,8 @@ jobs:
             > "$RUNNER_TEMP/v20-audit/status" 2>/dev/null
           rc=$?
           set -e
-          grep -E '^V20_PILOT_[A-Z0-9_]+=(YES|NO|UNVERIFIED|[A-Z0-9_]{4,78}) \
+          grep -E '^V20_PILOT_[A-Z0-9_]+=(YES|NO|UNVERIFIED|[A-Z0-9_]{4,78})$' \
             "$RUNNER_TEMP/v20-audit/status" | head -40 || true
           [[ "$rc" == 0 ]]
           grep -qx 'V20_PILOT_SOURCE_AND_GATES=YES' "$RUNNER_TEMP/v20-audit/status"
-          grep -Eq '^V20_PILOT_CRM_WRITES=(YES|NO)
- \
-            "$RUNNER_TEMP/v20-audit/status" | head -40 || true
-          [[ "$rc" == 0 ]]
-          grep -qx 'V20_LIVE_EXACT_CODE=YES' "$RUNNER_TEMP/v20-audit/status"
-          grep -qx 'V20_LIVE_GATES=YES' "$RUNNER_TEMP/v20-audit/status"
-          grep -qx 'V20_LIVE_CRM_WRITES=NO' "$RUNNER_TEMP/v20-audit/status"
- "$RUNNER_TEMP/v20-audit/status"
- \
-            "$RUNNER_TEMP/v20-audit/status" | head -40 || true
-          [[ "$rc" == 0 ]]
-          grep -qx 'V20_LIVE_EXACT_CODE=YES' "$RUNNER_TEMP/v20-audit/status"
-          grep -qx 'V20_LIVE_GATES=YES' "$RUNNER_TEMP/v20-audit/status"
-          grep -qx 'V20_LIVE_CRM_WRITES=NO' "$RUNNER_TEMP/v20-audit/status"
+          grep -Eq '^V20_PILOT_CRM_WRITES=(YES|NO)$' "$RUNNER_TEMP/v20-audit/status"

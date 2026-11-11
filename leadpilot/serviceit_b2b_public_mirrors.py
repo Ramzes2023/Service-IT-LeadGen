@@ -448,24 +448,33 @@ def brave_mirror_search(client: httpx.Client, tender_id: str, subject: str,
             except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
                 continue
 
-    # Only if the discovery API is inaccessible: bounded candidate for
-    # B2B's public Kontur detail route. Normal indexed-source behavior is
-    # unchanged, including strict tests that disallow additional origins. This
-    # merely GUESSES A URL, never an identity or a fact. The independent
-    # HTTPS/robots fetch and tender-number+title+B2B attribution gates below
-    # must all succeed; a missing, unrelated or blocked URL yields nothing.
-    # Crucially this discovery still works when Brave's search quota fails.
-    if (brave_unavailable and "zakupki.kontur.ru" in allow_mirrors
-            and len(checked) < 8):
-        direct = "https://zakupki.kontur.ru/" + tender_id + "_4"
-        checked.add(direct)
-        try:
-            row = from_public_page(client, direct, tender_id, subject,
-                                   mirror_host="zakupki.kontur.ru")
-            if row:
-                candidates.append(row)
-        except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
-            pass
+    # If Brave is unavailable OR indexes no independently verified page,
+    # try at most two observed public Kontur URL patterns. The suffix varies
+    # between published B2B procedures: an exact number alone cannot tell it.
+    # These URLs are guesses for DISCOVERY, not evidence: from_public_page()
+    # independently enforces HTTPS, public DNS, robots, no redirects, exact
+    # tender ID, matching procurement subject and B2B source attribution.
+    # Keep the previous one-candidate path when a verified Tendum result exists
+    # but Brave is down; do not introduce a broad catalog crawler.
+    if ((brave_unavailable or not candidates)
+            and "zakupki.kontur.ru" in allow_mirrors
+            and len(checked) < budget):
+        suffixes = ("4",) if candidates else ("4", "459")
+        for suffix in suffixes:
+            if len(checked) >= budget:
+                break
+            direct = "https://zakupki.kontur.ru/" + tender_id + "_" + suffix
+            if direct in checked:
+                continue
+            checked.add(direct)
+            try:
+                row = from_public_page(client, direct, tender_id, subject,
+                                       mirror_host="zakupki.kontur.ru")
+                if row:
+                    candidates.append(row)
+                    break
+            except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+                continue
 
     if not candidates:
         return None

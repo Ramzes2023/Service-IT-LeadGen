@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_dossier_consistency_v37_receipts (
 """
 RESULT = frozenset(("VERIFIED","NO_ATTESTED_NEW_FACTS","INSUFFICIENT_CAPACITY",
                     "NONSTANDARD_REPORT","CONFLICT","UNCERTAIN"))
+# This is a standalone, explicitly audited subset update contract. The
+# universal Rest deliberately permits only complete nine/twelve-field
+# bundles, and must NOT be relaxed to support V41.
+ALLOWED_PATCH = AI_FIELDS | {
+    PREFIX+"COMPANY_INN", PREFIX+"COMPANY_NAME", PREFIX+"REGION"
+}
+MAX_CRM_REPORT=12000
+MAX_CRM_OTHER=4096
 
 class V37Blocked(ValueError):
     pass
@@ -54,6 +62,87 @@ class V37Blocked(ValueError):
 def need(value, name):
     if not value:
         raise V37Blocked(name)
+
+
+def verify_patch_schema(rest,patch):
+    """Fail-closed against the real live Bitrix 1062 field definitions."""
+    need(isinstance(patch,dict) and 0<len(patch)<=len(ALLOWED_PATCH)
+         and set(patch)<=ALLOWED_PATCH
+         and all(isinstance(value,str) and value.strip()
+                 and len(value)<=(
+                    MAX_CRM_REPORT if key==REPORT else MAX_CRM_OTHER)
+                 for key,value in patch.items()),
+         "V41_SCOPED_UPDATE_FIELDS_INVALID")
+    definitions=rest("crm.item.fields",{
+        "entityTypeId":1062,"useOriginalUfNames":"Y"})["fields"]
+    need(isinstance(definitions,dict),"V41_SCHEMA_READ_FAILED")
+    for key in patch:
+        detail=definitions.get(key)
+        need(isinstance(detail,dict)
+             and detail.get("type")=="string"
+             and detail.get("isReadOnly") is False
+             and detail.get("isImmutable") in (None,False)
+             and detail.get("isMultiple") in (None,False),
+             "V41_SCHEMA_FIELD_NOT_WRITABLE")
+
+
+def scoped_subset_update(rest,card,patch):
+    """Only verified 1062/21 subset; do NOT weaken general Rest safety.
+
+    Called only after verification of signed notice, snapshot, live field
+    schema and durable PostgreSQL WRITE_INTENT. Zero retries on uncertainty.
+    """
+    need(isinstance(rest,Rest) and type(card) is int and 8<=card<=2_000_000_000
+         and card not in (3,7),"V41_REST_ITEM_ID_INVALID")
+    need(isinstance(patch,dict) and 0<len(patch)<=len(ALLOWED_PATCH)
+         and set(patch)<=ALLOWED_PATCH
+         and all(type(value) is str and value.strip()
+                 and len(value)<=(
+                     MAX_CRM_REPORT if key==REPORT else MAX_CRM_OTHER)
+                 for key,value in patch.items()),
+         "V41_SCOPED_UPDATE_FIELDS_INVALID")
+    request={
+        "entityTypeId":1062,"id":card,
+        "useOriginalUfNames":"Y","fields":patch,
+    }
+    response=rest.client.post(rest.base+"/crm.item.update.json",json=request,
+                              follow_redirects=False,timeout=20)
+    need(response.status_code==200 and len(response.content)<=512000,
+         "V41_BITRIX_UPDATE_HTTP_UNVERIFIED")
+    try:
+        obj=response.json()
+    except ValueError:
+        raise V37Blocked("V41_BITRIX_UPDATE_JSON_UNVERIFIED") from None
+    need(isinstance(obj,dict) and "error" not in obj
+         and isinstance(obj.get("result"),dict),
+         "V41_BITRIX_UPDATE_REJECTED")
+    return obj["result"]
+
+
+def uncertain_no_effect_verified(conn,card,hash_,item):
+    """Allow a fresh attempt only if a prior UNCERTAIN write was proven to
+    have affected absolutely ZERO targeted fields. Do not alter old receipt.
+    """
+    row=conn.execute(f"""
+       SELECT before_fields,after_fields,salt,digest
+       FROM {TABLE}
+       WHERE card_id=%s AND status='UNCERTAIN' AND source_hash=%s
+       ORDER BY attempt_no DESC LIMIT 1
+    """,(card,hash_)).fetchone()
+    if row is None:
+        return False
+    old,desired,salt,proof=row
+    if (not isinstance(old,dict) or not isinstance(desired,dict)
+            or not old or set(old)!=set(desired)
+            or not set(old)<=ALLOWED_PATCH
+            or not isinstance(salt,(bytes,memoryview))
+            or not isinstance(proof,(bytes,memoryview))):
+        return False
+    if (not secrets.compare_digest(_digest(desired,bytes(salt)),bytes(proof))
+            or not all(item.get(key)==value for key,value in old.items())
+            or not all(item.get(key)!=value for key,value in desired.items())):
+        return False
+    return True
 
 
 def _sha(source):
@@ -89,13 +178,23 @@ def eligible(conn, target_ids=None):
                OR (last.status IN (
                     'NO_ATTESTED_NEW_FACTS','INSUFFICIENT_CAPACITY',
                     'NONSTANDARD_REPORT')
-                   AND last.updated_at < now() - interval '24 hours'))
+                   AND last.updated_at < now() - interval '24 hours')
+               OR (last.status='UNCERTAIN'
+                   AND last.updated_at < now() - interval '15 minutes')
+               -- A prior company conflict is never auto-replayed by the
+               -- five-minute coordinator. Only an owner-scoped explicit
+               -- signed-card apply may re-evaluate after code correction.
+               OR (last.status='CONFLICT'
+                   AND %s::BIGINT[] IS NOT NULL
+                   AND b.card_id=ANY(%s::BIGINT[])))
              AND NOT EXISTS(
                SELECT 1 FROM serviceit_vps_native_receipts n
                WHERE n.card_id=b.card_id AND n.status IN ('RESERVED','WRITE_INTENT'))
            ORDER BY COALESCE(last.updated_at,b.received_at),
                     b.received_at,b.source_id LIMIT 1
         """,(targets if target_ids is not None else None,
+              targets if target_ids is not None else None,
+              targets if target_ids is not None else None,
               targets if target_ids is not None else None))
         return cur.fetchone()
 
@@ -239,6 +338,10 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
         src_url,title=safe_notice(notice,card,source,first)
         need(src_url==notice["source_url"] and bool(title),
              "V37_SIGNED_IDENTITY_CONFLICT")
+        if last_status=="UNCERTAIN" and not uncertain_no_effect_verified(
+                conn,card,source_hash,first):
+            return {"status":"V41_UNCERTAIN_RECONCILIATION_BLOCKED",
+                    "crm_writes":0}
         before=original_nine(first)
         lines=verified_lines(conn,card,source_hash,before[REPORT])
         try:
@@ -272,6 +375,16 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
             attempt=reserve(conn,card,source_hash,{})
             mark(conn,card,attempt,result)
             return {"status":"V37_"+result,"crm_writes":0}
+        try:
+            verify_patch_schema(rest,patch)
+        except (V37Blocked, KeyError, TypeError):
+            # Treat missing or non-writable CRM fields as a conflict; do not
+            # persist a WRITE_INTENT or endlessly select this first card.
+            if active_card_write(conn,card):
+                return {"status":"V37_NATIVE_WRITE_IN_FLIGHT","crm_writes":0}
+            attempt=reserve(conn,card,source_hash,{})
+            mark(conn,card,attempt,"CONFLICT")
+            return {"status":"V41_SCHEMA_BLOCKED_NO_WRITE","crm_writes":0}
         fresh=_get(rest,card)
         if (fingerprint(first)!=fingerprint(fresh)
                 or active_card_write(conn,card)
@@ -281,9 +394,7 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
                         {k:first.get(k) for k in patch})
         salt,proof=mark(conn,card,attempt,"WRITE_INTENT",patch)
         try:
-            rest("crm.item.update",{
-                "entityTypeId":1062,"id":card,
-                "useOriginalUfNames":"Y","fields":patch})
+            scoped_subset_update(rest,card,patch)
             after=_get(rest,card)
             need(all(after.get(k)==v for k,v in patch.items())
                  and _non_target_unchanged(fresh,after,patch)

@@ -379,6 +379,12 @@ def prepare(notice, item, verified_lines):
             elif prior and key == COMPANY:
                 normal = lambda val: re.sub(r"[^а-яa-z0-9]", "", val.casefold())
                 approved_organizer_aliases = {
+                    # Two independently reviewed sources name a procurement
+                    # organizer different from the legal buying entity.
+                    "4672802": (
+                        "АО ГМЗ «Агат»",
+                        "АО «ГМЗ Агат»",
+                    ),
                     "4674861": (
                         "ООО «Группа компаний ФСК»",
                         "ООО «ГК ФСК»",

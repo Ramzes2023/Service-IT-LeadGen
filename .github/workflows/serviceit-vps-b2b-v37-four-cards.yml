@@ -52,8 +52,8 @@ jobs:
             serviceit_b2b_dossier_consistency_v37.py
             serviceit_b2b_dossier_consistency_worker_v37.py)
           blobs=(5e240eb920d6b33880303fa08c84699bcd4d19dd
-            c7d0b836a196f440dd19bc0ec2e22a89e570f786
-            98867c22528fa79bbf2220296d4d46b1ac04b1e6)
+            3067439c7b60441b0fb9547e877e681efd019b52
+            e12a52da95aaa40670a92adf26664d187bc7f2bc)
           : > "$RUNNER_TEMP/v37-four/shas"
           for i in "${!names[@]}"; do
             f="leadpilot/${names[$i]}"

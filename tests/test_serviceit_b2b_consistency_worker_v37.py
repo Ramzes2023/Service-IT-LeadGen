@@ -104,6 +104,8 @@ def test_selector_excludes_persistent_conflicts_and_uncertain_writes():
     assert "serviceit_vps_b2b_dossier_v11_receipts" in sql
     assert "last.status='VERIFIED'" in sql
     assert "NONSTANDARD_REPORT" in sql
-    assert "CONFLICT" not in sql.split("AND (last.status IS NULL")[1]
-    assert "UNCERTAIN" not in sql.split("AND (last.status IS NULL")[1]
+    assert "last.status='CONFLICT'" in sql
+    assert cur.execute.call_args.args[1] == (None,None,None,None)
+    assert "last.status='UNCERTAIN'" in sql
+    assert "15 minutes" in sql
     assert "WRITE_INTENT" in sql

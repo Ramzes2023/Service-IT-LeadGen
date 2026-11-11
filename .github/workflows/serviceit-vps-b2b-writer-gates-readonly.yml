@@ -66,7 +66,7 @@ jobs:
           for name in "${names[@]}"; do
             sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/dossier-readback-four/shas"
           done
-      - name: Read production writer gates without claiming notices
+      - name: Check writer gates and live Bitrix duplicate witnesses
         shell: bash
         run: |
           set -euo pipefail

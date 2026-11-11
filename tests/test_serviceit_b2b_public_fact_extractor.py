@@ -24,6 +24,7 @@ COMPANY = """
 ИНН: 5260365605
 ОГРН: 1135260012337
 Электронная почта: contact@globus-ltd.com
+Телефон: 8 800 775 13 96
 """
 
 
@@ -51,6 +52,8 @@ def test_verified_company_site_inn_ogrn_contact_but_not_fns():
     assert got["buyer_ogrn"]["value"] == "1135260012337"
     assert got["fns_registry_status"] == "NOT_CHECKED"
     assert got["company_public_emails"][0]["value"] == "contact@globus-ltd.com"
+    assert got["buyer_legal_address"]["value"].startswith("603024")
+    assert "8 800 775 13 96" in [p["value"] for p in got["company_public_phones"]]
     assert "NOT_FNS_VERIFIED" in got["buyer_inn"]["evidence"]
 
 

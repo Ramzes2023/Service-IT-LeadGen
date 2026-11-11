@@ -123,7 +123,7 @@ def test_native_reader_uses_free_source_only_after_all_primary_mirrors_fail(monk
     assert receipts == [True]
 
 
-def test_native_reader_keeps_success_without_free_vendor_call(monkeypatch):
+def test_native_reader_keeps_success_when_independent_free_search_is_empty(monkeypatch):
     monkeypatch.setattr(research, "host_allowlist",
                         lambda env: frozenset({"b2b-center.ru"}))
     monkeypatch.setattr(research, "secret_file", lambda *a, **k: "")
@@ -133,12 +133,15 @@ def test_native_reader_keeps_success_without_free_vendor_call(monkeypatch):
     monkeypatch.setattr(mirrors, "brave_mirror_search", lambda *a, **k: {
         "status": "PUBLIC_PAGES_INSPECTED", "pages": [
             {"url": TENDER, "excerpt": "Оказание услуг по предоставлению ИТ-специалистов 4673595"}]})
+    calls = []
     monkeypatch.setattr(free, "read_free_public_mirror",
-                        lambda *a, **k: pytest.fail("unneeded free fetch"))
+                        lambda *a, **k: (calls.append(True) or None))
     monkeypatch.setattr(research, "followup_public_buyer_research",
                         lambda finding, *a, **k: finding)
     got = research.source_findings({}, NOTICE, ENV, Mock())
     assert got["pages"][0]["url"] == TENDER
+    assert calls == [True]
+    assert got["tinyfish_independent_stage"] == "NO_VERIFIED_PUBLIC_PAGE_RETRYABLE"
 
 
 

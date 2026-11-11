@@ -45,7 +45,7 @@ jobs:
           script=ops/serviceit_vps_b2b_v19_independent_postread.py
           python -m py_compile "$script"
           git cat-file -e 'e92d218ddf94e2b6ef3072230deeca32106257db^{commit}'
-          git diff --quiet 1146871c64269074ce8359280a4f8c964d4e7103 HEAD -- "$script"
+          git diff --quiet e92d218ddf94e2b6ef3072230deeca32106257db HEAD -- "$script"
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
           [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]

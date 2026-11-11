@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
     paths: [.github/workflows/serviceit-vps-b2b-incoming-three-readonly.yml]
+  workflow_run:
+    workflows: [ServiceIT B2B writer duplicate witness release]
+    types: [completed]
 permissions:
   contents: read
   issues: read
@@ -11,7 +14,13 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preview:
-    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023' &&
+      (github.event_name == 'push' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_sha == '13c968eedba01d6086de6e69e82a448acfe05676'))
     runs-on: ubuntu-latest
     timeout-minutes: 18
     environment: serviceit-vps-readonly

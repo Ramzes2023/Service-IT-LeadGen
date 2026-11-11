@@ -53,13 +53,17 @@ def main():
         for tid in (4677404, 4676478, 4676643):
             source = f"B2B-CENTER-{tid}"
             row = conn.execute("""
-                SELECT b.state,b.card_id,coalesce(v.status,'NO_RECEIPT')
+                SELECT b.state,b.card_id,coalesce(v.status,'NO_RECEIPT'),coalesce(q.status,'NO_QUEUE')
                 FROM serviceit_vps_b2b_inbox b
                 LEFT JOIN serviceit_vps_b2b_dossier_v11_receipts v ON v.card_id=b.card_id
+                LEFT JOIN serviceit_vps_new_cards q ON q.card_id=b.card_id
                 WHERE b.source_id=%s
             """, (source,)).fetchone()
             out(f"TENDER_{tid}_INBOX", row[0] if row else "NOT_RECEIVED")
             out(f"TENDER_{tid}_V11", row[2] if row else "NO_RECEIPT")
+            out(f"TENDER_{tid}_COORDINATOR_QUEUE", row[3] if row else "NO_QUEUE")
+            if row and row[1]:
+                out(f"TENDER_{tid}_CARD", row[1])
             try:
                 signal = PREFIX + "SIGNAL_ID"
                 result = rest("crm.item.list", {
@@ -74,6 +78,8 @@ def main():
                     })["item"])
                     validate_identity(current, item["id"])
                     assert current[signal] == source
+                    if "01  ПАСПОРТ ЗАКУПКИ" in (current.get(REPORT) or ""):
+                        out(f"TENDER_{tid}_PASSPORT", "PRESENT")
                 out(f"TENDER_{tid}_CRM_EXISTS", "YES" if candidates else "NO")
             except Exception:
                 out(f"TENDER_{tid}_CRM_EXISTS", "UNVERIFIED")

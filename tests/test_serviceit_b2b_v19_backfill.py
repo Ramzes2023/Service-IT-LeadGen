@@ -40,7 +40,7 @@ def test_v19_index_to_additive_dossier_preserves_nine_and_unrelated():
 def test_v19_no_source_or_no_space_means_no_mutation():
     before=old_fields()
     assert prepare_addendum(before,[],"4675475") is None
-    copied=dict(before);copied[PREFIX+"AI_FULL_REPORT"]+="X"*7600
+    copied=dict(before);copied[PREFIX+"AI_FULL_REPORT"]+="X"*11700
     assert prepare_addendum(copied,["ИНДЕКС BRAVE: новый заголовок ["+URL+"]"],TID) is None
     assert copied[PREFIX+"AI_STATUS"]==before[PREFIX+"AI_STATUS"]
 

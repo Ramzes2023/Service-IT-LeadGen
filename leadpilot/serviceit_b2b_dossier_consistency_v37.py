@@ -227,8 +227,6 @@ def prepare(notice, item, verified_lines):
     if old_report.count(anchor) != 1:
         return None, {"status": "NONSTANDARD_REPORT_MANUAL_REVIEW"}
     tail = old_report[old_report.index(anchor):]
-    if ("V37 · СОГЛАСОВАННЫЙ ПАСПОРТ" in old_report[:old_report.index(anchor)]):
-        return None, {"status": "ALREADY_CANONICAL"}
     buyer = record["buyer"] or "не установлен по проверенным источникам"
     inn = record["inn"] or (item.get(INN) if _is_valid_inn(item.get(INN)) else "")
     inn_text = (inn + " (публичные реквизиты; текущий статус ФНС отдельно)"

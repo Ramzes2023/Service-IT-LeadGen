@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed='41f316a7d2463ed05b5d31b2db098d9921f3de8c'
+          reviewed='66e72156c40aa9b63fb33aedb44b7c6e9d6a30be'
           scriptreview='10c0220023f70fe51cc85c760197826a206c8308'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$scriptreview^{commit}"

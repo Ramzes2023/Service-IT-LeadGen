@@ -32,7 +32,7 @@ def test_existing_registered_workflow_retains_two_jobs_and_adds_owner_only_one()
     assert "  audit:\n" in flow
     assert "  v16_audit:\n" in flow
     assert "  v17_direct_probe:\n" in flow
-    assert flow.count("github.event.issue.number == 368") == 4
+    assert flow.count("github.event.issue.number == 368") == 5
     assert "SERVICEIT_B2B_V17_FOUR_KONTUR_DIRECT_READONLY_368" in flow
     assert "github.actor == 'Ramzes2023'" in flow
     assert "github.event.comment.user.login == 'Ramzes2023'" in flow

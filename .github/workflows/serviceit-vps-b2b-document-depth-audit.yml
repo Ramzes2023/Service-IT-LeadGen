@@ -1,4 +1,4 @@
-name: ServiceIT B2B document availability audit
+name: ServiceIT B2B document provenance and formats audit
 # B2B receiver/writer post-rollout no-write reconciliation, 2026-11-12
 # Post geo-canary + DONE-digest classifier reconciliation; no CRM POST.
 on:

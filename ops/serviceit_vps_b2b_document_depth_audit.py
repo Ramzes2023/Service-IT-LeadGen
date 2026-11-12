@@ -49,6 +49,13 @@ def main():
                 for reason, count in res["rejections"].items():
                     if reason.startswith(("DOCUMENT_", "RESEARCH_")) and reason.replace("_","").isalnum():
                         emit(f"CARD_{card}_{reason}",count)
+                for index, document in enumerate(res["documents"],1):
+                    parsed = urlsplit(document["url"])
+                    emit(f"CARD_{card}_FILE_{index}_FORMAT",document["kind"].lstrip(".").upper())
+                    emit(f"CARD_{card}_FILE_{index}_BYTES",document["bytes"])
+                    emit(f"CARD_{card}_FILE_{index}_ORIGIN",
+                         (parsed.hostname or "").replace(".","_").replace("-","_").upper())
+                    emit(f"CARD_{card}_FILE_{index}_HASH",document["sha256"].upper())
                 if res["documents"]:
                     from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
                     group = {"status":"PUBLIC_PAGES_INSPECTED","pages":[
@@ -66,6 +73,15 @@ def main():
                 emit(tag+"_EIS_223_DOWNLOAD_LINKS",sum(
                     x.path == "/223/purchase/public/download/download.html" for x in official))
                 emit(tag+"_EIS_FILESTORE_LINKS",sum("filestore" in x.path for x in official))
+                from urllib.parse import parse_qsl
+                for parsed in official:
+                    if "filestore" in parsed.path:
+                        path = parsed.path.strip("/").replace("/","_").replace(".","_").replace("-","_")
+                        keys = "_".join(key for key,_ in parse_qsl(parsed.query))
+                        if (path.replace("_","").isalnum() and keys.replace("_","").isalnum()
+                                and len(path)<100 and len(keys)<40):
+                            emit(tag+"_PATH_SHAPE",path.upper()+"_"+keys.upper())
+                        break
                 if tag == "CONTROL":
                     url = f"https://sprosradar.ru/zakupki/223/{number}/"
                     control = inspect_public_documents(client,{"status":"PUBLIC_PAGES_INSPECTED","pages":[

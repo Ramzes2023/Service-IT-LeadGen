@@ -24,7 +24,8 @@ LOCATION_LABEL = re.compile(
     r"(?iu)^\s*(?:"
     r"место\s+(?:поставки|оказания\s+услуг|выполнения\s+работ|"
     r"исполнения\s+(?:договора|контракта|обязательств))|"
-    r"адрес\s+(?:поставки|оказания\s+услуг|выполнения\s+работ)|"
+    r"адрес\s+(?:поставки\s*/\s*оказания\s+услуг|"
+    r"места\s+поставки\s+товара|поставки|оказания\s+услуг|выполнения\s+работ)|"
     r"регион\s+(?:поставки|оказания\s+услуг|исполнения|выполнения\s+работ)|"
     r"территория\s+(?:оказания\s+услуг|исполнения\s+договора)"
     r")\s*[:：\-–—]?\s*(.*)$"
@@ -40,6 +41,10 @@ OTHER_PLACES = re.compile(
     r"новосибирск|екатеринбург|казань|уфа|самара|краснодар|"
     r"нижний\s+новгород|тюмень|пермь|ростов[\s-]*на[\s-]*дону|"
     r"владивосток|хабаровск|красноярск|омск|челябинск|иркутск)"
+)
+OTHER_REGIONS = re.compile(
+    r"(?iu)(?<![а-яё])(?!(?:московск|подмосков))[а-яё]{4,30}"
+    r"(?:ая|ой|ий|ого|ского)?\s+(?:область|области|край|края)(?![а-яё])"
 )
 ALL_RUSSIA = re.compile(
     r"(?iu)по\s+всей\s+росси[ии]|все\s+регионы|по\s+всей\s+рф|"
@@ -72,8 +77,8 @@ def classify_location_lines(lines: list[str]) -> str:
     if not values:
         return "UNKNOWN"
     in_moscow = any(MOSCOW.search(v) for v in values)
-    elsewhere = any(OTHER_PLACES.search(v) or ALL_RUSSIA.search(v)
-                    for v in values)
+    elsewhere = any(OTHER_PLACES.search(v) or OTHER_REGIONS.search(v)
+                    or ALL_RUSSIA.search(v) for v in values)
     # A positive match alone is NOT enough if the tender explicitly covers
     # another named region as well.
     if in_moscow and elsewhere:
@@ -84,6 +89,18 @@ def classify_location_lines(lines: list[str]) -> str:
         return "OUTSIDE"
     # 'г. Московский' and 'Московский район' are intentionally NOT city proof.
     return "UNKNOWN"
+
+
+def same_official_tender_head(flat: str, tender_id: str, subject: str) -> bool:
+    """Exact original URL + visible same-page number and subject, not footer IDs."""
+    if any(type(x) is not str for x in (flat, tender_id, subject)):
+        return False
+    head = " ".join(flat[:9000].split()).casefold().replace("ё", "е")
+    title = " ".join(subject.split()).casefold().replace("ё", "е")
+    if len(title) < 10 or len(title) > 240:
+        return False
+    number = re.search(r"(?<!\d)№\s*" + re.escape(tender_id) + r"(?!\d)", head)
+    return bool(number and title in head)
 
 
 def check_public_procurement_location(notice: dict, client) -> str:
@@ -114,7 +131,8 @@ def check_public_procurement_location(notice: dict, client) -> str:
         lines = parser.parts
         flat = " ".join(lines)
         # Number AND tender title in fetched full text, not an index snippet.
-        if not matched_excerpt(flat, tender_id, subject):
+        if not (same_official_tender_head(flat, tender_id, subject)
+                or matched_excerpt(flat, tender_id, subject)):
             return "UNKNOWN"
         return classify_location_lines(lines)
     except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, UnicodeError,

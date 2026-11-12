@@ -205,6 +205,16 @@ def eligible(conn, target_ids=None, *, refresh=False):
     refresh_clause = ("OR last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS',"
                       "'INSUFFICIENT_CAPACITY','NONSTANDARD_REPORT','UNCERTAIN')"
                       if refresh and targets else "")
+    table_row = conn.execute(
+        "SELECT to_regclass('public.serviceit_vps_b2b_tender_doc_receipts')"
+    ).fetchone()
+    document_refresh = """
+        OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS','INSUFFICIENT_CAPACITY')
+            AND EXISTS (
+                SELECT 1 FROM serviceit_vps_b2b_tender_doc_receipts doc
+                WHERE doc.card_id=b.card_id AND doc.status='VERIFIED'
+                  AND doc.updated_at>last.updated_at))
+    """ if isinstance(table_row,tuple) and table_row[0] else ""
     with conn.cursor() as cur:
         cur.execute(f"""
            SELECT b.card_id,b.source_id,b.notice_json,last.status,last.source_hash
@@ -221,6 +231,7 @@ def eligible(conn, target_ids=None, *, refresh=False):
              AND (%s::BIGINT[] IS NULL OR b.card_id=ANY(%s::BIGINT[]))
              AND (last.status IS NULL
                {refresh_clause}
+               {document_refresh}
                OR (last.status='VERIFIED'
                    AND last.updated_at < now() - interval '72 hours')
                OR (last.status IN (
@@ -398,6 +409,17 @@ def _manager_checks(conn, client, env, webhook, base, card, source, inn):
             checks["duplicate"] = "да" if checks["duplicate_hit"] else "нет, по номеру этой закупки"
     except (ValueError, TypeError, KeyError, httpx.HTTPError):
         pass
+    if conn.execute("SELECT to_regclass('public.serviceit_vps_b2b_tender_doc_receipts')").fetchone()[0]:
+        row = conn.execute("""
+            SELECT status,scanned_count FROM serviceit_vps_b2b_tender_doc_receipts
+            WHERE card_id=%s AND source_hash=%s
+        """,(card,_sha(source))).fetchone()
+        if row and row[0] == "VERIFIED":
+            checks["documents"] = f"прочитано файлов: {row[1]}; разбор в таймлайне"
+        elif row and row[0] == "SCANNED_NO_DOCS":
+            checks["documents"] = "доступные читаемые вложения пока не найдены"
+        elif row and row[0] in {"WRITE_INTENT","UNCERTAIN","CONFLICT"}:
+            checks["documents"] = "публикация анализа требует проверки"
     if not _is_valid_inn(inn):
         return checks
     try:

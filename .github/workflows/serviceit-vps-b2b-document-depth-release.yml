@@ -35,10 +35,10 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='264131b'
+          old='0c7d353'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
-          names=(serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_eis_mirrors.py serviceit_vps_b2b_dossier_v11_worker.py)
+          names=(serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py)
           install -d -m 0700 "$RUNNER_TEMP/v37-release"
           : > "$RUNNER_TEMP/v37-release/new-hashes"
           : > "$RUNNER_TEMP/v37-release/old-hashes"
@@ -70,7 +70,7 @@ jobs:
           stage="serviceit/staging/b2b-document-depth-onefile-release-$GITHUB_RUN_ID"
           ssh -T -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" "$target" \
             "umask 077; install -d -m 0700 '$stage'"
-          for name in serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_eis_mirrors.py serviceit_vps_b2b_dossier_v11_worker.py; do
+          for name in serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py; do
             scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
               "leadpilot/$name" "$target:$stage/"
           done
@@ -113,7 +113,7 @@ jobs:
           [[ "$rc" == 0 ]]
           grep -qx 'DOCUMENT_DEPTH_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v37-release/status"
           grep -qx 'DOCUMENT_DEPTH_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v37-release/status"
-      - name: Read live document availability without model requests or CRM writes
+      - name: Verify and publish document evidence for the existing signed card 27
         shell: bash
         run: |
           set -euo pipefail
@@ -123,6 +123,6 @@ jobs:
           rc=0
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
             "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" \
-            < ops/serviceit_vps_b2b_document_depth_audit.py > "$stage/manager-status" 2>/dev/null || rc=$?
+            < ops/serviceit_vps_b2b_document_depth_apply.py > "$stage/manager-status" 2>/dev/null || rc=$?
           grep -E '^DOCS_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/manager-status" || true
           [[ "$rc" == 0 ]]

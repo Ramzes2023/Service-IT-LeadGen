@@ -331,3 +331,18 @@ def test_cyrillic_legacy_text_and_bounded_model_calls(monkeypatch):
     output = worker._model_research(None,{},rows)
     assert len(calls)==2
     assert len(output)>len(calls)
+
+
+def test_public_eis_filestore_accepts_uid_and_rejects_authentication_parameters():
+    base = "https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html"
+    uid = "D471CB43F1EFE4DFE05334548D0AEB67"
+    assert docs.public_eis_attachment(base+"?uid="+uid)
+    assert not docs.public_eis_attachment(base+"?uid="+uid+"&token=x")
+    assert not docs.public_eis_attachment(base+"?uid=bad")
+
+
+def test_223_filestore_uid_route_is_recognized():
+    actual_shape = ("https://zakupki.gov.ru/223/filestore/public/1.0/download/fz223/file.html"
+                    "?uid=D471CB43F1EFE4DFE05334548D0AEB67")
+    assert docs.public_eis_attachment(actual_shape)
+    assert not docs.public_eis_attachment(actual_shape.replace("file.html","other.html"))

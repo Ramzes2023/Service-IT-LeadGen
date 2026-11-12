@@ -608,6 +608,7 @@ def manager_fields(notice, item, record, checks, related):
         "AI-статус: " + _text(status, 140),
         "Рекомендация AI: " + action,
         f"Полнота: {known}/6. Требуют проверки: {unknown}.",
+        "Документы: " + checks.get("documents", "статус проверки ещё не подтверждён"),
         "",
         "АВТОМАТИЧЕСКИЕ ПРОВЕРКИ",
         "Дубль закупки в видимой CRM: " + checks.get("duplicate", "не проверено"),

@@ -68,7 +68,7 @@ def need(ok, why):
         raise DocumentWorkerBlocked(why)
 
 
-def selected(connection):
+def selected(connection, *, target_card=None):
     with connection.cursor() as cur:
         cur.execute("""
           SELECT b.card_id,b.source_id,b.notice_json
@@ -76,14 +76,15 @@ def selected(connection):
           LEFT JOIN serviceit_vps_b2b_tender_doc_receipts d
              ON d.card_id=b.card_id
           WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
+            AND (%s::BIGINT IS NULL OR b.card_id=%s)
             AND (d.card_id IS NULL OR
-                 (d.status='SCANNED_NO_DOCS' AND d.next_attempt_at<=now()))
+                 (d.status='SCANNED_NO_DOCS' AND (d.next_attempt_at<=now() OR %s::BIGINT IS NOT NULL)))
             AND EXISTS (
                 SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts v
                 WHERE v.card_id=b.card_id AND v.status='VERIFIED')
           ORDER BY COALESCE(d.next_attempt_at,b.received_at),
                    b.received_at,b.source_id LIMIT 1
-        """)
+        """, (target_card,target_card,target_card))
         return cur.fetchone()
 
 
@@ -274,7 +275,7 @@ def _evidence(docs):
                        "excerpt": _priority_excerpt(d["text"])}
                       for d in docs[:3]]}
 
-def _model_research(client, env, docs):
+def _model_research(client, env, docs, *, use_model=True):
     """Read all retained text locally; at most two RouterAI requests per tender."""
     reports = []
     for doc in docs[:6]:
@@ -282,6 +283,8 @@ def _model_research(client, env, docs):
         for start in range(0, len(text), 4000):
             reports.append(source_only_investigation({"status":"PUBLIC_PAGES_INSPECTED",
                 "pages":[{"url":doc["url"],"excerpt":text[start:start+4500]}]}))
+    if not use_model:
+        return reports
     try:
         cfg = config_from_env(exact_environment(env))
         need(cfg.provider == "routerai", "TDI_ROUTERAI_ONLY")
@@ -343,7 +346,7 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
             str(covered) + " разделов с доказательствами · " +
             str(evidence_count) + " подтверждённых цитат",
             "RouterAI: " + ("цитаты проверены" if model_used
-                            else "недоступен; использованы исходные тексты"),
+                            else "локальный разбор по исходному тексту"),
             "Файлы для прикрепления к карточке: " +
             str(attachments_planned) + " (только общедоступные форматы)",
             "",
@@ -388,6 +391,11 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
             lines.append("[" + str(i) + "] " + doc["kind"][1:].upper() +
                          " · " + str(doc["bytes"]) + " байт · SHA256 " +
                          doc["sha256"][:12])
+            if doc.get("official_eis"):
+                lines.append("Источник файла: официальный публичный файл ЕИС.")
+            elif doc.get("source_page"):
+                origin = "Текстовая выгрузка открытой карточки: " if doc["kind"] == ".txt" else "Ссылка из публичной карточки: "
+                lines.append(origin + _visible_url(doc["source_page"]))
             lines.append(_visible_url(doc["url"]))
         lines += [
             "",
@@ -407,7 +415,7 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
     need(100 <= len(result) <= MAX_REPORT, "TDI_REPORT_OVERSIZED")
     return "".join("•" if ord(char) > 0xffff else char for char in result)
 
-def run_once(env, client, connection, *, preview=False):
+def run_once(env, client, connection, *, preview=False, target_card=None):
     if env.get(ENABLED, "NO") != "YES":
         return {"status": "TDI_DISABLED", "crm_writes": 0}
     need(live_permitted(env)
@@ -422,7 +430,10 @@ def run_once(env, client, connection, *, preview=False):
     if not locked:
         return {"status": "TDI_ANOTHER_WORKER_RUNNING", "crm_writes": 0}
     try:
-        row = selected(connection)
+        if target_card is not None:
+            PostgresNativeFence.validate_card(target_card)
+        row = (selected(connection, target_card=target_card)
+               if target_card is not None else selected(connection))
         if row is None:
             return {"status": "TDI_NO_ELIGIBLE_CARDS", "crm_writes": 0}
         card, source, notice = row
@@ -439,8 +450,13 @@ def run_once(env, client, connection, *, preview=False):
         need(all(isinstance(before.get(k), str) and before[k].strip()
                  for k in AI_FIELDS), "TDI_NINE_EXISTING_AI_REQUIRED")
         try:
-            findings = source_findings(before, notice,
-                                       exact_environment(env), client)
+            if target_card is None:
+                findings = source_findings(before, notice, exact_environment(env), client)
+            else:
+                from .serviceit_public_evidence_research import _page
+                page = _page(client, url, frozenset({"b2b-center.ru"}))
+                findings = {"status":"PUBLIC_PAGES_INSPECTED",
+                            "pages":[{"url":url,"excerpt":page["text"]}]}
             from .serviceit_b2b_eis_mirrors import supplement_eis_mirrors
             findings = supplement_eis_mirrors(findings, notice, client)
             evidence = inspect_public_documents(
@@ -467,7 +483,8 @@ def run_once(env, client, connection, *, preview=False):
             phase = "AI_INTENT"
             files, manifest = prepare_public_attachments(
                 docs, notice["tender_id"])
-            reports = _model_research(client, env, docs)
+            reports = (_model_research(client, env, docs, use_model=False)
+                       if target_card is not None else _model_research(client, env, docs))
             text = build_report(notice, docs, reports,
                                 attachments_planned=len(manifest))
             # Prove the same source/identity is still in CRM before append.
@@ -491,6 +508,14 @@ def run_once(env, client, connection, *, preview=False):
                                    {"fields": fields})
             comment_id = (int(ident) if str(ident).isdecimal() else 0)
             need(comment_id > 0, "TDI_COMMENT_ID_INVALID")
+            with connection.transaction():
+                saved = connection.execute("""
+                    UPDATE serviceit_vps_b2b_tender_doc_receipts
+                    SET comment_id=%s,updated_at=now()
+                    WHERE card_id=%s AND status='WRITE_INTENT' AND comment_id IS NULL
+                    RETURNING card_id
+                """,(comment_id,card)).fetchone()
+                need(saved is not None, "TDI_COMMENT_RECEIPT_NOT_SAVED")
             actual = _timeline_call(
                 client, webhook, "crm.timeline.comment.get",
                 {"id": comment_id})

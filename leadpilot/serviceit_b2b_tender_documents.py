@@ -28,6 +28,11 @@ EIS_FILE_ENDPOINTS = frozenset({
     "/223/contract/public/download/download.html",
 })
 EIS_FILESTORE = re.compile(r"/(?:44fz/)?filestore/public/1/download/[a-fA-F0-9-]{16,64}/?")
+EIS_PUBLIC_FILE = re.compile(
+    r"/(?:44fz/|223/)?filestore/public/1(?:\.0)?/download/"
+    r"(?:[a-z][a-z0-9]{0,15}/)?file\.html"
+)
+EIS_UID = re.compile(r"[A-Fa-f0-9]{32}|[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}")
 DOCUMENT_HOSTS = PUBLIC_MARKETS | EIS_FILE_HOSTS
 EXTS = frozenset((".pdf", ".docx", ".xlsx", ".zip", ".txt"))
 MAX_LINKS = 8
@@ -69,6 +74,9 @@ def public_eis_attachment(url):
         if EIS_FILESTORE.fullmatch(parts.path):
             return not parts.query
         params = parse_qsl(parts.query, keep_blank_values=True)
+        if EIS_PUBLIC_FILE.fullmatch(parts.path):
+            return (len(params) == 1 and params[0][0] == "uid"
+                    and bool(EIS_UID.fullmatch(params[0][1])))
         return (parts.path in EIS_FILE_ENDPOINTS and len(params) == 1
                 and params[0][0] in {"id", "fileId", "fileUid", "docId"}
                 and bool(re.fullmatch(r"(?:[0-9]{1,20}|[A-Fa-f0-9-]{32,36})", params[0][1])))
@@ -149,7 +157,8 @@ def candidate_links(client, findings, tender_id, *, max_pages=6):
                     continue
                 if dest not in seen and dest != url:
                     seen.add(dest)
-                    candidates.append({"url": dest, "label": label[:80]})
+                    candidates.append({"url": dest, "label": label[:80],
+                                       "source_page": url, "official_eis": official})
             except (TenderDocumentBlocked, ResearchBlocked, ValueError):
                 continue
     return sorted(candidates, key=lambda row: _document_priority(row["label"]))[:MAX_LINKS]
@@ -223,6 +232,10 @@ def _safe_archive(data):
         fail(sum(x.file_size for x in members) <= MAX_ARCHIVE_BYTES,
              "DOCUMENT_ARCHIVE_DECOMPRESSION_LIMIT")
         for m in members:
+            normalized = m.filename.casefold()
+            fail("vbaproject" not in normalized and "/activex/" not in normalized
+                 and "/embeddings/" not in normalized,
+                 "DOCUMENT_ARCHIVE_ACTIVE_PAYLOAD")
             fail(not m.flag_bits & 1 and m.file_size <= MAX_FILE_BYTES
                  and (m.compress_size > 0 or m.file_size == 0)
                  and (m.file_size <= 100 * m.compress_size or m.file_size == 0),
@@ -366,6 +379,8 @@ def inspect_public_documents(client, findings, tender_id, *, max_pages=6, max_do
             fail(len(content) >= 30, "DOCUMENT_SCANNED_OR_EMPTY_TEXT")
             documents.append({
                 "url": row["url"], "kind": kind, "text": content,
+                "label": row["label"], "source_page": row["source_page"],
+                "official_eis": row["official_eis"],
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "bytes": len(payload),
                 # Ephemeral bytes are used only to attach approved public files

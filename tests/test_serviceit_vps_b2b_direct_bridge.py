@@ -126,6 +126,7 @@ def test_one_real_hold_requires_pg_reservation_before_crm_add(monkeypatch):
             fake_call.payload = params
             assert params["fields"][bridge.SIGNAL] == SOURCE
             assert not (bridge.AI_FIELDS & params["fields"].keys())
+            assert bridge.MANAGER_DECISION not in params["fields"]
             return {"result": {"item":{"id":45}}}
         if method == "crm.item.get":
             called.append("GET")

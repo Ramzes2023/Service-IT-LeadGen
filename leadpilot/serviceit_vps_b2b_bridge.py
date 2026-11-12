@@ -24,7 +24,7 @@ from .b2b_github_to_bitrix import (
     BridgeBlocked, SIGNAL,
 )
 from .b2b_bitrix_readiness import ReadOnlyBitrix, preflight
-from .serviceit_b2b_hold_ai_fields import AI_FIELDS
+from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_vps_pg_queue import db, insert_new, secret_file, VpsBlocked
 from .serviceit_vps_worker import live_permitted
 from .b2b_email_opportunity_bridge import classify_services
@@ -35,6 +35,7 @@ PATH = "/integrations/serviceit/b2b-center/notice"
 MAX_BODY = 6000
 MAX_PER_CYCLE = 4
 MAX_PER_24H = 240
+MANAGER_DECISION = PREFIX + "REVIEW_DECISION"
 INTERVAL_SECONDS = 300
 DDL = """
 CREATE TABLE IF NOT EXISTS serviceit_vps_b2b_inbox (
@@ -213,8 +214,8 @@ def initial_readback_matches(actual, card, expected_fields):
     """Verify the immutable source proof, allowing native Kanban title decoration.
 
     Production 1062/21 rewrites the card title after crm.item.add. The unique
-    source ID, idempotency, URL, stage, category and every other initial field
-    MUST still match. No relaxed source, buyer or evidence checks.
+    source ID, idempotency, URL, stage, category and initial source fields
+    MUST still match. Manager input is independent of the intake receipt. No relaxed source, buyer or evidence checks.
     """
     title = actual.get("title") if isinstance(actual, dict) else None
     return (
@@ -226,7 +227,7 @@ def initial_readback_matches(actual, card, expected_fields):
         and isinstance(expected_fields, dict)
         and isinstance(expected_fields.get(SIGNAL), str)
         and all(actual.get(key) == value
-                for key, value in expected_fields.items() if key != "title")
+                for key, value in expected_fields.items() if key not in {"title", MANAGER_DECISION})
     )
 
 
@@ -310,6 +311,7 @@ def deliver_one(connection, client, webhook, *, geo_only=False):
     must(reserve_post(connection, source), "B2B_SOURCE_RESERVED_ELSEWHERE")
     for name in AI_FIELDS:
         payload["fields"].pop(name)
+    payload["fields"].pop(MANAGER_DECISION)
     # Irreversible external side effect: no automatic re-POST in any exception.
     result = bitrix_call(client, base, "crm.item.add", payload)
     obj = result["result"].get("item")

@@ -11,23 +11,28 @@ MODULE = "serviceit_b2b_positive_control.py"
 
 
 def main():
-    run_id, old_sha, new_sha, helper_sha = sys.argv[1:]
+    args = sys.argv[1:]
+    decision_release = args[:1] == ["--manager-decision"]
+    run_id, old_sha, new_sha, helper_sha = args[1:] if decision_release else args
+    module = "serviceit_vps_b2b_bridge.py" if decision_release else MODULE
     assert re.fullmatch(r"\d{7,16}", run_id)
     assert all(re.fullmatch(r"[0-9a-f]{64}", x) for x in (old_sha, new_sha, helper_sha))
     stage = Path(__file__).resolve().parent
     helper = stage / "cutover.py"
-    for path, expected in ((helper, helper_sha), (stage / MODULE, new_sha)):
+    for path, expected in ((helper, helper_sha), (stage / module, new_sha)):
         assert not path.is_symlink() and hashlib.sha256(path.read_bytes()).hexdigest() == expected
     funcs = runpy.run_path(str(helper))
     run, inspect, need = (funcs[k] for k in ("run", "inspect", "need"))
     writer, receiver, core = (funcs[k] for k in ("WRITER", "RECEIVER", "CORE"))
+    geo = "SERVICEIT_B2B_MOSCOW_ONLY_ENABLED"
+    funcs["ALLOWED_ENV"].add(geo)
     lock = Path.home() / "serviceit/config/.serviceit-five-minute-activate.lock"
     assert not lock.is_symlink()
     with lock.open("a") as guard:
         fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
         original, env = funcs["validate_existing"](writer)
         neighbors = {name: inspect(name)["Id"] for name in (receiver, core)}
-        sha_cmd = ["docker", "exec", writer, "sha256sum", "/app/leadpilot/" + MODULE]
+        sha_cmd = ["docker", "exec", writer, "sha256sum", "/app/leadpilot/" + module]
         need(run(sha_cmd).stdout.split()[0] == old_sha, "WRITER_SOURCE_DRIFT")
         image_id = original["Image"]
         need(re.fullmatch(r"sha256:[0-9a-f]{64}", image_id), "IMAGE_ID_INVALID")
@@ -36,11 +41,20 @@ def main():
         run(["docker", "tag", image_id, base])
         context = stage / "build"
         context.mkdir(mode=0o700)
-        (context / MODULE).write_bytes((stage / MODULE).read_bytes())
+        (context / module).write_bytes((stage / module).read_bytes())
         (context / "Dockerfile").write_text(
-            f"FROM {base}\nCOPY --chmod=0444 {MODULE} /app/leadpilot/{MODULE}\n")
+            f"FROM {base}\nCOPY --chmod=0444 {module} /app/leadpilot/{module}\n")
         run(["docker", "build", "--network", "none", "--pull=false", "-t", image, str(context)],
             timeout=240)
+        if decision_release:
+            smoke = (
+                "from leadpilot.serviceit_vps_b2b_bridge import MANAGER_DECISION, INTERVAL_SECONDS;"
+                "assert MANAGER_DECISION=='UF_CRM_13_SVCIT_REVIEW_DECISION';"
+                "assert INTERVAL_SECONDS==300"
+            )
+            run(["docker", "run", "--rm", "--network", "none", "--read-only",
+                 "--user", "10001:10001", "--cap-drop", "ALL", "--entrypoint",
+                 "python", image, "-B", "-c", smoke], timeout=50)
         funcs["start_new"].__globals__["IMAGE"] = image
         funcs["source_probe"]()
         print("DOSSIER_READBACK_NEW_DUPLICATE_CONTROL=YES", flush=True)
@@ -52,6 +66,8 @@ def main():
             funcs["start_new"](writer, backup, env)
             time.sleep(3)
             need(run(sha_cmd).stdout.split()[0] == new_sha, "NEW_WRITER_HASH_MISMATCH")
+            need(funcs["validate_existing"](writer)[1].get(geo) == env.get(geo),
+                 "WRITER_GEO_GATE_CHANGED")
             need(all(inspect(name)["Id"] == ident for name, ident in neighbors.items()),
                  "NEIGHBOR_CONTAINER_CHANGED")
         except Exception:

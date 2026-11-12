@@ -70,7 +70,7 @@ KINDS = {
         r"(?:приобретени\w*|закупк\w*|продлени\w*|продлени\w*|"
         r"поставк\w*)\s+(?:программн\w*\s+)?лицензи\w*\s*"
         r"(?:microsoft\s*)?(?:teams|office\s*365|m365|"
-        r"windows|exchange|sharepoint)|"
+        r"windows|exchange|sharepoint|microsoft\s*365)|"
         r"лицензи\w*\s+(?:на\s+)?(?:программн\w*\s+"
         r"обеспечен\w*|(?<!\w)по(?!\w))|"
         r"(?:продлени\w*|поставк\w*)\s+"

@@ -687,6 +687,8 @@ function pollAndDispatchB2B() {
     const summary = {
       status: "SERVICEIT_B2B_POLL_OK",
       last_poll_utc: new Date().toISOString(),
+      vendor_messages_visible: ids.length,
+      pending_emails_scanned: pending.length,
       messages: messages,
       dispatched: dispatched,
       skipped: skipped,
@@ -728,7 +730,8 @@ function serviceITB2BDeliveryStatusReadOnly() {
   let lastResult = {};
   try {
     const parsed = JSON.parse(last);
-    ["status","last_poll_utc","messages","dispatched","review_required",
+    ["status","last_poll_utc","vendor_messages_visible",
+     "pending_emails_scanned","messages","dispatched","review_required",
      "uncertain_dispatches","pending_tenders_deferred",
      "recovered_missed_messages","missed_messages_rechecked"].forEach(function (key) {
       if (typeof parsed[key] === "number" || typeof parsed[key] === "string") {

@@ -152,6 +152,12 @@ import json,os,httpx
 from leadpilot.serviceit_vps_pg_queue import db
 from leadpilot.serviceit_b2b_moscow_geo import check_public_procurement_location
 samples=('4677160','4678279','4677404','4676643','4675475')
+official_controls=(
+    ("4677923", "Приобретение лицензий Teams (продление)",
+     "https://www.b2b-center.ru/app/market-next/priobretenie-litsenzii-teams-prodlenie/tender-4677923/"),
+    ("4677837", "Услуги ТП для серверов Sparc M8-8 и Power E980",
+     "https://www.b2b-center.ru/app/market-next/uslugi-tp-dlia-serverov-sparc-m8-8-i-power-e980/tender-4677837/"),
+)
 with db(dict(os.environ)) as conn, conn.transaction():
     conn.execute('SET TRANSACTION READ ONLY')
     rows=conn.execute('SELECT source_id,notice_json FROM serviceit_vps_b2b_inbox '
@@ -168,6 +174,13 @@ with httpx.Client(trust_env=False, follow_redirects=False, timeout=12) as client
         tender_id=str(key).rsplit('-',1)[-1]
         if tender_id in samples:
             print('GEO_SAMPLE_'+tender_id+'='+decision)
+    for tender_id,subject,source_url in official_controls:
+        decision=check_public_procurement_location({
+            'source':'B2B-Center', 'tender_id':tender_id,
+            'subject':subject, 'source_url':source_url
+        },client)
+        assert decision in counts
+        print('GEO_PUBLIC_'+tender_id+'='+decision)
 print('GEO_READONLY_COUNT='+str(len(rows)))
 for key,num in counts.items():
     print('GEO_COUNT_'+key+'='+str(num))
@@ -185,13 +198,16 @@ print('GEO_PG_WRITES=0')
     p=run(args,timeout=240,check=False)
     status={}
     for line in p.stdout.splitlines():
-        if re.fullmatch(r"GEO_(?:SAMPLE_[0-9]{5,12}|COUNT_[A-Z]+|READONLY_COUNT|CRM_WRITES|PG_WRITES)=[A-Z0-9]+",line):
+        if re.fullmatch(r"GEO_(?:SAMPLE_[0-9]{5,12}|PUBLIC_[0-9]{5,12}|COUNT_[A-Z]+|READONLY_COUNT|CRM_WRITES|PG_WRITES)=[A-Z0-9]+",line):
             k,v=line.split("=",1)
             status[k]=v
             print(line,flush=True)
     need(p.returncode==0 and status.get("GEO_CRM_WRITES")=="0"
          and status.get("GEO_PG_WRITES")=="0", "GEO_READONLY_CANARY_FAILED")
-    return int(status.get("GEO_COUNT_MOSCOW","0")) > 0
+    # Real opposite-region public controls are required; do not switch
+    # strict policy if the original pages are blocked from the VPS.
+    return (status.get("GEO_PUBLIC_4677923") == "MOSCOW"
+            and status.get("GEO_PUBLIC_4677837") == "OUTSIDE")
 
 def rollback(name,backup):
     run(["docker","rm","-f",name],check=False)

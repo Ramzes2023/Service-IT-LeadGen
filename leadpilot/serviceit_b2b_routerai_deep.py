@@ -247,13 +247,18 @@ def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
                    r"не\s+указана(?:,\s*₽)?|сумма\s+не\s+задана)"),
         ("OTHER", r"(?iu)\bорганизатор\s*[:：—-]?\s*"
                   r"(?:ПАО|ООО|АО|ОАО|ЗАО)\s*[«\"][^»\"]{3,100}[»\"]"),
-        ("PAYMENT", r"(?iu)\bусловия\s+оплаты\s*[:：—-]\s*"
-                    r"(?:отсрочка|оплата|предоплата|аванс)"
+        ("PAYMENT", r"(?iu)\bусловия\s+оплаты\s*(?:[:：—-]\s*)?"
+                    r"(?:предпочтительно\s+)?(?:отсрочка|оплата|предоплата|аванс)"
                     r"[^.;]{5,125}"),
-        # City/street abbreviations like "г.Москва ул. Новохохловская"
-        # contain dots; do not mistake them for an end-of-field marker.
-        ("LOCATION", r"(?iu)\bусловия\s+поставки\s*[:：—-]\s*"
-                     r"[^\n]{8,90}"),
+        # New B2B layouts render the label and value in separate HTML nodes:
+        # "Условия поставки / оказания услуг" then "электронная поставка".
+        # City/street abbreviations contain dots, so keep this location
+        # quote bounded by length rather than sentence punctuation.
+        ("LOCATION", r"(?iu)\bусловия\s+поставки(?:\s*/\s*оказания\s+услуг)?"
+                     r"\s*(?:[:：—-]\s*)?[^\n]{8,100}"),
+        ("LOCATION", r"(?iu)\bадрес\s+поставки(?:\s*/\s*оказания\s+услуг)?"
+                     r"\s*(?:[:：—-]\s*)?(?:Россия[,]?\s*)?"
+                     r"(?:г[.]?\s*Москва|Московская\s+область)[^\n]{8,130}"),
         ("EVALUATION", r"(?iu)\bпри\s+выборе\s+победителя\s+учитывается"
                        r"\s*[:：—-]\s*[^.;]{8,110}"),
         ("DOCUMENTS", r"(?iu)\bподгрузка\s+документации\s+к\s+заявке\s+"

@@ -25,6 +25,10 @@ NOTICE = {
     (["Регион: Москва"], "UNKNOWN"),  # Can be a site-wide filter.
     (["Место оказания услуг", "Москва"], "MOSCOW"),
     (["Место поставки: Московская область, г. Химки"], "MOSCOW"),
+    (["Адрес поставки / оказания услуг",
+      "Россия, г. Москва, 121151, ул. Можайский Вал, д. 8"], "MOSCOW"),
+    (["Место поставки / оказания услуг", "Московская область, г. Красногорск"], "MOSCOW"),
+    (["Место поставки", "Краснодарский край, г. Краснодар, ул. Солнечная, д. 15"], "OUTSIDE"),
     (["Регион исполнения: г. Москва, Тверская улица"], "MOSCOW"),
     (["Адрес поставки: Московский район, Санкт-Петербург"], "OUTSIDE"),
     (["Место поставки: г. Уфа"], "OUTSIDE"),
@@ -35,6 +39,49 @@ NOTICE = {
 ])
 def test_location_requires_procurement_label_and_excludes_other_regions(lines,expected):
     assert geo.classify_location_lines(lines) == expected
+
+
+def test_canonical_original_b2b_heading_verification_requires_exact_title_number_proximity():
+    assert geo.exact_original_page_identity([
+        "Приобретение лицензий Teams (продление)", "№ 4677923",
+        "Адрес поставки / оказания услуг", "Россия, г. Москва"
+    ], "4677923", "Приобретение лицензий Teams (продление)")
+    assert not geo.exact_original_page_identity([
+        "Актуальные торговые процедуры", "№ 4677923",
+        "Справочник лицензий Teams"
+    ], "4677923", "Приобретение лицензий Teams (продление)")
+    assert not geo.exact_original_page_identity([
+        "Приобретение лицензий Teams (продление)", "№ 4677924",
+        "Адрес поставки / оказания услуг", "Россия, г. Москва"
+    ], "4677923", "Приобретение лицензий Teams (продление)")
+
+
+def test_realistic_original_b2b_teams_moscow_performance(monkeypatch):
+    notice = {**NOTICE,
+       "tender_id":"4677923",
+       "source_url":"https://www.b2b-center.ru/app/market-next/priobretenie-litsenzii-teams-prodlenie/tender-4677923/",
+       "subject":"Приобретение лицензий Teams (продление)"}
+    monkeypatch.setattr(geo, "_robots", lambda *args: None)
+    monkeypatch.setattr(geo, "_get", lambda *args:
+      "<html><body><h1>Приобретение лицензий Teams (продление)</h1>"
+      "<p>№ 4677923</p><div>Организатор</div><p>АО ПРИМЕР</p>"
+      "<div>Адрес поставки / оказания услуг</div>"
+      "<p>Россия, г. Москва, 121151, ул. Можайский Вал, д. 8</p>"
+      "</body></html>")
+    assert geo.check_public_procurement_location(notice, object()) == "MOSCOW"
+
+
+def test_realistic_original_b2b_rejects_mismatched_tender_even_with_moscow(monkeypatch):
+    notice = {**NOTICE,
+       "tender_id":"4677923",
+       "source_url":"https://www.b2b-center.ru/app/market-next/priobretenie-litsenzii-teams-prodlenie/tender-4677923/",
+       "subject":"Приобретение лицензий Teams (продление)"}
+    monkeypatch.setattr(geo, "_robots", lambda *args: None)
+    monkeypatch.setattr(geo, "_get", lambda *args:
+      "<html><body><h1>Приобретение лицензий Teams (продление)</h1>"
+      "<p>№ 4677924</p><div>Адрес поставки / оказания услуг</div>"
+      "<p>Москва</p></body></html>")
+    assert geo.check_public_procurement_location(notice, object()) == "UNKNOWN"
 
 
 def test_invalid_public_page_never_promotes_mail_company_address(monkeypatch):

@@ -21,6 +21,7 @@ import httpx
 
 from .ai import config_from_env
 from .bitrix_metadata_audit import validate_webhook
+from .serviceit_b2b_eis_mirrors import registry_buyer_note, supplement_eis_mirrors
 from .serviceit_b2b_dossier_v11 import REPORT, compose, original_nine, DossierV11Blocked
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_b2b_routerai_deep import (
@@ -346,6 +347,7 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                     findings = source_findings(first, notice, exact, client, **options)
                     findings = tender_scoped_findings(findings, notice["tender_id"])
                     if search_scope and can_search:
+                        findings = supplement_eis_mirrors(findings, notice, client)
                         try:
                             findings, document_texts, documents_tried, research_steps = research_with_routerai(
                                 client, config_from_env(exact), exact, notice, findings,
@@ -378,6 +380,9 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
             report, deadline_conflicts = withhold_conflicting_deadlines(report)
             fields, coverage = compose(
                 notice, first, {**findings, "indexed_candidates": []}, report)
+            registry_note = registry_buyer_note(findings)
+            if registry_note and len(fields[REPORT]) + len(registry_note) <= 12000:
+                fields[REPORT] += registry_note
             if deadline_conflicts:
                 note = "\n\nСВЕРКА ИСТОЧНИКОВ\nСроки подачи различаются. Уточнить актуальный срок на площадке.\n"
                 note += "\n".join(deadline_conflicts[:3])

@@ -56,3 +56,18 @@ def test_robots_block_is_ignored_and_other_mirror_is_checked(monkeypatch):
     result = mirrors.supplement_eis_mirrors({"pages": [PRIMARY]}, NOTICE, None)
     assert result["eis_mirror_count"] == 1
     assert result["pages"][1]["url"] == "https://sprosradar.ru/zakupki/223/32616566539/"
+
+
+def test_registry_inn_requires_buyer_label_and_agreement_between_mirrors(monkeypatch):
+    def page(client, url, allowed):
+        if "tendik.ru" in url:
+            return {"text": EXACT + ' Заказчик ООО "Распределительные электрические сети"'}
+        return {"text": EXACT + " Заказчик Распределительные электрические сети ИНН 0277071467"}
+
+    monkeypatch.setattr(mirrors, "_page", page)
+    result = mirrors.supplement_eis_mirrors({"pages": [PRIMARY]}, NOTICE, None)
+    assert result["eis_registry_buyer"]["inn"] == "0277071467"
+    assert "ИНН 0277071467" in mirrors.registry_buyer_note(result)
+    rows = result["pages"][1:]
+    wrong = {**rows[1], "excerpt": rows[1]["excerpt"].replace("Заказчик", "Организатор")}
+    assert mirrors._registry_buyer([rows[0], wrong]) is None

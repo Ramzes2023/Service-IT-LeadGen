@@ -48,9 +48,12 @@ def _registry_buyer(rows):
     pages = {urlsplit(row["url"]).hostname: row for row in rows}
     if not {"tendik.ru", "sprosradar.ru"} <= set(pages):
         return None
-    reference = public_buyer_candidate({
-        "status": "PUBLIC_PAGES_INSPECTED", "pages": [pages["tendik.ru"]],
-    })
+    try:
+        reference = public_buyer_candidate({
+            "status": "PUBLIC_PAGES_INSPECTED", "pages": [pages["tendik.ru"]],
+        })
+    except ValueError:
+        return None
     if not reference:
         return None
     row = pages["sprosradar.ru"]

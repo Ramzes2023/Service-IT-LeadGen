@@ -35,6 +35,7 @@ NEIGHBORS = (
     "serviceit-b2b-vps-writer-1",
 )
 FILES = ('serviceit_b2b_v19_backfill.py', 'serviceit_b2b_v20_versioned.py', 'serviceit_b2b_dossier_v11.py')
+EIS_MIRROR_FILES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_eis_mirrors.py")
 ROUTERAI_RESEARCH_FILES = ("serviceit_b2b_routerai_deep.py", "serviceit_vps_b2b_dossier_v11_worker.py")
 TAVILY_GAPS_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_deep_research.py")
 SEARCH_QUOTA_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_dossier_v11_worker.py")
@@ -297,7 +298,10 @@ def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
             and type(new_hashes) is tuple and len(new_hashes) == len(files)
             and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in new_hashes)
             and type(old_hashes) is tuple and len(old_hashes) == len(files)
-            and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in old_hashes),
+            and all(re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or (release == "eis-mirrors" and name == "serviceit_b2b_eis_mirrors.py"
+                        and digest == "MISSING")
+                    for name, digest in zip(files, old_hashes)),
             "SOURCE_SHA_INPUT_INVALID")
     stage = ROOT / "staging" / (f"b2b-{release}-onefile-release-" + run_id)
     require(stage.is_dir() and not stage.is_symlink()
@@ -424,6 +428,9 @@ if 'serviceit_vps_b2b_deep_research.py' in files:
         'url':'https://zakupki.kontur.ru/1234567_40',
         'excerpt':'Заказчик Общество с ограниченной ответственностью Управляющая компания «Учебный холдинг» ИНН-КПП 1234567894'}]})
     assert evidence['buyer_name']=='ООО УК «Учебный холдинг»' and evidence['inn']=='1234567894'
+if 'serviceit_b2b_eis_mirrors.py' in files:
+    from leadpilot.serviceit_b2b_eis_mirrors import EIS_MIRRORS, supplement_eis_mirrors
+    assert len(EIS_MIRRORS)==2 and callable(supplement_eis_mirrors)
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
@@ -488,6 +495,7 @@ print('V37_OFFLINE_SMOKE_PASS')
 def main():
     args = sys.argv[1:]
     profiles = {
+        "--eis-mirrors": (EIS_MIRROR_FILES, "eis-mirrors"),
         "--routerai-research": (ROUTERAI_RESEARCH_FILES, "routerai-research"),
         "--tavily-gaps": (TAVILY_GAPS_FILES, "tavily-gaps"),
         "--search-quota": (SEARCH_QUOTA_FILES, "search-quota"),

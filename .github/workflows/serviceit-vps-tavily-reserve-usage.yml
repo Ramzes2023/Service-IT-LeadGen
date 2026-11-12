@@ -164,5 +164,11 @@ jobs:
               print("TAVILY_RESERVE_USAGE=UNVERIFIED")
           PY
           REMOTE
-          grep -E '^TAVILY_(RESERVE|VPS)_[A-Z0-9_]+=[A-Z0-9_]+
- "$stage/status"
+          # Strict status-only allowlist. Never display arbitrary provider or secret text.
+          python3 - "$stage/status" <<'PY'
+          import re,sys
+          from pathlib import Path
+          for line in Path(sys.argv[1]).read_text().splitlines():
+              if re.fullmatch(r'TAVILY_(?:RESERVE|VPS)_[A-Z0-9_]+=[A-Z0-9_]+',line):
+                  print(line)
+          PY

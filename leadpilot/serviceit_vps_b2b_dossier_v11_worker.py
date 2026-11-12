@@ -7,6 +7,8 @@ research, not by GitHub/cloud CRM writers.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -182,7 +184,7 @@ def non_ai_unchanged(before, after):
                if k not in ignored)
 
 
-def worker_once(env, client, connection, *, preview=False):
+def worker_once(env, client, connection, *, preview=False, search_scope=None):
     """No payment/outreach/score/stage/task/contacts. Old fields copied into PG."""
     need(live_permitted(env)
          and env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES"
@@ -229,8 +231,11 @@ def worker_once(env, client, connection, *, preview=False):
             from .serviceit_vps_worker import exact_environment
             exact = exact_environment(env)
             try:
-                findings = source_findings(first, notice, exact, client,
-                                           enable_v18=True)
+                with search_scope(card, source) if search_scope else nullcontext(True) as can_search:
+                    options = {"enable_v18": True}
+                    if can_search and exact.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES":
+                        options["connection"] = connection
+                    findings = source_findings(first, notice, exact, client, **options)
             except Exception:
                 findings = {"status": "PUBLIC_SOURCE_UNVERIFIED", "pages": [],
                             "checked_at": datetime.now(timezone.utc).isoformat()}

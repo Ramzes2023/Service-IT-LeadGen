@@ -8,6 +8,7 @@ GitHub ledger remains untouched. Normal mode is strictly READONLY.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -35,6 +36,36 @@ from .serviceit_b2b_hold_ai_fields import AI_FIELDS
 
 MAX_ITEMS = 6
 INTERVAL_SECONDS = 300
+SEARCH_POLICY_START = datetime(2026, 11, 12, 10, 20, tzinfo=timezone.utc)
+SEARCH_REQUESTS_PER_CARD = 10
+SEARCH_HOSTS = frozenset({
+    "api.search.brave.com", "api.search.tinyfish.ai", "api.fetch.tinyfish.ai",
+    "api.tavily.com", "google.serper.dev",
+})
+
+
+class SearchBudget:
+    """Meter external discovery independently of direct public page reads."""
+
+    def __init__(self):
+        self.remaining = 0
+        self.sent = 0
+
+    def check(self, request):
+        if request.url.host not in SEARCH_HOSTS:
+            return
+        if self.remaining <= 0:
+            raise httpx.RequestError("AUTOMATED_SEARCH_DISABLED_OR_LIMIT_REACHED", request=request)
+        self.remaining -= 1
+        self.sent += 1
+
+    @contextmanager
+    def for_card(self, eligible):
+        self.remaining = SEARCH_REQUESTS_PER_CARD if eligible else 0
+        try:
+            yield eligible
+        finally:
+            self.remaining = 0
 
 
 def safe_log(payload):
@@ -143,6 +174,17 @@ def poll_new(env: dict, *, client: httpx.Client, connection,
 
 
 def run_once(env: dict, *, client: httpx.Client) -> dict:
+    budget = SearchBudget()
+    hook = budget.check
+    client.event_hooks["request"].append(hook)
+    try:
+        result = _run_once(env, client=client, budget=budget)
+        return {**result, "metered_search_requests": budget.sent}
+    finally:
+        client.event_hooks["request"].remove(hook)
+
+
+def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
     with db(env) as connection:
         if not live_permitted(env):
             # A successful empty list alone is insufficient. Validate the
@@ -156,6 +198,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             result["migration_cutover"] = "NOT_AUTHORIZED"
             return result
         exact_env = exact_environment(env)
+        followup_env = {**exact_env, "SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED": "NO"}
         # The native worker verifies the independent cutover/privacy gates
         # again immediately before reserving its PostgreSQL one-use receipt.
         # No GitHub token/HMAC/Fernet key is needed on this VPS.
@@ -165,6 +208,17 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             polled = poll_new(env, client=client, connection=connection)
         handled = 0
         review = 0
+        has_b2b_inbox = bool(connection.execute(
+            "SELECT to_regclass('public.serviceit_vps_b2b_inbox')"
+        ).fetchone()[0])
+
+        def b2b_search_scope(card, source):
+            row = connection.execute("""
+                SELECT received_at FROM serviceit_vps_b2b_inbox
+                WHERE card_id=%s AND source_id=%s AND state='VERIFIED'
+            """, (card, source)).fetchone()
+            return budget.for_card(bool(row and row[0] >= SEARCH_POLICY_START))
+
         for _ in range(MAX_ITEMS):
             card = claim_one(connection)
             if card is None:
@@ -172,8 +226,15 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             # There is deliberately NO automatic replay after any exception.
             # A claim that crashes stays RUNNING, then becomes UNCERTAIN.
             try:
-                outcome = run_vps_native(card, exact_env, client=client,
-                                         connection=connection)
+                queue_row = connection.execute(
+                    "SELECT received_at FROM serviceit_vps_new_cards WHERE card_id=%s", (card,)
+                ).fetchone()
+                is_b2b = has_b2b_inbox and connection.execute(
+                    "SELECT 1 FROM serviceit_vps_b2b_inbox WHERE card_id=%s LIMIT 1", (card,)
+                ).fetchone()
+                with budget.for_card(bool(queue_row and queue_row[0] >= SEARCH_POLICY_START and not is_b2b)):
+                    outcome = run_vps_native(card, exact_env, client=client,
+                                             connection=connection)
                 ok = outcome.get("status") in (
                     "SERVICEIT_NEW_CARD_EVENT_PROCESSED",
                     "EXACT_TARGET_READBACK",
@@ -199,14 +260,14 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
             # Public research failures must not stall future source intake.
             try:
                 from .serviceit_vps_b2b_deep_research import run_once as deep_once
-                research = deep_once(exact_env, client, connection)
+                research = deep_once(followup_env, client, connection)
             except Exception:
                 research = {"status": "B2B_RESEARCH_CHECK_FAILED", "research": 0}
         public_inn = {"status": "B2B_PUBLIC_INN_DISABLED", "writes": 0}
         if env.get("SERVICEIT_VPS_B2B_PUBLIC_INN_ENABLED", "NO") == "YES":
             try:
                 from .serviceit_vps_b2b_public_inn import run_once as public_inn_once
-                public_inn = public_inn_once(exact_env, client, connection)
+                public_inn = public_inn_once(followup_env, client, connection)
             except Exception:
                 public_inn = {"status": "B2B_PUBLIC_INN_CHECK_FAILED", "writes": 0}
         # V11 supersedes V10's automatic writer (do not call both).
@@ -218,7 +279,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
         if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO") == "YES":
             try:
                 from .serviceit_vps_b2b_dossier_v11_worker import worker_once
-                dossier = worker_once(env, client, connection)
+                dossier = worker_once(env, client, connection, search_scope=b2b_search_scope)
             except Exception:
                 dossier = {"status": "B2B_DOSSIER_V11_CHECK_FAILED",
                            "crm_writes": 0}
@@ -228,7 +289,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
         if env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED", "NO") == "YES":
             try:
                 from .serviceit_vps_b2b_document_worker import run_once as docs_once
-                tender_docs = docs_once(exact_env, client, connection)
+                tender_docs = docs_once(followup_env, client, connection)
             except Exception:
                 tender_docs = {"status": "TDI_CHECK_FAILED", "crm_writes": 0}
         # V19 additive, one-use supplement for prior V11-signed cards.
@@ -238,7 +299,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
         if exact_env.get("SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED") == "YES":
             try:
                 from .serviceit_b2b_v19_backfill import run_once as backfill_once
-                v19 = backfill_once(exact_env, client, connection)
+                v19 = backfill_once(followup_env, client, connection)
             except Exception:
                 v19 = {"status": "B2B_V19_ADDITIVE_CHECK_FAILED", "crm_writes": 0}
         # V20 adds immutable sequential receipts only for V19-VERIFIED cards.
@@ -248,7 +309,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
         if exact_env.get("SERVICEIT_VPS_B2B_V20_VERSIONED_ENABLED", "NO") == "YES":
             try:
                 from .serviceit_b2b_v20_versioned import run_once as v20_once
-                v20 = v20_once(exact_env, client, connection)
+                v20 = v20_once(followup_env, client, connection)
             except Exception:
                 v20 = {"status": "B2B_V20_VERSIONED_CHECK_FAILED", "crm_writes": 0}
         # V37: reflect previously verified facts in the passport, managerial
@@ -265,14 +326,7 @@ def run_once(env: dict, *, client: httpx.Client) -> dict:
         # Independent bounded public-source retry after the existing CRM
         # writers. Retry receipts are PG-only and do not override any V11,
         # V19, V20 or TDI source/AI decisions.
-        tinyfish_retry = {"status": "TINYFISH_RETRY_DISABLED", "crm_writes": 0}
-        if exact_env.get("SERVICEIT_VPS_B2B_TINYFISH_RETRY_ENABLED") == "YES":
-            try:
-                from .serviceit_vps_b2b_tinyfish_retry import run_once as retry_once
-                tinyfish_retry = retry_once(exact_env, client, connection)
-            except Exception:
-                tinyfish_retry = {
-                    "status": "TINYFISH_RETRY_CHECK_FAILED", "crm_writes": 0}
+        tinyfish_retry = {"status": "TINYFISH_RETRY_DISABLED_NEW_ONLY", "crm_writes": 0}
         return {
             "b2b_dossier_consistency": consistency,
             "b2b_tinyfish_retry": tinyfish_retry,

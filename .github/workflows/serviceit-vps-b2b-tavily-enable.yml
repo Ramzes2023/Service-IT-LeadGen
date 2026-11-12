@@ -1,0 +1,56 @@
+name: ServiceIT B2B Tavily credential check and activation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-tavily-enable.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  activate:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Fetch exact reviewed public repository revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init --quiet .
+          git remote add origin https://github.com/Ramzes2023/Service-IT-LeadGen.git
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+      - name: Check private key, test one public search, and activate on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          stage="$RUNNER_TEMP/tavily-activation"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/id" "$stage/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$stage/hosts" >/dev/null
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          remote="serviceit/staging/tavily-enable-$GITHUB_RUN_ID"
+          ssh -T -i "$stage/id" "${opts[@]}" "$target"             "umask 077; install -d -m 0700 '$remote'"
+          scp -i "$stage/id" "${opts[@]}" ops/serviceit_vps_b2b_tavily_enable.py             ops/serviceit_vps_b2b_v37_quality_release.py "$target:$remote/"
+          rc=0
+          ssh -T -i "$stage/id" "${opts[@]}" "$target"             "python3 -B '$remote/serviceit_vps_b2b_tavily_enable.py'"             > "$stage/status" 2>/dev/null || rc=$?
+          grep -E '^TAVILY_[A-Z0-9_]{3,42}=[A-Z0-9_]{1,55}$' "$stage/status" || true
+          [[ "$rc" == 0 ]]
+          grep -Eq '^TAVILY_ACTIVATION=(LIVE|ALREADY_LIVE)$' "$stage/status"

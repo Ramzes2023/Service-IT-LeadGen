@@ -46,7 +46,11 @@ from leadpilot.serviceit_b2b_tavily_fallback_v44 import _search_once, permitted
 from leadpilot.serviceit_b2b_public_mirrors import _from_page_or_public_browser
 assert permitted(os.environ)
 key = secret_file(os.environ, 'SERVICEIT_TAVILY_SEARCH_API_KEY')
-with httpx.Client(trust_env=False, follow_redirects=False, timeout=18) as client:
+def report_http(response):
+    if response.request.url.host == 'api.tavily.com':
+        print('TAVILY_PROBE_HTTP=' + str(response.status_code), flush=True)
+with httpx.Client(trust_env=False, follow_redirects=False, timeout=18,
+                  event_hooks={'response': [report_http]}) as client:
     status, urls = _search_once(client, key, '4677404')
     print('TAVILY_PROBE_STATUS=' + status, flush=True)
     assert status in ('CANDIDATES', 'NO_RESULTS')
@@ -121,6 +125,8 @@ def run():
                     _, _, count = line.partition("=")
                     if count.isdigit() and len(count) == 1:
                         print(line, flush=True)
+                elif line.startswith("TAVILY_PROBE_HTTP=") and line.removeprefix("TAVILY_PROBE_HTTP=").isdigit():
+                    print(line, flush=True)
             runtime.require(probe.returncode == 0, "TAVILY_API_CHECK_FAILED")
             runtime.require(runtime.pending_source_writes() == 0, "CRM_WRITE_IN_PROGRESS")
             started = True

@@ -659,6 +659,20 @@ test('client service relevance matches VPS: 1C, servers, explicit IT staffing ye
 });
 
 
+test('quoted-printable decoding keeps ASCII local and preserves UTF-8',()=>{
+  const e=environment();
+  const original=e.context.Utilities.newBlob;
+  let textBlobs=0;
+  e.context.Utilities.newBlob=value=>{
+    if(typeof value==='string') textBlobs++;
+    return original(value);
+  };
+  const ascii='Long ASCII line '.repeat(2000);
+  assert.strictEqual(e.context.decodeQuotedPrintableUtf8_(ascii+'=D0=90=\r\n😀'),ascii+'А😀');
+  assert.strictEqual(textBlobs,1);
+});
+
+
 test('Gmail advanced raw omission uses same-provider authenticated read-only REST fallback',()=>{
   const html='<a href="https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/">Запрос цен № 1234567</a>'+
     '<div>Организатор: ООО "Пример"</div><div>Предмет договора: Лицензии 1С</div>';

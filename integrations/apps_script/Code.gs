@@ -182,11 +182,17 @@ function decodeQuotedPrintableUtf8_(encoded) {
       bytes.push(parseInt(unfolded.slice(i + 1, i + 3), 16));
       i += 2;
     } else {
-      // Normal QP encoded messages are all ASCII; retain valid 8-bit
-      // UTF-8 content instead of corrupting non-ASCII characters.
-      const utf8 = Utilities.newBlob(char).getBytes();
-      for (let j = 0; j < utf8.length; j++) {
-        bytes.push((utf8[j] + 256) % 256);
+      // Unescaped QP text is normally ASCII. Avoid one Apps Script service
+      // call per HTML character, which can consume the whole polling window.
+      const code = unfolded.codePointAt(i);
+      if (code < 128) {
+        bytes.push(code);
+      } else {
+        const utf8 = Utilities.newBlob(String.fromCodePoint(code)).getBytes();
+        for (let j = 0; j < utf8.length; j++) {
+          bytes.push((utf8[j] + 256) % 256);
+        }
+        if (code > 0xffff) i++;
       }
     }
   }

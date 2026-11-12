@@ -62,6 +62,17 @@ jobs:
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' > "$stage/status" <<'REMOTE'
           set -euo pipefail
           core=serviceit-leadgen-vps-coordinator-1
+          # Unauthenticated control: distinguish VPS host/IP path from Python HTTP client fingerprint.
+          if command -v curl >/dev/null 2>&1; then
+            code="$(curl -4 --silent --show-error --max-redirs 0 --max-time 20 --output /dev/null --write-out '%{http_code}' 'https://api.tavily.com/usage')" || code='NETWORK_ERROR'
+            if [[ "$code" =~ ^[0-9]{3}$ ]]; then
+              echo "TAVILY_VPS_HOST_IPV4_UNAUTH_HTTP=$code"
+            else
+              echo 'TAVILY_VPS_HOST_IPV4_UNAUTH_HTTP=NETWORK_ERROR'
+            fi
+          else
+            echo 'TAVILY_VPS_HOST_IPV4_UNAUTH_HTTP=CURL_MISSING'
+          fi
           img="$(docker inspect --format '{{.Image}}' "$core")"
           [[ "$img" =~ ^sha256:[a-f0-9]{64}$ ]]
           docker exec -i "$core" python -B - <<'PY'
@@ -80,6 +91,20 @@ jobs:
               print(f"TAVILY_RESERVE_SHA_{name}={digest}")
           flag = os.environ.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED") == "YES"
           print("TAVILY_RESERVE_ACTIVE=" + ("YES" if flag else "NO"))
+          PY
+          docker exec -i "$core" python -B - <<'PY'
+          import httpx
+          for label,headers in (("DEFAULT",{}),("CURL_UA",{"User-Agent":"curl/8.0"})):
+              try:
+                  with httpx.Client(timeout=15,trust_env=False,follow_redirects=False) as client:
+                      response=client.get("https://api.tavily.com/usage",headers=headers)
+                  code=str(response.status_code)
+                  server=response.headers.get("server","").lower()
+                  edge="CLOUDFLARE" if "cloudflare" in server else ("NGINX" if "nginx" in server else "OTHER_OR_NONE")
+                  print(f"TAVILY_VPS_HTTPX_{label}_UNAUTH_HTTP={code}")
+                  print(f"TAVILY_VPS_HTTPX_{label}_SERVER={edge}")
+              except httpx.HTTPError:
+                  print(f"TAVILY_VPS_HTTPX_{label}_UNAUTH_HTTP=NETWORK_ERROR")
           PY
           docker run --rm -i --pull never --read-only --user 10001:10001 --cap-drop ALL \
             --mount type=bind,src=/etc/serviceit/secrets/tavily_api_key,dst=/run/tavily,readonly \

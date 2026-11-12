@@ -72,7 +72,7 @@ def supplement_eis_mirrors(findings, notice, client):
         window = text[max(0, match.start()-300):match.end()+300].casefold()
         if len(words & set(re.findall(r"[^\W_]{4,}", window))) < 2:
             continue
-        added.append({"url": url, "excerpt": text[:6800]})
+        added.append({"url": url, "excerpt": text[:7000]})
     if not added:
         return findings
     return {**findings, "status": "PUBLIC_PAGES_INSPECTED",

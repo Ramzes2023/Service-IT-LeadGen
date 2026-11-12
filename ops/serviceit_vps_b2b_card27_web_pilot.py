@@ -151,14 +151,15 @@ def main():
             for row in findings["pages"][1:]:
                 text = row["excerpt"]
                 position = text.find(INN)
+                print("CARD27_WEB_MIRROR_INN_POSITION=" + str(max(0, position)), flush=True)
                 if position >= 0:
-                    # Print only the label tokens and verified buyer name markers.
-                    span = text[max(0, position-270):position+100].casefold()
-                    tokens = re.findall(r"заказчик|покупатель|инн|кпп|огрн|"
-                                        r"организатор|башкирэнерго|"
-                                        r"башкирские|распределительные|электрические|сети|"
-                                        r"ответственностью|ооо|" + INN, span)
-                    print("CARD27_WEB_LABELS=" + "_".join(tokens), flush=True)
+                    span = text[max(0, position-350):position+140].casefold()
+                    labels = {"заказчик": "BUYER", "покупатель": "BUYER",
+                              "инн": "INN", "кпп": "KPP", "огрн": "OGRN",
+                              "организатор": "ORGANIZER", "башкирэнерго": "SHORT",
+                              "башкирские": "FULL", "ооо": "OOO", INN: "VALUE"}
+                    tokens = re.findall("|".join(labels), span)
+                    print("CARD27_WEB_LABELS=" + "_".join(labels[t] for t in tokens), flush=True)
             report = source_only_investigation(findings)
             fields, _ = compose(notice, card, findings, report)
             print("CARD27_WEB_EIS_DOSSIER=" + ("YES" if all(

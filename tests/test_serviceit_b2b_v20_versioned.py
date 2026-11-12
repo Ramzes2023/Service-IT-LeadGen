@@ -62,7 +62,8 @@ def test_versioned_history_receipts_and_safe_worker_are_isolated():
     assert "non_ai_unchanged(fresh,after)" in source
     assert "original_nine(after)==draft" in source
     assert "safe_notice(notice,card,source,first)" in source
-    assert "source_findings(first,notice,exact,client,enable_v18=True)" in source
+    assert "source_findings(first,notice,exact,client,enable_v18=True," in source
+    assert "connection=conn" in source
     assert "pg_try_advisory_lock" in source
     assert "crm.contact.add" not in source
     assert "tasks.task.add" not in source

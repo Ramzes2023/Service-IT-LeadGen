@@ -1,5 +1,6 @@
 name: ServiceIT B2B card29 source-backed one-use dossier repair
 # Retry after independently verified V37 post-V11 audit chain (no untrusted edits).
+# Read exact split-label original B2B terms before one-use CRM write.
 on:
   push:
     branches: [main]

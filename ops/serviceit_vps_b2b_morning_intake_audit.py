@@ -53,10 +53,36 @@ def main():
             emit(f"TENDER_{tid}_PG", row[0] if row else "ABSENT")
             if row and row[1]:
                 emit(f"TENDER_{tid}_PG_CARD", row[1])
+        reviews = conn.execute("""
+            SELECT source_id,notice_json FROM serviceit_vps_b2b_inbox
+            WHERE state='REVIEW' AND source_id=ANY(%s)
+        """, (["B2B-CENTER-4677923","B2B-CENTER-4673595"],)).fetchall()
         emit("PENDING", "YES" if read_candidate(conn) else "NO")
     base = validate_webhook(secret_file(env, "SERVICEIT_BITRIX_WEBHOOK"))
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=12) as client:
         emit("BITRIX_DUPLICATE_CONTROL", "YES" if positive_duplicate_control(client, base) else "NO")
+        from leadpilot.serviceit_b2b_moscow_geo import (
+            HOSTS, _get, _robots, VisibleText, same_official_tender_head,
+            matched_excerpt, classify_location_lines,
+        )
+        for source, notice in reviews:
+            tid = source.split("-")[-1]
+            phase = "ROBOTS"
+            try:
+                _robots(client, notice["source_url"], HOSTS)
+                phase = "FETCH"
+                html = _get(client, notice["source_url"], HOSTS)
+                parser = VisibleText()
+                parser.feed(html)
+                flat = " ".join(parser.parts)
+                emit(f"GEO_{tid}_HEAD", "YES" if same_official_tender_head(
+                    flat, tid, notice["subject"]) else "NO")
+                emit(f"GEO_{tid}_MATCHED", "YES" if matched_excerpt(
+                    flat, tid, notice["subject"]) else "NO")
+                emit(f"GEO_{tid}_LOCATION", classify_location_lines(parser.parts))
+            except Exception as exc:
+                emit(f"GEO_{tid}_{phase}", str(exc) if re.fullmatch(r"[A-Z][A-Z0-9_]{3,70}", str(exc))
+                     else type(exc).__name__.upper())
         for tid in TENDERS:
             try:
                 matches = exact_duplicate(client, base, f"B2B-CENTER-{tid}")

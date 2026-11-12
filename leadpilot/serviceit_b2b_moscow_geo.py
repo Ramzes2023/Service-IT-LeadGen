@@ -23,8 +23,10 @@ HOSTS = frozenset(("b2b-center.ru",))
 LOCATION_LABEL = re.compile(
     r"(?iu)^\s*(?:"
     r"место\s+(?:поставки|оказания\s+услуг|выполнения\s+работ|"
-    r"исполнения\s+(?:договора|контракта|обязательств))|"
-    r"адрес\s+(?:поставки|оказания\s+услуг|выполнения\s+работ)|"
+    r"исполнения\s+(?:договора|контракта|обязательств))"
+    r"(?:\s*/\s*(?:поставки|оказания\s+услуг|выполнения\s+работ))?|"
+    r"адрес\s+(?:поставки|оказания\s+услуг|выполнения\s+работ)"
+    r"(?:\s*/\s*(?:поставки|оказания\s+услуг|выполнения\s+работ))?|"
     r"регион\s+(?:поставки|оказания\s+услуг|исполнения|выполнения\s+работ)|"
     r"территория\s+(?:оказания\s+услуг|исполнения\s+договора)"
     r")\s*[:：\-–—]?\s*(.*)$"
@@ -39,7 +41,10 @@ OTHER_PLACES = re.compile(
     r"республик[аиуе]\s+[а-яё-]+|"
     r"новосибирск|екатеринбург|казань|уфа|самара|краснодар|"
     r"нижний\s+новгород|тюмень|пермь|ростов[\s-]*на[\s-]*дону|"
-    r"владивосток|хабаровск|красноярск|омск|челябинск|иркутск)"
+    r"владивосток|хабаровск|красноярск|омск|челябинск|иркутск|"
+    r"тверь|калуга|тула|ярославль|воронеж|псков|белгород|"
+    r"(?:[а-яё-]+(?:ский|ская|ского|ском)\s+)?(?:край|область|обл\.)"
+    r"(?!\s*московск))"
 )
 ALL_RUSSIA = re.compile(
     r"(?iu)по\s+всей\s+росси[ии]|все\s+регионы|по\s+всей\s+рф|"
@@ -86,6 +91,32 @@ def classify_location_lines(lines: list[str]) -> str:
     return "UNKNOWN"
 
 
+def exact_original_page_identity(parts: list[str], tender_id: str,
+                                 subject: str) -> bool:
+    """The *canonical original* B2B detail page: nearby heading + numbered ID.
+
+    Mirror proof requires extra publisher attribution. The original page URL
+    already ties the numeric ID to this B2B source; require the exact visible
+    subject near an explicit № number in the opening procurement header,
+    not a footer's unrelated recommended tender.
+    """
+    if (type(parts) is not list or len(parts) > 5000
+            or type(subject) is not str or type(tender_id) is not str):
+        return False
+    head = " ".join(part for part in parts[:1200] if isinstance(part, str))[:12000]
+    compact = " ".join(head.casefold().replace("ё", "е").split())
+    title = " ".join(subject.casefold().replace("ё", "е").split())
+    if not 10 <= len(title) <= 240:
+        return False
+    for match in re.finditer(
+            r"(?<!\\d)№\\s*" + re.escape(tender_id) + r"(?!\\d)", compact):
+        # The heading title must be directly adjacent to the exact tender
+        # number; a match in related notices or a footer is not sufficient.
+        if title in compact[max(0, match.start()-380):match.end()+250]:
+            return True
+    return False
+
+
 def check_public_procurement_location(notice: dict, client) -> str:
     """Never trust bare mail fields; first verify the exact public tender page."""
     if type(notice) is not dict or notice.get("source") != "B2B-Center":
@@ -114,7 +145,8 @@ def check_public_procurement_location(notice: dict, client) -> str:
         lines = parser.parts
         flat = " ".join(lines)
         # Number AND tender title in fetched full text, not an index snippet.
-        if not matched_excerpt(flat, tender_id, subject):
+        if not (exact_original_page_identity(lines, tender_id, subject)
+                or matched_excerpt(flat, tender_id, subject)):
             return "UNKNOWN"
         return classify_location_lines(lines)
     except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, UnicodeError,

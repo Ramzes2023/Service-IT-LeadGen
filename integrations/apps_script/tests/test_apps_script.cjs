@@ -527,7 +527,7 @@ test('valid 202 VPS persisted receipt is required to mark email DISPATCHED',()=>
   assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,1);
   assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCHED:/);
   assert.match(e.context.serviceITB2BDeliveryStatusReadOnly().last_result.last_poll_utc,
-    /^20\\d{2}-\\d{2}-\\d{2}T/);
+    /^20\d{2}-\d{2}-\d{2}T/);
 });
 
 test('fake 202 HTML proxy response never marks source DISPATCHED or retries',()=>{

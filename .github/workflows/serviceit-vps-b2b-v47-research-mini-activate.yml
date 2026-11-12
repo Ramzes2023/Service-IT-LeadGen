@@ -1,0 +1,70 @@
+name: ServiceIT V47 Tavily Research Mini guarded activation new-card cutoff
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  activate:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V47_RESEARCH_MINI_ACTIVATE_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact reviewed Research MINI overlay controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git hash-object ops/serviceit_vps_b2b_v47_research_mini_activate.py)" == 741771bc244310715742ad1d7f08dce397616651 ]]
+          [[ "$(git hash-object ops/serviceit_vps_b2b_v37_quality_release.py)" == 6fe561f986dc50cf4b678c5c68c4432c2c2f78a6 ]]
+          python -m py_compile ops/serviceit_vps_b2b_v47_research_mini_activate.py
+          python -m py_compile ops/serviceit_vps_b2b_v37_quality_release.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          install -d -m 0700 "$RUNNER_TEMP/v47-pro"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v47-pro/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v47-pro/hosts"
+          chmod 0600 "$RUNNER_TEMP/v47-pro/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v47-pro/hosts" >/dev/null
+      - name: Stage source SHA pinned controllers and activate only if /usage OK
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v47-pro/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/research-mini-v47-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v47-pro/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          scp -i "$RUNNER_TEMP/v47-pro/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v47_research_mini_activate.py \
+            ops/serviceit_vps_b2b_v37_quality_release.py "$target:$stage/"
+          rc=0
+          ssh -T -i "$RUNNER_TEMP/v47-pro/id" "${opts[@]}" "$target" \
+            "python3 -B '$stage/serviceit_vps_b2b_v47_research_mini_activate.py'" \
+            > "$RUNNER_TEMP/v47-pro/status" 2>/dev/null || rc=$?
+          grep -E '^RESEARCH_MINI_[A-Z0-9_]{3,50}=[A-Z0-9_]{1,60}$' \
+            "$RUNNER_TEMP/v47-pro/status" | head -25 || true
+          [[ "$rc" == 0 ]]
+          grep -Eq '^RESEARCH_MINI_ACTIVATION=(LIVE|ALREADY_LIVE)$' "$RUNNER_TEMP/v47-pro/status"

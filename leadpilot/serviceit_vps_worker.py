@@ -293,18 +293,21 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
             except Exception:
                 dossier = {"status": "B2B_DOSSIER_V11_CHECK_FAILED",
                            "crm_writes": 0}
-        # V46: Tavily Research PRO is an independent source-only async step.
+        # V47: Tavily Research MINI is an independent source-only async step.
         # It never updates Bitrix directly. Its own PG receipt is created
-        # BEFORE paying, and /usage must show >=250 included free credits.
+        # BEFORE paying, and /usage must show >=110 included free credits.
         # Missing key, prior Tavily 403, or disabled flag fail closed; B2B
         # intake and old CRM writers continue normally.
-        tavily_pro = {"status":"RESEARCH_PRO_DISABLED","writes":0}
-        if env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED")=="YES":
+        tavily_mini = {"status":"RESEARCH_MINI_DISABLED","writes":0}
+        # A new signed B2B card starts ONE task after Mini activation.
+        # Every subsequent 300s cycle can check pending task STATUS but
+        # never pays again and never selects historical B2B cards.
+        if env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED")=="YES":
             try:
-                from .serviceit_b2b_tavily_research_pro_v46 import run_once as research_pro_once
-                tavily_pro = research_pro_once(env)
+                from .serviceit_b2b_tavily_research_mini_v47 import run_once as research_mini_once
+                tavily_mini = research_mini_once(env)
             except Exception:
-                tavily_pro = {"status":"RESEARCH_PRO_CHECK_FAILED","writes":0}
+                tavily_mini = {"status":"RESEARCH_MINI_CHECK_FAILED","writes":0}
 
         # Completely separate document step: never replaces V11 nine fields,
         # public INN, score, stage or task. OFF until explicitly activated.
@@ -356,7 +359,7 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
             "b2b_v20_versioned": v20,
             "b2b_v19_additive": v19,
             "b2b_tender_documents": tender_docs,
-            "tavily_research_pro": tavily_pro,
+            "tavily_research_mini": tavily_mini,
             "b2b_dossier_v11": dossier,
             "b2b_public_inn": public_inn,
             "b2b_research": research,

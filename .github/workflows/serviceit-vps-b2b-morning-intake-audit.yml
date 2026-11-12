@@ -1,4 +1,4 @@
-name: ServiceIT B2B recent Gmail intake and research audit
+name: ServiceIT B2B intake recovery and research audit
 # B2B receiver/writer post-rollout no-write reconciliation, 2026-11-12
 # Check the Gmail handoff separately from downstream worker receipts.
 on:

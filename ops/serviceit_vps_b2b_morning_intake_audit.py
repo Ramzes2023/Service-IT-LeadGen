@@ -34,6 +34,19 @@ def main():
         emit("TODAY_RECEIVED", sum(count for _, count in rows))
         for state, count in rows:
             emit("TODAY_" + state, count)
+        latest = conn.execute("""
+            SELECT source_id,state,card_id
+            FROM serviceit_vps_b2b_inbox
+            WHERE received_at >= TIMESTAMPTZ '2026-11-12 00:00:00 Europe/Rome'
+            ORDER BY received_at DESC LIMIT 20
+        """).fetchall()
+        for source, state, card in latest:
+            match = re.fullmatch(r"B2B-CENTER-(\d{5,12})", source)
+            if match:
+                label = f"RECENT_{match[1]}"
+                emit(label, state)
+                if card:
+                    emit(label + "_CARD", card)
         for tid in TENDERS:
             row = conn.execute("SELECT state,card_id FROM serviceit_vps_b2b_inbox WHERE source_id=%s",
                                (f"B2B-CENTER-{tid}",)).fetchone()

@@ -46,10 +46,12 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/card29-repair"
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$root/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          rc=0
           ssh -T -i "$root/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
             'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --preview' \
-            < ops/serviceit_vps_b2b_card29_dossier_repair.py > "$root/preview"
-          grep -E '^CARD29_REPAIR_[A-Z0-9_]+=[A-Z0-9_]+$' "$root/preview" | head -25
+            < ops/serviceit_vps_b2b_card29_dossier_repair.py > "$root/preview" 2>/dev/null || rc=$?
+          grep -E '^CARD29_REPAIR_[A-Z0-9_]+=[A-Z0-9_]+$' "$root/preview" | head -25 || true
+          [[ "$rc" == 0 ]]
           grep -qx 'CARD29_REPAIR_EVIDENCE_READY=YES' "$root/preview"
           grep -qx 'CARD29_REPAIR_PREVIEW_NO_WRITES=YES' "$root/preview"
       - name: One-use receipt and nine-field CRM write with exact readback, no replay

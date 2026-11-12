@@ -40,6 +40,8 @@ TAVILY_RESERVE_FILES = (
     "serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_v19_backfill.py",
     "serviceit_b2b_tavily_research_mini_v47.py",
 )
+MANAGER_CARD_FILES = ("serviceit_b2b_dossier_consistency_v37.py",
+                      "serviceit_b2b_dossier_consistency_worker_v37.py")
 EIS_MIRROR_FILES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_eis_mirrors.py")
 ROUTERAI_RESEARCH_FILES = ("serviceit_b2b_routerai_deep.py", "serviceit_vps_b2b_dossier_v11_worker.py")
 TAVILY_GAPS_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_deep_research.py")
@@ -443,6 +445,10 @@ if 'serviceit_b2b_tavily_research_mini_v47.py' in files:
     from leadpilot.serviceit_vps_b2b_dossier_v11_worker import reserve_research_needed
     assert MODEL=='mini' and not approved({})
     assert callable(nominate_gap) and callable(reserve_research_needed)
+if 'serviceit_b2b_dossier_consistency_v37.py' in files:
+    from leadpilot.serviceit_b2b_dossier_consistency_v37 import manager_fields, RELATED_PUBLIC
+    from leadpilot.serviceit_b2b_dossier_consistency_worker_v37 import run_once
+    assert callable(manager_fields) and callable(run_once) and RELATED_PUBLIC['0277071467']
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
@@ -508,6 +514,7 @@ def main():
     args = sys.argv[1:]
     profiles = {
         "--tavily-reserve": (TAVILY_RESERVE_FILES, "tavily-reserve"),
+        "--manager-cards": (MANAGER_CARD_FILES, "manager-cards"),
         "--eis-mirrors": (EIS_MIRROR_FILES, "eis-mirrors"),
         "--routerai-research": (ROUTERAI_RESEARCH_FILES, "routerai-research"),
         "--tavily-gaps": (TAVILY_GAPS_FILES, "tavily-gaps"),

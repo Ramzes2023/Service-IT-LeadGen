@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from .bitrix_1062_mapping import _is_valid_inn
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
+from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, score_label
 
 REPORT = PREFIX + "AI_FULL_REPORT"
 SUMMARY = PREFIX + "AI_SUMMARY"
@@ -21,6 +22,10 @@ NEXT = PREFIX + "AI_NEXT_ACTION"
 INN = PREFIX + "COMPANY_INN"
 COMPANY = PREFIX + "COMPANY_NAME"
 REGION = PREFIX + "REGION"
+DECISION = PREFIX + "REVIEW_DECISION"
+RECOMMENDATION = PREFIX + "AI_RECOMMENDATION"
+MANAGER_PLACEHOLDER = "Проверить закупку и покупателя; не контактировать"
+MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v1"
 MAX_REPORT = 12000
 MAX_TEXT = 4096
 # Reviewed 2026-11-11: published tender detail + a separate legal source,
@@ -85,6 +90,83 @@ REVIEWED = {
         "legal_url": "https://cbr.ru/registries/rcb/ecb/orginfo/?id=9460",
     },
 }
+REVIEWED.update({'4676478': {'buyer': 'АО «Тандер»',
+             'inn': '2310031475',
+             'region': 'Москва',
+             'deadline': '18.11.2026 15:00 МСК',
+             'delivery': 'Москва, Алтуфьевское шоссе, д. 33Г',
+             'subject': 'Серверное оборудование для DATA',
+             'organizer': 'АО «Тандер»',
+             'procedure': 'Запрос предложений',
+             'platform_url': 'https://www.b2b-center.ru/app/market-next/servernoe-oborudovanie-dlia-data/tender-4676478/',
+             'tender_url': 'https://zakupki.kontur.ru/4676478_458',
+             'scope': 'Серверное оборудование для DATA',
+             'terms': '',
+             'documents': 'Полное ТЗ требует сверки',
+             'legal_url': 'https://zakupki.kontur.ru/4676478_458',
+             'budget': 'Не раскрыт в доступной публикации'},
+ '4676643': {'buyer': 'АО «Издательство „Просвещение“»',
+             'inn': '7715995942',
+             'region': 'Москва',
+             'deadline': '24.11.2026 17:00 МСК',
+             'delivery': 'Москва, ул. Краснопролетарская, д. 16 стр. 3, помещ. 1Н',
+             'subject': 'Технологический аудит информационной системы на платформе 1С',
+             'organizer': 'АО «Издательство „Просвещение“»',
+             'procedure': 'Запрос предложений',
+             'platform_url': 'https://www.b2b-center.ru/app/market-next/okazanie-uslug-po-provedeniiu-tekhnologicheskogo-audita-informatsionnoi/tender-4676643/',
+             'tender_url': 'https://zakupki.kontur.ru/4676643_458',
+             'scope': 'Технологический аудит информационной системы на платформе 1С',
+             'terms': '',
+             'documents': 'Полное ТЗ требует сверки',
+             'legal_url': 'https://zakupki.kontur.ru/4676643_458',
+             'budget': 'Не раскрыт в доступной публикации'},
+ '4677404': {'buyer': 'ООО УК «Промышленно-металлургический холдинг»',
+             'inn': '0411075740',
+             'region': 'Москва',
+             'deadline': '17.11.2026 16:00 МСК',
+             'delivery': 'Москва, 2-й Верхний Михайловский проезд, д. 9',
+             'subject': 'Приобретение лицензий 1С',
+             'organizer': 'ООО УК «Промышленно-металлургический холдинг»',
+             'procedure': 'Предварительный квалификационный отбор',
+             'platform_url': 'https://www.b2b-center.ru/market/view.html?id=4677404',
+             'tender_url': 'https://zakupki.kontur.ru/4677404_40',
+             'scope': 'Приобретение лицензий 1С',
+             'terms': '',
+             'documents': 'Полное ТЗ требует сверки',
+             'legal_url': 'https://zakupki.kontur.ru/4677404_40',
+             'budget': 'Не раскрыт в доступной публикации'},
+ '4678279': {'buyer': 'ПАО «Московский Кредитный Банк»',
+             'inn': '7734202860',
+             'region': 'Москва',
+             'deadline': '18.11.2026 16:00 МСК',
+             'delivery': 'Москва, 2-й проезд Перова Поля, д. 2, стр. 4',
+             'subject': 'Поставка серверных комплектующих для нужд МКБ',
+             'organizer': 'ПАО «Московский Кредитный Банк»',
+             'procedure': 'Предварительный квалификационный отбор',
+             'platform_url': 'https://www.b2b-center.ru/market/postavka-servernykh-komplektuiushchikh-dlia-nuzhd-pao-moskovskii-kreditnyi/tender-4678279/',
+             'tender_url': 'https://zakupki.kontur.ru/4678279_40',
+             'scope': 'Поставка серверных комплектующих для нужд МКБ',
+             'terms': '',
+             'documents': 'Полное ТЗ требует сверки',
+             'legal_url': 'https://zakupki.kontur.ru/4678279_40',
+             'budget': 'Не раскрыт в доступной публикации'},
+ '4677160': {'buyer': 'ООО «Башкирэнерго»',
+             'inn': '0277071467',
+             'region': 'Республика Башкортостан',
+             'deadline': '16.11.2026 10:00 МСК',
+             'delivery': 'Уфа, бульвар Ибрагимова, д. 86',
+             'subject': 'Приобретение ПО и лицензий 1С для ООО «Башкирэнерго» 26-005731',
+             'organizer': 'АО «БЭСК»',
+             'procedure': 'Запрос цен по 223-ФЗ',
+             'platform_url': 'https://www.b2b-energo.ru/market/priobretenie-po-i-litsenzii-1s-dlia-ooo-bashkirenergo-26-005731/tender-4677160/',
+             'tender_url': 'https://zakupki.kontur.ru/32616566539',
+             'scope': 'Приобретение ПО и лицензий 1С для ООО «Башкирэнерго» 26-005731',
+             'terms': 'Предложение на весь лот. Документы принимаются до 16.11.2026 13:00 МСК.',
+             'documents': 'Полное ТЗ требует сверки',
+             'legal_url': 'https://www.b2b-energo.ru/firms/ooo-bashkirenergo/49070/',
+             'budget': '11 028 400 ₽ без НДС',
+             'registry_id': '32616566539'}})
+
 PROVEN_QUOTE = re.compile(
     r"^ПРОЧИТАННЫЙ ИСТОЧНИК / ([A-Z_]{3,25}): (.{10,300}) \[(https://[^\]\s]{8,700})\]$"
 )
@@ -186,6 +268,10 @@ def _record_from_verified(notice, item, verified):
                       r"место\s+исполнения|адрес\s+доставки)", quote)
                 and not re.search(r"(?iu)юридическ\w*\s+адрес", quote)):
             record["delivery"] = _text(quote, 200) + " (цитата источника)"
+            if re.search(r"(?iu)московск\w*\s+обл",quote):
+                record["region"] = "Московская область"
+            elif re.search(r"(?iu)\bг(?:ород)?[.\s]+москва\b",quote):
+                record["region"] = "Москва"
             record["tender_url"] = record["tender_url"] or url
     if "PROCEDURE" in parsed:
         record["procedure"] = _text(parsed["PROCEDURE"][0], 135)
@@ -215,7 +301,8 @@ def reviewed_or_verified(notice, item, verified_lines):
         record = dict(REVIEWED[tid])
         _need(_is_valid_inn(record["inn"])
               and record["platform_url"].find(tid) >= 0
-              and record["tender_url"].find(tid) >= 0
+              and (tid in record["tender_url"] or
+                   (record.get("registry_id") and record["tender_url"].endswith("/" + record["registry_id"])))
               and _safe_url(record["legal_url"])
               and _safe_url(record["platform_url"])
               and _safe_url(record["tender_url"]),
@@ -284,7 +371,7 @@ def prepare(notice, item, verified_lines):
                 "Согласование контакта, проверка CRM-дублей и STOP-листа"]
     sections = [
         f"СЕРВИС ИТ | V37 · СОГЛАСОВАННЫЙ ПАСПОРТ | ТЕНДЕР №{tid}",
-        "Актуальность фактов: публичные публикации, проверка от 11.11.2026"
+        "Актуальность фактов: проверенные публичные публикации"
         if record["reviewed"] else
         "Факты из ранее проверенных и подписанных цитат источников",
         "Коммерческий контакт: требуется отдельное разрешение",
@@ -388,7 +475,9 @@ def prepare(notice, item, verified_lines):
                     "4674861": (
                         "ООО «Группа компаний ФСК»",
                         "ООО «ГК ФСК»",
-                    )
+                    ),
+                    "4677160": ("АО «БЭСК»", "АО «Башкирская электросетевая компания»"),
+                    "4677404": ("ООО УК «ПМХ»", 'ООО «УК ПМХ»'),
                 }
                 if normal(prior) == normal(value):
                     continue
@@ -414,3 +503,107 @@ def prepare(notice, item, verified_lines):
         "unknown_count": len(unknown),
         "structured_candidates": sum(int(k in patch) for k in (COMPANY,INN,REGION)),
     }
+
+# These signals were corroborated by an exact tender ID and a separate
+# public company/registry record bearing the same buyer INN.
+RELATED_PUBLIC = {
+    "0277071467": (
+        ("4672286", "Сопровождение ПО 1С 8.2",
+         "https://zakupki.kontur.ru/32616553946"),
+    ),
+    "7734202860": (
+        ("4675475", "Приобретение серверного оборудования",
+         "https://zakupki.kontur.ru/4675475_40"),
+        ("4678279", "Поставка серверных комплектующих",
+         "https://zakupki.kontur.ru/4678279_40"),
+    ),
+}
+MANAGER_HEADER = "КЛЮЧЕВАЯ ИНФОРМАЦИЯ"
+MANAGER_END = "──────── ПОДРОБНОЕ ДОСЬЕ ────────"
+
+
+def manager_fields(notice, item, record, checks, related):
+    """Build the short brief without converting unknown checks to clearance."""
+    record = record or {}
+    inn = record.get("inn") or item.get(INN)
+    inn = inn if _is_valid_inn(inn) else ""
+    buyer = record.get("buyer") or ""
+    deadline = record.get("deadline") or ""
+    budget = record.get("budget") or ""
+    region = record.get("region") or ""
+    score = item.get(SCORE_FIELD)
+    try:
+        if isinstance(score, str) and score.isdecimal():
+            score = int(score)
+    except ValueError:
+        score = None
+    score_valid = type(score) is int and 0 <= score <= 100
+    patch = {}
+    if not score_valid and all(k in item and item[k] in (None, "") for k in
+                               (SCORE_FIELD, VERSION_FIELD, BADGE_FIELD)):
+        score = (20 + 8 * bool(buyer and inn) + 5 * bool(deadline)
+                 + 4 * bool(budget and budget[:1].isdigit()) + 3 * bool(region)
+                 + 8 * bool(related))
+        if region in ("Москва", "Московская область"):
+            score += 25
+        elif region:
+            score = min(score, 49)
+        patch.update({SCORE_FIELD:score, VERSION_FIELD:MANAGER_SCORE_VERSION})
+        score_valid = True
+    if score_valid and not item.get(BADGE_FIELD):
+        patch[BADGE_FIELD] = score_label(score) + " · приоритет проверки"
+    version = patch.get(VERSION_FIELD, item.get(VERSION_FIELD)) or "не указана"
+    status = item.get(PREFIX+"AI_STATUS") or "Не подтверждён"
+    locality = ("Вне зоны Москва / Московская область" if region and
+                region not in ("Москва", "Московская область") else "")
+    if locality:
+        action = "Оставить как историю спроса. Регион исполнения вне зоны отбора."
+    elif checks.get("stop_hit"):
+        action = "Передать на внутреннюю проверку стоп-листа."
+    elif checks.get("duplicate_hit"):
+        action = "Сверить совпадение в CRM и документы перед решением."
+    else:
+        action = "Сверить ТЗ и условия участия. Решение принимает менеджер."
+    slots = {
+        "заказчик":buyer, "ИНН":inn, "срок подачи":deadline,
+        "бюджет":budget if budget[:1].isdigit() else "",
+        "место исполнения":record.get("delivery"), "полное ТЗ":False,
+    }
+    known = sum(bool(value) for value in slots.values())
+    unknown = ", ".join(k for k,v in slots.items() if not v)
+    core = [
+        MANAGER_HEADER,
+        "Заказчик: " + (buyer or "не подтверждён"),
+        "ИНН заказчика: " + (inn or "не подтверждён"),
+        "Организатор: " + (record.get("organizer") or _text(notice.get("organizer"), 145)
+                           or "не подтверждён"),
+        "Предмет: " + _text(notice["subject"], 240),
+        "Общая сумма закупки: " + (budget or "не подтверждена"),
+        "Срок подачи заявок: " + (deadline or "не подтверждён"),
+        "Место исполнения: " + (record.get("delivery") or "не подтверждено"),
+        "Регион исполнения: " + (region or "не подтверждён") + (" · " + locality if locality else ""),
+        "Предполагаемая услуга: " + (_text(item.get(PREFIX+"SUGGESTED_SERVICE"), 80) or "уточняется"),
+        "Lead Score: " + (f"{score}/100" if score_valid else "не выставлен") + " · " + version,
+        "AI-статус: " + _text(status, 140),
+        "Рекомендация AI: " + action,
+        f"Полнота: {known}/6. Требуют проверки: {unknown}.",
+        "",
+        "АВТОМАТИЧЕСКИЕ ПРОВЕРКИ",
+        "Дубль закупки в видимой CRM: " + checks.get("duplicate", "не проверено"),
+        "Действующий клиент: " + checks.get("customer", "не подтверждено"),
+        "Стоп-лист: " + checks.get("stop", "не проверено"),
+        "ФНС / ЕГРЮЛ: " + checks.get("registry", "официальная проверка не подтверждена"),
+    ]
+    if related:
+        core += ["", "СВЯЗАННЫЕ СИГНАЛЫ ПО ИНН"] + related[:5]
+    header = "\n".join(core)
+    original = item[REPORT]
+    if original.startswith(MANAGER_HEADER+"\n") and "\n"+MANAGER_END+"\n" in original:
+        original = original.split("\n"+MANAGER_END+"\n",1)[1].lstrip("\n")
+    report = header + "\n\n" + MANAGER_END + "\n\n" + original
+    patch.update({SUMMARY:"\n".join(core[:10]), BRIEF:header, RECOMMENDATION:action})
+    if len(report) <= MAX_REPORT:
+        patch[REPORT] = report
+    if item.get(DECISION) == MANAGER_PLACEHOLDER:
+        patch[DECISION] = ""
+    return patch

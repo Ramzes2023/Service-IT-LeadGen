@@ -6,21 +6,32 @@ external Bitrix write is durable-intent fenced and independently read back.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
 import secrets
 
+import httpx
+
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
-from .serviceit_b2b_dossier_v11 import original_nine
+from .serviceit_b2b_dossier_v11 import LABELS, original_nine
 from .serviceit_b2b_dossier_consistency_v37 import (
-    prepare, PROVEN_QUOTE, REPORT, ReconcileBlocked,
+    prepare, reviewed_or_verified, manager_fields, PROVEN_QUOTE, REPORT, ReconcileBlocked,
+    RELATED_PUBLIC, DECISION, MANAGER_PLACEHOLDER, INN,
 )
+from .bitrix_1062_mapping import _is_valid_inn
+from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD
+from .serviceit_corporate_stop_inn import precheck as corporate_stop_precheck
+from .serviceit_own_signal_stop import check as own_stop_check, read_rules
+from .serviceit_qualification_proof_v2 import crm_inn_visibility_readonly
+from .serviceit_vps_native_msp_result import verified_receipt
+from .b2b_github_to_bitrix import exact_duplicate
 from .serviceit_b2b_v19_backfill import active_card_write
 from .serviceit_enrichment_worker import Rest, normalized, validate_identity, fingerprint
 from .serviceit_vps_b2b_deep_research import safe_notice
-from .serviceit_vps_b2b_dossier_v11_worker import LOCK_ID
+from .serviceit_vps_b2b_dossier_v11_worker import LOCK_ID, compute_digest
 from .serviceit_vps_pg_queue import secret_file
 from .serviceit_vps_worker import live_permitted, exact_environment
 
@@ -50,7 +61,8 @@ RESULT = frozenset(("VERIFIED","NO_ATTESTED_NEW_FACTS","INSUFFICIENT_CAPACITY",
 # universal Rest deliberately permits only complete nine/twelve-field
 # bundles, and must NOT be relaxed to support V41.
 ALLOWED_PATCH = AI_FIELDS | {
-    PREFIX+"COMPANY_INN", PREFIX+"COMPANY_NAME", PREFIX+"REGION"
+    PREFIX+"COMPANY_INN", PREFIX+"COMPANY_NAME", PREFIX+"REGION",
+    SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, DECISION,
 }
 MAX_CRM_REPORT=12000
 MAX_CRM_OTHER=4096
@@ -64,14 +76,21 @@ def need(value, name):
         raise V37Blocked(name)
 
 
+def _patch_value(key, value):
+    if key == SCORE_FIELD:
+        return type(value) is int and 0 <= value <= 100
+    if key == DECISION:
+        return value == ""
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= (
+        MAX_CRM_REPORT if key == REPORT else MAX_CRM_OTHER
+    )
+
+
 def verify_patch_schema(rest,patch):
     """Fail-closed against the real live Bitrix 1062 field definitions."""
     need(isinstance(patch,dict) and 0<len(patch)<=len(ALLOWED_PATCH)
          and set(patch)<=ALLOWED_PATCH
-         and all(isinstance(value,str) and value.strip()
-                 and len(value)<=(
-                    MAX_CRM_REPORT if key==REPORT else MAX_CRM_OTHER)
-                 for key,value in patch.items()),
+         and all(_patch_value(key, value) for key,value in patch.items()),
          "V41_SCOPED_UPDATE_FIELDS_INVALID")
     definitions=rest("crm.item.fields",{
         "entityTypeId":1062,"useOriginalUfNames":"Y"})["fields"]
@@ -79,7 +98,7 @@ def verify_patch_schema(rest,patch):
     for key in patch:
         detail=definitions.get(key)
         need(isinstance(detail,dict)
-             and detail.get("type")=="string"
+             and detail.get("type")==("integer" if key==SCORE_FIELD else "string")
              and detail.get("isReadOnly") is False
              and detail.get("isImmutable") in (None,False)
              and detail.get("isMultiple") in (None,False),
@@ -96,10 +115,7 @@ def scoped_subset_update(rest,card,patch):
          and card not in (3,7),"V41_REST_ITEM_ID_INVALID")
     need(isinstance(patch,dict) and 0<len(patch)<=len(ALLOWED_PATCH)
          and set(patch)<=ALLOWED_PATCH
-         and all(type(value) is str and value.strip()
-                 and len(value)<=(
-                     MAX_CRM_REPORT if key==REPORT else MAX_CRM_OTHER)
-                 for key,value in patch.items()),
+         and all(_patch_value(key, value) for key,value in patch.items()),
          "V41_SCOPED_UPDATE_FIELDS_INVALID")
     request={
         "entityTypeId":1062,"id":card,
@@ -151,13 +167,16 @@ def _sha(source):
     return hashlib.sha256(source.encode("ascii")).hexdigest()
 
 
-def eligible(conn, target_ids=None):
+def eligible(conn, target_ids=None, *, refresh=False):
     """One due card, even if V19/V20 already VERIFIED: no stale-source replay."""
     targets = sorted(set(target_ids)) if target_ids is not None else []
     if target_ids is not None:
         need(targets and len(targets)<=4 and
              all(type(x) is int and 8<=x<=2000000000 for x in targets),
              "TARGET_SCOPE_INVALID")
+    refresh_clause = ("OR last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS',"
+                      "'INSUFFICIENT_CAPACITY','NONSTANDARD_REPORT')"
+                      if refresh and targets else "")
     with conn.cursor() as cur:
         cur.execute(f"""
            SELECT b.card_id,b.source_id,b.notice_json,last.status,last.source_hash
@@ -173,6 +192,7 @@ def eligible(conn, target_ids=None):
              AND b.received_at < now() - interval '20 minutes'
              AND (%s::BIGINT[] IS NULL OR b.card_id=ANY(%s::BIGINT[]))
              AND (last.status IS NULL
+               {refresh_clause}
                OR (last.status='VERIFIED'
                    AND last.updated_at < now() - interval '72 hours')
                OR (last.status IN (
@@ -199,9 +219,31 @@ def eligible(conn, target_ids=None):
         return cur.fetchone()
 
 
+def _v11_quotes(conn, card, source_hash, current_report):
+    row = conn.execute("""
+        SELECT after_fields,salt,digest FROM serviceit_vps_b2b_dossier_v11_receipts
+        WHERE card_id=%s AND source_hash=%s AND status='VERIFIED'
+    """, (card,source_hash)).fetchone()
+    if not row or not isinstance(row[0],dict) or not row[1] or not row[2]:
+        return []
+    fields, salt, digest = row
+    if not secrets.compare_digest(compute_digest(fields,bytes(salt)),bytes(digest)):
+        return []
+    original = fields.get(REPORT,"")
+    refs = dict(re.findall(r"(?m)^\[(?:ОРИГИНАЛ = )?(\d+)\] (https://[^\s]+)$",original))
+    categories = {label:category for category,label in LABELS.items()}
+    result = []
+    for label, ref, quote in re.findall(r"(?m)^\d+\. (.+) \[(\d+)\]\n    «(.+)»$",original):
+        if label in categories and ref in refs and quote in current_report:
+            line = f"ПРОЧИТАННЫЙ ИСТОЧНИК / {categories[label]}: {quote} [{refs[ref]}]"
+            if PROVEN_QUOTE.fullmatch(line):
+                result.append(line)
+    return result
+
+
 def verified_lines(conn,card,source_hash,report):
     """Only source quotes in signed VERIFIED receipts and the current report."""
-    lines = []
+    lines = _v11_quotes(conn,card,source_hash,report)
     with conn.cursor() as cur:
         for name in ("serviceit_vps_b2b_v19_research_receipts",
                      "serviceit_vps_b2b_v20_revision_receipts"):
@@ -294,7 +336,98 @@ def _non_target_unchanged(before,after,changed):
                if key not in ignored)
 
 
-def run_once(env,client,conn,*,target_ids=None,preview=False):
+def _manager_checks(conn, client, env, webhook, base, card, source, inn):
+    checks = {}
+    try:
+        matches = exact_duplicate(client, base, source)
+        ids = {row["id"] for row in matches}
+        if card in ids:
+            checks["duplicate_hit"] = len(ids) > 1
+            checks["duplicate"] = "да" if checks["duplicate_hit"] else "нет, по номеру этой закупки"
+    except (ValueError, TypeError, KeyError, httpx.HTTPError):
+        pass
+    if not _is_valid_inn(inn):
+        return checks
+    try:
+        result = crm_inn_visibility_readonly(client, webhook, inn)
+        if result.get("visible_pages_complete") is True:
+            present = result.get("visible_matches", 0) > 0
+            checks["customer"] = ("есть реквизиты в видимой CRM; активность не подтверждена"
+                                  if present else "в видимой CRM совпадений нет; полный список не подтверждён")
+    except (ValueError, TypeError, KeyError, httpx.HTTPError):
+        pass
+    try:
+        own, _ = own_stop_check(inn, read_rules(), card_id=card)
+        corporate = corporate_stop_precheck(inn, env)
+        hit = own == "HOLD_OWN_SIGNAL_STOP" or corporate == "HIT"
+        checks["stop_hit"] = hit
+        if hit:
+            checks["stop"] = "да"
+        elif corporate == "NO_MATCH_IN_INN_SCOPE_ONLY":
+            checks["stop"] = "нет совпадения в проверенном перечне ИНН"
+        elif own == "NOT_IN_OWN_SIGNAL_STOP":
+            checks["stop"] = "нет в локальном списке; корпоративный список не подтверждён"
+    except (ValueError, TypeError, OSError):
+        pass
+    if conn.execute("SELECT to_regclass('public.serviceit_vps_msp_snapshot')").fetchone()[0]:
+        try:
+            official = verified_receipt(conn, card, inn, datetime.now(timezone.utc))
+            if official:
+                checks["registry"] = "реестр МСП проверен; выписка ЕГРЮЛ не подтверждена"
+        except (ValueError, TypeError):
+            pass
+    return checks
+
+
+def _related_signals(rest, conn, card, notice, inn):
+    if not _is_valid_inn(inn):
+        return []
+    tid = notice["tender_id"]
+    signals = {other: f"№{other} · {name} · {url}"
+               for other,name,url in RELATED_PUBLIC.get(inn, ()) if other != tid}
+    # Bitrix exact-INN visibility is a candidate list; verify signed sources
+    # and re-read each returned card before adding it to the company history.
+    try:
+        response = rest.client.post(rest.base + "/crm.item.list.json", json={
+            "entityTypeId":1062, "useOriginalUfNames":"Y",
+            "filter":{"categoryId":21, INN:inn}, "select":["id","categoryId",INN],
+            "start":0,
+        }, follow_redirects=False, timeout=12)
+        body = response.json() if response.status_code == 200 else {}
+        items = body.get("result",{}).get("items",[])
+        peers = [row["id"] for row in items[:12]
+                 if type(row.get("id")) is int and row["id"] != card
+                 and row.get(INN) == inn and str(row.get("categoryId")) == "21"]
+    except (ValueError, TypeError, KeyError, AttributeError, httpx.HTTPError):
+        return list(signals.values())
+    if not peers:
+        return list(signals.values())
+    rows = conn.execute("""
+        SELECT b.card_id,b.source_id,b.notice_json
+        FROM serviceit_vps_b2b_inbox b
+        WHERE b.state='VERIFIED' AND b.card_id=ANY(%s)
+        ORDER BY b.received_at DESC LIMIT 12
+    """, (peers,)).fetchall()
+    for peer, source, original in rows:
+        if len(signals) >= 5:
+            break
+        if not isinstance(original,dict):
+            continue
+        other = original.get("tender_id")
+        if not other or other in signals:
+            continue
+        try:
+            item = _get(rest, peer)
+            if item.get(INN) != inn:
+                continue
+            url, title = safe_notice(original, peer, source, item)
+            signals[other] = f"Карточка №{peer} · закупка №{other} · {title[:180]} · {url}"
+        except (ValueError, TypeError, KeyError, httpx.HTTPError):
+            continue
+    return list(signals.values())
+
+
+def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
     """Never mutate on preview; one card per normal cycle; versioned receipts."""
     if env.get(ENABLED)!="YES":
         return {"status":"V37_DISABLED","crm_writes":0}
@@ -320,7 +453,7 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
     if not locked:
         return {"status":"V37_OTHER_DOSSIER_WORKER_ACTIVE","crm_writes":0}
     try:
-        row=eligible(conn,target_ids=target_ids)
+        row=eligible(conn,target_ids=target_ids,refresh=True) if refresh else eligible(conn,target_ids=target_ids)
         if not row:
             return {"status":"V37_NO_DUE_SIGNED_CARD","crm_writes":0}
         card,source,notice,last_status,last_hash=row
@@ -346,6 +479,15 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
         lines=verified_lines(conn,card,source_hash,before[REPORT])
         try:
             patch,meta=prepare(notice,first,lines)
+            record=reviewed_or_verified(notice,first,lines)
+            inn=(record or {}).get("inn") or first.get(INN)
+            checks=_manager_checks(conn,client,exact,webhook,rest.base,card,source,inn)
+            related=_related_signals(rest,conn,card,notice,inn)
+            base_patch=patch or {}
+            revised=manager_fields(notice,{**first,**base_patch},record,checks,related)
+            patch={key:value for key,value in {**base_patch,**revised}.items() if first.get(key)!=value}
+            if not patch:
+                patch=None
         except ReconcileBlocked:
             if preview:
                 return {"status":"V37_PREVIEW_CONFLICT_NO_WRITE",
@@ -388,7 +530,8 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
         fresh=_get(rest,card)
         if (fingerprint(first)!=fingerprint(fresh)
                 or active_card_write(conn,card)
-                or any(fresh.get(k)!=first.get(k) for k in patch)):
+                or any(fresh.get(k)!=first.get(k) for k in patch)
+                or (DECISION in patch and fresh.get(DECISION)!=MANAGER_PLACEHOLDER)):
             return {"status":"V37_PREWRITE_CHANGED_NO_WRITE","crm_writes":0}
         attempt=reserve(conn,card,source_hash,
                         {k:first.get(k) for k in patch})
@@ -396,7 +539,8 @@ def run_once(env,client,conn,*,target_ids=None,preview=False):
         try:
             scoped_subset_update(rest,card,patch)
             after=_get(rest,card)
-            need(all(after.get(k)==v for k,v in patch.items())
+            need(all(after.get(k)==v or (k==DECISION and v=="" and after.get(k) is None)
+                     for k,v in patch.items())
                  and _non_target_unchanged(fresh,after,patch)
                  and secrets.compare_digest(_digest(patch,salt),proof),
                  "V37_READBACK_FAILED")

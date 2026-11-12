@@ -44,6 +44,8 @@ def _setup(monkeypatch, *, preview=False, conflict=False):
                         lambda first: {x:"old verified dossier" for x in AI_FIELDS})
     monkeypatch.setattr(worker, "verified_lines", lambda *args,**kwargs: [])
     monkeypatch.setattr(worker, "Rest", lambda *args,**kwargs: MagicMock())
+    monkeypatch.setattr(worker, "_manager_checks", lambda *args: {})
+    monkeypatch.setattr(worker, "_related_signals", lambda *args: [])
     monkeypatch.setattr(worker, "active_card_write", lambda *args:False)
     if conflict:
         def fail(*args):
@@ -60,7 +62,7 @@ def test_preview_does_not_call_schema_migration_or_bitrix_update(monkeypatch):
     got=worker.run_once(ENV,object(),conn,target_ids={17},preview=True)
     assert got["status"]=="V37_READONLY_PREVIEW"
     assert got["crm_writes"]==0
-    assert got["draft_ready"] is False
+    assert got["draft_ready"] is True
     conn.execute.assert_not_called()
     assert any("to_regclass" in c.args[0] for c in cur.execute.call_args_list)
     assert all("UPDATE" not in c.args[0] for c in cur.execute.call_args_list)

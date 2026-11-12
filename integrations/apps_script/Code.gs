@@ -711,6 +711,63 @@ function pollAndDispatchB2B() {
  * Owner-run read-only status of the LIVE Apps Script trigger and email states.
  * Never prints subject, MIME, message ID, secret, or customer data.
  */
+/**
+ * Owner-only read-only trace of FOUR independently observed vendor tender IDs.
+ * This reveals only fixed state names and counts, never Gmail message IDs,
+ * subject text, HMAC secret, dispatch UUID, source payload or contacts.
+ * Source markers cannot be reset by this function.
+ */
+function serviceITB2BExactDeliveryAuditReadOnly() {
+  privateConfig_();
+  assertMailbox_();
+  const props = scriptProperties_();
+  const tenderIds = ["4677923", "4677837", "4674919", "4679263"];
+  const safeStates = ["DONE","NO_MATCH","BASELINE","REVIEW_REQUIRED",
+    "PARTIAL_REVIEW","PENDING","UNPROCESSED"];
+  const safeSource = /^(DISPATCHED|DISPATCH_UNCERTAIN|RESERVED|RETIRED_DO_NOT_RECREATE|EXISTS_DO_NOT_RECREATE)(?::|$)/;
+  const rows = tenderIds.map(function (tid) {
+    const receipt = props.getProperty("SERVICEIT_SOURCE_" + tid) || "";
+    const statusMatch = receipt.match(safeSource);
+    const row = {
+      tender_id: tid,
+      source_status: statusMatch ? statusMatch[1] : receipt ? "OTHER_REVIEW" : "NO_SOURCE_RECEIPT",
+      vendor_emails: 0,
+      email_states: {}
+    };
+    // Search only exact tender number and authenticated vendor address;
+    // no email is opened, modified or transmitted to our VPS.
+    const response = Gmail.Users.Messages.list("me", {
+      q: "from:marketplace@b2b-center.ru newer_than:14d \"" + tid + "\"",
+      maxResults: 10,
+      includeSpamTrash: false
+    });
+    const matches = response && Array.isArray(response.messages) ? response.messages : [];
+    if (response && response.nextPageToken) {
+      row.email_search = "MORE_THAN_10_REVIEW";
+    }
+    matches.forEach(function (item) {
+      if (!item || typeof item.id !== "string" ||
+          !/^[a-f0-9]{16,24}$/i.test(item.id)) {
+        throw new Error("SERVICEIT_GMAIL_MESSAGE_ID_INVALID");
+      }
+      row.vendor_emails++;
+      const state = props.getProperty("SERVICEIT_EMAIL_" + item.id) || "UNPROCESSED";
+      const safe = safeStates.indexOf(state) >= 0 ? state : "OTHER_REVIEW";
+      row.email_states[safe] = (row.email_states[safe] || 0) + 1;
+    });
+    return row;
+  });
+  const result = {
+    status: "SERVICEIT_B2B_EXACT_MISSING_TENDERS_READONLY",
+    tenders: rows,
+    vps_posts: 0,
+    crm_writes: 0,
+    source_properties_modified: 0
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 function serviceITB2BDeliveryStatusReadOnly() {
   privateConfig_();
   assertMailbox_();

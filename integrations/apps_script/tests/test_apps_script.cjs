@@ -63,6 +63,15 @@ function environment(options={}) {
         Messages: {
           list: (_user, args) => {
             assert.strictEqual(_user,'me');
+            if (args.maxResults===10) {
+              assert.match(args.q,/from:marketplace@b2b-center\.ru/);
+              const tid=(args.q.match(/"(\d{7})"/)||[])[1];
+              assert(tid);
+              calls.list++;
+              return {messages:(mailboxMessages||[currentMessage]).filter(m=>
+                Buffer.from(m.payload?.body?.data||'', 'base64url').toString('utf8')
+                  .includes(tid)).map(m=>({id:m.id}))};
+            }
             assert.match(args.q,/from:\(b2b-center\.ru\)/);
             assert.strictEqual(args.maxResults,100);
             calls.list++;
@@ -219,6 +228,35 @@ test('Apps Script manifest grants only Gmail read, outbound HTTPS and time trigg
     'https://www.googleapis.com/auth/script.scriptapp'
   ].sort());
   assert.strictEqual(manifest.dependencies.enabledAdvancedServices[0].serviceId,'gmail');
+});
+
+test('owner-only missing tender diagnostic counts exact Gmail states without secrets or writes',()=>{
+  const msg=message(MID,{body:[
+    'Организатор закупки: АО "ПРИМЕР"',
+    'Предмет закупки: Приобретение лицензий Teams (продление)',
+    'https://www.b2b-center.ru/app/market-next/teams/tender-4677923/',
+    'Организатор закупки: АО "ПРИМЕР"',
+    'Предмет закупки: Услуги ТП для серверов',
+    'https://www.b2b-center.ru/app/market-next/servers/tender-4677837/'
+  ].join('\n')});
+  const e=environment({message:msg,properties:{
+    ['SERVICEIT_EMAIL_'+MID]:'DONE',
+    SERVICEIT_SOURCE_4677923:'DISPATCH_UNCERTAIN:secret-private-uuid'
+  }});
+  const before=JSON.stringify(e.properties);
+  const result=e.context.serviceITB2BExactDeliveryAuditReadOnly();
+  assert.strictEqual(result.tenders.length,4);
+  assert.strictEqual(result.tenders[0].source_status,'DISPATCH_UNCERTAIN');
+  assert.strictEqual(result.tenders[0].vendor_emails,1);
+  assert.strictEqual(result.tenders[0].email_states.DONE,1);
+  assert.strictEqual(result.tenders[1].source_status,'NO_SOURCE_RECEIPT');
+  assert.strictEqual(result.tenders[1].vendor_emails,1);
+  assert.strictEqual(result.tenders[2].vendor_emails,0);
+  assert.strictEqual(result.crm_writes,0);
+  assert.strictEqual(result.vps_posts,0);
+  assert.strictEqual(JSON.stringify(e.properties),before);
+  assert(!JSON.stringify(result).includes(MID));
+  assert(!JSON.stringify(result).includes('secret-private-uuid'));
 });
 
 test('read-only Gmail preflight never dispatches or writes CRM',()=>{

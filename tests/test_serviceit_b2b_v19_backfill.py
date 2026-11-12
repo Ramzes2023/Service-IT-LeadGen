@@ -63,7 +63,8 @@ def test_worker_no_duplicate_or_plaintext_external_api():
     assert "pg_try_advisory_lock" in text
     assert "non_ai_unchanged" in text
     assert "original_nine(after)==draft" in text
-    assert "source_findings(first,notice,exact,client,enable_v18=True)" in text
+    assert "source_findings(first,notice,exact,client,enable_v18=True," in text
+    assert "connection=conn" in text
     assert "MAX_FACTS = 6" in text
     assert "crm.contact.add" not in text and "tasks.task.add" not in text
     assert "SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED" in core

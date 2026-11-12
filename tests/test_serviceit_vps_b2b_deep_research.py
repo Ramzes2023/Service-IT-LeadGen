@@ -182,7 +182,7 @@ def test_live_one_card_uses_separate_fence_and_exact_nine_readback(monkeypatch):
                         lambda env, key, optional=False: "SYNTHETIC-SECRET")
     monkeypatch.setattr(research, "validate_webhook", lambda key: True)
     monkeypatch.setattr(research, "source_findings",
-                        lambda item, notice, env, client: findings())
+                        lambda item, notice, env, client, connection=None: findings())
     monkeypatch.setattr(research, "config_from_env",
                         lambda env: SimpleNamespace(provider="routerai"))
     calls = []

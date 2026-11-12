@@ -276,15 +276,21 @@ def _evidence(docs):
                        "excerpt": _priority_excerpt(d["text"])}
                       for d in originals[:3]]}
 
+def _document_windows(doc):
+    text = doc["text"][:24000]
+    for start in range(0, len(text), 4000):
+        yield {"url": doc["url"], "excerpt": text[start:start + 4500]}
+
+
 def _model_research(client, env, docs, *, use_model=True):
     """Read all retained text locally; at most two RouterAI requests per tender."""
     docs = [doc for doc in docs if not doc.get("ocr")]
     reports = []
     for doc in docs[:6]:
-        text = doc["text"][:24000]
-        for start in range(0, len(text), 4000):
-            reports.append(source_only_investigation({"status":"PUBLIC_PAGES_INSPECTED",
-                "pages":[{"url":doc["url"],"excerpt":text[start:start+4500]}]}))
+        for window in _document_windows(doc):
+            reports.append(source_only_investigation({
+                "status": "PUBLIC_PAGES_INSPECTED", "pages": [window],
+            }))
     if not use_model:
         return reports
     try:
@@ -295,8 +301,11 @@ def _model_research(client, env, docs, *, use_model=True):
     primary = []
     for start in range(0, min(6, len(docs)), 3):
         try:
-            primary.append(investigate_routerai(
-                client, cfg, _evidence(docs[start:start+3]), timeout=18))
+            group = docs[start:start+3]
+            evidence = (_evidence(group) if len(group) > 1 else {
+                "status": "PUBLIC_PAGES_INSPECTED", "pages": list(_document_windows(group[0])),
+            })
+            primary.append(investigate_routerai(client, cfg, evidence, timeout=18))
         except Exception:
             continue
     return primary + reports

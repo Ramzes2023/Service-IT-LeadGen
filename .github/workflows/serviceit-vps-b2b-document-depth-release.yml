@@ -1,4 +1,4 @@
-name: ServiceIT B2B public document depth release
+name: ServiceIT B2B document depth and coverage release
 on:
   push:
     branches: [main]
@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='928aa74'
+          old='479d24f'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
           names=(serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_eis_mirrors.py)

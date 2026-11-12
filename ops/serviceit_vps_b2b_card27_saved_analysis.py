@@ -14,6 +14,7 @@ import httpx
 from leadpilot import serviceit_b2b_v19_backfill as v19
 from leadpilot import serviceit_b2b_v20_versioned as v20
 from leadpilot.ai import config_from_env
+from leadpilot.b2b_email_opportunity_bridge import classify_services
 from leadpilot.serviceit_b2b_dossier_v11 import LABELS, LIMIT_REPORT, REPORT, routing, tidy
 from leadpilot.serviceit_b2b_routerai_deep import (
     _must_plain, _routerai_json, investigate_routerai, public_documents, source_only_investigation,
@@ -83,15 +84,22 @@ def attested_report(conn, source_hash, report):
     return False
 
 
+def service_groups(notice):
+    raw = notice.get("source_service_groups")
+    groups = {value for value in raw if isinstance(value, str)} if isinstance(raw, list) else set()
+    return (groups & SAFE_GROUPS
+            or set(classify_services(notice.get("subject") or "")) & SAFE_GROUPS)
+
+
 def generic_questions(client, config, groups):
-    prompt = json.dumps({"service_groups": sorted(groups)}, ensure_ascii=False)
+    prompt = json.dumps({"service_groups": sorted(groups) or ["ИТ-закупка"]}, ensure_ascii=False)
     result = _routerai_json(
         client, config,
         "Сформулируй три коротких проверочных вопроса для решения об участии "
         "в ИТ-закупке указанного типа. Требуются вопросы о составе, критериях и рисках. "
         "Не сообщай факты, цены, реквизиты, даты, контакты или названия компаний. "
         'Верни только JSON вида {"questions":["вопрос?"]}.',
-        prompt, max_tokens=800, timeout=22,
+        prompt, max_tokens=1600, timeout=45,
     )
     questions = []
     if isinstance(result, dict) and isinstance(result.get("questions"), list):
@@ -106,8 +114,7 @@ def generic_questions(client, config, groups):
 
 
 def prepare_note(notice, result, docs):
-    raw = notice.get("source_service_groups")
-    groups = set(raw) & SAFE_GROUPS if isinstance(raw, list) else set()
+    groups = service_groups(notice)
     route, check = routing(sorted(groups), notice.get("subject") or "")
     facts = result.get("facts", [])
     questions = result.get("manager_questions") or []
@@ -156,7 +163,9 @@ def run(conn, client, env):
     if url != notice["source_url"]:
         return "SIGNED_SOURCE_MISMATCH"
     before = v20.original_nine(first)
-    if MARKER in before[REPORT]:
+    _, separator, last_note = before[REPORT].partition("\n\n" + MARKER)
+    if separator and ("Вопросы для решения об участии:" in last_note
+                      or "Что прямо следует из сохранённых цитат:" in last_note):
         return "ALREADY_APPLIED"
     if v19.active_card_write(conn, CARD):
         return "CARD_WRITE_IN_PROGRESS"
@@ -172,7 +181,7 @@ def run(conn, client, env):
     proof = attested_report(conn, source_hash, before[REPORT])
     findings = cached_findings(before[REPORT], notice["tender_id"]) if proof else {}
     docs = public_documents(findings)
-    groups = set(notice.get("source_service_groups") or []) & SAFE_GROUPS
+    groups = service_groups(notice)
     emit("CACHED_PUBLIC_SOURCES", len(docs))
     for group in sorted(groups):
         emit("SERVICE_" + group, "YES")
@@ -186,14 +195,22 @@ def run(conn, client, env):
         else:
             result = {"manager_questions": generic_questions(client, config, groups)}
         emit("ROUTERAI_RETURNED", "YES")
-    except (ValueError, httpx.HTTPError):
+    except (ValueError, httpx.HTTPError) as error:
         result = source_only_investigation(findings) if docs else {}
         emit("ROUTERAI_RETURNED", "NO")
+        code = str(error)
+        if re.fullmatch(r"(ROUTERAI|MODEL|NO_SAFE)[A-Z0-9_]{5,70}", code):
+            emit("ROUTERAI_REASON", code)
     addition, facts, questions = prepare_note(notice, result, docs)
     emit("CITED_FINDINGS", facts)
     for category in sorted({fact["category"] for fact in result.get("facts", [])} & LABELS.keys()):
         emit("CITED_" + category, "YES")
     emit("MODEL_QUESTIONS", questions)
+    if separator and not facts and not questions:
+        v20.transition(conn, CARD, attempt, "RESERVED", "NO_NEW_EVIDENCE")
+        return "EXISTING_NOTE_RETAINED"
+    if separator:
+        addition = addition.replace(MARKER, "ДОПОЛНЕНИЕ ROUTERAI К СОХРАНЁННОМУ АНАЛИЗУ", 1)
     if len(before[REPORT]) + len(addition) > LIMIT_REPORT:
         v20.transition(conn, CARD, attempt, "RESERVED", "INSUFFICIENT_CAPACITY")
         return "REPORT_CAPACITY"
@@ -236,7 +253,7 @@ def main():
         status = run(conn, client, exact)
     emit("STATUS", status)
     emit("EXTERNAL_SEARCH_CALLS", 0)
-    return 0 if status in {"WRITTEN_AND_READ_BACK", "ALREADY_APPLIED"} else 2
+    return 0 if status in {"WRITTEN_AND_READ_BACK", "ALREADY_APPLIED", "EXISTING_NOTE_RETAINED"} else 2
 
 
 if __name__ == "__main__":

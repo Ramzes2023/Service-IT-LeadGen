@@ -2,7 +2,9 @@ name: ServiceIT B2B analyze card 27 with RouterAI and saved evidence only
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/serviceit-vps-b2b-card27-saved-analysis.yml]
+    paths:
+      - .github/workflows/serviceit-vps-b2b-card27-saved-analysis.yml
+      - ops/serviceit_vps_b2b_card27_saved_analysis.py
 permissions:
   contents: read
 concurrency:

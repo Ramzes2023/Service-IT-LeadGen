@@ -255,7 +255,14 @@ def main(argv):
         (image_id,new_image,"Dockerfile.writer.overlay"),
         (receiver_image_id,recv_image,"Dockerfile.receiver.overlay"),
     ):
-        lines=["FROM "+old_id]
+        # Docker BuildKit may resolve a naked sha256:<id> FROM as remote
+        # registry metadata. Pin a unique local image tag first, never pull.
+        base_tag="serviceit-b2b-local-base:"+run_id+(
+            "-writer" if "writer" in filename else "-receiver")
+        run(["docker","tag",old_id,base_tag])
+        need(output(["docker","image","inspect","-f","{{.Id}}",base_tag])==old_id,
+             "LOCAL_BASE_TAG_DRIFT")
+        lines=["FROM "+base_tag]
         for name in NAMES:
             lines.append("COPY --chmod=0644 "+name+" /app/leadpilot/"+name)
         (stage/filename).write_text("\n".join(lines)+"\n")

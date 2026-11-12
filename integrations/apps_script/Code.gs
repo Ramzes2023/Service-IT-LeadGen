@@ -600,21 +600,22 @@ function processMessage_(messageId, remainingDispatchBudget) {
 }
 
 /**
- * A parser revision must not strand real new notifications permanently at
- * NO_MATCH. Re-evaluate at most four post-cutover NO_MATCH messages once per
- * revision, and only requeue if at least one relevant tender has NO source
- * reservation. Never clear a source receipt or a security REVIEW marker.
+ * A parser/classifier update may find IT tenders in a previously DONE digest:
+ * an email with 3 tenders might have sent 1 and silently ignored 2.
+ * Re-evaluate up to four DONE/NO_MATCH emails per cycle, ONCE PER REVISION.
+ * Only post-activation authenticated notices with NO source receipt may be
+ * marked PENDING. Nothing can undo a source reservation or security review.
  */
-function recoverPostCutoverNoMatchV4_(ids) {
+function recoverPostCutoverMissedV5_(ids) {
   const props = scriptProperties_();
   const activation = Math.max(Number(privateConfig_().cutoverMs),
     Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0));
-  const revision = "B2B_PARSER_V4";
+  const revision = "B2B_CLASSIFIER_V5";
   let checked = 0, queued = 0;
   for (const id of ids) {
     if (checked >= 4) break;
     const key = "SERVICEIT_EMAIL_" + id;
-    if (props.getProperty(key) !== "NO_MATCH") continue;
+    if (["NO_MATCH", "DONE"].indexOf(props.getProperty(key)) < 0) continue;
     const probeKey = "SERVICEIT_" + revision + "_" + id;
     if (props.getProperty(probeKey)) continue;
     checked++;
@@ -635,8 +636,8 @@ function recoverPostCutoverNoMatchV4_(ids) {
       }
       props.setProperty(probeKey, candidates.length ? "QUEUED" : "NO_NEW_SOURCE");
     } catch (_err) {
-      // Preserve NO_MATCH and retry after a future transient Gmail recovery.
-      // REVIEW_REQUIRED is intentionally not automatically released.
+      // Do not modify DONE/NO_MATCH on parse/transport failure. Do not
+      // automatically release security quarantines (REVIEW_REQUIRED).
     }
   }
   return {checked: checked, queued: queued};
@@ -657,7 +658,7 @@ function pollAndDispatchB2B() {
   try {
     assertMailbox_();
     const ids = listVendorMessageIds_().reverse();
-    const recovered = recoverPostCutoverNoMatchV4_(ids);
+    const recovered = recoverPostCutoverMissedV5_(ids);
     const pending = [];
     for (const id of ids) {
       const state = props.getProperty("SERVICEIT_EMAIL_" + id) || "";
@@ -686,14 +687,16 @@ function pollAndDispatchB2B() {
     const summary = {
       status: "SERVICEIT_B2B_POLL_OK",
       last_poll_utc: new Date().toISOString(),
+      vendor_messages_visible: ids.length,
+      pending_emails_scanned: pending.length,
       messages: messages,
       dispatched: dispatched,
       skipped: skipped,
       review_required: review,
       uncertain_dispatches: uncertain,
       pending_tenders_deferred: deferred,
-      recovered_nomatch_messages: recovered.queued,
-      nomatch_messages_rechecked: recovered.checked,
+      recovered_missed_messages: recovered.queued,
+      missed_messages_rechecked: recovered.checked,
       external_transmission: dispatched,
       crm_writes: 0
     };
@@ -727,9 +730,10 @@ function serviceITB2BDeliveryStatusReadOnly() {
   let lastResult = {};
   try {
     const parsed = JSON.parse(last);
-    ["status","last_poll_utc","messages","dispatched","review_required",
+    ["status","last_poll_utc","vendor_messages_visible",
+     "pending_emails_scanned","messages","dispatched","review_required",
      "uncertain_dispatches","pending_tenders_deferred",
-     "recovered_nomatch_messages","nomatch_messages_rechecked"].forEach(function (key) {
+     "recovered_missed_messages","missed_messages_rechecked"].forEach(function (key) {
       if (typeof parsed[key] === "number" || typeof parsed[key] === "string") {
         lastResult[key] = parsed[key];
       }

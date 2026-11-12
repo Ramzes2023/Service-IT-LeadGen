@@ -1,6 +1,7 @@
 """Read-only inventory of real B2B card facts and manager schema."""
 import hashlib
 import os
+import traceback
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,7 @@ from leadpilot.serviceit_vps_b2b_dossier_v11_worker import VERSION as DOSSIER_VE
 from leadpilot.serviceit_enrichment_worker import Rest, normalized
 from leadpilot.serviceit_kanban_presentation import SCORE_FIELD, BADGE_FIELD, VERSION_FIELD
 from leadpilot.serviceit_vps_pg_queue import db, secret_file
+from leadpilot.serviceit_vps_worker import exact_environment
 
 def emit(k,v):
     print(f"MANAGER_{k}={v}", flush=True)
@@ -23,7 +25,7 @@ def emit(k,v):
 def main():
     env = dict(os.environ)
     emit("DEEP_RESEARCH", "YES" if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES" else "NO")
-    emit("MANAGER_WORKER", "YES" if env.get(ENABLED) == "YES" else "NO")
+    emit("MANAGER_WORKER", "YES" if exact_environment(env).get(ENABLED) == "YES" else "NO")
     emit("DOSSIER_VERSION", DOSSIER_VERSION)
     for name, key in (("serviceit_b2b_dossier_consistency_worker_v37.py","WORKER"),
                       ("serviceit_b2b_dossier_consistency_v37.py","FORM"),
@@ -46,23 +48,31 @@ def main():
             WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL ORDER BY b.card_id
         """).fetchall()
         signed = {card: (source, state) for card, source, state in rows}
+        emit("SIGNED", len(signed))
         ids = set(signed)
         cursor = 0
-        while True:
-            records = rest("crm.item.list", {
-                "entityTypeId": 1062, "useOriginalUfNames": "Y",
-                "filter": {"categoryId": 21, ">id": cursor}, "order": {"id": "ASC"},
-                "select": ["id", "categoryId"], "start": 0,
-            })["items"]
-            if not records:
-                break
-            page = [int(row["id"]) for row in records if str(row["categoryId"]) == "21"]
-            if not page or min(page) <= cursor:
-                raise ValueError("INVALID_CRM_PAGINATION")
-            ids.update(page)
-            cursor = max(page)
+        try:
+            while True:
+                records = rest("crm.item.list", {
+                    "entityTypeId": 1062, "useOriginalUfNames": "Y",
+                    "filter": {"categoryId": 21, ">id": cursor}, "order": {"id": "ASC"},
+                    "select": ["id", "categoryId"], "start": 0,
+                })["items"]
+                if not records:
+                    break
+                page = [int(row["id"]) for row in records
+                        if isinstance(row, dict) and row.get("id") is not None
+                        and str(row.get("categoryId")) == "21"]
+                if not page or min(page) <= cursor:
+                    raise ValueError("INVALID_CRM_PAGINATION")
+                ids.update(page)
+                cursor = max(page)
+            emit("CRM_INVENTORY", "COMPLETE")
+        except (ValueError, TypeError, KeyError, httpx.HTTPError) as error:
+            emit("CRM_INVENTORY", "SIGNED_PLUS_PARTIAL")
+            emit("CRM_INVENTORY_ERROR", type(error).__name__.upper())
+            emit("CRM_INVENTORY_LINE", traceback.extract_tb(error.__traceback__)[-1].lineno)
         emit("TOTAL", len(ids))
-        emit("SIGNED", len(signed))
         items = {}
         for card in sorted(ids):
             if card in signed:
@@ -126,4 +136,5 @@ if __name__=="__main__":
         main()
     except Exception as e:
         emit("ERROR",type(e).__name__.upper())
+        emit("ERROR_LINE", traceback.extract_tb(e.__traceback__)[-1].lineno)
         raise SystemExit(2) from None

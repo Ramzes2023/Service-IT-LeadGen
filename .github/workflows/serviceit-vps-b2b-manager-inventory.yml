@@ -1,5 +1,5 @@
 name: ServiceIT B2B manager card and company history inventory
-# B2B receiver/writer post-rollout no-write reconciliation, 2026-11-12
+# Read real category 21 cards and signed intake receipts.
 # Post geo-canary + DONE-digest classifier reconciliation; no CRM POST.
 on:
   push:
@@ -43,3 +43,6 @@ jobs:
             < ops/serviceit_vps_b2b_manager_inventory.py > "$stage/status" 2>/dev/null || rc=$?
           grep -E '^MANAGER_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/status"
           [[ "$rc" == 0 ]]
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            'docker exec serviceit-b2b-vps-writer-1 sha256sum /app/leadpilot/serviceit_vps_b2b_bridge.py' \
+            | awk '$1 ~ /^[a-f0-9]+$/ && length($1) == 64 {print "MANAGER_WRITER_BRIDGE_SHA=" toupper($1)}'

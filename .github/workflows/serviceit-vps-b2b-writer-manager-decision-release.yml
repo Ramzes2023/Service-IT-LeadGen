@@ -1,4 +1,4 @@
-name: ServiceIT B2B writer bounded geography retries
+name: ServiceIT B2B writer classification parity release
 on:
   push:
     branches: [main]
@@ -32,7 +32,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ && "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
           [[ "$GITHUB_RUN_ID" =~ ^[0-9]{7,16}$ && -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
-          module=leadpilot/serviceit_vps_b2b_bridge.py
+          module=leadpilot/serviceit_manager_readiness.py
           helper=deploy/serviceit-vps-b2b-guarded-cutover.py
           installer=ops/serviceit_vps_b2b_writer_witness_release.py
           git diff --quiet 7b52738 HEAD -- "$helper"
@@ -55,7 +55,7 @@ jobs:
           scp -i "$dir/id" "${opts[@]}" "$module" "$target:$stage/"
           scp -i "$dir/id" "${opts[@]}" "$helper" "$target:$stage/cutover.py"
           scp -i "$dir/id" "${opts[@]}" "$installer" "$target:$stage/install.py"
-          ssh -T -i "$dir/id" "${opts[@]}" "$target"             "test \"\$(sha256sum '$stage/install.py' | cut -d' ' -f1)\" = '$installer_sha' && python3 '$stage/install.py' --manager-decision '$GITHUB_RUN_ID' '$old' '$new' '$helper_sha'"
+          ssh -T -i "$dir/id" "${opts[@]}" "$target"             "test \"\$(sha256sum '$stage/install.py' | cut -d' ' -f1)\" = '$installer_sha' && python3 '$stage/install.py' --manager-readiness '$GITHUB_RUN_ID' '$old' '$new' '$helper_sha'"
           ssh -T -i "$dir/id" "${opts[@]}" "$target" \
             'docker exec -i serviceit-b2b-vps-writer-1 python -B -' \
             < ops/serviceit_vps_b2b_requeue_verified_moscow.py

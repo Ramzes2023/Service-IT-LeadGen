@@ -210,3 +210,23 @@ def test_synthetic_or_private_source_host_does_not_pass_manager_handoff():
         approval["signals"][0]["source_url"] = bad_url
         with pytest.raises(ManagerReadinessBlocked, match="MANAGER_PRIMARY_SOURCE_URL_INVALID"):
             manager_readiness(card, 101, assessment, approval)
+
+
+@pytest.mark.parametrize("title,group", [
+    ("Приобретение лицензий Teams (продление)", "LICENSES"),
+    ("Предоставление доступа к облачным сервисам", "CLOUD"),
+])
+def test_recognized_new_b2b_category_builds_a_hold_payload(title, group):
+    from leadpilot.b2b_email_opportunity_bridge import classify_services
+    from leadpilot.b2b_github_to_bitrix import hold_payload
+
+    notice = {
+        "source": "B2B-Center", "tender_id": "4677923",
+        "source_url": "https://www.b2b-center.ru/market/example/tender-4677923/",
+        "organizer": "ООО Пример", "subject": title,
+        "original_publication_verified": False, "qualified_lead": False,
+        "contact_approved": False, "buyer_inn": None, "fns_msp": None,
+    }
+    groups = classify_services(title)
+    assert group in groups
+    assert group in hold_payload(notice, groups)["fields"]["UF_CRM_13_SVCIT_SUGGESTED_SERVICE"]

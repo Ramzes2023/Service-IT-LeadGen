@@ -12,9 +12,13 @@ MODULE = "serviceit_b2b_positive_control.py"
 
 def main():
     args = sys.argv[1:]
-    decision_release = args[:1] == ["--manager-decision"]
-    run_id, old_sha, new_sha, helper_sha = args[1:] if decision_release else args
-    module = "serviceit_vps_b2b_bridge.py" if decision_release else MODULE
+    modules = {
+        "--manager-decision": "serviceit_vps_b2b_bridge.py",
+        "--manager-readiness": "serviceit_manager_readiness.py",
+    }
+    profile = args[0] if args and args[0] in modules else None
+    run_id, old_sha, new_sha, helper_sha = args[1:] if profile else args
+    module = modules.get(profile, MODULE)
     assert re.fullmatch(r"\d{7,16}", run_id)
     assert all(re.fullmatch(r"[0-9a-f]{64}", x) for x in (old_sha, new_sha, helper_sha))
     stage = Path(__file__).resolve().parent
@@ -46,12 +50,17 @@ def main():
             f"FROM {base}\nCOPY --chmod=0444 {module} /app/leadpilot/{module}\n")
         run(["docker", "build", "--network", "none", "--pull=false", "-t", image, str(context)],
             timeout=240)
-        if decision_release:
+        if profile:
             smoke = (
                 "from leadpilot.serviceit_vps_b2b_bridge import MANAGER_DECISION, INTERVAL_SECONDS;"
                 "assert MANAGER_DECISION=='UF_CRM_13_SVCIT_REVIEW_DECISION';"
                 "assert INTERVAL_SECONDS==300"
             )
+            if profile == "--manager-readiness":
+                smoke += (
+                    ";from leadpilot.serviceit_manager_readiness import KINDS;"
+                    "assert 'LICENSES' in KINDS and 'CLOUD' in KINDS"
+                )
             run(["docker", "run", "--rm", "--network", "none", "--read-only",
                  "--user", "10001:10001", "--cap-drop", "ALL", "--entrypoint",
                  "python", image, "-B", "-c", smoke], timeout=50)

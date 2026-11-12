@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import json
 import re
 
+from .b2b_email_opportunity_bridge import KINDS
 from .serviceit_b2b_hold_ai_fields import PREFIX
 from .serviceit_ai_lead_engine import assess_lead
 from .serviceit_kanban_presentation import BADGE_FIELD, SCORE_FIELD, VERSION_FIELD, score_label
@@ -66,8 +67,8 @@ def preliminary_manager_action(notice, services):
            and notice.get("fns_msp") is None
            and isinstance(services, list)
            and 1 <= len(services) <= 5
-           and all(x in {"1C", "IT_SUPPORT", "IT_STAFFING", "CRM", "KKT_EDO",
-                         "SERVERS", "INTEGRATION"} for x in services),
+           and all(isinstance(x, str) and (x in KINDS or x == "INTEGRATION")
+                   for x in services),
            "HOLD_SOURCE_UNVERIFIED")
     return ("Проверить первоисточник B2B-Center, дату и актуальность; "
             "установить фактического заказчика, ИНН/ФНС и регион; "

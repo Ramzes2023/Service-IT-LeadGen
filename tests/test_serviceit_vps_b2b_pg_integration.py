@@ -23,6 +23,8 @@ def test_b2b_postgres_unique_source_and_one_use_post_receipt(monkeypatch):
         with connection.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS serviceit_vps_b2b_inbox")
         src.migrate(connection)
+        src.migrate_geo_retry(connection)
+        src.migrate_geo_retry(connection)
         assert src.accept(connection,notice,["1C"]) is True
         assert src.accept(connection,notice,["1C"]) is False
         candidate=src.read_candidate(connection)
@@ -36,6 +38,25 @@ def test_b2b_postgres_unique_source_and_one_use_post_receipt(monkeypatch):
         src.confirm(connection,candidate[0],45)
         assert src.statistics(connection)["VERIFIED"]==1
         assert src.reserve_post(connection,candidate[0]) is False
+        pending = {**notice, "tender_id": "1234568"}
+        source = "B2B-CENTER-1234568"
+        assert src.accept(connection, pending, ["1C"])
+        for attempt in range(1, src.MAX_GEO_ATTEMPTS + 1):
+            assert src.read_candidate(connection)[0] == source
+            assert src.defer_unconfirmed_geo(connection, source)
+            assert src.read_candidate(connection) is None
+            status, tries, started, card = connection.execute(
+                "SELECT state,geo_attempts,write_started_at,card_id "
+                "FROM serviceit_vps_b2b_inbox WHERE source_id=%s", (source,)).fetchone()
+            assert (tries, started, card) == (attempt, None, None)
+            if attempt < src.MAX_GEO_ATTEMPTS:
+                assert status == "PENDING"
+                assert not src.defer_unconfirmed_geo(connection, source)
+                connection.execute(
+                    "UPDATE serviceit_vps_b2b_inbox SET geo_retry_at=now()-interval '1 second' "
+                    "WHERE source_id=%s", (source,))
+            else:
+                assert status == "REVIEW"
         with connection.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS serviceit_vps_b2b_inbox")
 

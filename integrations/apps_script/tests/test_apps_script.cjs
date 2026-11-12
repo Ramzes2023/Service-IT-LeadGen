@@ -182,7 +182,15 @@ function environment(options={}) {
         assert(!cp.payload_json.includes('Актуально до'));
         assert(!cp.payload_json.includes('phone'));
         calls.dispatch.push(payload);
-        return {getResponseCode:()=>responseCode,getContentText:()=>''};
+        return {
+          getResponseCode:()=>responseCode,
+          getContentText:()=> options.invalidAckBody ? '<html>Proxy fallback</html>' :
+            JSON.stringify({
+              status: options.ackStatus ||
+                (responseCode===202 ? 'B2B_NOTICE_PERSISTED' : 'B2B_NOTICE_DUPLICATE'),
+              crm_writes: 0
+            })
+        };
       }
     },
     console:{log:value=>calls.logs.push(String(value))}
@@ -511,6 +519,32 @@ test('realistic Russian quoted-printable HTML via Gmail raw fallback is parsed a
   assert.deepStrictEqual(Array.from(parsed.observations[0].services),['1C']);
   assert.strictEqual(parsed.observations[0].notice.tender_id,'1234567');
   assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('valid 202 VPS persisted receipt is required to mark email DISPATCHED',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,1);
+  assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCHED:/);
+  assert.match(e.context.serviceITB2BDeliveryStatusReadOnly().last_result.last_poll_utc,
+    /^20\\d{2}-\\d{2}-\\d{2}T/);
+});
+
+test('fake 202 HTML proxy response never marks source DISPATCHED or retries',()=>{
+  const e=environment({invalidAckBody:true,properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  const x=e.context.pollAndDispatchB2B();
+  assert.strictEqual(x.dispatched,0);
+  assert.strictEqual(x.uncertain_dispatches,1);
+  assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCH_UNCERTAIN:/);
+  assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,0);
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('HTTP 202 without actual B2B persisted receipt is fenced, not acknowledged',()=>{
+  const e=environment({ackStatus:'B2B_RECEIVER_ALIVE',
+    properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  assert.strictEqual(e.context.pollAndDispatchB2B().uncertain_dispatches,1);
+  assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCH_UNCERTAIN:/);
   assert.strictEqual(e.calls.dispatch.length,1);
 });
 

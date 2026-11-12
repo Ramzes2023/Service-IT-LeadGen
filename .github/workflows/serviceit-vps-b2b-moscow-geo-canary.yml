@@ -1,0 +1,56 @@
+name: ServiceIT B2B Moscow geo source-only VPS canary
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/serviceit-vps-b2b-moscow-geo-canary.yml
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-moscow-geo-readonly
+  cancel-in-progress: false
+jobs:
+  source-readonly:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check reviewed source and read-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f leadpilot/serviceit_b2b_moscow_geo.py
+          test -f ops/serviceit_b2b_moscow_geo_canary_stdin.py
+          python3 -m py_compile ops/serviceit_b2b_moscow_geo_canary_stdin.py
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+      - name: Compare up to five real B2B pages on VPS without CRM or PG writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/b2b-moscow-canary"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/id" "$stage/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$stage/hosts" >/dev/null
+          python3 ops/serviceit_b2b_moscow_geo_canary_stdin.py > "$stage/geo-readonly.py"
+          rc=0
+          ssh -T -i "$stage/id" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes \
+            -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-b2b-vps-writer-1 python -B -' \
+            < "$stage/geo-readonly.py" > "$stage/result" 2>/dev/null || rc=$?
+          grep -E '^MOSCOW_CANARY_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/result" || true
+          [[ "$rc" == 0 ]]

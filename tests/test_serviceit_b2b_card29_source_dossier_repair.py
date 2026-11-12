@@ -72,3 +72,56 @@ def test_foreign_url_fails_closed_and_no_false_customer_inn():
     out=m.prepare(FACTS,[{"source_id":1,"url":URL,"text":TEXT}],original(),URL)
     assert "ИНН заказчика: нет проверенной юридической связки" in out[PREFIX+"AI_FULL_REPORT"]
     assert "Заказчик: отдельно не подтверждён" in out[PREFIX+"AI_FULL_REPORT"]
+
+
+def test_verified_v37_patch_provenance_allows_only_matching_digest_chain():
+    m=load()
+    start=original()
+    name=PREFIX+"AI_FULL_REPORT"
+    next_report="СЕРВИС ИТ | V37 · СОГЛАСОВАННЫЙ ПАСПОРТ\n" + start[name]
+    before={name:start[name]}
+    after={name:next_report}
+    salt=b"0000000000000001"
+    digest=m.digest(after,salt)
+    class Cursor:
+        def __init__(self,one=None,many=None):
+            self.one=one
+            self.many=many
+        def fetchone(self):
+            return self.one
+        def fetchall(self):
+            return self.many
+    class DB:
+        def __init__(self,proof):
+            self.proof=proof
+        def execute(self,sql,params):
+            if "to_regclass" in sql:
+                return Cursor((params[0] if params[0].endswith("v37_receipts") else None,))
+            if "FROM serviceit_vps_b2b_dossier_consistency_v37_receipts" in sql:
+                return Cursor(many=[("VERIFIED",before,after,salt,self.proof)])
+            raise AssertionError("UNEXPECTED_QUERY")
+    reconstructed=m.attested_current_chain(DB(digest),m.SOURCE,start)
+    assert reconstructed[name]==next_report
+    assert all(reconstructed[k]==start[k] for k in start if k!=name)
+    with pytest.raises(m.Blocked,match="V37_RECEIPT_DIGEST_INVALID"):
+        m.attested_current_chain(DB(b"x"*32),m.SOURCE,start)
+
+
+def test_v37_uncertain_conflict_blocks_replaying_old_card():
+    m=load()
+    start=original()
+    class Cursor:
+        def __init__(self,one=None,many=None):
+            self.one=one
+            self.many=many
+        def fetchone(self):
+            return self.one
+        def fetchall(self):
+            return self.many
+    class DB:
+        def execute(self,sql,params):
+            if "to_regclass" in sql:
+                return Cursor((params[0] if params[0].endswith("v37_receipts") else None,))
+            return Cursor(many=[("UNCERTAIN",{},None,None,None)])
+    with pytest.raises(m.Blocked,match="V37_PRIOR_UNCERTAIN_NO_REPLAY"):
+        m.attested_current_chain(DB(),m.SOURCE,start)

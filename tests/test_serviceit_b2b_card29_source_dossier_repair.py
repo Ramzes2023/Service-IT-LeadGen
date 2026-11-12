@@ -57,11 +57,28 @@ def test_primary_card29_dossier_is_structured_and_preserves_history_and_nonrepor
     assert len(out[PREFIX+"AI_FULL_REPORT"])<=12000
 
 
-def test_missing_deadline_or_delivery_never_produces_draft():
+def test_missing_source_deadline_or_delivery_never_produces_draft():
     m=load()
-    for facts in (FACTS[1:],FACTS[:2],FACTS[:3]):
+    with pytest.raises(m.Blocked):
+        m.prepare(FACTS[1:],[{"source_id":1,"url":URL,"text":TEXT}],original(),URL)
+    for excerpt in (
+        TEXT.replace("электронная поставка", "условия требуют сверки"),
+        TEXT.replace("Можайский Вал", "адрес не указан"),
+        TEXT.replace("отсрочка 30 календарных дней", "условия оплаты не указаны"),
+    ):
         with pytest.raises(m.Blocked):
-            m.prepare(facts,[{"source_id":1,"url":URL,"text":TEXT}],original(),URL)
+            m.prepare(FACTS[:1],[{"source_id":1,"url":URL,"text":excerpt}],original(),URL)
+
+
+def test_original_public_text_can_supply_payment_and_address_without_regex_facts():
+    m=load()
+    # The first V22 regex pass can miss an HTML split-heading value.
+    # These literal source substrings, not model guesses, remain eligible.
+    out=m.prepare(FACTS[:1],[{"source_id":1,"url":URL,"text":TEXT}],original(),URL)
+    assert "Можайский Вал" in out[PREFIX+"AI_FULL_REPORT"]
+    assert "отсрочка" in out[PREFIX+"AI_FULL_REPORT"].lower()
+    assert "электронная поставка" in out[PREFIX+"AI_FULL_REPORT"]
+
 
 
 def test_foreign_url_fails_closed_and_no_false_customer_inn():

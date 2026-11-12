@@ -53,6 +53,17 @@ jobs:
                       r = client.get("https://api.tavily.com/usage",
                                      headers={"Authorization": "Bearer " + key})
                   print("TAVILY_RESERVE_USAGE_HTTP=" + str(r.status_code))
+                  if r.status_code in (401, 403):
+                      body = r.text[:12000].casefold()
+                      if any(x in body for x in ("invalid api key", "missing api key", "invalid token")):
+                          reason = "KEY_REJECTED"
+                      elif any(x in body for x in ("country", "geographic", "your region")):
+                          reason = "REGION_RESTRICTED"
+                      elif any(x in body for x in ("cloudflare", "request blocked", "access denied")):
+                          reason = "EDGE_DENIAL"
+                      else:
+                          reason = "UNSPECIFIED"
+                      print("TAVILY_RESERVE_DENIAL=" + reason)
                   if r.status_code == 200:
                       account = r.json().get("account", {})
                       limit, used = account.get("plan_limit"), account.get("plan_usage")

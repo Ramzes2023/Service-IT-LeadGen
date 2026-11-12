@@ -1,4 +1,4 @@
-name: ServiceIT B2B morning intake read-only audit
+name: ServiceIT B2B recent Gmail intake and research audit
 # B2B receiver/writer post-rollout no-write reconciliation, 2026-11-12
 # Post geo-canary + DONE-digest classifier reconciliation; no CRM POST.
 on:
@@ -58,3 +58,7 @@ jobs:
                  END {printf "INTAKE_CYCLES_OK=%d\nINTAKE_CYCLES_BLOCKED=%d\n",ok,blocked}'
           REMOTE
           [[ "$rc" == 0 ]]
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --research' \
+            < ops/serviceit_vps_b2b_morning_intake_audit.py > "$stage/research"
+          grep -E '^INTAKE_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/research"

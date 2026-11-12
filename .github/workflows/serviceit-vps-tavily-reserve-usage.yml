@@ -70,6 +70,22 @@ jobs:
                       r = client.get("https://api.tavily.com/usage",
                                      headers={"Authorization": "Bearer " + key})
                   print("TAVILY_RESERVE_USAGE_HTTP=" + str(r.status_code))
+                  # The support team can identify whether the 403 was served
+                  # by an edge/WAF or API origin. Never log body, token,
+                  # arbitrary server header values or Ray identifier.
+                  server = r.headers.get("server", "").casefold()
+                  via = r.headers.get("via", "").casefold()
+                  edge = ("cloudflare" in server or "cloudflare" in via
+                          or "cf-ray" in r.headers)
+                  print("TAVILY_RESERVE_EDGE=" + ("CLOUDFLARE" if edge else "NOT_DETECTED"))
+                  ctype = r.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+                  kind = ("JSON" if "json" in ctype else
+                          "HTML" if "html" in ctype else "OTHER")
+                  print("TAVILY_RESERVE_CONTENT_TYPE=" + kind)
+                  print("TAVILY_RESERVE_CF_RAY=" +
+                        ("PRESENT" if "cf-ray" in r.headers else "ABSENT"))
+                  print("TAVILY_RESERVE_RETRY_AFTER=" +
+                        ("PRESENT" if "retry-after" in r.headers else "ABSENT"))
                   if r.status_code in (401, 403):
                       if r.status_code == 403:
                           with httpx.Client(timeout=15, trust_env=False, follow_redirects=False) as client:

@@ -705,6 +705,23 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
             "DISABLED_BY_SOURCE_POLICY" if not tinyfish_authorized else
             "VERIFIED" if result.get("tinyfish_independent_verified") else
             "NO_VERIFIED_PUBLIC_PAGE_RETRYABLE")
+        # Research Pro's generated report is NOT evidence by itself.
+        # Only HTTPS public pages that were independently fetched and passed
+        # the exact tender-ID/title and robots gates can enter normal
+        # RouterAI/Bitrix dossier evidence. This also reuses finished async
+        # Pro tasks for later V19/V20 consistency cycles.
+        if (connection is not None and
+                env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED")=="YES"):
+            from .serviceit_b2b_tavily_research_pro_v46 import independently_verified_pages
+            proven = optional(independently_verified_pages,connection,client,env,notice,browser) or []
+            if proven:
+                previous = list(result.get("pages") or [])
+                seen={p.get("url") for p in previous if isinstance(p,dict)}
+                additions=[p for p in proven if p.get("url") not in seen]
+                if additions:
+                    result["pages"]=(previous[:1]+additions+previous[1:])[:MAX_PAGES]
+                    result["status"]="PUBLIC_PAGES_INSPECTED"
+                    result["tavily_research_pro_public_verified"]=True
         # Re-run the ordinary verified-buyer follow-up only after all safely
         # merged public sources, so the model/CRM dossier sees both providers.
         result = optional(followup_public_buyer_research, result, env, client, key) or result

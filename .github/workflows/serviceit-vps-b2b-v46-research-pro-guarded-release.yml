@@ -1,0 +1,133 @@
+name: ServiceIT VPS V46 guarded Tavily Research Pro coordinator code-only release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' && github.actor == 'Ramzes2023' &&
+      github.event_name == 'issue_comment' &&
+       github.event.issue.number == 489 &&
+       !github.event.issue.pull_request &&
+       github.event.comment.user.login == 'Ramzes2023' &&
+       github.event.comment.body == 'SERVICEIT_B2B_V46_RESEARCH_PRO_GUARDED_RELEASE_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify reviewed NEW V46 and pinned pre-V46 OLD source hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed="$GITHUB_SHA"
+          old='7077736dcf639fb30e85cfb2283e52f6804f4067'
+          git cat-file -e "$reviewed^{commit}"
+          git cat-file -e "$old^{commit}"
+          names=(serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_vps_b2b_dossier_v11_worker.py serviceit_b2b_tavily_research_pro_v46.py)
+          install -d -m 0700 "$RUNNER_TEMP/v46-release"
+          : > "$RUNNER_TEMP/v46-release/new-hashes"
+          : > "$RUNNER_TEMP/v46-release/old-hashes"
+          blobs=(60e28256cf4a624ee0174fdd18493580fa2030e5
+            ac0fcfaf08ca3aec28601c33e5dcefe7aa90699c
+            b2c279305ddb1c772af4ea65629c0c3f63a48895
+            8a7d0f504c0c980c83ad21c43249b606d7c60ef1)
+          for i in "${!names[@]}"; do
+            name="${names[$i]}"
+            [[ "$(git hash-object "leadpilot/$name")" == "${blobs[$i]}" ]]
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v46-release/new-hashes"
+          done
+          for n in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_vps_b2b_dossier_v11_worker.py; do
+            git show "$old:leadpilot/$n" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/v46-release/old-hashes"
+          done
+          ! git cat-file -e "$old:leadpilot/serviceit_b2b_tavily_research_pro_v46.py" 2>/dev/null
+          printf '%s\n' 'MISSING' >> "$RUNNER_TEMP/v46-release/old-hashes"
+          script=ops/serviceit_vps_b2b_v46_research_pro_guarded_release.py
+          python -m py_compile "$script"
+          sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v46-release/script-sha"
+          [[ "$(wc -l < "$RUNNER_TEMP/v46-release/new-hashes")" == 4 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v46-release/old-hashes")" == 4 ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v46-release/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v46-release/hosts"
+          chmod 0600 "$RUNNER_TEMP/v46-release/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v46-release/hosts" >/dev/null
+      - name: Transfer exactly one nonsecret file plus release controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v46-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-v46-onefile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v46-release/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_vps_b2b_dossier_v11_worker.py serviceit_b2b_tavily_research_pro_v46.py; do
+            scp -i "$RUNNER_TEMP/v46-release/id" "${opts[@]}" \
+              "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$RUNNER_TEMP/v46-release/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v46_research_pro_guarded_release.py "$target:$stage/activate.py"
+      - name: Offline smoke new one module and swap coordinator only with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v46-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t new < "$RUNNER_TEMP/v46-release/new-hashes"
+          mapfile -t old < "$RUNNER_TEMP/v46-release/old-hashes"
+          [[ "${#new[@]}" == 4 && "${#old[@]}" == 4 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/v46-release/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          args=()
+          for v in "${new[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$v'")
+          done
+          [[ "${old[0]}" =~ ^[a-f0-9]{64}$ && "${old[1]}" =~ ^[a-f0-9]{64}$ &&
+             "${old[2]}" =~ ^[a-f0-9]{64}$ && "${old[3]}" == "MISSING" ]]
+          args+=("'${old[0]}'" "'${old[1]}'" "'${old[2]}'" "'MISSING'")
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${args[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v46-release/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/v46-release/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 8 ]]
+          [[ "$1" =~ ^[a-f0-9]{64}$ && "$2" =~ ^[a-f0-9]{64}$ &&
+             "$3" =~ ^[a-f0-9]{64}$ && "$4" =~ ^[a-f0-9]{64}$ &&
+             "$5" =~ ^[a-f0-9]{64}$ && "$6" =~ ^[a-f0-9]{64}$ &&
+             "$7" =~ ^[a-f0-9]{64}$ && "$8" == "MISSING" ]]
+          script="$HOME/serviceit/staging/b2b-v46-onefile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^V46_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v46-release/status" | head -30 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V46_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v46-release/status"
+          grep -qx 'V46_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v46-release/status"

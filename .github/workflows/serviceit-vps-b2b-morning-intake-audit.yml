@@ -1,4 +1,4 @@
-name: ServiceIT B2B intake, geography and research audit
+name: ServiceIT B2B restored Moscow tender end-to-end audit
 # B2B receiver/writer post-rollout no-write reconciliation, 2026-11-12
 # Check the Gmail handoff separately from downstream worker receipts.
 on:

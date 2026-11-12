@@ -21,6 +21,10 @@ SITES={
     "TBANK":"https://www.tbank.ru/business/contractor/legal/1027700058506/",
     "TOCHKA":"https://check.tochka.com/company/1027700058506/",
     "EGRUL":"https://egrul.org/7727218041",
+    "SABY":"https://saby.ru/profile/7727218041-773001001",
+    "XFIRM":"https://xfirm.ru/company/7727218041",
+    "SLEDI":"https://sledi.ru/azot-vzryv-7727218041/",
+    "B2BHOUSE":"https://b2b.house/company/AO-AZOT-VZRYV_43158d33-2b0a-4786-aaab-6716d134c4fa/",
 }
 ORGANIZER="АЗОТ-ВЗРЫВ"
 EXPECTED_INN="7727218041"

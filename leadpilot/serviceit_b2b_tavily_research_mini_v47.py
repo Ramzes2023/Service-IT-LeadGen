@@ -1,11 +1,11 @@
-"""V46: asynchronous Tavily Research MINI for new signed B2B tender dossiers.
+"""V47: asynchronous Tavily Research MINI for new signed B2B tender dossiers.
 
 The Research API is not Search: POST /research with model='mini' returns a
 request_id; GET /research/{uuid} later returns citations and text.
 
 All new tasks are source-fenced, once-ever and spend at most remaining included
-plan credits (reserve worst-case 250 Pro credits until task completes).
-Tavily Research has dynamic 15..250 credits/task. Never use pay-as-you-go
+plan credits (reserve worst-case 110 Mini credits until task completes).
+Tavily Research Mini has variable 4..110 credits/task. Never use pay-as-you-go
 balance to authorize a task. Fail-closed on unverified key/plan/usage.
 
 A research report is NOT independent proof of buyer/INN/deadlines. Only actual
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     status IN ('RESERVED','SUBMITTED','IN_PROGRESS','COMPLETED',
                'FAILED','UNCERTAIN')),
   request_id VARCHAR(40) UNIQUE,
-  credits_reserved SMALLINT NOT NULL DEFAULT 250,
+  credits_reserved SMALLINT NOT NULL DEFAULT 110,
   credits_used SMALLINT,
   report TEXT,
   sources JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (jsonb_typeof(sources)='array')
 );
-CREATE INDEX IF NOT EXISTS serviceit_vps_b2b_tavily_pro_started_idx
+CREATE INDEX IF NOT EXISTS serviceit_vps_b2b_tavily_mini_started_idx
  ON {TABLE}(started_at);
 """
 

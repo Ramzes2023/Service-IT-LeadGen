@@ -675,3 +675,26 @@ test('ambiguous source receipt for IT staffing prevents any replay',()=>{
 });
 
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');
+
+{
+  const html = [
+    '<strong>Организатор закупки</strong>: АО &quot;ПРИМЕР&quot;<br>',
+    '<strong>Предмет закупки</strong>:<br>Услуги ТП для серверов Sparc M8-8<br>',
+    '<a href="https://www.b2b-center.ru/app/market-next/uslugi-tp/tender-4677837/?utm_source=procedure_invite">',
+    'Посмотреть процедуру №4677837 на площадке</a>'
+  ].join('');
+  const actual = message();
+  actual.payload.mimeType = 'text/html';
+  actual.payload.body.data = b64url(html);
+  const e = environment({message: actual, properties: {
+    SERVICEIT_AUTOMATION_ENABLED: 'YES',
+    ['SERVICEIT_EMAIL_' + MID]: 'NO_MATCH'
+  }});
+  const parsed = e.context.parseEmailMessage_(actual, MID);
+  assert.strictEqual(parsed.observations.length, 1);
+  assert.strictEqual(parsed.observations[0].notice.tender_id, '4677837');
+  const recovery = e.context.recoverB2B4677837AfterParserFix();
+  assert.strictEqual(recovery.status, 'SERVICEIT_B2B_EXACT_RECOVERY_QUEUED');
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_' + MID], 'PENDING');
+  assert.strictEqual(e.calls.dispatch.length, 0);
+}

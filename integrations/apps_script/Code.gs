@@ -415,8 +415,9 @@ function parseEmailMessage_(message, messageId) {
     throw new Error("SERVICEIT_GMAIL_INTERNAL_DATE_INVALID");
   }
   const text = messageText_(message);
-  const hasInvite = text.indexOf("Организатор закупки:") >= 0 &&
-    text.indexOf("Предмет закупки:") >= 0;
+  // A closing HTML tag can leave a space before the colon in invitations.
+  const hasInvite = /Организатор\s+закупки\s*:/i.test(text) &&
+    /Предмет закупки\s*:/i.test(text);
   const chunks = hasInvite ?
     text.split(/(?=Организатор\s+закупки\s*:)/i).filter(function (x) {
       return /Предмет закупки\s*:/i.test(x);
@@ -779,6 +780,50 @@ function dispatchB2B4673595Once() {
     };
     console.log(JSON.stringify(sent));
     return sent;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Queue only the missed, authenticated server-support invitation for normal polling. */
+function recoverB2B4677837AfterParserFix() {
+  const config = privateConfig_();
+  assertMailbox_();
+  const props = scriptProperties_();
+  if (props.getProperty("SERVICEIT_AUTOMATION_ENABLED") !== "YES" ||
+      props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") !== "YES") {
+    throw new Error("SERVICEIT_B2B_RECOVERY_AUTOMATION_NOT_ACTIVE");
+  }
+  const cutover = Math.max(Number(config.cutoverMs),
+    Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0));
+  if (!Number.isFinite(cutover) || cutover <= 0) {
+    throw new Error("SERVICEIT_B2B_RECOVERY_ACTIVATION_MISSING");
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) throw new Error("SERVICEIT_B2B_RECOVERY_LOCK_BUSY");
+  try {
+    const tender = "4677837";
+    if (props.getProperty("SERVICEIT_SOURCE_" + tender)) {
+      return {status: "SERVICEIT_B2B_RECOVERY_ALREADY_HANDLED"};
+    }
+    for (const id of listVendorMessageIds_().slice(0, 20)) {
+      const key = "SERVICEIT_EMAIL_" + id;
+      if (props.getProperty(key) !== "NO_MATCH") continue;
+      const message = Gmail.Users.Messages.get("me", id, {format: "full"});
+      if (!message || message.id !== id) continue;
+      let parsed;
+      try {
+        parsed = parseEmailMessage_(message, id);
+      } catch (_ignored) {
+        continue;
+      }
+      if (parsed.internalDate > cutover && parsed.observations.length === 1 &&
+          parsed.observations[0].notice.tender_id === tender) {
+        props.setProperty(key, "PENDING");
+        return {status: "SERVICEIT_B2B_EXACT_RECOVERY_QUEUED", tender_id: tender};
+      }
+    }
+    return {status: "SERVICEIT_B2B_RECOVERY_NO_ELIGIBLE_MAIL"};
   } finally {
     lock.releaseLock();
   }

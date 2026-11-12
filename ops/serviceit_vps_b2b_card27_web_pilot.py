@@ -12,6 +12,7 @@ from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
 from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
 from leadpilot.serviceit_vps_b2b_deep_research import safe_notice
 from leadpilot.serviceit_vps_pg_queue import db, secret_file
+from leadpilot.serviceit_public_evidence_research import _page, ResearchBlocked
 
 from leadpilot import serviceit_b2b_dossier_consistency_worker_v37 as writer
 from leadpilot import serviceit_b2b_v20_versioned as v20
@@ -104,8 +105,10 @@ def main():
     assert live_permitted(env)
     with db(env) as conn, httpx.Client(
             trust_env=False, follow_redirects=False, timeout=16) as client:
-        for lock in dict.fromkeys((v20.LOCK_ID, DOCUMENT_LOCK, writer.LOCK_ID)):
-            assert conn.execute("SELECT pg_try_advisory_lock(%s)", (lock,)).fetchone()[0]
+        # The authorized one-off write is complete. Future runs are read-only.
+        if "--apply" in sys.argv:
+            for lock in dict.fromkeys((v20.LOCK_ID, DOCUMENT_LOCK, writer.LOCK_ID)):
+                assert conn.execute("SELECT pg_try_advisory_lock(%s)", (lock,)).fetchone()[0]
         row = conn.execute("""
             SELECT source_id, notice_json FROM serviceit_vps_b2b_inbox
             WHERE card_id=%s AND state='VERIFIED'
@@ -124,7 +127,19 @@ def main():
         print("CARD27_WEB_SLUG=" + ("YES" if re.fullmatch(
             r"/(?:market|app/market-next)/[a-z0-9-]+/tender-4677160/?", urlsplit(url).path
         ) else "NO"), flush=True)
-        apply(conn, rest, card, source)
+        if "--apply" in sys.argv:
+            apply(conn, rest, card, source)
+            card = writer._get(rest, CARD)
+        print("CARD27_WEB_SLUG_MATCH=" + ("YES" if urlsplit(url).path.replace(
+            "/app/market-next/", "/market/", 1).rstrip("/") == urlsplit(DETAIL).path.rstrip("/")
+            else "NO"), flush=True)
+        for kind, link in (("DETAIL", DETAIL), ("PROFILE", PROFILE)):
+            try:
+                page = _page(client, link, frozenset({"b2b-energo.ru"}))
+                status = "VERIFIED" if (TENDER if kind == "DETAIL" else INN) in page["text"] else "NO_MATCH"
+            except (ResearchBlocked, httpx.HTTPError) as error:
+                status = str(error) if isinstance(error, ResearchBlocked) else type(error).__name__.upper()
+            print("CARD27_WEB_VPS_" + kind + "=" + status, flush=True)
         assert urlsplit(url).hostname in {"www.b2b-center.ru", "b2b-center.ru"}
         print("CARD27_WEB_TENDER=" + tender, flush=True)
         print("CARD27_WEB_INN_IN_CRM=" + ("YES" if card.get(PREFIX+"COMPANY_INN") else "NO"), flush=True)

@@ -64,8 +64,8 @@ function environment(options={}) {
           list: (_user, args) => {
             assert.strictEqual(_user,'me');
             if (args.maxResults===10) {
-              assert.match(args.q,/from:marketplace@b2b-center\\.ru/);
-              const tid=(args.q.match(/"(\\d{7})"/)||[])[1];
+              assert.match(args.q,/from:marketplace@b2b-center\.ru/);
+              const tid=(args.q.match(/"(\d{7})"/)||[])[1];
               assert(tid);
               calls.list++;
               return {messages:(mailboxMessages||[currentMessage]).filter(m=>

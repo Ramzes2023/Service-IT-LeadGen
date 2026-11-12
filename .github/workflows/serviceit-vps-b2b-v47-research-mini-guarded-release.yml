@@ -45,7 +45,7 @@ jobs:
           : > "$RUNNER_TEMP/v47-release/old-hashes"
           blobs=(778073b015126bbc99ad5489c68a6a958fb7561b
             57a1acf33111b9a13b6d2e517646eefdba1b83c1
-            b8317e394476b73680a74478338af8d02fe89881
+            59a0b27c997318a26d3f6adf8e2ef00b1d293c92
             ab3148b03178633665089ab06b773b5e32ff027b)
           for i in "${!names[@]}"; do
             name="${names[$i]}"

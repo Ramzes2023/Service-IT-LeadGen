@@ -31,7 +31,7 @@ def test_v19c_exact_environment_optin_still_one_card_per_5min():
     assert 'result["SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED"] = "YES"' in s
     assert "INTERVAL_SECONDS = 300" in s
     assert 'if exact_env.get("SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED") == "YES":' in s
-    assert "v19 = backfill_once(exact_env, client, connection)" in s
+    assert "v19 = backfill_once(followup_env, client, connection)" in s
     assert '"historical_cards_touched": v19.get("crm_writes") == 1' in s
     assert "b2b_v19_additive" in s
 

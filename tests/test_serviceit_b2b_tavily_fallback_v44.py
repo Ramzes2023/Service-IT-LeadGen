@@ -62,7 +62,7 @@ def test_no_personal_data_or_title_sent_to_tavily(monkeypatch):
     fake=MagicMock()
     fake.post.return_value=MagicMock(
         status_code=200,
-        content=b'{"results":[{"url":"https://zakupki.kontur.ru/4676478_4","content":"ИНН 9999999999"}]}',
+        content=b'{"results":[{"url":"https://zakupki.kontur.ru/4676478_4"}]}',
         headers={"content-type":"application/json"},
         json=lambda:{"results":[{"url":URL,"content":"НЕПРОВЕРЕННЫЙ ЗАКАЗЧИК: ООО Х"}]})
     result=t._search_once(fake,"tvly-"+"X"*25,NOTICE["tender_id"])

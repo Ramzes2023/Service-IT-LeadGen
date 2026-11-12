@@ -52,7 +52,7 @@ def test_primary_card29_dossier_is_structured_and_preserves_history_and_nonrepor
     assert "АРХИВ РАННЕГО" in out[PREFIX+"AI_FULL_REPORT"]
     assert base[PREFIX+"AI_FULL_REPORT"] in out[PREFIX+"AI_FULL_REPORT"]
     assert "3 (не количество лицензий)" in out[PREFIX+"AI_FULL_REPORT"]
-    assert "заказчик/ИНН" not in out[PREFIX+"AI_SUMMARY"].lower()
+    assert "заказчик/инн не подтверждены" in out[PREFIX+"AI_SUMMARY"].lower()
     assert out[PREFIX+"AI_STATUS"]==base[PREFIX+"AI_STATUS"]
     assert len(out[PREFIX+"AI_FULL_REPORT"])<=12000
 

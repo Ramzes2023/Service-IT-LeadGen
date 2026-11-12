@@ -99,6 +99,32 @@ def env_of(info):
                  "B2B_SECRET_PATH_UNEXPECTED")
     return safe
 
+def receiver_env(info):
+    rows=info.get("Config", {}).get("Env", [])
+    need(isinstance(rows,list),"B2B_RECEIVER_ENV_INVALID")
+    source=dict(x.split("=",1) for x in rows if isinstance(x,str) and "=" in x)
+    expected={
+        "SERVICEIT_VPS_B2B_RECEIVER_ENABLED":"YES",
+        "SERVICEIT_VPS_B2B_GH_WRITERS_DISABLED_ACK":"YES",
+        "SERVICEIT_PG_PASSWORD_FILE":"/run/secrets/serviceit_pg_password",
+        "SERVICEIT_VPS_B2B_HMAC_KEY_FILE":"/run/secrets/serviceit_b2b_hmac",
+    }
+    for key,val in expected.items():
+        need(source.get(key)==val,"B2B_RECEIVER_PRODUCTION_GATES_DRIFT")
+    allowed={x for x in ALLOWED if x.startswith("SERVICEIT_PG_") or x in
+             ("SERVICEIT_VPS_B2B_RECEIVER_ENABLED",
+              "SERVICEIT_VPS_B2B_GH_WRITERS_DISABLED_ACK",
+              "SERVICEIT_VPS_INTAKE_ENABLED")}
+    allowed.add("SERVICEIT_VPS_B2B_HMAC_KEY_FILE")
+    safe={key:source[key] for key in allowed if key in source}
+    for key,val in safe.items():
+        need(len(val)<256 and "\n" not in val and "\r" not in val,
+             "B2B_RECEIVER_ENV_UNSAFE")
+        if key.endswith("_FILE"):
+            need(val.startswith("/run/secrets/serviceit_"),
+                 "B2B_RECEIVER_SECRET_PATH_UNEXPECTED")
+    return safe
+
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -190,8 +216,17 @@ def main(argv):
              "RELEASE_FILE_HASH_DRIFT")
 
     running(CORE)
-    running(RECEIVER)
+    old_receiver=running(RECEIVER)
     old=running(WRITER)
+    need(old_receiver["Config"]["User"]=="10001:10001"
+         and old_receiver["HostConfig"]["NetworkMode"]=="host"
+         and old_receiver["HostConfig"]["ReadonlyRootfs"] is True,
+         "OLD_RECEIVER_ISOLATION_DRIFT")
+    receiver_mounts={m["Destination"] for m in old_receiver.get("Mounts",[])}
+    need({"/run/secrets/serviceit_pg_password",
+          "/run/secrets/serviceit_b2b_hmac"} <= receiver_mounts,
+         "OLD_RECEIVER_SECRET_MOUNTS_MISSING")
+    receiver_vars=receiver_env(old_receiver)
     need(old["Config"]["User"]=="10001:10001"
          and old["HostConfig"]["NetworkMode"]=="host"
          and old["HostConfig"]["ReadonlyRootfs"] is True,
@@ -203,6 +238,7 @@ def main(argv):
     env=env_of(old)
     image_id=old["Image"]
     need(re.fullmatch(r"sha256:[a-f0-9]{64}",image_id),"OLD_IMAGE_ID_INVALID")
+    need(old_receiver["Image"]==image_id,"WRITER_RECEIVER_IMAGE_DIVERGED")
     need(output(["docker","image","inspect","-f","{{.Id}}",image_id])==image_id,
          "OLD_IMAGE_NOT_PRESENT")
     new_image="serviceit-b2b-writer:moscow-"+run_id
@@ -235,12 +271,19 @@ def main(argv):
     print("B2B_GEO_INGRESS_BACKLOG_EMPTY=YES",flush=True)
 
     backup=WRITER.replace("-1","-rollback-"+run_id)
-    need(run(["docker","inspect",backup],check=False).returncode!=0,
-         "B2B_ROLLBACK_NAME_CONFLICT")
-    need(inspect(WRITER)["Id"]==old["Id"],"B2B_WRITER_CHANGED_DURING_STAGE")
-    run(["docker","stop","--time","20",WRITER],timeout=30)
-    run(["docker","rename",WRITER,backup])
+    recv_backup=RECEIVER.replace("-1","-rollback-"+run_id)
+    for name in (backup,recv_backup):
+        need(run(["docker","inspect",name],check=False).returncode!=0,
+             "B2B_ROLLBACK_NAME_CONFLICT")
+    need(inspect(WRITER)["Id"]==old["Id"]
+         and inspect(RECEIVER)["Id"]==old_receiver["Id"],
+         "B2B_SOURCE_CHANGED_DURING_STAGE")
+    writer_saved=False
+    receiver_saved=False
     try:
+        run(["docker","stop","--time","20",WRITER],timeout=35)
+        run(["docker","rename",WRITER,backup])
+        writer_saved=True
         args=["docker","run","-d","--name",WRITER,"--restart","unless-stopped",
               "--network","host","--user","10001:10001","--read-only",
               "--init","--tmpfs","/tmp:size=32m,mode=1777",
@@ -254,8 +297,8 @@ def main(argv):
         run(args,timeout=50)
         time.sleep(4)
         now=running(WRITER)
-        need(now["Image"]==output(["docker","image","inspect","-f","{{.Id}}",new_image]),
-             "B2B_NEW_IMAGE_DRIFT")
+        expected_image=output(["docker","image","inspect","-f","{{.Id}}",new_image])
+        need(now["Image"]==expected_image,"B2B_NEW_IMAGE_DRIFT")
         verify=run(["docker","exec",WRITER,"python","-B","-c",
                     "import os;"
                     "from leadpilot.serviceit_vps_b2b_bridge import enabled,INTERVAL_SECONDS;"
@@ -264,15 +307,54 @@ def main(argv):
                     "print('WRITER_RESTART_PASS')"],timeout=30)
         need(verify.stdout.strip()=="WRITER_RESTART_PASS",
              "B2B_NEW_WRITER_POSTREAD_FAILED")
-        running(RECEIVER)
+        print("B2B_GEO_WRITER_DEPLOYED=YES",flush=True)
+
+        # The receiver also validates service categories at ingress. Updating
+        # only the writer would break new Teams/cloud notices: both must share
+        # the same classifier, with existing HMAC mount and dedup preserved.
+        need(inspect(RECEIVER)["Id"]==old_receiver["Id"],
+             "B2B_RECEIVER_CHANGED_DURING_WRITER_SWAP")
+        run(["docker","stop","--time","20",RECEIVER],timeout=35)
+        run(["docker","rename",RECEIVER,recv_backup])
+        receiver_saved=True
+        receiver_args=[
+            "docker","run","-d","--name",RECEIVER,"--restart","unless-stopped",
+            "--network","host","--user","10001:10001","--read-only",
+            "--init","--tmpfs","/tmp:size=32m,mode=1777",
+            "--security-opt","no-new-privileges","--cap-drop","ALL",
+            "--pids-limit","128","--memory","400m",
+            "--volumes-from",recv_backup,
+        ]
+        for key in sorted(receiver_vars):
+            receiver_args+=["--env",key+"="+receiver_vars[key]]
+        receiver_args+=["--entrypoint","python",new_image,
+            "-m","uvicorn","leadpilot.serviceit_vps_b2b_ingress:app",
+            "--host","127.0.0.1","--port","18781","--workers","1",
+            "--no-access-log"]
+        run(receiver_args,timeout=50)
+        time.sleep(5)
+        actual=running(RECEIVER)
+        need(actual["Image"]==expected_image,"B2B_RECEIVER_NEW_IMAGE_DRIFT")
+        receiver_check=run(["docker","exec",RECEIVER,"python","-B","-c",
+           "import httpx;"
+           "r=httpx.get('http://127.0.0.1:18781/health',timeout=4);"
+           "assert r.status_code==200;"
+           "d=r.json();"
+           "assert d.get('status')=='B2B_INGRESS_ALIVE';"
+           "assert d.get('source_enabled') is True;"
+           "assert d.get('crm_writes')==0;"
+           "print('RECEIVER_RESTART_PASS')"],timeout=25)
+        need(receiver_check.stdout.strip()=="RECEIVER_RESTART_PASS",
+             "B2B_RECEIVER_POSTREAD_FAILED")
         running(CORE)
     except Exception:
-        restored=rollback(WRITER,backup)
-        print("B2B_GEO_ROLLBACK="+("YES" if restored else "FAILED"),flush=True)
+        restored_receiver = rollback(RECEIVER,recv_backup) if receiver_saved else True
+        restored_writer = rollback(WRITER,backup) if writer_saved else True
+        print("B2B_GEO_ROLLBACK="+("YES" if restored_receiver and restored_writer
+                                   else "FAILED"),flush=True)
         raise
-    print("B2B_GEO_WRITER_DEPLOYED=YES",flush=True)
     print("B2B_GEO_MOSCOW_ONLY_ENABLED="+("YES" if allow else "NO"),flush=True)
-    print("B2B_GEO_RECEIVER_UNTOUCHED=YES",flush=True)
+    print("B2B_GEO_RECEIVER_DEPLOYED=YES",flush=True)
     print("B2B_GEO_CORE_UNTOUCHED=YES",flush=True)
     print("B2B_GEO_CRM_WRITES_BY_INSTALLER=NO",flush=True)
 

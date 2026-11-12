@@ -173,7 +173,7 @@ def rollback(name,backup):
     return r.returncode==0
 
 def main(argv):
-    need(len(argv)==8, "RELEASE_ARGS_INVALID")
+    need(len(argv)==7, "RELEASE_ARGS_INVALID")
     run_id, script_sha, *file_shas = argv
     need(re.fullmatch(r"[0-9]{7,16}",run_id) is not None
          and re.fullmatch(r"[0-9a-f]{64}",script_sha) is not None

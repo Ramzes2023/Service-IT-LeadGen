@@ -135,23 +135,25 @@ def main():
         print("CARD27_WEB_SLUG_MATCH=" + ("YES" if urlsplit(url).path.replace(
             "/app/market-next/", "/market/", 1).rstrip("/") == urlsplit(DETAIL).path.rstrip("/")
             else "NO"), flush=True)
-        sources = (
-            ("KONTUR", REGISTER, "zakupki.kontur.ru"),
-            ("TENDIK", "https://tendik.ru/tender/eis223/32616566539", "tendik.ru"),
-            ("SPROSRADAR", "https://sprosradar.ru/zakupki/223/32616566539/", "sprosradar.ru"),
-            ("SIGNED", url, "b2b-center.ru"),
-        )
-        for kind, link, host in sources:
-            try:
-                page = _page(client, link, frozenset({host}))
-                body = " ".join(page["text"].split())
-                status = "VERIFIED" if TENDER in body else "NO_MATCH"
-                for tag, needle in (("EIS", "32616566539"), ("INN", INN),
-                                    ("EIS_LABEL", "Номер извещения на ЕИС")):
-                    print(f"CARD27_WEB_{kind}_{tag}=" + ("YES" if needle in body else "NO"), flush=True)
-            except (ResearchBlocked, httpx.HTTPError) as error:
-                status = str(error) if isinstance(error, ResearchBlocked) else type(error).__name__.upper()
-            print("CARD27_WEB_VPS_" + kind + "=" + status, flush=True)
+        if "--eis-probe" in sys.argv:
+            from leadpilot.serviceit_vps_b2b_deep_research import published_buyer_inn_evidence
+            from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
+            from leadpilot.serviceit_b2b_dossier_v11 import compose
+
+            page = _page(client, url, frozenset({"b2b-center.ru"}))
+            before = {"status": "PUBLIC_PAGES_INSPECTED", "pages": [
+                {"url": url, "excerpt": " ".join(page["text"].split())}]}
+            findings = supplement_eis_mirrors(before, notice, client)
+            count = findings.get("eis_mirror_count", 0)
+            print(f"CARD27_WEB_EIS_MIRRORS={count}", flush=True)
+            evidence = published_buyer_inn_evidence(findings)
+            print("CARD27_WEB_EIS_BUYER_INN=" + ("YES" if (evidence or {}).get("inn") == INN else "NO"), flush=True)
+            report = source_only_investigation(findings)
+            fields, _ = compose(notice, card, findings, report)
+            print("CARD27_WEB_EIS_DOSSIER=" + ("YES" if all(
+                host in fields[REPORT] for host, _ in EIS_MIRRORS) else "NO"), flush=True)
+            if count != len(EIS_MIRRORS):
+                sys.exit(2)
         print("CARD27_WEB_TENDER=" + tender, flush=True)
         print("CARD27_WEB_INN_IN_CRM=" + ("YES" if card.get(PREFIX+"COMPANY_INN") else "NO"), flush=True)
         for name, filename in (("DEEP", "serviceit_vps_b2b_deep_research.py"),

@@ -68,7 +68,9 @@ def run(argv, *, timeout=180, check=True, cwd=None):
     except (OSError, subprocess.TimeoutExpired):
         raise Blocked("COMMAND_UNAVAILABLE_OR_TIMEOUT") from None
     if check and p.returncode != 0:
-        raise Blocked("COMMAND_FAILED")
+        kind = str(argv[1]).upper().replace("-", "_") if len(argv)>1 else "UNKNOWN"
+        kind = kind if re.fullmatch(r"[A-Z_]{2,24}",kind) else "UNKNOWN"
+        raise Blocked("COMMAND_" + kind + "_FAILED")
     return p
 
 def output(argv):
@@ -215,6 +217,7 @@ def main(argv):
         need(source.is_file() and not source.is_symlink() and sha(source)==want,
              "RELEASE_FILE_HASH_DRIFT")
 
+    print("B2B_GEO_STAGE=SOURCE_INSPECT",flush=True)
     running(CORE)
     old_receiver=running(RECEIVER)
     old=running(WRITER)
@@ -238,12 +241,14 @@ def main(argv):
     env=env_of(old)
     image_id=old["Image"]
     need(re.fullmatch(r"sha256:[a-f0-9]{64}",image_id),"OLD_IMAGE_ID_INVALID")
+    print("B2B_GEO_STAGE=IMAGE_LOOKUP",flush=True)
     receiver_image_id=old_receiver["Image"]
     need(re.fullmatch(r"sha256:[a-f0-9]{64}",receiver_image_id),
          "OLD_RECEIVER_IMAGE_ID_INVALID")
     need(output(["docker","image","inspect","-f","{{.Id}}",image_id])==image_id
          and output(["docker","image","inspect","-f","{{.Id}}",receiver_image_id])==receiver_image_id,
          "OLD_IMAGES_NOT_PRESENT")
+    print("B2B_GEO_STAGE=OFFLINE_OVERLAY_BUILD",flush=True)
     new_image="serviceit-b2b-writer:moscow-"+run_id
     recv_image="serviceit-b2b-receiver:moscow-"+run_id
     for old_id,tag,filename in (
@@ -259,6 +264,7 @@ def main(argv):
         smoke(tag)
     print("B2B_GEO_OLD_IMAGE_VALIDATED=YES",flush=True)
     print("B2B_GEO_NEW_IMAGES_SMOKE=YES",flush=True)
+    print("B2B_GEO_STAGE=GEO_SOURCE_CANARY",flush=True)
     allow=canary(new_image,env,WRITER)
     print("B2B_GEO_MOSCOW_PROOF="+("YES" if allow else "NO"),flush=True)
 

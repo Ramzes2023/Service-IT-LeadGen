@@ -748,7 +748,10 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
             return candidate
         result = _merge_independent_tinyfish(
             candidate, tinyfish, notice["tender_id"])
-        result = verified_original_b2b_details(result, notice, client)
+        # Guarded rollout: offline fixtures make no extra source request.
+        # The coordinator enables the verified public-detail path explicitly.
+        if env.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES":
+            result = verified_original_b2b_details(result, notice, client)
         result = dict(result)
         result["tinyfish_independent_stage"] = (
             "DISABLED_BY_SOURCE_POLICY" if not tinyfish_authorized else

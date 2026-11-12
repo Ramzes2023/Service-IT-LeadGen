@@ -17,13 +17,13 @@ SECRET_NAME = "serviceit_tavily_research_pro_key"
 TARGET = "/run/secrets/" + SECRET_NAME
 FLAGS = {
     "SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED": "YES",
-    "SERVICEIT_RESEARCH_PRO_SEARCH_API_KEY_FILE": TARGET,
+    "SERVICEIT_TAVILY_SEARCH_API_KEY_FILE": TARGET,
 }
 SPEC = f"""services:
   coordinator:
     environment:
       SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED: "YES"
-      SERVICEIT_RESEARCH_PRO_SEARCH_API_KEY_FILE: {TARGET}
+      SERVICEIT_TAVILY_SEARCH_API_KEY_FILE: {TARGET}
     secrets:
       - {SECRET_NAME}
 secrets:
@@ -34,7 +34,7 @@ CHECK = """
 from pathlib import Path
 import re
 import stat
-path = Path('/run/secrets/serviceit_tavily_search_key')
+path = Path('/run/secrets/serviceit_tavily_research_pro_key')
 meta = path.stat()
 assert stat.S_IMODE(meta.st_mode) == 0o400
 assert (meta.st_uid, meta.st_gid) == (10001, 10001)

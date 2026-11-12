@@ -1,0 +1,78 @@
+name: ServiceIT B2B Moscow + Gmail VPS guarded rollout
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-moscow-ingest-guarded-rollout.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-native-guarded-cutover
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pin source integrity, stage and run guarded overlay deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          stage="$RUNNER_TEMP/b2bgeo"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/id" "$stage/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$stage/hosts" >/dev/null
+          files=(serviceit_b2b_moscow_geo.py serviceit_b2b_public_mirrors.py serviceit_public_evidence_research.py serviceit_vps_b2b_bridge.py b2b_email_opportunity_bridge.py)
+          : > "$stage/shas"
+          for name in "${files[@]}"; do
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d ' ' -f1 >> "$stage/shas"
+          done
+          python -m py_compile ops/serviceit_vps_b2b_writer_geo_upgrade.py
+          controller_sha="$(sha256sum ops/serviceit_vps_b2b_writer_geo_upgrade.py | cut -d ' ' -f1)"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          dest="serviceit/staging/b2b-writer-geo-$GITHUB_RUN_ID"
+          ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$dest'"
+          for name in "${files[@]}"; do
+            scp -i "$stage/id" "${opts[@]}" "leadpilot/$name" "$target:$dest/"
+          done
+          scp -i "$stage/id" "${opts[@]}" ops/serviceit_vps_b2b_writer_geo_upgrade.py "$target:$dest/promote.py"
+          readarray -t hashes < "$stage/shas"
+          [[ "${#hashes[@]}" == 5 ]]
+          arguments=()
+          for value in "${hashes[@]}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+            arguments+=("'$value'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$controller_sha' ${arguments[*]}"
+          rc=0
+          ssh -T -i "$stage/id" "${opts[@]}" "$target" "$remote" > "$stage/status" 2>/dev/null <<'REMOTE' || rc=$?
+          set -euo pipefail
+          id="$1"; controller="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$controller" =~ ^[a-f0-9]{64}$ && "$#" == 5 ]]
+          path="$HOME/serviceit/staging/b2b-writer-geo-$id/promote.py"
+          [[ -f "$path" && ! -L "$path" ]]
+          printf '%s  %s\n' "$controller" "$path" | sha256sum --check --status
+          python3 "$path" "$id" "$controller" "$@"
+          REMOTE
+          grep -E '^(B2B_GEO_[A-Z0-9_]+|GEO_(COUNT_[A-Z]+|SAMPLE_[0-9]+|READONLY_COUNT|CRM_WRITES|PG_WRITES))=[A-Z0-9_]+$' "$stage/status" | tail -45 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'B2B_GEO_WRITER_DEPLOYED=YES' "$stage/status"
+          grep -qx 'B2B_GEO_RECEIVER_DEPLOYED=YES' "$stage/status"
+          grep -qx 'B2B_GEO_CRM_WRITES_BY_INSTALLER=NO' "$stage/status"

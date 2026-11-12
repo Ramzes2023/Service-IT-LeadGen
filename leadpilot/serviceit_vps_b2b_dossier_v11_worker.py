@@ -15,15 +15,17 @@ import json
 import os
 import re
 import secrets
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
 from .ai import config_from_env
 from .bitrix_metadata_audit import validate_webhook
-from .serviceit_b2b_dossier_v11 import compose, original_nine, DossierV11Blocked
+from .serviceit_b2b_dossier_v11 import REPORT, compose, original_nine, DossierV11Blocked
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_b2b_routerai_deep import (
-    public_documents, investigate_routerai, source_only_investigation,
+    MAX_PAGES, investigate_routerai, plan_research_step, public_documents,
+    source_only_investigation,
 )
 from .serviceit_enrichment_worker import (
     Rest, normalized, validate_identity, fingerprint,
@@ -34,6 +36,107 @@ from .serviceit_vps_b2b_deep_research import (
 from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import db, secret_file
 from .serviceit_vps_worker import live_permitted
+
+RESEARCH_STEPS = {
+    "search_kontur": "zakupki.kontur.ru",
+    "search_synapse": "synapsenet.ru",
+    "search_tendem": "tendem.ru",
+}
+MAX_RESEARCH_STEPS = 2
+DEADLINE_VALUE = re.compile(r"(?<!\d)(\d{1,2})[./](\d{1,2})[./](\d{4})[\s,]+(\d{1,2}):(\d{2})(?!\d)")
+
+
+def explicitly_other_tender(url, tender_id):
+    """Reject foreign procurement URLs even when related listings mention our ID."""
+    try:
+        parsed = urlsplit(url)
+    except (TypeError, ValueError):
+        return True
+    host = (parsed.hostname or "").removeprefix("www.")
+    if host == "b2b-center.ru":
+        match = re.search(r"/tender-(\d{5,12})(?:/|$)", parsed.path)
+        ids = ([match[1]] if match else
+               parse_qs(parsed.query).get("id", []) if parsed.path == "/market/view.html" else [])
+    elif host == "zakupki.kontur.ru":
+        match = re.match(r"^/(\d{5,12})_\d+/?$", parsed.path)
+        ids = [match[1]] if match else []
+    elif host == "synapsenet.ru":
+        match = re.match(r"^/zakupki/b2b/(\d{5,12})(?:--|/|$)", parsed.path)
+        ids = [match[1]] if match else []
+    else:
+        ids = []
+    return any(value != tender_id for value in ids)
+
+
+def tender_scoped_findings(findings, tender_id):
+    pages = findings.get("pages") or []
+    valid = [page for page in pages if isinstance(page, dict)
+             and isinstance(page.get("url"), str)
+             and not explicitly_other_tender(page["url"], tender_id)]
+    if valid == pages:
+        return findings
+    return {**findings, "pages": valid, "contacts": [], "model_excerpt": "",
+            "structured_facts": [], "independent_company_research": None}
+
+
+def research_with_routerai(client, config, env, notice, findings):
+    """Two model-directed steps inside the existing per-card search budget."""
+    from .serviceit_b2b_public_mirrors import brave_mirror_search
+
+    tender_id = notice["tender_id"]
+    findings = tender_scoped_findings(findings, tender_id)
+    steps = dict(RESEARCH_STEPS)
+    can_read_documents = env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED") == "YES"
+    history = []
+    originals = {}
+    if can_read_documents:
+        steps["read_documents"] = None
+    for _ in range(MAX_RESEARCH_STEPS):
+        try:
+            action = plan_research_step(client, config, tender_id, findings, tuple(steps), history)
+        except Exception:
+            break
+        if action == "stop":
+            break
+        domain = steps.pop(action)
+        count_before = len(public_documents(findings))
+        if action == "read_documents":
+            findings, originals = dossier_document_sources(client, findings, tender_id)
+        else:
+            try:
+                key = secret_file(env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)
+                result = brave_mirror_search(
+                    client, tender_id, notice["subject"], key,
+                    allow_mirrors=frozenset({domain}),
+                    index={"candidates": findings.get("indexed_candidates", [])},
+                )
+            except Exception:
+                result = None
+            if result:
+                result = tender_scoped_findings(result, tender_id)
+                prior = findings.get("pages") or []
+                known = {page["url"] for page in prior}
+                added = [page for page in result.get("pages", []) if page["url"] not in known]
+                if added:
+                    findings = {**findings, "status": "PUBLIC_PAGES_INSPECTED",
+                                "pages": (prior[:1] + added + prior[1:])[:MAX_PAGES]}
+        history.append({"step": action, "new_sources": max(0, len(public_documents(findings)) - count_before)})
+    return findings, originals, "read_documents" not in steps, len(history)
+
+
+def withhold_conflicting_deadlines(report):
+    """Keep other verified facts when two sources give distinct deadlines."""
+    values = {}
+    for fact in report.get("facts", []):
+        if fact.get("category") != "DEADLINE":
+            continue
+        dates = DEADLINE_VALUE.findall(fact.get("quote", ""))
+        if len(dates) == 1:
+            values.setdefault(fact["url"], set()).add(tuple(map(int, dates[0])))
+    stable = {url: next(iter(dates)) for url, dates in values.items() if len(dates) == 1}
+    if len(set(stable.values())) < 2:
+        return report, []
+    return {**report, "facts": [f for f in report["facts"] if f.get("category") != "DEADLINE"]}, list(stable)
 
 def dossier_document_sources(client, findings, tender_id):
     """Add up to two readable public files to the initial dossier input."""
@@ -230,6 +333,9 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
         try:
             from .serviceit_vps_worker import exact_environment
             exact = exact_environment(env)
+            document_texts = {}
+            documents_tried = False
+            research_steps = 0
             try:
                 with search_scope(card, source) if search_scope else nullcontext(True) as can_search:
                     options = {"enable_v18": True}
@@ -238,11 +344,18 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                             or exact.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED") == "YES"):
                         options["connection"] = connection
                     findings = source_findings(first, notice, exact, client, **options)
+                    findings = tender_scoped_findings(findings, notice["tender_id"])
+                    if search_scope and can_search:
+                        try:
+                            findings, document_texts, documents_tried, research_steps = research_with_routerai(
+                                client, config_from_env(exact), exact, notice, findings,
+                            )
+                        except Exception:
+                            pass  # Retain the already fetched evidence.
             except Exception:
                 findings = {"status": "PUBLIC_SOURCE_UNVERIFIED", "pages": [],
                             "checked_at": datetime.now(timezone.utc).isoformat()}
-            document_texts = {}
-            if env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED") == "YES":
+            if not documents_tried and env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED") == "YES":
                 findings, document_texts = dossier_document_sources(
                     client, findings, notice["tender_id"])
             report = source_only_investigation(findings)
@@ -262,8 +375,14 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                     if fact.get("url") not in document_texts
                     or fact["quote"] in document_texts[fact["url"]]
                 ]}
+            report, deadline_conflicts = withhold_conflicting_deadlines(report)
             fields, coverage = compose(
                 notice, first, {**findings, "indexed_candidates": []}, report)
+            if deadline_conflicts:
+                note = "\n\nСВЕРКА ИСТОЧНИКОВ\nСроки подачи различаются. Уточнить актуальный срок на площадке.\n"
+                note += "\n".join(deadline_conflicts[:3])
+                if len(fields[REPORT]) + len(note) <= 12000:
+                    fields[REPORT] += note
             fresh = normalized(rest("crm.item.get", {
                 "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
             })["item"])
@@ -293,6 +412,7 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
             update_state(connection, card, "WRITE_INTENT", "VERIFIED")
             return {"status": "V11_NINE_FIELDS_VERIFIED", "crm_writes": 1,
                     "routerai_invoked": invoked,
+                    "routerai_research_steps": research_steps,
                     "source_pages": min(coverage["pages"], 9),
                     "quoted_facts": min(coverage["citations"], 16),
                     "deadline_public": coverage["deadline_public"],

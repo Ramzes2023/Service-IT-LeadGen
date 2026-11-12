@@ -49,6 +49,22 @@ key = secret_file(os.environ, 'SERVICEIT_TAVILY_SEARCH_API_KEY')
 def report_http(response):
     if response.request.url.host == 'api.tavily.com':
         print('TAVILY_PROBE_HTTP=' + str(response.status_code), flush=True)
+        if response.status_code == 403:
+            response.read()
+            content_type = response.headers.get('content-type', '')
+            sample = response.text[:4096].casefold()
+            reason = 'ACCESS_DENIED'
+            if response.headers.get('cf-mitigated') == 'challenge' or 'cloudflare' in sample:
+                reason = 'EDGE_BLOCK'
+            elif any(x in sample for x in ('unsupported country', 'restricted region', 'not available in your country', 'geographic')):
+                reason = 'REGION_POLICY'
+            elif any(x in sample for x in ('invalid api key', 'invalid token', 'missing api key', 'revoked')):
+                reason = 'CREDENTIAL_REJECTED'
+            elif any(x in sample for x in ('usage limit', 'quota', 'credits', 'rate limit')):
+                reason = 'USAGE_LIMIT'
+            elif 'application/json' not in content_type:
+                reason = 'NON_API_ACCESS_DENIAL'
+            print('TAVILY_PROBE_REASON=' + reason, flush=True)
 with httpx.Client(trust_env=False, follow_redirects=False, timeout=18,
                   event_hooks={'response': [report_http]}) as client:
     status, urls = _search_once(client, key, '4677404')
@@ -126,6 +142,11 @@ def run():
                     if count.isdigit() and len(count) == 1:
                         print(line, flush=True)
                 elif line.startswith("TAVILY_PROBE_HTTP=") and line.removeprefix("TAVILY_PROBE_HTTP=").isdigit():
+                    print(line, flush=True)
+                elif line.removeprefix("TAVILY_PROBE_REASON=") in (
+                    "ACCESS_DENIED", "EDGE_BLOCK", "REGION_POLICY", "CREDENTIAL_REJECTED",
+                    "USAGE_LIMIT", "NON_API_ACCESS_DENIAL",
+                ) and line.startswith("TAVILY_PROBE_REASON="):
                     print(line, flush=True)
             runtime.require(probe.returncode == 0, "TAVILY_API_CHECK_FAILED")
             runtime.require(runtime.pending_source_writes() == 0, "CRM_WRITE_IN_PROGRESS")

@@ -2,7 +2,9 @@ name: ServiceIT B2B Tavily credential check and activation
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/serviceit-vps-b2b-tavily-enable.yml]
+    paths:
+      - .github/workflows/serviceit-vps-b2b-tavily-enable.yml
+      - ops/serviceit_vps_b2b_tavily_enable.py
 permissions:
   contents: read
 concurrency:

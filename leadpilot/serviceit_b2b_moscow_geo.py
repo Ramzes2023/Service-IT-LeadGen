@@ -109,7 +109,7 @@ def exact_original_page_identity(parts: list[str], tender_id: str,
     if not 10 <= len(title) <= 240:
         return False
     for match in re.finditer(
-            r"(?<!\\d)№\\s*" + re.escape(tender_id) + r"(?!\\d)", compact):
+            r"(?<!\d)№\s*" + re.escape(tender_id) + r"(?!\d)", compact):
         # The heading title must be directly adjacent to the exact tender
         # number; a match in related notices or a footer is not sufficient.
         if title in compact[max(0, match.start()-380):match.end()+250]:

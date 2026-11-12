@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/serviceit-vps-b2b-moscow-geo-canary.yml
+      - ops/serviceit_b2b_moscow_geo_canary_stdin.py
 permissions:
   contents: read
 concurrency:
@@ -53,4 +54,5 @@ jobs:
             'docker exec -i serviceit-b2b-vps-writer-1 python -B -' \
             < "$stage/geo-readonly.py" > "$stage/result" 2>/dev/null || rc=$?
           grep -E '^MOSCOW_CANARY_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/result" || true
+          printf "MOSCOW_CANARY_SSH_RC=%d\n" "$rc"
           [[ "$rc" == 0 ]]

@@ -1,4 +1,4 @@
-name: ServiceIT B2B post-release official document verification
+name: ServiceIT B2B official attachments and timeline readback
 # B2B receiver/writer post-rollout no-write reconciliation, 2026-11-12
 # Post geo-canary + DONE-digest classifier reconciliation; no CRM POST.
 on:

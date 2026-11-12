@@ -2,6 +2,7 @@
 import hashlib
 import os
 import sys
+import secrets
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -10,7 +11,7 @@ import httpx
 from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
 from leadpilot.serviceit_b2b_eis_mirrors import supplement_eis_mirrors
 from leadpilot.serviceit_public_evidence_research import _page
-from leadpilot.serviceit_vps_pg_queue import db
+from leadpilot.serviceit_vps_pg_queue import db, secret_file
 
 MODULES = {"EXTRACT":"serviceit_b2b_tender_documents.py",
            "WORKER":"serviceit_vps_b2b_document_worker.py",
@@ -69,6 +70,23 @@ def main():
                 emit(f"CARD_{card}_EIS_MIRRORS",findings.get("eis_mirror_count",0))
             except Exception:
                 emit(f"CARD_{card}_FETCH","UNAVAILABLE")
+        row = conn.execute("""
+            SELECT status,comment_id,salt,digest FROM serviceit_vps_b2b_tender_doc_receipts
+            WHERE card_id=27
+        """).fetchone()
+        if row and row[1] and row[2] and row[3]:
+            from leadpilot.serviceit_vps_b2b_document_worker import _timeline_call
+            try:
+                actual = _timeline_call(client,secret_file(env,"SERVICEIT_BITRIX_WEBHOOK"),
+                                        "crm.timeline.comment.get",{"id":row[1]})
+                body = actual.get("COMMENT") or ""
+                ok = str(actual.get("ENTITY_ID")) == "27" and secrets.compare_digest(
+                    hashlib.sha256(bytes(row[2])+body.encode()).digest(),bytes(row[3]))
+                emit("CARD27_TIMELINE_DIGEST","YES" if ok else "NO")
+                files = actual.get("FILES") or {}
+                emit("CARD27_TIMELINE_FILES",len(files))
+            except Exception as error:
+                emit("CARD27_TIMELINE_ERROR",type(error).__name__.upper())
         for tag, number in (("CONTROL","32616565221"),("CARD27","32616566539")):
             try:
                 source = _page(client,f"https://sprosradar.ru/zakupki/223/{number}/",frozenset({"sprosradar.ru"}))

@@ -27,7 +27,8 @@ def test_v18_has_real_search_capabilities_without_missing_legal_gates():
     assert "enable_v18 is True" in s
     assert '"INDEX_ONLY_UNVERIFIED"' in INDEX.read_text("utf8")
     s=WORKER.read_text("utf8")
-    assert "enable_v18=True" in s
+    assert '"enable_v18": True' in s
+    assert "source_findings(first, notice, exact, client, **options)" in s
     s=CORE.read_text("utf8")
     assert 'result["SERVICEIT_B2B_V18_SEARCH_ENABLED"] = "YES"' in s
     assert "INTERVAL_SECONDS = 300" in s

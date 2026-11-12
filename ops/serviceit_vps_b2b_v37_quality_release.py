@@ -412,9 +412,23 @@ def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
                     "USER 10001:10001\n"
                 )
             (build / "Dockerfile").write_text(dockerfile, "utf8")
-            call(["docker", "build", "--network", "none", "--pull=false",
-                  "--no-cache", "-t", target, "-f", str(build / "Dockerfile"),
-                  str(build)], timeout=250)
+            build_result = call(["docker", "build", "--network", "none", "--pull=false",
+                                 "--no-cache", "-t", target, "-f", str(build / "Dockerfile"),
+                                 str(build)], timeout=250, check=False)
+            if release == "document-ocr" and build_result.returncode != 0:
+                errors = build_result.stderr + build_result.stdout
+                for fragment, reason in (
+                    ("not a supported wheel", "OCR_WHEEL_PLATFORM_UNSUPPORTED"),
+                    ("No space left", "OCR_DOCKER_DISK_FULL"),
+                    ("no space left", "OCR_DOCKER_DISK_FULL"),
+                    ("Permission denied", "OCR_DOCKER_PERMISSION_DENIED"),
+                    ("No module named pip", "OCR_PIP_MISSING"),
+                    ("not found", "OCR_DOCKER_INPUT_NOT_FOUND"),
+                    ("network mode", "OCR_DOCKER_NETWORK_MODE_REJECTED"),
+                ):
+                    if fragment in errors:
+                        raise ReleaseBlocked(reason)
+            require(build_result.returncode == 0, "RELEASE_OFFLINE_BUILD_FAILED")
             next_image = output(["docker", "image", "inspect", "-f",
                                  "{{.Id}}", target])
             require(bool(SHA_RE.fullmatch(next_image))
@@ -503,16 +517,22 @@ if 'serviceit_b2b_pdf_ocr.py' in files:
                               font=ImageFont.load_default(size=44), fill='black')
     buffer = BytesIO()
     image.save(buffer, format='PDF', resolution=150)
-    assert not extract_text(buffer.getvalue(), '.pdf').strip()
-    assert '4677160' in recognize_pdf(buffer.getvalue())
+    assert not extract_text(buffer.getvalue(), '.pdf').strip(), 'OCR_SMOKE_FIXTURE_INVALID'
+    assert '4677160' in recognize_pdf(buffer.getvalue()), 'OCR_SMOKE_TEXT_MISSING'
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
                         "--pull", "never", "--read-only", "--user", "10001:10001",
                         "--cap-drop", "ALL", "--pids-limit", "64", "--memory", "512m",
                         "--entrypoint", "python", next_image, "-B", "-c", smoke,
-                        *files, *new_hashes], timeout=110)
-            require(res.stdout.strip() == "V37_OFFLINE_SMOKE_PASS",
+                        *files, *new_hashes], timeout=110, check=False)
+            if release == "document-ocr" and res.returncode != 0:
+                for code in ("OCR_SMOKE_FIXTURE_INVALID", "OCR_SMOKE_TEXT_MISSING",
+                             "ModuleNotFoundError", "ImportError", "AssertionError"):
+                    if code in res.stderr:
+                        raise ReleaseBlocked("OCR_SMOKE_" + code.upper()
+                                             if not code.startswith("OCR_") else code)
+            require(res.returncode == 0 and res.stdout.strip() == "V37_OFFLINE_SMOKE_PASS",
                     "MIRROR_OFFLINE_SMOKE_FAILED")
             print(label + "_OFFLINE_SMOKE=YES", flush=True)
             next_pin = pin_image(old_pin, old_image, next_image)

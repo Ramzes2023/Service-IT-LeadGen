@@ -64,23 +64,6 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v37-release/hosts"
           chmod 0600 "$RUNNER_TEMP/v37-release/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v37-release/hosts" >/dev/null
-      - name: Stage offline OCR wheels and language data
-        shell: bash
-        run: |
-          set -euo pipefail
-          assets="$RUNNER_TEMP/v37-release/assets"
-          install -d -m 0700 "$assets"
-          python -m pip download --only-binary=:all: --no-deps --dest "$assets" \
-            --platform manylinux_2_27_x86_64 --platform manylinux_2_17_x86_64 \
-            --implementation cp --abi cp312 --python-version 3.12 \
-            'pillow==13.0.0' 'pypdfium2==5.15.2' 'tesserocr==2.13.0'
-          for lang in eng rus; do
-            curl --fail --silent --show-error --location --max-time 35 \
-              "https://deb.debian.org/debian/pool/main/t/tesseract-lang/tesseract-ocr-${lang}_4.1.0-2_all.deb" \
-              -o "$RUNNER_TEMP/serviceit-${lang}.deb"
-            dpkg-deb -x "$RUNNER_TEMP/serviceit-${lang}.deb" "$RUNNER_TEMP/serviceit-${lang}"
-            cp "$RUNNER_TEMP/serviceit-${lang}/usr/share/tesseract-ocr/5/tessdata/$lang.traineddata" "$assets/"
-          done
       - name: Transfer reviewed modules and offline OCR assets
         shell: bash
         run: |
@@ -96,8 +79,24 @@ jobs:
             scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
               "leadpilot/$name" "$target:$stage/"
           done
-          scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
-            "$RUNNER_TEMP/v37-release/assets/"* "$target:$stage/"
+          if ! ssh -T -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" "$target" \
+            "set -eu; cd serviceit/staging; cp -- b2b-document-ocr-onefile-release-43260680567/*.whl b2b-document-ocr-onefile-release-43260680567/*.traineddata '${stage#serviceit/staging/}/'"; then
+            assets="$RUNNER_TEMP/v37-release/assets"
+            install -d -m 0700 "$assets"
+            python -m pip download --only-binary=:all: --no-deps --dest "$assets" \
+              --platform manylinux_2_27_x86_64 --platform manylinux_2_17_x86_64 \
+              --implementation cp --abi cp312 --python-version 3.12 \
+              'pillow==13.0.0' 'pypdfium2==5.15.2' 'tesserocr==2.13.0'
+            for lang in eng rus; do
+              curl --fail --silent --show-error --location --max-time 35 \
+                "https://deb.debian.org/debian/pool/main/t/tesseract-lang/tesseract-ocr-${lang}_4.1.0-2_all.deb" \
+                -o "$RUNNER_TEMP/serviceit-${lang}.deb"
+              dpkg-deb -x "$RUNNER_TEMP/serviceit-${lang}.deb" "$RUNNER_TEMP/serviceit-${lang}"
+              cp "$RUNNER_TEMP/serviceit-${lang}/usr/share/tesseract-ocr/5/tessdata/$lang.traineddata" "$assets/"
+            done
+            scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
+              "$assets/"* "$target:$stage/"
+          fi
           scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
             ops/serviceit_vps_b2b_v37_quality_release.py "$target:$stage/activate.py"
       - name: Test modules offline and deploy coordinator with rollback

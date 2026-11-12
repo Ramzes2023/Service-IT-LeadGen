@@ -104,7 +104,9 @@ def test_vps_readonly_mode_never_calls_exact_ai_or_card_writer(monkeypatch):
         "positive_control_card3": "PASS",
         "new_card_candidates": 0})
     monkeypatch.setattr(worker, "run_vps_native", lambda *a, **kw: pytest.fail("NO CRM WRITE"))
-    result = worker.run_once({}, client=object())
+    import httpx
+    with httpx.Client() as readonly_client:
+        result = worker.run_once({}, client=readonly_client)
     assert result["migration_cutover"] == "NOT_AUTHORIZED"
     assert result["queue_counts"] == {"PENDING": 2}
     assert result["poll_positive_control"] == "PASS"

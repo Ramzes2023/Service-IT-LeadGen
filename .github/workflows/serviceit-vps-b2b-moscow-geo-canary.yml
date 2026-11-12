@@ -53,8 +53,6 @@ jobs:
             -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" \
             'docker exec -i serviceit-b2b-vps-writer-1 python -B -' \
             < "$stage/geo-readonly.py" > "$stage/result" 2>/dev/null || rc=$?
-          grep -E '^MOSCOW_CANARY_[A-Z0-9_]+=[A-Z0-9_]+
-          [[ "$rc" == 0 ]]
- "$stage/result" || true
+          grep -E '^MOSCOW_CANARY_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/result" || true
           printf "MOSCOW_CANARY_SSH_RC=%d\n" "$rc"
           [[ "$rc" == 0 ]]

@@ -5,10 +5,7 @@ import sys
 
 import httpx
 
-from leadpilot.serviceit_vps_b2b_bridge import (
-    db, enabled, exact_duplicate, positive_duplicate_control, read_candidate,
-    secret_file, validate_webhook,
-)
+from leadpilot.serviceit_vps_pg_queue import db, secret_file
 
 TENDERS = (4678279, 4677923, 4677404, 4677160, 4676643, 4677837, 4674919, 4679263)
 
@@ -20,6 +17,9 @@ def emit(key, value):
 
 
 def main():
+    from leadpilot.serviceit_vps_b2b_bridge import (
+        enabled, exact_duplicate, positive_duplicate_control, read_candidate, validate_webhook,
+    )
     env = dict(os.environ)
     emit("MOSCOW_ONLY", "YES" if env.get("SERVICEIT_B2B_MOSCOW_ONLY_ENABLED") == "YES" else "NO")
     emit("WRITER_ENABLED", "YES" if enabled(env, writer=True) else "NO")

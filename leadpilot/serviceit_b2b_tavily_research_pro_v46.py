@@ -128,7 +128,8 @@ def _candidate(conn):
         LEFT JOIN {TABLE} r ON r.source_id=b.source_id
         WHERE b.state='VERIFIED' AND b.received_at >= %s
           AND r.source_id IS NULL
-          AND b.source_id ~ '^B2B-CENTER-[0-9]{{5,12}}
+          AND b.source_id ~ '^B2B-CENTER-[0-9]{{5,12}}$'
+        ORDER BY b.received_at, b.card_id LIMIT 80
     """,(SEARCH_POLICY_START,)).fetchall()
     for card,source,notice,received in rows:
         tid=_notice(source)

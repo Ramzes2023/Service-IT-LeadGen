@@ -290,3 +290,44 @@ def test_reader_keeps_payload_for_valid_fenced_bitrix_attachment(monkeypatch):
     doc = found["documents"][0]
     assert doc["payload"] == payload
     assert doc["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+def test_eis_file_requires_verified_matching_mirror_and_ranks_specification(monkeypatch):
+    source = "https://sprosradar.ru/zakupki/223/32616566539/"
+    contract = "https://zakupki.gov.ru/44fz/filestore/public/1/download/aa11bb22-1111-2222-3333-444455556666"
+    specs = "https://zakupki.gov.ru/44fz/filestore/public/1/download/aa11bb22-1111-2222-3333-444455556667"
+    monkeypatch.setattr(docs, "_robots", lambda *args: None)
+    raw = (f'<p>Извещение 32616566539 · B2B №{TENDER}</p>'
+           f'<a href="{contract}">Проект договора</a>'
+           f'<a href="{specs}">Техническое задание</a>'
+           f'<a href="{specs}?signature=private">Вложение</a>'
+           f'<a href="https://evil.zakupki.gov.ru/files/secret.pdf">Документ</a>')
+    monkeypatch.setattr(docs, "_get", lambda *args: raw)
+    proven = {"url":source,"excerpt":f"Тендер №{TENDER}","eis_notice_number":"32616566539"}
+    def candidate(page):
+        return docs.candidate_links(None, {"status":"PUBLIC_PAGES_INSPECTED","pages":[page]},TENDER)
+    assert [x["url"] for x in candidate(proven)] == [specs, contract]
+    assert candidate({**proven,"eis_notice_number":"32616566538"}) == []
+    assert candidate({k:v for k,v in proven.items() if k!="eis_notice_number"}) == []
+
+
+def test_eis_legacy_numeric_attachment_rejects_any_extra_parameter():
+    url = "https://zakupki.gov.ru/223/purchase/public/download/download.html?id=12345678"
+    assert docs.public_eis_attachment(url)
+    assert not docs.public_eis_attachment(url+"&redirect=https://example.org")
+    assert not docs.public_eis_attachment(url+"&id=999")
+    assert not docs.public_eis_attachment(url.replace("zakupki.gov.ru","zakupki.gov.ru.invalid"))
+
+
+def test_cyrillic_legacy_text_and_bounded_model_calls(monkeypatch):
+    assert docs.extract_text("Срок подачи: 30 ноября".encode("cp1251"),".txt") == "Срок подачи: 30 ноября"
+    from types import SimpleNamespace
+    calls = []
+    monkeypatch.setattr(worker, "exact_environment", lambda x:x)
+    monkeypatch.setattr(worker, "config_from_env", lambda _:SimpleNamespace(provider="routerai"))
+    monkeypatch.setattr(worker, "investigate_routerai", lambda *a,**k: calls.append(a) or {"facts":[]})
+    rows = [{"url":ATT,"text":("Срок подачи заявок 30.11.2026 14:00. " * 700)[:24000]}
+            for _ in range(6)]
+    output = worker._model_research(None,{},rows)
+    assert len(calls)==2
+    assert len(output)>len(calls)

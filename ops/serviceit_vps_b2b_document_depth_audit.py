@@ -45,6 +45,16 @@ def main():
                 res = inspect_public_documents(client,findings,notice["tender_id"],max_downloads=2)
                 emit(f"CARD_{card}_LINKS",res["discovered"])
                 emit(f"CARD_{card}_FILES",len(res["documents"]))
+                emit(f"CARD_{card}_EIS_FILES_LINKED",res.get("eis_links",0))
+                for reason, count in res["rejections"].items():
+                    if reason.startswith(("DOCUMENT_", "RESEARCH_")) and reason.replace("_","").isalnum():
+                        emit(f"CARD_{card}_{reason}",count)
+                if res["documents"]:
+                    from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
+                    group = {"status":"PUBLIC_PAGES_INSPECTED","pages":[
+                        {"url":d["url"],"excerpt":d["text"]} for d in res["documents"]
+                    ]}
+                    emit(f"CARD_{card}_VERIFIED_FILE_QUOTES",len(source_only_investigation(group)["facts"]))
                 emit(f"CARD_{card}_EIS_MIRRORS",findings.get("eis_mirror_count",0))
             except Exception:
                 emit(f"CARD_{card}_FETCH","UNAVAILABLE")
@@ -56,6 +66,16 @@ def main():
                 emit(tag+"_EIS_223_DOWNLOAD_LINKS",sum(
                     x.path == "/223/purchase/public/download/download.html" for x in official))
                 emit(tag+"_EIS_FILESTORE_LINKS",sum("filestore" in x.path for x in official))
+                if tag == "CONTROL":
+                    url = f"https://sprosradar.ru/zakupki/223/{number}/"
+                    control = inspect_public_documents(client,{"status":"PUBLIC_PAGES_INSPECTED","pages":[
+                        {"url":url,"excerpt":source["text"],"eis_notice_number":number}
+                    ]},number,max_downloads=2)
+                    emit("CONTROL_SAFE_LINKS",control.get("eis_links",0))
+                    emit("CONTROL_READABLE",len(control["documents"]))
+                    for reason,count in control["rejections"].items():
+                        if reason.startswith(("DOCUMENT_", "RESEARCH_")) and reason.replace("_","").isalnum():
+                            emit("CONTROL_"+reason,count)
             except Exception:
                 emit(tag+"_MIRROR","UNAVAILABLE")
 

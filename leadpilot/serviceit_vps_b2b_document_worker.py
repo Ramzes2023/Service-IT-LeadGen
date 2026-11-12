@@ -15,7 +15,6 @@ import json
 import os
 import re
 import secrets
-from time import monotonic
 
 import httpx
 
@@ -276,31 +275,26 @@ def _evidence(docs):
                       for d in docs[:3]]}
 
 def _model_research(client, env, docs):
-    env = exact_environment(env)
-    cfg = config_from_env(env)
-    need(cfg.provider == "routerai", "TDI_ROUTERAI_ONLY")
-    # Cover every retained character, not only keyword-selected excerpts.
-    # Overlap preserves requirements spanning a window boundary. Existing
-    # six-file / 24k-character caps bound this to at most 12 model calls.
-    chunks = []
+    """Read all retained text locally; at most two RouterAI requests per tender."""
+    reports = []
     for doc in docs[:6]:
         text = doc["text"][:24000]
         for start in range(0, len(text), 4000):
-            chunks.append({"url": doc["url"], "excerpt": text[start:start + 4500]})
-    reports = []
-    model_deadline = monotonic() + 90
-    for start in range(0, len(chunks), 3):
-        group = {"status": "PUBLIC_PAGES_INSPECTED",
-                 "pages": chunks[start:start + 3]}
-        remaining = model_deadline - monotonic()
-        if remaining <= 0:
-            reports.append(source_only_investigation(group))
-            continue
+            reports.append(source_only_investigation({"status":"PUBLIC_PAGES_INSPECTED",
+                "pages":[{"url":doc["url"],"excerpt":text[start:start+4500]}]}))
+    try:
+        cfg = config_from_env(exact_environment(env))
+        need(cfg.provider == "routerai", "TDI_ROUTERAI_ONLY")
+    except Exception:
+        return reports
+    primary = []
+    for start in range(0, min(6, len(docs)), 3):
         try:
-            reports.append(investigate_routerai(client, cfg, group, timeout=min(20, remaining)))
+            primary.append(investigate_routerai(
+                client, cfg, _evidence(docs[start:start+3]), timeout=18))
         except Exception:
-            reports.append(source_only_investigation(group))
-    return reports
+            continue
+    return primary + reports
 
 
 def build_report(notice, docs, reports, *, attachments_planned=0):
@@ -447,6 +441,8 @@ def run_once(env, client, connection, *, preview=False):
         try:
             findings = source_findings(before, notice,
                                        exact_environment(env), client)
+            from .serviceit_b2b_eis_mirrors import supplement_eis_mirrors
+            findings = supplement_eis_mirrors(findings, notice, client)
             evidence = inspect_public_documents(
                 client, findings, notice["tender_id"])
         except Exception:
@@ -455,12 +451,14 @@ def run_once(env, client, connection, *, preview=False):
         if preview:
             return {"status": "TDI_PREVIEW", "crm_writes": 0,
                     "documents_readable": len(docs),
-                    "links_found": evidence["discovered"]}
+                    "links_found": evidence["discovered"],
+                    "eis_links": evidence.get("eis_links",0)}
         if not docs:
             save_no_documents(connection, card, source)
             return {"status": "TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H",
                     "crm_writes": 0, "documents_readable": 0,
-                    "links_found": evidence["discovered"]}
+                    "links_found": evidence["discovered"],
+                    "eis_links": evidence.get("eis_links",0)}
         if not reserve(connection, card, source, len(docs)):
             return {"status": "TDI_ALREADY_RESERVED_NO_RETRY", "crm_writes": 0}
         phase = "RESERVED"

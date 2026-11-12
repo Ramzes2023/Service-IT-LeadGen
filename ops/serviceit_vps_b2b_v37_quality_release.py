@@ -40,6 +40,10 @@ TAVILY_RESERVE_FILES = (
     "serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_v19_backfill.py",
     "serviceit_b2b_tavily_research_mini_v47.py",
 )
+DOCUMENT_DEPTH_FILES = (
+    "serviceit_b2b_tender_documents.py", "serviceit_vps_b2b_document_worker.py",
+    "serviceit_b2b_eis_mirrors.py", "serviceit_vps_b2b_dossier_v11_worker.py",
+)
 MANAGER_CARD_FILES = ("serviceit_b2b_dossier_consistency_v37.py",
                       "serviceit_b2b_dossier_consistency_worker_v37.py")
 EIS_MIRROR_FILES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_eis_mirrors.py")
@@ -449,6 +453,13 @@ if 'serviceit_b2b_dossier_consistency_v37.py' in files:
     from leadpilot.serviceit_b2b_dossier_consistency_v37 import manager_fields, RELATED_PUBLIC
     from leadpilot.serviceit_b2b_dossier_consistency_worker_v37 import run_once
     assert callable(manager_fields) and callable(run_once) and RELATED_PUBLIC['0277071467']
+if 'serviceit_b2b_tender_documents.py' in files:
+    from pypdf import PdfReader
+    from leadpilot.serviceit_b2b_tender_documents import public_eis_attachment, extract_text
+    assert PdfReader
+    url = 'https://zakupki.gov.ru/223/purchase/public/download/download.html?id=12345678'
+    assert public_eis_attachment(url) and not public_eis_attachment(url+'&token=x')
+    assert extract_text('техническое задание'.encode('cp1251'),'.txt')=='техническое задание'
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
@@ -514,6 +525,7 @@ def main():
     args = sys.argv[1:]
     profiles = {
         "--tavily-reserve": (TAVILY_RESERVE_FILES, "tavily-reserve"),
+        "--document-depth": (DOCUMENT_DEPTH_FILES, "document-depth"),
         "--manager-cards": (MANAGER_CARD_FILES, "manager-cards"),
         "--eis-mirrors": (EIS_MIRROR_FILES, "eis-mirrors"),
         "--routerai-research": (ROUTERAI_RESEARCH_FILES, "routerai-research"),

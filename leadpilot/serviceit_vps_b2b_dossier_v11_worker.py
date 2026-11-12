@@ -142,7 +142,7 @@ def withhold_conflicting_deadlines(report):
 def dossier_document_sources(client, findings, tender_id):
     """Add up to two readable public files to the initial dossier input."""
     from urllib.parse import urlsplit
-    from .serviceit_b2b_tender_documents import inspect_public_documents
+    from .serviceit_b2b_tender_documents import inspect_public_documents, public_eis_attachment
     from .serviceit_b2b_routerai_deep import MAX_PAGES
     from .serviceit_vps_b2b_document_worker import _priority_excerpt
 
@@ -161,7 +161,8 @@ def dossier_document_sources(client, findings, tender_id):
         url = document["url"]
         parsed = urlsplit(url)
         # Never expose signed or expiring links in a dossier.
-        if parsed.query or parsed.fragment or len(url) > 600 or url in known:
+        if ((parsed.query and not public_eis_attachment(url)) or parsed.fragment
+                or len(url) > 600 or url in known):
             continue
         text = document["text"]
         additions.append({"url": url, "excerpt": _priority_excerpt(text)})

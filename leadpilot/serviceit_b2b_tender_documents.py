@@ -10,7 +10,7 @@ from io import BytesIO
 import hashlib
 import re
 import zipfile
-from urllib.parse import urljoin, urlsplit, unquote
+from urllib.parse import parse_qsl, urljoin, urlsplit, unquote
 
 import httpx
 from defusedxml import ElementTree as XML
@@ -20,8 +20,15 @@ from .serviceit_public_evidence_research import (
 )
 
 PUBLIC_MARKETS = frozenset((
-    "b2b-center.ru", "tendem.ru", "zakupki.kontur.ru", "synapsenet.ru",
+    "b2b-center.ru", "tendem.ru", "zakupki.kontur.ru", "synapsenet.ru", "sprosradar.ru", "tendik.ru",
 ))
+EIS_FILE_HOSTS = frozenset({"zakupki.gov.ru", "www.zakupki.gov.ru"})
+EIS_FILE_ENDPOINTS = frozenset({
+    "/223/purchase/public/download/download.html",
+    "/223/contract/public/download/download.html",
+})
+EIS_FILESTORE = re.compile(r"/(?:44fz/)?filestore/public/1/download/[a-fA-F0-9-]{16,64}/?")
+DOCUMENT_HOSTS = PUBLIC_MARKETS | EIS_FILE_HOSTS
 EXTS = frozenset((".pdf", ".docx", ".xlsx", ".zip", ".txt"))
 MAX_LINKS = 8
 MAX_FILES = 6
@@ -54,6 +61,45 @@ def public_market_url(url):
     return host
 
 
+def public_eis_attachment(url):
+    try:
+        if _host(url, EIS_FILE_HOSTS) not in EIS_FILE_HOSTS:
+            return False
+        parts = urlsplit(url)
+        if EIS_FILESTORE.fullmatch(parts.path):
+            return not parts.query
+        params = parse_qsl(parts.query, keep_blank_values=True)
+        return (parts.path in EIS_FILE_ENDPOINTS and len(params) == 1
+                and params[0][0] in {"id", "fileId", "fileUid", "docId"}
+                and bool(re.fullmatch(r"(?:[0-9]{1,20}|[A-Fa-f0-9-]{32,36})", params[0][1])))
+    except (ResearchBlocked, TypeError, ValueError):
+        return False
+
+
+def _eis_mirror_notice(page, url, text):
+    number = page.get("eis_notice_number")
+    if not isinstance(number, str) or not re.fullmatch(r"3\d{10}", number):
+        return False
+    parsed = urlsplit(url)
+    paths = {"sprosradar.ru": f"/zakupki/223/{number}",
+             "tendik.ru": f"/tender/eis223/{number}"}
+    return (parsed.path.rstrip("/") == paths.get(parsed.hostname)
+            and not parsed.query
+            and bool(re.search(r"(?<!\d)" + number + r"(?!\d)", text)))
+
+
+def _document_priority(label):
+    if re.search(r"(?iu)техническ\w*\s+задани|описание объекта|\bтз\b", label):
+        return 0
+    if re.search(r"(?iu)проект\w*\s+договора|проект\w*\s+контракт", label):
+        return 1
+    if re.search(r"(?iu)закупочн\w*\s+документац|извещени|спецификац", label):
+        return 2
+    if re.search(r"(?iu)обосновани|расч[её]т|нмц", label):
+        return 3
+    return 4
+
+
 def candidate_links(client, findings, tender_id, *, max_pages=6):
     """Follow hrefs ONLY on already verified, exact-ID tender detail pages."""
     fail(type(tender_id) is str and SAFE_ID.fullmatch(tender_id),
@@ -80,39 +126,43 @@ def candidate_links(client, findings, tender_id, *, max_pages=6):
             text = " ".join(parser.parts)
             if not exact.search(text):
                 continue
+            exact_eis_mirror = _eis_mirror_notice(page, url, text)
         except (TenderDocumentBlocked, ResearchBlocked,
                 httpx.HTTPError, ValueError, TypeError):
             continue
-        for href, label in parser.links[:150]:
-            if len(candidates) >= MAX_LINKS:
-                break
+        for href, label in parser.links[:180]:
             if not isinstance(href, str) or len(href) > 900:
                 continue
             dest = urljoin(url, href)
             try:
-                host = public_market_url(dest)
-                fail(host == base_host, "DOCUMENT_CROSS_HOST_LINK")
+                official = exact_eis_mirror and public_eis_attachment(dest)
+                if not official:
+                    host = public_market_url(dest)
+                    fail(host == base_host, "DOCUMENT_CROSS_HOST_LINK")
                 suffix = extension(urlsplit(dest).path)
                 # Dynamic download URLs are allowed only with explicit
                 # document/download labels AND a download-looking endpoint.
                 dynamic = (bool(re.search(r"(?i)(?:download|attachment|file)", dest))
                            and any(w in label for w in (
                                "скачать", "документ", "тз", "download", "файл")))
-                if not suffix and not dynamic:
+                if not suffix and not dynamic and not official:
                     continue
                 if dest not in seen and dest != url:
                     seen.add(dest)
                     candidates.append({"url": dest, "label": label[:80]})
             except (TenderDocumentBlocked, ResearchBlocked, ValueError):
                 continue
-    return candidates[:MAX_LINKS]
+    return sorted(candidates, key=lambda row: _document_priority(row["label"]))[:MAX_LINKS]
 
 
 def fetch_bytes(client, url):
     """Bound total downloaded bytes; never follow redirects or HTML logins."""
-    host = public_market_url(url)
+    if public_eis_attachment(url):
+        host = _host(url, EIS_FILE_HOSTS)
+    else:
+        host = public_market_url(url)
     fail(_public_dns(host), "DOCUMENT_PUBLIC_DNS_FAILED")
-    _robots(client, url, PUBLIC_MARKETS)
+    _robots(client, url, DOCUMENT_HOSTS)
     size = 0
     chunks = []
     try:
@@ -152,7 +202,9 @@ def fetch_bytes(client, url):
                         ".xlsx" if "xl/workbook.xml" in names else ".zip")
         except (zipfile.BadZipFile, ValueError):
             raise TenderDocumentBlocked("DOCUMENT_ZIP_INVALID") from None
-    elif media == "text/plain" and b"\x00" not in data[:3000]:
+    elif (media == "text/plain" or extension(urlsplit(url).path)==".txt") and b"\x00" not in data[:3000]:
+        fail(not data.lstrip().lower().startswith((b"<!doctype html",b"<html",b"<?xml")),
+             "DOCUMENT_DOWNLOAD_LOGIN_OR_HTML")
         kind = ".txt"
     else:
         raise TenderDocumentBlocked("DOCUMENT_UNSUPPORTED_FORMAT")
@@ -231,7 +283,8 @@ def _excel(data):
                         val = ""
                     elif c.get("t") == "s":
                         try:
-                            val = shared[int(v.text)]
+                            i = int(v.text)
+                            val = shared[i] if i >= 0 else ""
                         except (IndexError, ValueError):
                             val = ""
                     else:
@@ -275,7 +328,12 @@ def extract_text(data, kind):
     if kind == ".xlsx":
         return _excel(data)
     if kind == ".txt":
-        return data.decode("utf8", "replace")[:MAX_TEXT]
+        for encoding in ("utf-8-sig", "cp1251"):
+            try:
+                return data.decode(encoding)[:MAX_TEXT]
+            except UnicodeDecodeError:
+                continue
+        raise TenderDocumentBlocked("DOCUMENT_TEXT_ENCODING_UNSUPPORTED")
     if kind == ".zip":
         out = []
         with _safe_archive(data) as z:
@@ -318,4 +376,5 @@ def inspect_public_documents(client, findings, tender_id, *, max_pages=6, max_do
             code = str(exc)
             reasons[code] = reasons.get(code, 0) + 1
     return {"documents": documents, "discovered": len(candidates),
+            "eis_links": sum(public_eis_attachment(row["url"]) for row in candidates),
             "rejections": reasons}

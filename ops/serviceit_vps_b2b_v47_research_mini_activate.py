@@ -51,7 +51,7 @@ PROBE = """
 import os
 import httpx
 from leadpilot.serviceit_vps_pg_queue import secret_file
-from leadpilot.serviceit_b2b_tavily_research_mini_v46 import approved,MAX_MINI_CREDITS
+from leadpilot.serviceit_b2b_tavily_research_mini_v47 import approved,MAX_MINI_CREDITS
 assert approved(os.environ)
 key=secret_file(os.environ,'SERVICEIT_TAVILY_SEARCH_API_KEY')
 with httpx.Client(trust_env=False,follow_redirects=False,timeout=15) as client:

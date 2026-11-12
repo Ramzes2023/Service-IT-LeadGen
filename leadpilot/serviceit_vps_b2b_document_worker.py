@@ -453,12 +453,18 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
             if target_card is None:
                 findings = source_findings(before, notice, exact_environment(env), client)
             else:
-                from .serviceit_public_evidence_research import _page
-                page = _page(client, url, frozenset({"b2b-center.ru"}))
-                findings = {"status":"PUBLIC_PAGES_INSPECTED",
-                            "pages":[{"url":url,"excerpt":page["text"]}]}
+                from .serviceit_public_evidence_research import _page, ResearchBlocked
+                findings = {"status":"PUBLIC_RESEARCH_INCOMPLETE","pages":[]}
+                try:
+                    page = _page(client, url, frozenset({"b2b-center.ru"}))
+                    findings = {"status":"PUBLIC_PAGES_INSPECTED",
+                                "pages":[{"url":url,"excerpt":page["text"]}]}
+                except (ResearchBlocked,httpx.HTTPError):
+                    pass
             from .serviceit_b2b_eis_mirrors import supplement_eis_mirrors
-            findings = supplement_eis_mirrors(findings, notice, client)
+            from .serviceit_b2b_dossier_consistency_v37 import REVIEWED
+            confirmed = REVIEWED.get(notice["tender_id"],{}).get("registry_id")
+            findings = supplement_eis_mirrors(findings, notice, client, verified_number=confirmed)
             evidence = inspect_public_documents(
                 client, findings, notice["tender_id"])
         except Exception:
@@ -474,7 +480,8 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
             return {"status": "TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H",
                     "crm_writes": 0, "documents_readable": 0,
                     "links_found": evidence["discovered"],
-                    "eis_links": evidence.get("eis_links",0)}
+                    "eis_links": evidence.get("eis_links",0),
+                    "file_rejections": evidence.get("rejections",{})}
         if not reserve(connection, card, source, len(docs)):
             return {"status": "TDI_ALREADY_RESERVED_NO_RETRY", "crm_writes": 0}
         phase = "RESERVED"

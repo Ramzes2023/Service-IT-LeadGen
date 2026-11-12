@@ -76,15 +76,43 @@ def chosen(facts, category, *, marker=""):
     return ""
 
 
+def exact_source_fragment(text, label, required, *, maximum=220):
+    """Return only a literal bounded substring from the verified public page."""
+    need(isinstance(text,str) and len(text)<=4800,"SOURCE_FRAGMENT_TEXT_INVALID")
+    lowered=text.casefold()
+    search_at=0
+    while True:
+        pos=lowered.find(required.casefold(),search_at)
+        if pos<0:
+            return ""
+        label_pos=lowered.rfind(label.casefold(),max(0,pos-240),pos+len(required))
+        if label_pos>=0 and pos-label_pos<=220:
+            end=min(len(text),pos+95,label_pos+maximum)
+            raw=text[label_pos:end].strip(" .;,-")
+            if 15<=len(raw)<=maximum and raw in text:
+                return raw
+        search_at=pos+len(required)
+
+
 def prepare(facts, docs, original, url):
     """Pure deterministic source-cited manager-friendly nine-field patch."""
     need(len(docs) == 1 and docs[0]["url"] == url
          and 30 <= len(docs[0]["text"]) <= 4800, "SOURCE_DOCUMENT_NOT_SINGLE_OR_VERIFIED")
     text = docs[0]["text"]
     deadline = chosen(facts, "DEADLINE", marker="20.11.2026")
-    payment = chosen(facts, "PAYMENT", marker="отсроч")
-    delivery = chosen(facts, "LOCATION", marker="электронная")
-    address = chosen(facts, "LOCATION", marker="Москва")
+    payment = (chosen(facts, "PAYMENT", marker="отсроч")
+               or exact_source_fragment(text,"Условия оплаты","отсроч"))
+    delivery = (chosen(facts, "LOCATION", marker="электронная")
+                or exact_source_fragment(text,"Условия поставки","электронная поставка"))
+    address = (chosen(facts, "LOCATION", marker="Можайский")
+               or exact_source_fragment(text,"Адрес поставки","Можайский Вал"))
+    # A city/street must be present in the SAME independently verified
+    # original-page quote, never inferred from the organizer's office.
+    if address and not ("Москва" in address and "Можайский" in address):
+        address = ""
+    emit("PUBLIC_PAYMENT_QUOTE", "YES" if payment else "NO")
+    emit("PUBLIC_DELIVERY_QUOTE", "YES" if delivery else "NO")
+    emit("PUBLIC_ADDRESS_QUOTE", "YES" if address else "NO")
     organizer = re.search(r'(?iu)\bорганизатор\s+(АО\s+(?:«АЗОТ-ВЗРЫВ»|"АЗОТ-ВЗРЫВ"))', text)
     need(deadline and "13:59" in deadline, "PUBLIC_DEADLINE_NOT_FOUND")
     need(payment and delivery and address and "Можайский" in address,

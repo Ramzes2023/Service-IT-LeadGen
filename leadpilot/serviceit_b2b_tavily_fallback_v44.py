@@ -149,6 +149,20 @@ def discover_urls(conn, client, env, notice):
     if not api_key:
         return []
     tender_id, source_hash = _identity(notice)
+    # V45: guarantee that historical/manual B2B cards never consume Tavily
+    # credits, even when V19/V20 reprocess them hours or days later. The
+    # original verified inbox receipt and its activation timestamp are the
+    # source of truth, not the AI-generated notice or public search result.
+    from .serviceit_vps_worker import SEARCH_POLICY_START
+    row = conn.execute("""
+        SELECT b.received_at FROM serviceit_vps_b2b_inbox b
+        WHERE b.source_id=%s AND b.state='VERIFIED'
+          AND b.notice_json->>'tender_id'=%s
+        LIMIT 1
+    """, ("B2B-CENTER-" + tender_id, tender_id)).fetchone()
+    if (not row or not isinstance(row[0], datetime)
+            or row[0].tzinfo is None or row[0] < SEARCH_POLICY_START):
+        return []
     with conn.transaction():
         conn.execute(DDL)
     with conn.transaction():

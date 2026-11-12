@@ -951,7 +951,7 @@ def cited_manager_fields(item, findings, report):
     return cleaned
 
 
-def run_once(env, client, connection):
+def run_once(env, client, connection, *, search_scope=None):
     """One card per 5-min coordinator cycle; no blind write or paid AI replay."""
     if env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED", "NO") != "YES":
         return {"status": "B2B_RESEARCH_DISABLED", "research": 0}
@@ -981,8 +981,10 @@ def run_once(env, client, connection):
     _, signed_title = safe_notice(notice, card, source_id, item)
     # Read-only public search/JS fetch can fail; it is never a reason to
     # suppress the task or classify an unverified buyer as qualified.
-    findings = source_findings(item, notice, env, client,
-                               connection=connection)
+    from contextlib import nullcontext
+    with (search_scope(card,source_id) if search_scope else nullcontext()):
+        findings = source_findings(item, notice, env, client,
+                                   connection=connection)
     docs = public_documents(findings)
     fence = PostgresNativeFence(connection, RECEIPT)
     if fence.reserve(card) != "RESERVED":

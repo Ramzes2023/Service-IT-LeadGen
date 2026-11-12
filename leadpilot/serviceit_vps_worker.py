@@ -198,7 +198,10 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
             result["migration_cutover"] = "NOT_AUTHORIZED"
             return result
         exact_env = exact_environment(env)
-        followup_env = {**exact_env, "SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED": "NO"}
+        # V45: honor Tavily opt-in, but grant metered search access ONLY
+        # within the exact newly received, signed B2B card scope below.
+        # Durable V44 PG source receipts additionally cap credits/month.
+        followup_env = exact_env
         # The native worker verifies the independent cutover/privacy gates
         # again immediately before reserving its PostgreSQL one-use receipt.
         # No GitHub token/HMAC/Fernet key is needed on this VPS.
@@ -260,7 +263,8 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
             # Public research failures must not stall future source intake.
             try:
                 from .serviceit_vps_b2b_deep_research import run_once as deep_once
-                research = deep_once(followup_env, client, connection)
+                research = deep_once(followup_env, client, connection,
+                                     search_scope=b2b_search_scope)
             except Exception:
                 research = {"status": "B2B_RESEARCH_CHECK_FAILED", "research": 0}
         public_inn = {"status": "B2B_PUBLIC_INN_DISABLED", "writes": 0}
@@ -299,7 +303,8 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
         if exact_env.get("SERVICEIT_VPS_B2B_V19_BACKFILL_ENABLED") == "YES":
             try:
                 from .serviceit_b2b_v19_backfill import run_once as backfill_once
-                v19 = backfill_once(followup_env, client, connection)
+                v19 = backfill_once(followup_env, client, connection,
+                                    search_scope=b2b_search_scope)
             except Exception:
                 v19 = {"status": "B2B_V19_ADDITIVE_CHECK_FAILED", "crm_writes": 0}
         # V20 adds immutable sequential receipts only for V19-VERIFIED cards.
@@ -309,7 +314,8 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
         if exact_env.get("SERVICEIT_VPS_B2B_V20_VERSIONED_ENABLED", "NO") == "YES":
             try:
                 from .serviceit_b2b_v20_versioned import run_once as v20_once
-                v20 = v20_once(followup_env, client, connection)
+                v20 = v20_once(followup_env, client, connection,
+                                search_scope=b2b_search_scope)
             except Exception:
                 v20 = {"status": "B2B_V20_VERSIONED_CHECK_FAILED", "crm_writes": 0}
         # V37: reflect previously verified facts in the passport, managerial

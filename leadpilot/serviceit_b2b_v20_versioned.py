@@ -159,7 +159,7 @@ def transition(conn, card, attempt, before, after, *, desired=None):
             return salt,digest
 
 
-def run_once(env, client, conn):
+def run_once(env, client, conn, *, search_scope=None):
     """One bounded history scan per enabled cycle; NEVER create a CRM card."""
     if env.get("SERVICEIT_VPS_B2B_V20_VERSIONED_ENABLED") != "YES":
         return {"status":"V20_OFF","crm_writes":0}
@@ -198,8 +198,10 @@ def run_once(env, client, conn):
              "V20_SIGNED_NOTICE_MISMATCH")
         before=original_nine(first)
         try:
-            findings=source_findings(first,notice,exact,client,enable_v18=True,
-                                     connection=conn)
+            from contextlib import nullcontext
+            with (search_scope(card,source) if search_scope else nullcontext()):
+                findings=source_findings(first,notice,exact,client,enable_v18=True,
+                                         connection=conn)
             draft,count=versioned_addendum(before,findings,notice["tender_id"])
         except Exception:
             # No invented facts, no repeated immediate paid queries.

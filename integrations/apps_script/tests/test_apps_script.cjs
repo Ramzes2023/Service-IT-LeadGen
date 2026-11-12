@@ -674,6 +674,54 @@ test('ambiguous source receipt for IT staffing prevents any replay',()=>{
   assert.strictEqual(e.calls.dispatch.length,1);
 });
 
+test('new B2B IT categories: Teams license renewal and public cloud services',()=>{
+  const e=environment();
+  assert(e.context.classifyServices_('Приобретение лицензий Teams (продление)').includes('LICENSES'));
+  assert(e.context.classifyServices_('Оказание услуг по предоставлению доступа и права использования облачных сервисов (основное и резервное облако)').includes('CLOUD'));
+  assert.strictEqual(e.context.classifyServices_('Лицензирование алкогольной продукции').length,0);
+  assert.strictEqual(e.context.classifyServices_('Поставка облаков для метеорологического проекта').length,0);
+});
+
+test('5-min polling automatically recovers post-cutover NO_MATCH without duplicate',()=>{
+  const msg=message(MID,{body:BODY,internalDate:CUTOVER+1000});
+  const e=environment({message:msg,properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+MID]:'NO_MATCH'
+  }});
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.recovered_nomatch_messages,1);
+  assert.strictEqual(result.dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+  assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCHED:/);
+  assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,0);
+  assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('post-cutover recovery fences historical NO_MATCH before activation',()=>{
+  const msg=message(MID,{body:BODY,internalDate:CUTOVER-1000});
+  const e=environment({message:msg,properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+MID]:'NO_MATCH'
+  }});
+  const result=e.context.pollAndDispatchB2B();
+  assert.strictEqual(result.recovered_nomatch_messages,0);
+  assert.strictEqual(result.dispatched,0);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'NO_MATCH');
+});
+
+test('owner read-only status checks live trigger configuration with no writes',()=>{
+  const e=environment({properties:{SERVICEIT_AUTOMATION_ENABLED:'YES'}});
+  e.calls.triggers.push({getHandlerFunction:()=> 'pollAndDispatchB2B'});
+  const before=JSON.stringify(e.properties);
+  const result=e.context.serviceITB2BDeliveryStatusReadOnly();
+  assert.strictEqual(result.trigger_count,1);
+  assert.strictEqual(result.automation_enabled,true);
+  assert.strictEqual(result.vps_direct_enabled,true);
+  assert.strictEqual(result.vps_posts,0);
+  assert.strictEqual(JSON.stringify(e.properties),before);
+});
+
 process.stdout.write('ALL_APPS_SCRIPT_TESTS_PASS\n');
 
 {

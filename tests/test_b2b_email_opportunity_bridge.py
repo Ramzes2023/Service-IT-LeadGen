@@ -176,3 +176,13 @@ def test_explicit_b2b_vendor_email_deadline_labels_stay_unverified(label):
     assert len(entries) == 1
     assert entries[0]["deadline_as_stated_in_email"] == "19.11.2026 13:00"
     assert entries[0]["deadline_verified_from_original"] is False
+
+
+def test_relevant_software_licensing_and_cloud_b2b_notices_are_not_lost():
+    assert "LICENSES" in classify_services("Приобретение лицензий Teams (продление)")
+    assert "LICENSES" in classify_services("Продление лицензий Microsoft 365")
+    assert "CLOUD" in classify_services(
+        "Оказание услуг по предоставлению доступа и права использования облачных сервисов (основное и резервное облако)"
+    )
+    assert classify_services("Лицензирование алкоголя") == []
+    assert classify_services("Облака для детского праздника") == []

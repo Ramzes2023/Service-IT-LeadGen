@@ -11,13 +11,17 @@ assert "def check_public_procurement_location" in geo_code
 assert "def classify_location_lines" in geo_code
 
 print("import json, os, sys, types")
-print("import httpx")
-print("from leadpilot.serviceit_vps_pg_queue import db")
-print("geo = types.ModuleType('leadpilot.serviceit_b2b_moscow_geo')")
-print("geo.__package__ = 'leadpilot'")
-print("sys.modules['leadpilot.serviceit_b2b_moscow_geo'] = geo")
-print("exec(compile(" + repr(geo_code) + ", 'reviewed_b2b_geo.py', 'exec'), geo.__dict__)")
-print(String := '''
+print("try:")
+print("    import httpx")
+print("    from leadpilot.serviceit_vps_pg_queue import db")
+print("    geo = types.ModuleType('leadpilot.serviceit_b2b_moscow_geo')")
+print("    geo.__package__ = 'leadpilot'")
+print("    sys.modules['leadpilot.serviceit_b2b_moscow_geo'] = geo")
+print("    exec(compile(" + repr(geo_code) + ", 'reviewed_b2b_geo.py', 'exec'), geo.__dict__)")
+print("except Exception as exc:")
+print("    print('MOSCOW_CANARY_IMPORT_ERROR=' + type(exc).__name__.upper(), flush=True)")
+print("    raise SystemExit(2) from None")
+print('''
 SOURCES = ("4675475", "4677160", "4677404", "4678279", "4676643")
 counts = {"MOSCOW": 0, "OUTSIDE": 0, "MIXED": 0, "UNKNOWN": 0}
 try:

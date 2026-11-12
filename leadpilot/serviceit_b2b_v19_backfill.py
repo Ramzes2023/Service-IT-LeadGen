@@ -303,7 +303,8 @@ def run_once(env, client, conn, *, preview=False):
             before=original_nine(first)
             findings = {}
             try:
-                findings=source_findings(first,notice,exact,client,enable_v18=True)
+                findings=source_findings(first,notice,exact,client,enable_v18=True,
+                                     connection=conn)
                 items=novel_evidence({**findings, "indexed_candidates": []},before[REPORT])
                 draft=prepare_addendum(before,items,notice["tender_id"])
                 values = confirmed_passport_values(findings, source_only_investigation(findings))

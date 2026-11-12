@@ -267,7 +267,7 @@ def move(conn, card, before, after, *, desired=None):
             need(cur.fetchone() is not None,"RECEIPT_PHASE_DRIFT")
 
 
-def run_once(env, client, conn, *, preview=False):
+def run_once(env, client, conn, *, preview=False, search_scope=None):
     """Execute bounded proof/readback. Max one future/historical card per cycle."""
     need(live_permitted(env)
          and env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED")=="YES"
@@ -303,8 +303,10 @@ def run_once(env, client, conn, *, preview=False):
             before=original_nine(first)
             findings = {}
             try:
-                findings=source_findings(first,notice,exact,client,enable_v18=True,
-                                     connection=conn)
+                from contextlib import nullcontext
+                with (search_scope(card,source) if search_scope else nullcontext()):
+                    findings=source_findings(first,notice,exact,client,enable_v18=True,
+                                             connection=conn)
                 items=novel_evidence({**findings, "indexed_candidates": []},before[REPORT])
                 draft=prepare_addendum(before,items,notice["tender_id"])
                 values = confirmed_passport_values(findings, source_only_investigation(findings))

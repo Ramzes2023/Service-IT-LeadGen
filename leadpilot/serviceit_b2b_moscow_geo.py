@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+import httpx
+
 from .serviceit_b2b_public_mirrors import matched_excerpt
 from .serviceit_public_evidence_research import (
     ResearchBlocked, VisibleText, _get, _robots,
@@ -115,6 +117,6 @@ def check_public_procurement_location(notice: dict, client) -> str:
         if not matched_excerpt(flat, tender_id, subject):
             return "UNKNOWN"
         return classify_location_lines(lines)
-    except (ResearchBlocked, ValueError, TypeError, UnicodeError,
+    except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, UnicodeError,
             OSError, AttributeError):
         return "UNKNOWN"

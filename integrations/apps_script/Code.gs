@@ -518,6 +518,20 @@ function dispatchNotice_(notice, dispatchId) {
   if (!response || ![200, 202].includes(response.getResponseCode())) {
     throw new Error("SERVICEIT_VPS_NOTICE_ACK_UNVERIFIED");
   }
+  // The old implementation accepted any HTTP 200/202 (including a reverse
+  // proxy HTML page) and permanently marked the email DISPATCHED even though
+  // the VPS may never have stored it. Require the exact source inbox receipt.
+  let receipt;
+  try {
+    receipt = JSON.parse(response.getContentText());
+  } catch (_error) {
+    throw new Error("SERVICEIT_VPS_NOTICE_RECEIPT_NOT_JSON");
+  }
+  const expected = response.getResponseCode() === 202 ?
+    "B2B_NOTICE_PERSISTED" : "B2B_NOTICE_DUPLICATE";
+  if (!receipt || receipt.status !== expected || receipt.crm_writes !== 0) {
+    throw new Error("SERVICEIT_VPS_NOTICE_RECEIPT_UNVERIFIED");
+  }
   return dispatchId;
 }
 
@@ -671,6 +685,7 @@ function pollAndDispatchB2B() {
     }
     const summary = {
       status: "SERVICEIT_B2B_POLL_OK",
+      last_poll_utc: new Date().toISOString(),
       messages: messages,
       dispatched: dispatched,
       skipped: skipped,
@@ -712,8 +727,9 @@ function serviceITB2BDeliveryStatusReadOnly() {
   let lastResult = {};
   try {
     const parsed = JSON.parse(last);
-    ["status","messages","dispatched","review_required","uncertain_dispatches",
-     "pending_tenders_deferred","recovered_nomatch_messages"].forEach(function (key) {
+    ["status","last_poll_utc","messages","dispatched","review_required",
+     "uncertain_dispatches","pending_tenders_deferred",
+     "recovered_nomatch_messages","nomatch_messages_rechecked"].forEach(function (key) {
       if (typeof parsed[key] === "number" || typeof parsed[key] === "string") {
         lastResult[key] = parsed[key];
       }

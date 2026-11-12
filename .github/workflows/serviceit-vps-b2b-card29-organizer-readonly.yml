@@ -1,4 +1,4 @@
-name: ServiceIT B2B card29 verified organizer independent public audit
+name: ServiceIT B2B card29 verified organizer independent public audit (expanded)
 on:
   push:
     branches: [main]

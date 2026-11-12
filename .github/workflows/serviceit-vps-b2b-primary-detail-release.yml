@@ -1,0 +1,124 @@
+name: ServiceIT B2B primary tender detail guarded release
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-primary-detail-release.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 27
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact main and reviewed evidence modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          names=(serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_vps_worker.py)
+          root="$RUNNER_TEMP/primary-detail"
+          install -d -m 0700 "$root"
+          : > "$root/new-hashes"
+          for name in "${names[@]}"; do
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$root/new-hashes"
+          done
+          python -m py_compile ops/serviceit_vps_b2b_v37_quality_release.py
+          python -m py_compile ops/serviceit_vps_b2b_primary_detail_verify_readonly.py
+          python -m py_compile ops/serviceit_vps_b2b_primary_detail_old_hashes_readonly.py
+          sha256sum ops/serviceit_vps_b2b_v37_quality_release.py | cut -d' ' -f1 > "$root/script-sha"
+          [[ "$(wc -l < "$root/new-hashes")" == 4 ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$root/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$root/hosts"
+          chmod 0600 "$root/id" "$root/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$root/hosts" >/dev/null
+      - name: Read independently witnessed old live module hashes without writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/primary-detail"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$root/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          ssh -T -i "$root/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            < ops/serviceit_vps_b2b_primary_detail_old_hashes_readonly.py > "$root/old-hashes"
+          [[ "$(wc -l < "$root/old-hashes")" == 4 ]]
+          [[ "$(grep -Ec '^[0-9a-f]{64}$' "$root/old-hashes")" == 4 ]]
+      - name: Stage only the four nonsecret source modules and guarded rollback controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/primary-detail"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$root/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-primary-detail-onefile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$root/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_vps_worker.py; do
+            scp -i "$root/id" "${opts[@]}" "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$root/id" "${opts[@]}" ops/serviceit_vps_b2b_v37_quality_release.py "$target:$stage/activate.py"
+      - name: Pin SHA, verify no in-flight writes, rebuild offline and activate coordinator with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/primary-detail"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$root/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t newer < "$root/new-hashes"
+          mapfile -t older < "$root/old-hashes"
+          [[ "${#newer[@]}" == 4 && "${#older[@]}" == 4 ]]
+          scriptsha="$(cat "$root/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          args=()
+          for value in "${newer[@]}" "${older[@]}"; do
+            [[ "$value" =~ ^[0-9a-f]{64}$ ]]
+            args+=("'$value'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${args[*]}"
+          rc=0
+          ssh -T -i "$root/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" "$remote" > "$root/status" <<'REMOTE' || rc=$?
+          set -euo pipefail
+          id="$1"; sha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 8 ]]
+          for v in "$@"; do [[ "$v" =~ ^[0-9a-f]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-primary-detail-onefile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" --primary-detail "$id" "$@"
+          REMOTE
+          grep -E '^PRIMARY_DETAIL_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' "$root/status" | head -40 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'PRIMARY_DETAIL_RELEASE_VPS_LIVE_ENABLED=YES' "$root/status"
+          grep -qx 'PRIMARY_DETAIL_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$root/status"
+      - name: Independently verify original Microsoft Teams public evidence and hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/primary-detail"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$root/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          ssh -T -i "$root/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            < ops/serviceit_vps_b2b_primary_detail_verify_readonly.py > "$root/verify"
+          grep -E '^PRIMARY_DETAIL_[A-Z0-9_]+=[A-Z0-9_]+$' "$root/verify" | head -30
+          grep -qx 'PRIMARY_DETAIL_LIVE_FLAG=YES' "$root/verify"
+          grep -qx 'PRIMARY_DETAIL_CARD29_SOURCE=VERIFIED' "$root/verify"
+          grep -qx 'PRIMARY_DETAIL_CARD29_ORIGINAL=VERIFIED' "$root/verify"
+          grep -qx 'PRIMARY_DETAIL_CARD29_DEADLINE=YES' "$root/verify"
+          grep -qx 'PRIMARY_DETAIL_CARD29_PAYMENT=YES' "$root/verify"
+          grep -qx 'PRIMARY_DETAIL_CARD29_DELIVERY=YES' "$root/verify"

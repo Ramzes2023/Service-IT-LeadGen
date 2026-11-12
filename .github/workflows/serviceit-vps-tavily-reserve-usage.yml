@@ -164,4 +164,5 @@ jobs:
               print("TAVILY_RESERVE_USAGE=UNVERIFIED")
           PY
           REMOTE
-          grep -E '^TAVILY_RESERVE_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/status"
+          grep -E '^TAVILY_(RESERVE|VPS)_[A-Z0-9_]+=[A-Z0-9_]+
+ "$stage/status"

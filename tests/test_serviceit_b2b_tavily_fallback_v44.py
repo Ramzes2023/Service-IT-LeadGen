@@ -1,5 +1,6 @@
 """Offline V44 tests: Tavily URL hints only, one credit/source/month cap."""
 from contextlib import nullcontext
+from datetime import datetime,timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,6 +36,9 @@ class PG:
         result=MagicMock()
         if "pg_try_advisory_xact_lock" in sql:
             result.fetchone.return_value=(True,)
+        elif "SELECT b.received_at" in sql:
+            result.fetchone.return_value=(
+                datetime(2026,11,12,11,0,tzinfo=timezone.utc),)
         elif "SELECT status,candidate_urls" in sql:
             result.fetchone.return_value=(self.updated or self.existing)
         elif "SELECT count(*)" in sql:
@@ -148,3 +152,39 @@ def test_verified_pages_include_only_independent_evidence(monkeypatch):
     assert got["status"]=="PUBLIC_PAGES_INSPECTED"
     assert got["pages"][0]["url"]==URL
     assert got["discovery"]=="TAVILY_URLS_WITH_INDEPENDENT_PUBLIC_READ"
+
+
+
+def test_historical_signed_notice_never_spends_any_credit(monkeypatch):
+    monkeypatch.setattr(t,"secret_file",lambda *args,**kwargs:"tvly-"+("X"*25))
+    old=PG()
+    original=old.execute
+    def before_activation(sql,args=()):
+        if "SELECT b.received_at" in sql:
+            answer=MagicMock()
+            answer.fetchone.return_value=(
+                datetime(2026,11,11,12,0,tzinfo=timezone.utc),)
+            return answer
+        return original(sql,args)
+    old.execute=before_activation
+    monkeypatch.setattr(t,"_search_once",
+                        lambda *args:pytest.fail("historical B2B credit spent"))
+    assert t.discover_urls(old,object(),ENV,NOTICE)==[]
+    assert old.inserted is None
+
+
+def test_missing_verified_inbox_refuses_tavily_without_receipt(monkeypatch):
+    monkeypatch.setattr(t,"secret_file",lambda *args,**kwargs:"tvly-"+("X"*25))
+    conn=PG()
+    original=conn.execute
+    def missing(sql,args=()):
+        if "SELECT b.received_at" in sql:
+            answer=MagicMock()
+            answer.fetchone.return_value=None
+            return answer
+        return original(sql,args)
+    conn.execute=missing
+    monkeypatch.setattr(t,"_search_once",
+                        lambda *args:pytest.fail("unsigned notice billed"))
+    assert t.discover_urls(conn,object(),ENV,NOTICE)==[]
+    assert conn.inserted is None

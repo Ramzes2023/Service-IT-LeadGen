@@ -73,6 +73,8 @@ def enabled(env: dict, *, writer=False) -> bool:
         must(env.get("SERVICEIT_VPS_B2B_WRITER_ENABLED") == "YES",
              "B2B_WRITER_NOT_AUTHORIZED")
         must(live_permitted(env), "B2B_NATIVE_CUTOVER_NOT_LIVE")
+        must(env.get("SERVICEIT_B2B_MOSCOW_ONLY_ENABLED", "NO") in ("NO", "YES"),
+             "B2B_MOSCOW_ONLY_FLAG_INVALID")
     return True
 
 
@@ -277,7 +279,7 @@ def reconcile_uncertain(connection, client, webhook):
     return recovered
 
 
-def deliver_one(connection, client, webhook):
+def deliver_one(connection, client, webhook, *, geo_only=False):
     if attempted_24h(connection) >= MAX_PER_24H:
         return "DAILY_BUDGET_THROTTLED"
     candidate = read_candidate(connection)
@@ -296,6 +298,15 @@ def deliver_one(connection, client, webhook):
          "B2B_POSITIVE_CRM_DUPLICATE_CONTROL_FAILED")
     if exact_duplicate(client, base, source):
         return "EXISTING" if set_existing(connection, source) else "ALREADY_RESERVED"
+    if geo_only:
+        # Only NEW cards are gated. A signed email contains region=None;
+        # the organizer's Moscow address cannot prove the work location.
+        # Explicitly source-proven Moscow/Moscow Oblast is the ONLY pass.
+        from .serviceit_b2b_moscow_geo import check_public_procurement_location
+        decision = check_public_procurement_location(notice, client)
+        if decision != "MOSCOW":
+            return ("GEO_" + decision if set_review(connection, source)
+                    else "ALREADY_RESERVED")
     must(reserve_post(connection, source), "B2B_SOURCE_RESERVED_ELSEWHERE")
     for name in AI_FIELDS:
         payload["fields"].pop(name)
@@ -332,7 +343,10 @@ def worker_once(env: dict, *, client):
         uncertain_recovered = reconcile_uncertain(connection, client, webhook)
         outcomes = []
         for _ in range(MAX_PER_CYCLE):
-            outcome = deliver_one(connection, client, webhook)
+            if env.get("SERVICEIT_B2B_MOSCOW_ONLY_ENABLED", "NO") == "YES":
+                outcome = deliver_one(connection, client, webhook, geo_only=True)
+            else:
+                outcome = deliver_one(connection, client, webhook)
             outcomes.append(outcome)
             if outcome in ("NO_PENDING", "DAILY_BUDGET_THROTTLED"):
                 break
@@ -343,6 +357,9 @@ def worker_once(env: dict, *, client):
             "uncertain_recovered": uncertain_recovered,
             "existing": outcomes.count("EXISTING"),
             "review": outcomes.count("REVIEW"),
+            "geo_outside": outcomes.count("GEO_OUTSIDE"),
+            "geo_unknown": outcomes.count("GEO_UNKNOWN"),
+            "geo_mixed": outcomes.count("GEO_MIXED"),
             "queue_counts": statistics(connection),
             "backlog_throttled": "DAILY_BUDGET_THROTTLED" in outcomes,
             "qualified_leads": 0,

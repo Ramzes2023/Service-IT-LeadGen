@@ -42,8 +42,7 @@ TAVILY_RESERVE_FILES = (
 )
 DOCUMENT_DEPTH_FILES = (
     "serviceit_b2b_tender_documents.py", "serviceit_vps_b2b_document_worker.py",
-    "serviceit_b2b_dossier_consistency_v37.py",
-    "serviceit_b2b_dossier_consistency_worker_v37.py",
+    "serviceit_b2b_eis_mirrors.py",
 )
 MANAGER_CARD_FILES = ("serviceit_b2b_dossier_consistency_v37.py",
                       "serviceit_b2b_dossier_consistency_worker_v37.py")

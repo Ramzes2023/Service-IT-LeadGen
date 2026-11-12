@@ -34,6 +34,9 @@ def main():
         for key in ("status","documents_readable","attachments_verified","eis_links"):
             if key in result:
                 emit(key.upper(),result[key])
+        for key,value in result.get("file_rejections",{}).items():
+            if re.fullmatch(r"[A-Z0-9_]+",key):
+                emit("FILE_REJECTION_"+key,value)
         receipt = conn.execute("""
             SELECT status,scanned_count FROM serviceit_vps_b2b_tender_doc_receipts
             WHERE card_id=%s

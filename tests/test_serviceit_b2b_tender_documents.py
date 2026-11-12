@@ -346,3 +346,18 @@ def test_223_filestore_uid_route_is_recognized():
                     "?uid=D471CB43F1EFE4DFE05334548D0AEB67")
     assert docs.public_eis_attachment(actual_shape)
     assert not docs.public_eis_attachment(actual_shape.replace("file.html","other.html"))
+
+
+def test_unavailable_official_file_does_not_abort_other_verified_downloads(monkeypatch):
+    rows = [{"url":"https://zakupki.gov.ru/public-file","label":"ТЗ",
+             "source_page":URL,"official_eis":True},
+            {"url":ATT,"label":"ТЗ","source_page":URL,"official_eis":False}]
+    monkeypatch.setattr(docs,"candidate_links",lambda *args,**kw: rows)
+    def download(client,url):
+        if url == rows[0]["url"]:
+            raise httpx.ConnectTimeout("official timeout")
+        return make_docx(),".docx"
+    monkeypatch.setattr(docs,"fetch_bytes",download)
+    result = docs.inspect_public_documents(None,{},TENDER)
+    assert result["rejections"] == {"DOCUMENT_HTTP_ERROR":1}
+    assert len(result["documents"]) == 1

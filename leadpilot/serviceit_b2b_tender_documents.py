@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl, urljoin, urlsplit, unquote
 
 import httpx
 from defusedxml import ElementTree as XML
+from defusedxml.common import DefusedXmlException
 
 from .serviceit_public_evidence_research import (
     AGENT, VisibleText, ResearchBlocked, _host, _public_dns, _robots, _get,
@@ -387,8 +388,11 @@ def inspect_public_documents(client, findings, tender_id, *, max_pages=6, max_do
                 # to the same fenced CRM comment; never persisted in PG/logs.
                 "payload": payload,
             })
-        except (TenderDocumentBlocked, ResearchBlocked, ValueError) as exc:
-            code = str(exc)
+        except (TenderDocumentBlocked, ResearchBlocked, ValueError, httpx.HTTPError,
+                XML.ParseError, DefusedXmlException, zipfile.BadZipFile, NotImplementedError) as exc:
+            code = ("DOCUMENT_HTTP_ERROR" if isinstance(exc,httpx.HTTPError)
+                    else str(exc) if isinstance(exc,(TenderDocumentBlocked,ResearchBlocked))
+                    else "DOCUMENT_PARSE_FAILED")
             reasons[code] = reasons.get(code, 0) + 1
     return {"documents": documents, "discovered": len(candidates),
             "eis_links": sum(public_eis_attachment(row["url"]) for row in candidates),

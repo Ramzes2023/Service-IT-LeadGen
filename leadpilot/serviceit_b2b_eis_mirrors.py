@@ -82,12 +82,14 @@ def _registry_buyer(rows):
             "url": row["url"], "reference": pages["tendik.ru"]["url"]}
 
 
-def supplement_eis_mirrors(findings, notice, client):
+def supplement_eis_mirrors(findings, notice, client, *, verified_number=None):
     """Cross-check exact registry-linked public pages, with no provider credits."""
     try:
         number = _source_eis_number(findings, notice, client)
     except (ResearchBlocked, httpx.HTTPError, KeyError, TypeError):
-        return findings
+        number = None
+    if not number and isinstance(verified_number,str) and re.fullmatch(r"3\d{10}",verified_number):
+        number = verified_number
     if not number:
         return findings
     tid = notice["tender_id"]

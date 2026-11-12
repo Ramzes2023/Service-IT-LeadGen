@@ -51,7 +51,7 @@ jobs:
             -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes -o ConnectTimeout=15)
           rc=0
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
-            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --apply" \
             < "$script" > "$stage/status" 2>/dev/null || rc=$?
           grep -E '^CARD27_WEB_[A-Z0-9_]{3,65}=[A-Z0-9_]{1,80}$' "$stage/status" || true
           [[ "$rc" == 0 ]]

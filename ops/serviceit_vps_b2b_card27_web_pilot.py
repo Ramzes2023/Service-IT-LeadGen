@@ -1,6 +1,7 @@
 """Apply verified public evidence to the one requested signed tender."""
 import hashlib
 import os
+from pathlib import Path
 import secrets
 import re
 import sys
@@ -44,12 +45,13 @@ def desired_patch(card):
     }
     result = sync_confirmed_passport(before, values)
     report = result[REPORT]
+    report = report.replace("Запрос документации до 16.11.2026 13:00", "Подача документов до 16.11.2026 13:00")
     if HEADING not in report:
         block = (
             f"{HEADING}\n{brief}\n"
             "Полное наименование заказчика — ООО «Башкирские распределительные электрические сети», "
             "ОГРН 1050204504558. Организатор — АО «БЭСК».\n"
-            "Поставка в Уфу, б-р Ибрагимова, 86. Запрос документации до 16.11.2026 13:00 МСК. "
+            "Поставка в Уфу, б-р Ибрагимова, 86. Подача документов до 16.11.2026 13:00 МСК. "
             "Предложение на весь лот. Вложения к заявке обязательны. "
             "При оценке сопоставляют цены без НДС.\n"
             "В сторонней выдаче встречается 13 454 648 ₽. В досье указана сумма первичной площадки "
@@ -142,12 +144,21 @@ def main():
         for kind, link, host in sources:
             try:
                 page = _page(client, link, frozenset({host}))
-                status = "VERIFIED" if TENDER in page["text"] else "NO_MATCH"
+                body = " ".join(page["text"].split())
+                status = "VERIFIED" if TENDER in body else "NO_MATCH"
+                for tag, needle in (("EIS", "32616566539"), ("INN", INN),
+                                    ("EIS_LABEL", "Номер извещения на ЕИС")):
+                    print(f"CARD27_WEB_{kind}_{tag}=" + ("YES" if needle in body else "NO"), flush=True)
             except (ResearchBlocked, httpx.HTTPError) as error:
                 status = str(error) if isinstance(error, ResearchBlocked) else type(error).__name__.upper()
             print("CARD27_WEB_VPS_" + kind + "=" + status, flush=True)
         print("CARD27_WEB_TENDER=" + tender, flush=True)
         print("CARD27_WEB_INN_IN_CRM=" + ("YES" if card.get(PREFIX+"COMPANY_INN") else "NO"), flush=True)
+        for name, filename in (("DEEP", "serviceit_vps_b2b_deep_research.py"),
+                               ("V11", "serviceit_vps_b2b_dossier_v11_worker.py"),
+                               ("ROUTER", "serviceit_b2b_routerai_deep.py")):
+            sha = hashlib.sha256((Path("/app/leadpilot") / filename).read_bytes()).hexdigest()
+            print(f"CARD27_WEB_SHA_{name}={sha.upper()}", flush=True)
         for name in ("TAVILY_SEARCH", "TAVILY_RESEARCH_MINI"):
             enabled = env.get("SERVICEIT_VPS_B2B_" + name + "_ENABLED") == "YES"
             print("CARD27_WEB_" + name + "_ENABLED=" + ("YES" if enabled else "NO"), flush=True)

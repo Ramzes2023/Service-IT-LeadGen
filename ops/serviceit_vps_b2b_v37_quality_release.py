@@ -44,6 +44,20 @@ DOCUMENT_DEPTH_FILES = (
     "serviceit_b2b_tender_documents.py", "serviceit_vps_b2b_document_worker.py",
     "serviceit_b2b_eis_mirrors.py",
 )
+DOCUMENT_OCR_FILES = (
+    "serviceit_b2b_tender_documents.py", "serviceit_vps_b2b_document_worker.py",
+    "serviceit_b2b_pdf_ocr.py",
+)
+OCR_ASSETS = {
+    "pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl":
+        "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca",
+    "pypdfium2-5.15.2-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl":
+        "dc31aea5b0fb9fefc9b537a65f4113980b2c40798445736a7e6565bc85161e37",
+    "tesserocr-2.13.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl":
+        "a3e260356d153c080b1af169ea5858a3abfe71c86765b0aea32251295183dceb",
+    "eng.traineddata": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+    "rus.traineddata": "e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225",
+}
 MANAGER_CARD_FILES = ("serviceit_b2b_dossier_consistency_v37.py",
                       "serviceit_b2b_dossier_consistency_worker_v37.py")
 EIS_MIRROR_FILES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_eis_mirrors.py")
@@ -312,6 +326,7 @@ def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
             and all(re.fullmatch(r"[0-9a-f]{64}", digest)
                     or (digest == "MISSING" and (release, name) in {
                         ("eis-mirrors", "serviceit_b2b_eis_mirrors.py"),
+                        ("document-ocr", "serviceit_b2b_pdf_ocr.py"),
                         ("tavily-reserve", "serviceit_b2b_tavily_research_mini_v47.py"),
                     })
                     for name, digest in zip(files, old_hashes)),
@@ -377,6 +392,25 @@ def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
                 (build / name).write_bytes((stage / name).read_bytes())
                 dockerfile += ('COPY --chmod=0444 ' + name
                                + ' /app/leadpilot/' + name + '\n')
+            if release == "document-ocr":
+                for name, expected in OCR_ASSETS.items():
+                    source = stage / name
+                    require(source.is_file() and not source.is_symlink()
+                            and source.stat().st_uid == os.geteuid()
+                            and 0 < source.stat().st_size <= 12_000_000,
+                            "OCR_ASSET_UNTRUSTED")
+                    data = source.read_bytes()
+                    require(hashlib.sha256(data).hexdigest() == expected,
+                            "OCR_ASSET_SHA_MISMATCH")
+                    (build / name).write_bytes(data)
+                dockerfile += (
+                    "USER 0:0\n"
+                    "COPY *.whl /tmp/serviceit-ocr/\n"
+                    "COPY --chmod=0444 *.traineddata /opt/serviceit/tessdata/\n"
+                    "RUN python -m pip install --no-index --no-deps --no-cache-dir "
+                    "/tmp/serviceit-ocr/*.whl && rm -rf /tmp/serviceit-ocr\n"
+                    "USER 10001:10001\n"
+                )
             (build / "Dockerfile").write_text(dockerfile, "utf8")
             call(["docker", "build", "--network", "none", "--pull=false",
                   "--no-cache", "-t", target, "-f", str(build / "Dockerfile"),
@@ -460,6 +494,17 @@ if 'serviceit_b2b_tender_documents.py' in files:
     url = 'https://zakupki.gov.ru/223/purchase/public/download/download.html?id=12345678'
     assert public_eis_attachment(url) and not public_eis_attachment(url+'&token=x')
     assert extract_text('техническое задание'.encode('cp1251'),'.txt')=='техническое задание'
+if 'serviceit_b2b_pdf_ocr.py' in files:
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+    from leadpilot.serviceit_b2b_pdf_ocr import recognize_pdf
+    image = Image.new('RGB', (1200, 500), 'white')
+    ImageDraw.Draw(image).text((35, 60), 'PURCHASE 4677160   DELIVERY TERMS',
+                              font=ImageFont.load_default(size=44), fill='black')
+    buffer = BytesIO()
+    image.save(buffer, format='PDF', resolution=150)
+    assert not extract_text(buffer.getvalue(), '.pdf').strip()
+    assert '4677160' in recognize_pdf(buffer.getvalue())
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
@@ -526,6 +571,7 @@ def main():
     profiles = {
         "--tavily-reserve": (TAVILY_RESERVE_FILES, "tavily-reserve"),
         "--document-depth": (DOCUMENT_DEPTH_FILES, "document-depth"),
+        "--document-ocr": (DOCUMENT_OCR_FILES, "document-ocr"),
         "--manager-cards": (MANAGER_CARD_FILES, "manager-cards"),
         "--eis-mirrors": (EIS_MIRROR_FILES, "eis-mirrors"),
         "--routerai-research": (ROUTERAI_RESEARCH_FILES, "routerai-research"),

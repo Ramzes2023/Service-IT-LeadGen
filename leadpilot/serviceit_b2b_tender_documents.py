@@ -16,6 +16,7 @@ import httpx
 from defusedxml import ElementTree as XML
 from defusedxml.common import DefusedXmlException
 
+from .serviceit_b2b_pdf_ocr import recognize_pdf
 from .serviceit_public_evidence_research import (
     AGENT, VisibleText, ResearchBlocked, _host, _public_dns, _robots, _get,
 )
@@ -365,10 +366,12 @@ def extract_text(data, kind):
     raise TenderDocumentBlocked("DOCUMENT_KIND_UNSUPPORTED")
 
 
-def inspect_public_documents(client, findings, tender_id, *, max_pages=6, max_downloads=MAX_LINKS):
+def inspect_public_documents(client, findings, tender_id, *, max_pages=6,
+                             max_downloads=MAX_LINKS, enable_ocr=False):
     """No raw document saved; returned evidence only from verified HTTP bytes."""
     candidates = candidate_links(client, findings, tender_id, max_pages=max_pages)
     documents, reasons = [], {}
+    ocr_attempts = 0
     for row in candidates[:max_downloads]:
         if len(documents) >= MAX_FILES:
             break
@@ -377,11 +380,17 @@ def inspect_public_documents(client, findings, tender_id, *, max_pages=6, max_do
             content = extract_text(payload, kind)
             content = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", content)
             content = " ".join(content.split())[:MAX_TEXT]
-            fail(len(content) >= 30, "DOCUMENT_SCANNED_OR_EMPTY_TEXT")
+            used_ocr = False
+            if len(content) < 30 and kind == ".pdf" and enable_ocr and ocr_attempts < 2:
+                ocr_attempts += 1
+                content = " ".join(recognize_pdf(payload).split())[:MAX_TEXT]
+                used_ocr = True
+            fail(len(content) >= 30,
+                 "DOCUMENT_OCR_NO_READABLE_TEXT" if used_ocr else "DOCUMENT_SCANNED_OR_EMPTY_TEXT")
             documents.append({
                 "url": row["url"], "kind": kind, "text": content,
                 "label": row["label"], "source_page": row["source_page"],
-                "official_eis": row["official_eis"],
+                "official_eis": row["official_eis"], "ocr": used_ocr,
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "bytes": len(payload),
                 # Ephemeral bytes are used only to attach approved public files

@@ -361,3 +361,26 @@ def test_unavailable_official_file_does_not_abort_other_verified_downloads(monke
     result = docs.inspect_public_documents(None,{},TENDER)
     assert result["rejections"] == {"DOCUMENT_HTTP_ERROR":1}
     assert len(result["documents"]) == 1
+
+
+def test_ocr_is_opt_in_and_scan_is_excluded_from_confirmed_facts(monkeypatch):
+    url = "https://b2b-center.ru/market/docs/spec.pdf"
+    rows = [{"url": url, "label": "ТЗ", "source_page": URL, "official_eis": False}]
+    payload = b"scanned PDF file bytes"
+    quote = "Срок подачи заявок до 19 ноября 2026 года."
+    monkeypatch.setattr(docs, "candidate_links", lambda *args, **kwargs: rows)
+    monkeypatch.setattr(docs, "fetch_bytes", lambda *args: (payload, ".pdf"))
+    monkeypatch.setattr(docs, "extract_text", lambda *args: "")
+    monkeypatch.setattr(docs, "recognize_pdf", lambda content: quote)
+    assert not docs.inspect_public_documents(None, {}, TENDER)["documents"]
+    result = docs.inspect_public_documents(None, {}, TENDER, enable_ocr=True)
+    scan, = result["documents"]
+    assert scan["ocr"] and scan["payload"] == payload
+    assert worker._model_research(None, {}, [scan], use_model=False) == []
+    report = worker.build_report({"tender_id": TENDER}, [scan], [{
+        "facts": [{"category": "DEADLINE", "quote": quote, "url": url}],
+    }])
+    assert "0 подтверждённых цитат" in report
+    confirmed, provisional = report.split("РАСПОЗНАННЫЕ СКАНЫ", 1)
+    assert quote.rstrip(".") in provisional
+    assert quote.rstrip(".") not in confirmed

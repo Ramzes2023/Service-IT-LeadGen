@@ -10,7 +10,7 @@ import httpx
 
 from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
 from leadpilot.serviceit_b2b_eis_mirrors import supplement_eis_mirrors
-from leadpilot.serviceit_public_evidence_research import _page
+from leadpilot.serviceit_public_evidence_research import ResearchBlocked, _get, _page
 from leadpilot.serviceit_vps_pg_queue import db, secret_file
 
 MODULES = {"EXTRACT":"serviceit_b2b_tender_documents.py",
@@ -29,6 +29,26 @@ def main():
         emit("SHA_"+name, hashlib.sha256((Path("/app/leadpilot")/filename).read_bytes()).hexdigest().upper())
     with db(env) as conn, conn.transaction(), httpx.Client(trust_env=False,follow_redirects=False,timeout=8) as client:
         conn.execute("SET TRANSACTION READ ONLY")
+        if "--ocr" in sys.argv:
+            from io import BytesIO
+            from PIL import Image, ImageDraw, ImageFont
+            from leadpilot.serviceit_b2b_pdf_ocr import recognize_pdf
+
+            image = Image.new("RGB", (1000, 320), "white")
+            ImageDraw.Draw(image).text((35, 65), "TENDER DOCUMENT 4677160",
+                                      font=ImageFont.load_default(size=44), fill="black")
+            scan = BytesIO()
+            image.save(scan, format="PDF", resolution=150)
+            result = recognize_pdf(scan.getvalue())
+            emit("LIVE_OCR_SMOKE", "YES" if "4677160" in result else "NO")
+            if "4677160" not in result:
+                raise RuntimeError("LIVE_OCR_SMOKE_FAILED")
+            try:
+                _get(client, "https://zakupki.gov.ru/robots.txt",
+                     frozenset({"zakupki.gov.ru"}), html=False)
+                emit("EIS_ROBOTS_TRANSPORT", "OK")
+            except (ResearchBlocked, httpx.HTTPError) as exc:
+                emit("EIS_ROBOTS_TRANSPORT", type(exc).__name__.upper())
         rows = conn.execute("""
             SELECT b.card_id,b.notice_json,COALESCE(r.status,'NONE')
             FROM serviceit_vps_b2b_inbox b
@@ -46,7 +66,8 @@ def main():
                 page = _page(client,url,frozenset({"b2b-center.ru"}))
                 findings = supplement_eis_mirrors({"status":"PUBLIC_PAGES_INSPECTED",
                     "pages":[{"url":url,"excerpt":page["text"]}]},notice,client)
-                res = inspect_public_documents(client,findings,notice["tender_id"],max_downloads=2)
+                res = inspect_public_documents(client,findings,notice["tender_id"],max_downloads=2,
+                                               enable_ocr="--ocr" in sys.argv)
                 emit(f"CARD_{card}_LINKS",res["discovered"])
                 emit(f"CARD_{card}_FILES",len(res["documents"]))
                 emit(f"CARD_{card}_EIS_FILES_LINKED",res.get("eis_links",0))
@@ -57,6 +78,7 @@ def main():
                     parsed = urlsplit(document["url"])
                     emit(f"CARD_{card}_FILE_{index}_FORMAT",document["kind"].lstrip(".").upper())
                     emit(f"CARD_{card}_FILE_{index}_BYTES",document["bytes"])
+                    emit(f"CARD_{card}_FILE_{index}_OCR","YES" if document.get("ocr") else "NO")
                     emit(f"CARD_{card}_FILE_{index}_OFFICIAL_EIS","YES" if document.get("official_eis") else "NO")
                     emit(f"CARD_{card}_FILE_{index}_ORIGIN",
                          (parsed.hostname or "").replace(".","_").replace("-","_").upper())
@@ -64,7 +86,7 @@ def main():
                 if res["documents"]:
                     from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
                     group = {"status":"PUBLIC_PAGES_INSPECTED","pages":[
-                        {"url":d["url"],"excerpt":d["text"]} for d in res["documents"]
+                        {"url":d["url"],"excerpt":d["text"]} for d in res["documents"] if not d.get("ocr")
                     ]}
                     emit(f"CARD_{card}_VERIFIED_FILE_QUOTES",len(source_only_investigation(group)["facts"]))
                 emit(f"CARD_{card}_EIS_MIRRORS",findings.get("eis_mirror_count",0))

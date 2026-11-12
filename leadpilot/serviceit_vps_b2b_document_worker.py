@@ -22,7 +22,7 @@ from .ai import config_from_env
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_b2b_routerai_deep import (
-    investigate_routerai, source_only_investigation,
+    investigate_routerai, source_only_investigation, public_documents,
 )
 from .serviceit_enrichment_worker import Rest, normalized, validate_identity
 from .serviceit_vps_b2b_deep_research import (
@@ -270,13 +270,15 @@ def _priority_excerpt(text):
 
 def _evidence(docs):
     """Independently downloaded bytes, with late condition coverage."""
+    originals = [doc for doc in docs if not doc.get("ocr")]
     return {"status": "PUBLIC_PAGES_INSPECTED",
             "pages": [{"url": d["url"],
                        "excerpt": _priority_excerpt(d["text"])}
-                      for d in docs[:3]]}
+                      for d in originals[:3]]}
 
 def _model_research(client, env, docs, *, use_model=True):
     """Read all retained text locally; at most two RouterAI requests per tender."""
+    docs = [doc for doc in docs if not doc.get("ocr")]
     reports = []
     for doc in docs[:6]:
         text = doc["text"][:24000]
@@ -329,8 +331,8 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
                 continue
             quote, url = fact.get("quote"), fact.get("url")
             if (not isinstance(quote, str) or not isinstance(url, str)
-                    or not any(doc["url"] == url and quote in doc["text"]
-                               for doc in docs)):
+                    or not any(not doc.get("ocr") and doc["url"] == url
+                               and quote in doc["text"] for doc in docs)):
                 continue
             category = fact["category"]
             if (quote, url) not in grouped[category] and len(grouped[category]) < 2:
@@ -338,6 +340,22 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
     covered = sum(bool(grouped[category]) for category in titles)
     evidence_count = sum(len(x) for x in grouped.values())
     inn_candidate = published_buyer_inn_evidence(_evidence(docs))
+    scanned = []
+    for index, doc in enumerate(docs, 1):
+        if not doc.get("ocr"):
+            continue
+        findings = {
+            "status": "PUBLIC_PAGES_INSPECTED",
+            "pages": [{"url": doc["url"], "excerpt": _priority_excerpt(doc["text"])}],
+        }
+        safe = public_documents(findings)
+        if not safe:
+            continue
+        provisional = source_only_investigation(findings)
+        hints = [(titles[fact["category"]], fact["quote"])
+                 for fact in provisional["facts"] if fact["category"] in titles][:3]
+        scanned.append((index, hints or [("Фрагмент", safe[0]["text"])]))
+
     def render(quote_limit, citations_per_group):
         lines = [
             "СЕРВИС ИТ | ДОКУМЕНТАЛЬНОЕ ДОСЬЕ B2B-CENTER",
@@ -391,6 +409,8 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
             lines.append("[" + str(i) + "] " + doc["kind"][1:].upper() +
                          " · " + str(doc["bytes"]) + " байт · SHA256 " +
                          doc["sha256"][:12])
+            if doc.get("ocr"):
+                lines.append("OCR: предварительное распознавание первых трёх страниц.")
             if doc.get("official_eis"):
                 lines.append("Источник файла: официальный публичный файл ЕИС.")
             elif doc.get("source_page"):
@@ -401,11 +421,16 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
             "",
             "05 | ГРАНИЦЫ ПРОВЕРКИ",
             "Проверены дословные фрагменты скачанных публичных файлов. "
-            "Сканированные PDF без текста и закрытые вложения не прочитаны. "
             "Перед участием перепроверить действующую редакцию, сроки и условия.",
             "Досье V11, Score, ФНС, ИНН, HOLD, задачи и контакты не изменялись. "
             "Никакой автоматической отправки предложений.",
         ]
+        if scanned:
+            lines.extend(["", "06 | РАСПОЗНАННЫЕ СКАНЫ",
+                          "Сверьте эти фрагменты с оригиналом. Они не участвуют в подтверждении реквизитов и условий."])
+            for index, hints in scanned:
+                for title, quote in hints[:citations_per_group]:
+                    lines.append(f"[{index}] {title} · {quote[:quote_limit]}")
         return "\n".join(lines)
     result = render(210, 2)
     if len(result) > MAX_REPORT:
@@ -466,7 +491,7 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
             confirmed = REVIEWED.get(notice["tender_id"],{}).get("registry_id")
             findings = supplement_eis_mirrors(findings, notice, client, verified_number=confirmed)
             evidence = inspect_public_documents(
-                client, findings, notice["tender_id"])
+                client, findings, notice["tender_id"], enable_ocr=True)
         except Exception:
             evidence = {"documents": [], "discovered": 0, "rejections": {}}
         docs = evidence["documents"]

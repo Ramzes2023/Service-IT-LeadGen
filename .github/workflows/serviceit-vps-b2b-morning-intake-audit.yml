@@ -1,0 +1,58 @@
+name: ServiceIT B2B morning intake read-only audit
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-morning-intake-audit.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  preview:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Trace existing tender IDs from inbox to Bitrix without writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/b2b-intake"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/id" "$stage/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$stage/hosts" >/dev/null
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          rc=0
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-b2b-vps-writer-1 python -B -' \
+            < ops/serviceit_vps_b2b_morning_intake_audit.py > "$stage/status" 2>/dev/null || rc=$?
+          grep -E '^INTAKE_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/status"
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          for name in writer receiver; do
+            actual="$(docker inspect --format '{{.State.Status}}' "serviceit-b2b-vps-$name-1")"
+            if [[ "$actual" == running ]]; then
+              printf 'INTAKE_%s_RUNNING=YES\n' "${name^^}"
+            else
+              printf 'INTAKE_%s_RUNNING=NO\n' "${name^^}"
+            fi
+          done
+          docker logs --since 12h serviceit-b2b-vps-writer-1 2>&1 |
+            awk '/"status": "B2B_VPS_CONTINUOUS_CYCLE"/ {ok++}
+                 /"status": "B2B_WORKER_BLOCKED_OR_UNCERTAIN"/ {blocked++}
+                 END {printf "INTAKE_CYCLES_OK=%d\nINTAKE_CYCLES_BLOCKED=%d\n",ok,blocked}'
+          REMOTE
+          [[ "$rc" == 0 ]]

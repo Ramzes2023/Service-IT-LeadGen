@@ -13,10 +13,10 @@ def recognize_pdf(data, *, data_dir=DATA_DIR):
     """Return tentative text, or an empty string if OCR cannot read the scan."""
     if not 0 < len(data) <= MAX_INPUT:
         return ""
-    if not all((data_dir / (lang + ".traineddata")).is_file()
-               for lang in ("rus", "eng")):
-        return ""
     try:
+        if not all((data_dir / (lang + ".traineddata")).is_file()
+                   for lang in ("rus", "eng")):
+            return ""
         result = subprocess.run(
             [sys.executable, "-IB", str(Path(__file__).resolve()), str(data_dir)],
             input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

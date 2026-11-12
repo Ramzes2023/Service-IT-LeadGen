@@ -406,8 +406,10 @@ def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
                 dockerfile += (
                     "USER 0:0\n"
                     "COPY *.whl /tmp/serviceit-ocr/\n"
-                    "COPY --chmod=0444 *.traineddata /opt/serviceit/tessdata/\n"
-                    "RUN python -m pip install --no-index --no-deps --no-cache-dir "
+                    "COPY *.traineddata /tmp/serviceit-ocr/\n"
+                    "RUN install -d -m 0755 /opt/serviceit/tessdata "
+                    "&& install -m 0444 /tmp/serviceit-ocr/*.traineddata /opt/serviceit/tessdata/ "
+                    "&& python -m pip install --no-index --no-deps --no-cache-dir "
                     "/tmp/serviceit-ocr/*.whl && rm -rf /tmp/serviceit-ocr\n"
                     "USER 10001:10001\n"
                 )

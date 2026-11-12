@@ -99,7 +99,7 @@ jobs:
           fi
           scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
             ops/serviceit_vps_b2b_v37_quality_release.py "$target:$stage/activate.py"
-      - name: Test modules offline and deploy coordinator with rollback
+      - name: Verify OCR as the coordinator user before deployment
         shell: bash
         run: |
           set -euo pipefail

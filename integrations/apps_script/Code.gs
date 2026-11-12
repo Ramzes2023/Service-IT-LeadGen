@@ -585,6 +585,49 @@ function processMessage_(messageId, remainingDispatchBudget) {
           uncertain: uncertain, deferred: deferred};
 }
 
+/**
+ * A parser revision must not strand real new notifications permanently at
+ * NO_MATCH. Re-evaluate at most four post-cutover NO_MATCH messages once per
+ * revision, and only requeue if at least one relevant tender has NO source
+ * reservation. Never clear a source receipt or a security REVIEW marker.
+ */
+function recoverPostCutoverNoMatchV4_(ids) {
+  const props = scriptProperties_();
+  const activation = Math.max(Number(privateConfig_().cutoverMs),
+    Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0));
+  const revision = "B2B_PARSER_V4";
+  let checked = 0, queued = 0;
+  for (const id of ids) {
+    if (checked >= 4) break;
+    const key = "SERVICEIT_EMAIL_" + id;
+    if (props.getProperty(key) !== "NO_MATCH") continue;
+    const probeKey = "SERVICEIT_" + revision + "_" + id;
+    if (props.getProperty(probeKey)) continue;
+    checked++;
+    try {
+      const message = Gmail.Users.Messages.get("me", id, {format: "full"});
+      if (!message || message.id !== id) continue;
+      const parsed = parseEmailMessage_(message, id);
+      if (parsed.internalDate <= activation) {
+        props.setProperty(probeKey, "BEFORE_CUTOVER");
+        continue;
+      }
+      const candidates = parsed.observations.filter(function (row) {
+        return !props.getProperty("SERVICEIT_SOURCE_" + row.notice.tender_id);
+      });
+      if (candidates.length) {
+        props.setProperty(key, "PENDING");
+        queued++;
+      }
+      props.setProperty(probeKey, candidates.length ? "QUEUED" : "NO_NEW_SOURCE");
+    } catch (_err) {
+      // Preserve NO_MATCH and retry after a future transient Gmail recovery.
+      // REVIEW_REQUIRED is intentionally not automatically released.
+    }
+  }
+  return {checked: checked, queued: queued};
+}
+
 function pollAndDispatchB2B() {
   privateConfig_();
   const props = scriptProperties_();
@@ -600,6 +643,7 @@ function pollAndDispatchB2B() {
   try {
     assertMailbox_();
     const ids = listVendorMessageIds_().reverse();
+    const recovered = recoverPostCutoverNoMatchV4_(ids);
     const pending = [];
     for (const id of ids) {
       const state = props.getProperty("SERVICEIT_EMAIL_" + id) || "";
@@ -633,6 +677,8 @@ function pollAndDispatchB2B() {
       review_required: review,
       uncertain_dispatches: uncertain,
       pending_tenders_deferred: deferred,
+      recovered_nomatch_messages: recovered.queued,
+      nomatch_messages_rechecked: recovered.checked,
       external_transmission: dispatched,
       crm_writes: 0
     };
@@ -641,6 +687,51 @@ function pollAndDispatchB2B() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Owner-run read-only status of the LIVE Apps Script trigger and email states.
+ * Never prints subject, MIME, message ID, secret, or customer data.
+ */
+function serviceITB2BDeliveryStatusReadOnly() {
+  privateConfig_();
+  assertMailbox_();
+  const props = scriptProperties_();
+  const ids = listVendorMessageIds_();
+  const states = {};
+  ["DONE","NO_MATCH","BASELINE","REVIEW_REQUIRED","PARTIAL_REVIEW",
+   "PENDING"].forEach(function (name) { states[name] = 0; });
+  ids.forEach(function (id) {
+    const state = props.getProperty("SERVICEIT_EMAIL_" + id) || "UNPROCESSED";
+    states[state] = (states[state] || 0) + 1;
+  });
+  const triggerCount = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === "pollAndDispatchB2B";
+  }).length;
+  const last = props.getProperty("SERVICEIT_LAST_RESULT") || "";
+  let lastResult = {};
+  try {
+    const parsed = JSON.parse(last);
+    ["status","messages","dispatched","review_required","uncertain_dispatches",
+     "pending_tenders_deferred","recovered_nomatch_messages"].forEach(function (key) {
+      if (typeof parsed[key] === "number" || typeof parsed[key] === "string") {
+        lastResult[key] = parsed[key];
+      }
+    });
+  } catch (_e) {}
+  const result = {
+    status: "SERVICEIT_B2B_LIVE_DELIVERY_READONLY",
+    automation_enabled: props.getProperty("SERVICEIT_AUTOMATION_ENABLED") === "YES",
+    vps_direct_enabled: props.getProperty("SERVICEIT_VPS_B2B_DIRECT_ENABLED") === "YES",
+    trigger_count: triggerCount,
+    messages_sampled: ids.length,
+    states: states,
+    last_result: lastResult,
+    crm_writes: 0,
+    vps_posts: 0
+  };
+  console.log(JSON.stringify(result));
+  return result;
 }
 
 function checkB2BCenter() {

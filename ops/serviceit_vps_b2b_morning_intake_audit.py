@@ -119,7 +119,7 @@ def research():
     from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
     from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
     from leadpilot.serviceit_kanban_presentation import SCORE_FIELD
-    target_card = None
+    target_cards = []
     with db(env) as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
         rows = conn.execute("""
@@ -128,8 +128,8 @@ def research():
             ORDER BY received_at DESC LIMIT 12
         """).fetchall()
         for source, card in rows:
-            if source == "B2B-CENTER-4677923":
-                target_card = card
+            if source in ("B2B-CENTER-4677923", "B2B-CENTER-4679263"):
+                target_cards.append(card)
                 state = conn.execute("""
                     SELECT status FROM serviceit_vps_native_receipts
                     WHERE card_id=%s AND namespace='B2B_RESEARCH_V4'
@@ -144,19 +144,21 @@ def research():
                                    "ORDER BY updated_at DESC LIMIT 1", (card,)).fetchone()
                 emit(f"CARD_{card}_{label}", row[0] if row else "NONE")
 
-    if target_card:
+    if target_cards:
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=12) as client:
             rest = Rest(secret_file(env, "SERVICEIT_BITRIX_WEBHOOK"), client)
-            card = normalized(rest("crm.item.get", {
-                "entityTypeId": 1062, "id": target_card, "useOriginalUfNames": "Y",
-            })["item"])
-            validate_identity(card, target_card)
-            emit(f"CARD_{target_card}_CRM_REPORT",
-                 "YES" if card.get(PREFIX+"AI_FULL_REPORT") else "NO")
-            emit(f"CARD_{target_card}_CRM_RESEARCH_STATUS", card.get(PREFIX+"AI_STATUS") or "NONE")
-            emit(f"CARD_{target_card}_CRM_SCORE", card.get(SCORE_FIELD) or "NONE")
-            emit(f"CARD_{target_card}_MANAGER_DECISION",
-                 "PRESENT" if card.get(PREFIX+"REVIEW_DECISION") else "EMPTY")
+            for target_card in target_cards:
+                card = normalized(rest("crm.item.get", {
+                    "entityTypeId": 1062, "id": target_card, "useOriginalUfNames": "Y",
+                })["item"])
+                validate_identity(card, target_card)
+                emit(f"CARD_{target_card}_CRM_REPORT",
+                     "YES" if card.get(PREFIX+"AI_FULL_REPORT") else "NO")
+                emit(f"CARD_{target_card}_CRM_RESEARCH_STATUS", card.get(PREFIX+"AI_STATUS") or "NONE")
+                score = card.get(SCORE_FIELD)
+                emit(f"CARD_{target_card}_CRM_SCORE", score if score is not None else "NONE")
+                emit(f"CARD_{target_card}_MANAGER_DECISION",
+                     "PRESENT" if card.get(PREFIX+"REVIEW_DECISION") else "EMPTY")
 
 
 if __name__ == "__main__":

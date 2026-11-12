@@ -1,6 +1,6 @@
 name: ServiceIT B2B manager card and company history inventory
 # Read real category 21 cards and signed intake receipts.
-# Post geo-canary + DONE-digest classifier reconciliation; no CRM POST.
+# Report manager fields, effective worker gates and related opportunities.
 on:
   push:
     branches: [main]

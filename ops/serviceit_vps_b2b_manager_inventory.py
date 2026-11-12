@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 
 from leadpilot.bitrix_1062_mapping import _is_valid_inn
+from leadpilot.serviceit_bitrix_list_shape import ItemListShapeError, strict_bitrix_items
 from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
 from leadpilot.serviceit_b2b_dossier_consistency_v37 import (
     BRIEF, DECISION, INN, MANAGER_HEADER, MANAGER_PLACEHOLDER, RELATED_PUBLIC,
@@ -53,20 +54,25 @@ def main():
         cursor = 0
         try:
             while True:
-                records = rest("crm.item.list", {
+                query = {
                     "entityTypeId": 1062, "useOriginalUfNames": "Y",
                     "filter": {"categoryId": 21, ">id": cursor}, "order": {"id": "ASC"},
                     "select": ["id", "categoryId"], "start": 0,
-                })["items"]
+                }
+                try:
+                    records = strict_bitrix_items(rest("crm.item.list", query))
+                except ItemListShapeError as error:
+                    if error.kind != "EMPTY":
+                        raise
+                    query["filter"] = {">id": cursor}
+                    records = strict_bitrix_items(rest("crm.item.list", query))
                 if not records:
                     break
-                page = [int(row["id"]) for row in records
-                        if isinstance(row, dict) and row.get("id") is not None
-                        and str(row.get("categoryId")) == "21"]
-                if not page or min(page) <= cursor:
+                page = [(int(row["id"]), str(row["categoryId"])) for row in records]
+                if min(card for card, _ in page) <= cursor:
                     raise ValueError("INVALID_CRM_PAGINATION")
-                ids.update(page)
-                cursor = max(page)
+                ids.update(card for card, category in page if category == "21")
+                cursor = max(card for card, _ in page)
             emit("CRM_INVENTORY", "COMPLETE")
         except (ValueError, TypeError, KeyError, httpx.HTTPError) as error:
             emit("CRM_INVENTORY", "SIGNED_PLUS_PARTIAL")
@@ -114,6 +120,9 @@ def main():
             score = str(item.get(SCORE_FIELD) if item.get(SCORE_FIELD) is not None else "")
             if score.isdecimal():
                 emit(f"CARD_{card}_SCORE_VALUE", score)
+            version = str(item.get(VERSION_FIELD) or "")
+            if version.startswith("svc-") and len(version) <= 120:
+                emit(f"CARD_{card}_SCORE_VERSION", version.upper().replace("-", "_").replace("+", "_"))
             checks = {
                 "INN": _is_valid_inn(inn),
                 "REGION": bool(item.get(PREFIX+"REGION")),

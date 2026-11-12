@@ -22,6 +22,7 @@ from .serviceit_b2b_dossier_consistency_v37 import (
     RELATED_PUBLIC, DECISION, MANAGER_PLACEHOLDER, MANAGER_HEADER, BRIEF, INN, manager_score_badge,
 )
 from .bitrix_1062_mapping import _is_valid_inn
+from .serviceit_bitrix_list_shape import strict_bitrix_items
 from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD
 from .serviceit_corporate_stop_inn import precheck as corporate_stop_precheck
 from .serviceit_own_signal_stop import check as own_stop_check, read_rules
@@ -232,6 +233,14 @@ def eligible(conn, target_ids=None, *, refresh=False):
              AND (last.status IS NULL
                {refresh_clause}
                {document_refresh}
+               OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS')
+                   AND EXISTS (
+                       SELECT 1 FROM {TABLE} known
+                       JOIN {TABLE} peer
+                         ON peer.after_fields->>'{INN}'=known.after_fields->>'{INN}'
+                       WHERE known.card_id=b.card_id AND known.status='VERIFIED'
+                         AND peer.card_id<>b.card_id AND peer.status='VERIFIED'
+                         AND peer.updated_at>last.updated_at))
                OR (last.status='VERIFIED'
                    AND last.updated_at < now() - interval '72 hours')
                OR (last.status IN (
@@ -459,46 +468,52 @@ def _related_signals(rest, conn, card, notice, inn):
     tid = notice["tender_id"]
     signals = {other: f"№{other} · {name} · {url}"
                for other,name,url in RELATED_PUBLIC.get(inn, ()) if other != tid}
-    # Bitrix exact-INN visibility is a candidate list; verify signed sources
-    # and re-read each returned card before adding it to the company history.
+    # Exact CRM matches nominate candidates. Signed intake and a fresh item
+    # read still have to establish the same buyer and immutable source.
+    peers = set()
     try:
-        response = rest.client.post(rest.base + "/crm.item.list.json", json={
-            "entityTypeId":1062, "useOriginalUfNames":"Y",
-            "filter":{"categoryId":21, INN:inn}, "select":["id","categoryId",INN],
-            "start":0,
-        }, follow_redirects=False, timeout=12)
-        body = response.json() if response.status_code == 200 else {}
-        items = body.get("result",{}).get("items",[])
-        peers = [row["id"] for row in items[:12]
-                 if type(row.get("id")) is int and row["id"] != card
-                 and row.get(INN) == inn and str(row.get("categoryId")) == "21"]
-    except (ValueError, TypeError, KeyError, AttributeError, httpx.HTTPError):
-        return list(signals.values())
-    if not peers:
-        return list(signals.values())
-    rows = conn.execute("""
+        result = rest("crm.item.list", {
+            "entityTypeId": 1062, "useOriginalUfNames": "Y",
+            "filter": {"categoryId": 21, INN: inn},
+            "select": ["id", "categoryId", INN], "start": 0,
+        })
+        for row in strict_bitrix_items(result):
+            raw_id = str(row.get("id"))
+            if (raw_id.isascii() and raw_id.isdecimal() and 8 <= int(raw_id) <= 2_000_000_000
+                    and int(raw_id) != card and row.get(INN) == inn
+                    and str(row.get("categoryId")) == "21"):
+                peers.add(int(raw_id))
+    except (ValueError, TypeError, KeyError, httpx.HTTPError):
+        pass
+    rows = conn.execute(f"""
         SELECT b.card_id,b.source_id,b.notice_json
         FROM serviceit_vps_b2b_inbox b
-        WHERE b.state='VERIFIED' AND b.card_id=ANY(%s)
-        ORDER BY b.received_at DESC LIMIT 12
-    """, (peers,)).fetchall()
+        WHERE b.state='VERIFIED' AND b.card_id<>%s
+          AND (b.card_id=ANY(%s::BIGINT[]) OR b.source_id=ANY(%s::TEXT[])
+               OR EXISTS (
+                   SELECT 1 FROM {TABLE} receipt
+                   WHERE receipt.card_id=b.card_id AND receipt.status='VERIFIED'
+                     AND receipt.after_fields->>(%s::text)=%s))
+        ORDER BY b.received_at DESC LIMIT 50
+    """, (card, sorted(peers), ["B2B-CENTER-" + tender for tender in signals],
+           INN, inn)).fetchall()
     for peer, source, original in rows:
-        if len(signals) >= 5:
-            break
         if not isinstance(original,dict):
             continue
         other = original.get("tender_id")
-        if not other or other in signals:
+        if not isinstance(other, str) or other == tid:
             continue
         try:
             item = _get(rest, peer)
             if item.get(INN) != inn:
                 continue
             url, title = safe_notice(original, peer, source, item)
-            signals[other] = f"Карточка №{peer} · закупка №{other} · {title[:180]} · {url}"
+            signal = signals.get(other, f"№{other} · {title[:180]} · {url}")
+            if not signal.startswith("Карточка №"):
+                signals[other] = f"Карточка №{peer} · {signal}"
         except (ValueError, TypeError, KeyError, httpx.HTTPError):
             continue
-    return list(signals.values())
+    return list(signals.values())[:5]
 
 
 def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):

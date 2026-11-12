@@ -1,4 +1,4 @@
-"""Apply the manager format to the nine source-attested cards inventoried live."""
+"""Refresh the manager format on signed, already researched B2B cards."""
 import os
 import sys
 
@@ -12,7 +12,6 @@ from leadpilot.serviceit_enrichment_worker import Rest
 from leadpilot.serviceit_vps_pg_queue import db, secret_file
 from leadpilot.serviceit_vps_worker import exact_environment
 
-TARGETS = (27, 25, 23, 21, 19, 17, 15, 13, 11)
 
 
 def emit(key, value):
@@ -23,8 +22,16 @@ def main():
     env = exact_environment(dict(os.environ))
     with db(env) as conn, httpx.Client(trust_env=False,follow_redirects=False,timeout=16) as client:
         rest = Rest(secret_file(env,"SERVICEIT_BITRIX_WEBHOOK"),client)
-        all_ready = True
-        for card in TARGETS:
+        rows = conn.execute("""
+            SELECT b.card_id
+            FROM serviceit_vps_b2b_inbox b
+            JOIN serviceit_vps_b2b_dossier_v11_receipts d ON d.card_id=b.card_id
+            WHERE b.state='VERIFIED' AND d.status='VERIFIED'
+            ORDER BY b.card_id
+        """).fetchall()
+        emit("SIGNED_RESEARCHED_COUNT", len(rows))
+        all_ready = bool(rows)
+        for (card,) in rows:
             try:
                 if "--read-only" not in sys.argv:
                     result = run_once(env,client,conn,target_ids={card},refresh=True)

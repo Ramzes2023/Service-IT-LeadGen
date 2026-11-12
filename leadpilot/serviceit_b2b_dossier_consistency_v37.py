@@ -25,7 +25,12 @@ REGION = PREFIX + "REGION"
 DECISION = PREFIX + "REVIEW_DECISION"
 RECOMMENDATION = PREFIX + "AI_RECOMMENDATION"
 MANAGER_PLACEHOLDER = "Проверить закупку и покупателя; не контактировать"
-MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v1"
+MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v2"
+LEGACY_MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v1"
+RELATED_SCORE_VERSIONS = frozenset({
+    "svc-prelim-v1-FNS-UNVERIFIED", "svc-leadgen-free-msp-v1",
+})
+RELATED_SCORE_BONUS = 8
 MAX_REPORT = 12000
 MAX_TEXT = 4096
 # Reviewed 2026-11-11: published tender detail + a separate legal source,
@@ -560,17 +565,26 @@ def manager_fields(notice, item, record, checks, related):
         score = None
     score_valid = type(score) is int and 0 <= score <= 100
     patch = {}
-    if not score_valid and all(k in item and item[k] in (None, "") for k in
-                               (SCORE_FIELD, VERSION_FIELD, BADGE_FIELD)):
+    score_version = item.get(VERSION_FIELD)
+    empty_score = not score_valid and all(k in item and item[k] in (None, "") for k in
+                                          (SCORE_FIELD, VERSION_FIELD, BADGE_FIELD))
+    if empty_score or score_valid and score_version in (
+        MANAGER_SCORE_VERSION, LEGACY_MANAGER_SCORE_VERSION,
+    ):
         score = (20 + 8 * bool(buyer and inn) + 5 * bool(deadline)
                  + 4 * bool(budget and budget[:1].isdigit()) + 3 * bool(region)
-                 + 8 * bool(related))
+                 + RELATED_SCORE_BONUS * bool(related))
         if region in ("Москва", "Московская область"):
             score += 25
         elif region:
             score = min(score, 49)
-        patch.update({SCORE_FIELD:score, VERSION_FIELD:MANAGER_SCORE_VERSION})
+        patch.update({SCORE_FIELD: score, VERSION_FIELD: MANAGER_SCORE_VERSION,
+                      BADGE_FIELD: manager_score_badge(score)})
         score_valid = True
+    elif score_valid and related and score_version in RELATED_SCORE_VERSIONS:
+        score = min(100, score + RELATED_SCORE_BONUS)
+        patch.update({SCORE_FIELD: score, VERSION_FIELD: score_version + "+related-v1",
+                      BADGE_FIELD: manager_score_badge(score)})
     if score_valid and not item.get(BADGE_FIELD):
         patch[BADGE_FIELD] = manager_score_badge(score)
     version = patch.get(VERSION_FIELD, item.get(VERSION_FIELD)) or "не указана"

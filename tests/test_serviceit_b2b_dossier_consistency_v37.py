@@ -259,3 +259,21 @@ def test_card13_arbitrary_different_company_stays_blocked():
     })
     with pytest.raises(ReconcileBlocked,match="EXISTING_COMPANY_CONFLICT"):
         prepare(_notice("4672802"),item,[])
+
+
+def test_related_evidence_updates_an_existing_managed_score_once():
+    from leadpilot.serviceit_b2b_dossier_consistency_v37 import (
+        DECISION, RECOMMENDATION, SCORE_FIELD, VERSION_FIELD, manager_fields,
+    )
+
+    record = REVIEWED["4677160"]
+    notice = {"subject": "Приобретение ПО и лицензий 1С"}
+    item = {REPORT: TAIL, SCORE_FIELD: 20, VERSION_FIELD: "svc-prelim-v1-FNS-UNVERIFIED",
+            DECISION: "Решение Ольги"}
+    related = ["№4672286 · Сопровождение ПО 1С 8.2"]
+    patch = manager_fields(notice, item, record, {}, related)
+    assert patch[SCORE_FIELD] == 28
+    assert patch[RECOMMENDATION]
+    assert DECISION not in patch
+    again = manager_fields(notice, {**item, **patch}, record, {}, related)
+    assert SCORE_FIELD not in again

@@ -142,3 +142,19 @@ def test_v11_registry_identity_requires_same_exact_notice():
     )
     assert worker._v11_identity(dossier)["inn"] == "0277071467"
     assert worker._v11_identity(dossier.replace("eis223/32616566539", "eis223/32616566538")) is None
+
+
+def test_related_crm_card_is_shown_even_when_public_tender_is_already_known(monkeypatch):
+    inn = "7734202860"
+    conn = MagicMock()
+    rest = MagicMock(return_value={"items": [[{
+        "id": "25", "categoryId": 21, worker.INN: inn,
+    }]]})
+    peer = {"tender_id": "4678279"}
+    conn.execute.return_value.fetchall.return_value = [(25, "B2B-CENTER-4678279", peer)]
+    monkeypatch.setattr(worker, "_get", lambda *args: {worker.INN: inn})
+    monkeypatch.setattr(worker, "safe_notice", lambda *args: (
+        "https://www.b2b-center.ru/market/servers/tender-4678279/", "Поставка"))
+    signals = worker._related_signals(rest, conn, 17, NOTICE, inn)
+    assert len(signals) == 1
+    assert signals[0].startswith("Карточка №25 · №4678279 ·")

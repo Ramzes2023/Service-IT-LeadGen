@@ -26,8 +26,8 @@ jobs:
           set -euo pipefail
           # Read-only unauthenticated GET. No API key or research payload and no credit use.
           # Record only status and JSON-vs-HTML classification, not server content.
-          code="$(curl --silent --show-error --location-trusted --max-time 20 \\
-            --output "$RUNNER_TEMP/tavily-public-probe.body" \\
+          code="$(curl --silent --show-error --max-redirs 0 --max-time 20 \
+            --output "$RUNNER_TEMP/tavily-public-probe.body" \
             --write-out '%{http_code}' 'https://api.tavily.com/usage')" || code='NETWORK_ERROR'
           if [[ "$code" =~ ^[0-9]{3}$ ]]; then
             echo "TAVILY_RUNNER_UNAUTH_HTTP=$code"

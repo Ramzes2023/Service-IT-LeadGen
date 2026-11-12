@@ -71,6 +71,12 @@ jobs:
                                      headers={"Authorization": "Bearer " + key})
                   print("TAVILY_RESERVE_USAGE_HTTP=" + str(r.status_code))
                   if r.status_code in (401, 403):
+                      if r.status_code == 403:
+                          with httpx.Client(timeout=15, trust_env=False, follow_redirects=False) as client:
+                              public = client.get("https://api.tavily.com/usage")
+                          identical = (public.status_code == 403 and public.content == r.content)
+                          print("TAVILY_RESERVE_UNAUTH_HTTP=" + str(public.status_code))
+                          print("TAVILY_RESERVE_SAME_DENIAL=" + ("YES" if identical else "NO"))
                       body = r.text[:12000].casefold()
                       if any(x in body for x in ("invalid api key", "missing api key", "invalid token")):
                           reason = "KEY_REJECTED"

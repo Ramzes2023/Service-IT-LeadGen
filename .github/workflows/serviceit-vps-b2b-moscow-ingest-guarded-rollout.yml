@@ -2,7 +2,9 @@ name: ServiceIT B2B Moscow + Gmail VPS guarded rollout
 on:
   push:
     branches: [main]
-    paths: [.github/workflows/serviceit-vps-b2b-moscow-ingest-guarded-rollout.yml]
+    paths:
+      - .github/workflows/serviceit-vps-b2b-moscow-ingest-guarded-rollout.yml
+      - ops/serviceit_vps_b2b_writer_geo_upgrade.py
 permissions:
   contents: read
 concurrency:

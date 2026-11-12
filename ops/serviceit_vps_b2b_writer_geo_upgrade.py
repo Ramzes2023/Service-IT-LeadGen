@@ -238,19 +238,27 @@ def main(argv):
     env=env_of(old)
     image_id=old["Image"]
     need(re.fullmatch(r"sha256:[a-f0-9]{64}",image_id),"OLD_IMAGE_ID_INVALID")
-    need(old_receiver["Image"]==image_id,"WRITER_RECEIVER_IMAGE_DIVERGED")
-    need(output(["docker","image","inspect","-f","{{.Id}}",image_id])==image_id,
-         "OLD_IMAGE_NOT_PRESENT")
+    receiver_image_id=old_receiver["Image"]
+    need(re.fullmatch(r"sha256:[a-f0-9]{64}",receiver_image_id),
+         "OLD_RECEIVER_IMAGE_ID_INVALID")
+    need(output(["docker","image","inspect","-f","{{.Id}}",image_id])==image_id
+         and output(["docker","image","inspect","-f","{{.Id}}",receiver_image_id])==receiver_image_id,
+         "OLD_IMAGES_NOT_PRESENT")
     new_image="serviceit-b2b-writer:moscow-"+run_id
-    lines=["FROM "+image_id]
-    for name in NAMES:
-        lines.append("COPY --chmod=0644 "+name+" /app/leadpilot/"+name)
-    (stage/"Dockerfile.overlay").write_text("\n".join(lines)+"\n")
+    recv_image="serviceit-b2b-receiver:moscow-"+run_id
+    for old_id,tag,filename in (
+        (image_id,new_image,"Dockerfile.writer.overlay"),
+        (receiver_image_id,recv_image,"Dockerfile.receiver.overlay"),
+    ):
+        lines=["FROM "+old_id]
+        for name in NAMES:
+            lines.append("COPY --chmod=0644 "+name+" /app/leadpilot/"+name)
+        (stage/filename).write_text("\n".join(lines)+"\n")
+        run(["docker","build","--network","none","--pull=false",
+             "--tag",tag,"-f",filename,"."],cwd=stage,timeout=300)
+        smoke(tag)
     print("B2B_GEO_OLD_IMAGE_VALIDATED=YES",flush=True)
-    run(["docker","build","--network","none","--pull=false",
-         "--tag",new_image,"-f","Dockerfile.overlay","."],cwd=stage,timeout=300)
-    smoke(new_image)
-    print("B2B_GEO_NEW_IMAGE_SMOKE=YES",flush=True)
+    print("B2B_GEO_NEW_IMAGES_SMOKE=YES",flush=True)
     allow=canary(new_image,env,WRITER)
     print("B2B_GEO_MOSCOW_PROOF="+("YES" if allow else "NO"),flush=True)
 
@@ -327,14 +335,15 @@ def main(argv):
         ]
         for key in sorted(receiver_vars):
             receiver_args+=["--env",key+"="+receiver_vars[key]]
-        receiver_args+=["--entrypoint","python",new_image,
+        receiver_args+=["--entrypoint","python",recv_image,
             "-m","uvicorn","leadpilot.serviceit_vps_b2b_ingress:app",
             "--host","127.0.0.1","--port","18781","--workers","1",
             "--no-access-log"]
         run(receiver_args,timeout=50)
         time.sleep(5)
         actual=running(RECEIVER)
-        need(actual["Image"]==expected_image,"B2B_RECEIVER_NEW_IMAGE_DRIFT")
+        receiver_image=output(["docker","image","inspect","-f","{{.Id}}",recv_image])
+        need(actual["Image"]==receiver_image,"B2B_RECEIVER_NEW_IMAGE_DRIFT")
         receiver_check=run(["docker","exec",RECEIVER,"python","-B","-c",
            "import httpx;"
            "r=httpx.get('http://127.0.0.1:18781/health',timeout=4);"

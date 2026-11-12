@@ -1,0 +1,64 @@
+name: ServiceIT V47 current VPS source SHA READONLY
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-v47-livehash-readonly
+  cancel-in-progress: false
+jobs:
+  sha-audit:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Ramzes2023' &&
+      github.event.issue.number == 489 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Ramzes2023' &&
+      github.event.comment.body == 'SERVICEIT_B2B_V47_LIVE_HASH_READONLY_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate source and SSH host
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git hash-object ops/serviceit_vps_v47_live_hash_readonly.py)" == 4ea114e994f42646824b16d819de0c62ed23560f ]]
+          python -m py_compile ops/serviceit_vps_v47_live_hash_readonly.py
+          install -d -m 0700 "$RUNNER_TEMP/v47live"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v47live/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v47live/hosts"
+          chmod 0600 "$RUNNER_TEMP/v47live/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v47live/hosts" >/dev/null
+      - name: Read exact six production source digests and allowlisted gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/v47live/hosts"
+            -o BatchMode=yes -o ConnectTimeout=15)
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v47live/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" \
+            < ops/serviceit_vps_v47_live_hash_readonly.py \
+            > "$RUNNER_TEMP/v47live/result" 2>/dev/null
+          rc=$?
+          set -e
+          grep -E '^V47_LIVE_(MODULE_[0-5]_SHA=([a-f0-9]{64}|MISSING)|FLAG_[A-Z0-9_]+=(YES|NO|OTHER)|SHA_CRM_WRITES=0)$' \
+             "$RUNNER_TEMP/v47live/result" | head -20 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V47_LIVE_SHA_CRM_WRITES=0' "$RUNNER_TEMP/v47live/result"

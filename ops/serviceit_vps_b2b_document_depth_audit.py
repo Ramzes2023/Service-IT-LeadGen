@@ -1,6 +1,7 @@
 """Read-only document availability on signed B2B cards and a public EIS example."""
 import hashlib
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,6 +35,8 @@ def main():
             WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
             ORDER BY b.card_id DESC LIMIT 15
         """).fetchall()
+        if "--quick" in sys.argv:
+            rows = [row for row in rows if row[0] == 27]
         emit("CARD_COUNT", len(rows))
         for card,notice,state in rows:
             emit(f"CARD_{card}_STATE",state)
@@ -53,6 +56,7 @@ def main():
                     parsed = urlsplit(document["url"])
                     emit(f"CARD_{card}_FILE_{index}_FORMAT",document["kind"].lstrip(".").upper())
                     emit(f"CARD_{card}_FILE_{index}_BYTES",document["bytes"])
+                    emit(f"CARD_{card}_FILE_{index}_OFFICIAL_EIS","YES" if document.get("official_eis") else "NO")
                     emit(f"CARD_{card}_FILE_{index}_ORIGIN",
                          (parsed.hostname or "").replace(".","_").replace("-","_").upper())
                     emit(f"CARD_{card}_FILE_{index}_HASH",document["sha256"].upper())
@@ -89,6 +93,7 @@ def main():
                     ]},number,max_downloads=2)
                     emit("CONTROL_SAFE_LINKS",control.get("eis_links",0))
                     emit("CONTROL_READABLE",len(control["documents"]))
+                    emit("CONTROL_OFFICIAL_READABLE",sum(bool(d.get("official_eis")) for d in control["documents"]))
                     for reason,count in control["rejections"].items():
                         if reason.startswith(("DOCUMENT_", "RESEARCH_")) and reason.replace("_","").isalnum():
                             emit("CONTROL_"+reason,count)

@@ -1,4 +1,4 @@
-"""Offline V46 Research MINI: async receipt, credits and source provenance."""
+"""Offline V47 Research MINI: async receipt, credits and source provenance."""
 import hashlib
 import json
 from types import SimpleNamespace
@@ -15,7 +15,7 @@ KEY="tvly-"+("x"*43)
 SINCE=(pro.SEARCH_POLICY_START + timedelta(seconds=1)).isoformat().replace("+00:00","Z")
 
 
-def test_fixed_pro_model_and_tender_only_prompt():
+def test_fixed_mini_model_and_tender_only_prompt():
     assert pro.MODEL=="mini"
     assert pro.MAX_MINI_CREDITS==110
     prompt=pro._prompt("4677404")
@@ -33,12 +33,12 @@ def test_off_by_default_even_with_other_tavily_search_enabled():
         "SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ACTIVE_SINCE":SINCE,
         "SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED":"YES",
         "SERVICEIT_VPS_WRITER_MODE":"LIVE",
-        "SERVICEIT_WORKER_MODEL_PRIVACY_APMINIVED":"YES",
-        "SERVICEIT_ROUTERAI_PRIVACY_APMINIVED":"YES_1062_21",
+        "SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED":"YES",
+        "SERVICEIT_ROUTERAI_PRIVACY_APPROVED":"YES_1062_21",
     })
 
 
-def test_submit_uses_research_endpoint_exact_pro_no_stream():
+def test_submit_uses_research_endpoint_exact_mini_no_stream():
     called=[]
     def handle(req):
         called.append(req)
@@ -48,7 +48,7 @@ def test_submit_uses_research_endpoint_exact_pro_no_stream():
         assert payload["model"]=="mini"
         assert payload["stream"] is False
         assert payload["citation_format"]=="numbered"
-        assert payload["output_length"]=="long"
+        assert payload["output_length"]=="standard"
         assert "4677404" in payload["input"]
         return httpx.Response(201,headers={"content-type":"application/json"},
                               json={"request_id":"123e4567-e89b-12d3-a456-426614174111"})

@@ -379,7 +379,7 @@ function classifyServices_(title) {
       "(?:приобретени" + suffix + "|закупк" + suffix +
       "|продлени" + suffix + "|поставк" + suffix + ")\\s+" +
       "(?:программн" + suffix + "\\s+)?лицензи" + suffix +
-      "\\s*(?:microsoft\\s*)?(?:teams|office\\s*365|m365|windows|exchange|sharepoint)" +
+      "\\s*(?:microsoft\\s*)?(?:teams|office\\s*365|m365|microsoft\\s*365|windows|exchange|sharepoint)" +
       "|лицензи" + suffix + "\\s+(?:на\\s+)?(?:программн" + suffix +
       "\\s+обеспечен" + suffix + "|по)" +
       "|(?:продлени" + suffix + "|поставк" + suffix +

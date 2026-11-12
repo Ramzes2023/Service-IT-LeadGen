@@ -60,4 +60,5 @@ jobs:
             "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --eis-probe" \
             < "$bundle" > "$stage/status" 2>/dev/null || rc=$?
           grep -E '^CARD27_WEB_[A-Z0-9_]{3,65}=[A-Z0-9_]{1,80}$' "$stage/status" || true
+          grep -E '^CARD27_WEB_LABELS=[а-я0-9_]+$' "$stage/status" || true
           [[ "$rc" == 0 ]]

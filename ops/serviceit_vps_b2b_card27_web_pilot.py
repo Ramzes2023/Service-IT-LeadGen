@@ -148,6 +148,17 @@ def main():
             print(f"CARD27_WEB_EIS_MIRRORS={count}", flush=True)
             evidence = published_buyer_inn_evidence(findings)
             print("CARD27_WEB_EIS_BUYER_INN=" + ("YES" if (evidence or {}).get("inn") == INN else "NO"), flush=True)
+            for row in findings["pages"][1:]:
+                text = row["excerpt"]
+                position = text.find(INN)
+                if position >= 0:
+                    # Print only the label tokens and verified buyer name markers.
+                    span = text[max(0, position-270):position+100].casefold()
+                    tokens = re.findall(r"заказчик|покупатель|инн|кпп|огрн|"
+                                        r"организатор|башкирэнерго|"
+                                        r"башкирские|распределительные|электрические|сети|"
+                                        r"ответственностью|ооо|" + INN, span)
+                    print("CARD27_WEB_LABELS=" + "_".join(tokens), flush=True)
             report = source_only_investigation(findings)
             fields, _ = compose(notice, card, findings, report)
             print("CARD27_WEB_EIS_DOSSIER=" + ("YES" if all(

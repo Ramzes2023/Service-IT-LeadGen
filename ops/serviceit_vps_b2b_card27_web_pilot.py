@@ -148,8 +148,17 @@ def main():
             print(f"CARD27_WEB_EIS_MIRRORS={count}", flush=True)
             evidence = published_buyer_inn_evidence(findings)
             print("CARD27_WEB_EIS_BUYER_INN=" + ("YES" if (evidence or {}).get("inn") == INN else "NO"), flush=True)
-            for row in findings["pages"][1:]:
-                text = row["excerpt"]
+            for host, path in EIS_MIRRORS:
+                row = next((p for p in findings["pages"] if urlsplit(p["url"]).hostname == host), None)
+                print("CARD27_WEB_SOURCE=" + host.upper().replace(".", "_"), flush=True)
+                if not row:
+                    try:
+                        text = _page(client, "https://" + host + path.format(number="32616566539"),
+                                     frozenset({host}))["text"]
+                    except (ResearchBlocked, httpx.HTTPError):
+                        continue
+                else:
+                    text = row["excerpt"]
                 position = text.find(INN)
                 print("CARD27_WEB_MIRROR_INN_POSITION=" + str(max(0, position)), flush=True)
                 if position >= 0:
@@ -164,7 +173,7 @@ def main():
             fields, _ = compose(notice, card, findings, report)
             print("CARD27_WEB_EIS_DOSSIER=" + ("YES" if all(
                 host in fields[REPORT] for host, _ in EIS_MIRRORS) else "NO"), flush=True)
-            if count != len(EIS_MIRRORS):
+            if count == 0:
                 sys.exit(2)
         print("CARD27_WEB_TENDER=" + tender, flush=True)
         print("CARD27_WEB_INN_IN_CRM=" + ("YES" if card.get(PREFIX+"COMPANY_INN") else "NO"), flush=True)

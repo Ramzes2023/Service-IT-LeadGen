@@ -7,9 +7,11 @@ Future tenders use only explicitly receipt-verified source quotation rows.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import re
 from urllib.parse import urlsplit
 
+from .b2b_email_opportunity_bridge import classify_services
 from .bitrix_1062_mapping import _is_valid_inn
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, score_label
@@ -25,12 +27,15 @@ REGION = PREFIX + "REGION"
 DECISION = PREFIX + "REVIEW_DECISION"
 RECOMMENDATION = PREFIX + "AI_RECOMMENDATION"
 MANAGER_PLACEHOLDER = "Проверить закупку и покупателя; не контактировать"
-MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v2"
-LEGACY_MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v1"
-RELATED_SCORE_VERSIONS = frozenset({
-    "svc-prelim-v1-FNS-UNVERIFIED", "svc-leadgen-free-msp-v1",
+MANAGER_SCORE_VERSION = "svc-b2b-evidence-priority-v3"
+MANAGED_SCORE_VERSIONS = frozenset({
+    MANAGER_SCORE_VERSION,
+    "svc-b2b-evidence-priority-v1", "svc-b2b-evidence-priority-v2",
+    "svc-prelim-v1-FNS-UNVERIFIED", "svc-prelim-v1-FNS-UNVERIFIED+related-v1",
+    "svc-leadgen-free-msp-v1", "svc-leadgen-free-msp-v1+related-v1",
 })
-RELATED_SCORE_BONUS = 8
+TARGET_REGIONS = frozenset({"Москва", "Московская область"})
+MOSCOW_TIME = timezone(timedelta(hours=3))
 MAX_REPORT = 12000
 MAX_TEXT = 4096
 # Reviewed 2026-11-11: published tender detail + a separate legal source,
@@ -229,7 +234,8 @@ def extracted_verified(verified_lines):
         if not _safe_url(url):
             continue
         if category in ("DEADLINE", "LOCATION", "BUYER", "BUDGET",
-                        "PROCEDURE", "ELIGIBILITY", "SUBMISSION", "DOCUMENTS"):
+                        "PROCEDURE", "ELIGIBILITY", "SUBMISSION", "DOCUMENTS",
+                        "SCOPE", "TECHNOLOGY"):
             found.setdefault(category, (quote, url))
     return found
 
@@ -245,6 +251,8 @@ def _record_from_verified(notice, item, verified, identity=None):
               "terms": "", "organizer": "", "documents": "", "budget": "",
               "region": "", "tender_url": "", "platform_url": notice["source_url"],
               "legal_url": ""}
+    record["service_evidence"] = tuple(parsed[key][0] for key in ("SCOPE", "TECHNOLOGY")
+                                       if key in parsed)
     if "BUYER" in parsed:
         quote, url = parsed["BUYER"]
         # Do not elevate arbitrary words in a generic quote to a legal entity.
@@ -548,9 +556,55 @@ def manager_score_badge(score):
     return symbol + " " + score_label(score).split(" ",1)[1]
 
 
-def manager_fields(notice, item, record, checks, related):
+def _submission_time(deadline):
+    match = DAY.search(deadline)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(" ".join(match.groups()), "%d.%m.%Y %H:%M").replace(
+            tzinfo=MOSCOW_TIME)
+    except ValueError:
+        return None
+
+
+def _dossier_priority(record, checks, related, now):
+    region = record.get("region") or ""
+    evidence = record.get("service_evidence", ())
+    if record.get("reviewed") is True:
+        evidence = (record.get("subject"), record.get("scope"), *evidence)
+    fit = any(classify_services(text) for text in evidence)
+    submission = _submission_time(record.get("deadline") or "")
+    open_submission = submission is not None and submission > now
+    amount = record.get("budget") or ""
+    has_amount = bool(re.search(r"(?iu)[1-9][\d\s.,]*(?:₽|руб\b|рубл|RUB\b|USD\b|EUR\b|\$|€)", amount))
+    weights = (
+        ("профиль услуг", 30, fit),
+        ("Москва / МО", 25, region in TARGET_REGIONS),
+        ("заказчик и ИНН", 15, bool(record.get("buyer") and _is_valid_inn(record.get("inn")))),
+        ("открытый срок", 10, open_submission),
+        ("бюджет", 8, has_amount),
+        ("связанные сигналы", 12, bool(related)),
+    )
+    score = sum(points for _, points, present in weights if present)
+    explanation = " · ".join(f"{label} {points if present else 0}/{points}"
+                             for label, points, present in weights)
+    if checks.get("stop_hit") or checks.get("duplicate_hit"):
+        return min(score, 39), explanation + " · предел 39: стоп-лист или дубль"
+    if submission is not None and not open_submission:
+        return min(score, 39), explanation + " · предел 39: срок подачи прошёл"
+    if region and region not in TARGET_REGIONS:
+        return min(score, 49), explanation + " · предел 49: вне региона отбора"
+    if not region or not fit:
+        return min(score, 59), explanation + " · предел 59: уточнить регион или профиль"
+    if submission is None:
+        return min(score, 79), explanation + " · предел 79: срок подачи не подтверждён"
+    return score, explanation
+
+
+def manager_fields(notice, item, record, checks, related, *, now=None):
     """Build the short brief without converting unknown checks to clearance."""
     record = record or {}
+    now = now or datetime.now(timezone.utc)
     inn = record.get("inn") or item.get(INN)
     inn = inn if _is_valid_inn(inn) else ""
     buyer = record.get("buyer") or ""
@@ -568,35 +622,27 @@ def manager_fields(notice, item, record, checks, related):
     score_version = item.get(VERSION_FIELD)
     empty_score = not score_valid and all(k in item and item[k] in (None, "") for k in
                                           (SCORE_FIELD, VERSION_FIELD, BADGE_FIELD))
-    if empty_score or score_valid and score_version in (
-        MANAGER_SCORE_VERSION, LEGACY_MANAGER_SCORE_VERSION,
-    ):
-        score = (20 + 8 * bool(buyer and inn) + 5 * bool(deadline)
-                 + 4 * bool(budget and budget[:1].isdigit()) + 3 * bool(region)
-                 + RELATED_SCORE_BONUS * bool(related))
-        if region in ("Москва", "Московская область"):
-            score += 25
-        elif region:
-            score = min(score, 49)
+    breakdown = ""
+    if record and (empty_score or (score_valid and score_version in MANAGED_SCORE_VERSIONS)):
+        score, breakdown = _dossier_priority(record, checks, related, now)
         patch.update({SCORE_FIELD: score, VERSION_FIELD: MANAGER_SCORE_VERSION,
                       BADGE_FIELD: manager_score_badge(score)})
         score_valid = True
-    elif score_valid and related and score_version in RELATED_SCORE_VERSIONS:
-        score = min(100, score + RELATED_SCORE_BONUS)
-        patch.update({SCORE_FIELD: score, VERSION_FIELD: score_version + "+related-v1",
-                      BADGE_FIELD: manager_score_badge(score)})
     if score_valid and not item.get(BADGE_FIELD):
         patch[BADGE_FIELD] = manager_score_badge(score)
     version = patch.get(VERSION_FIELD, item.get(VERSION_FIELD)) or "не указана"
     status = item.get(PREFIX+"AI_STATUS") or "Не подтверждён"
     locality = ("Вне зоны Москва / Московская область" if region and
-                region not in ("Москва", "Московская область") else "")
+                region not in TARGET_REGIONS else "")
+    submission = _submission_time(deadline)
     if locality:
         action = "Оставить как историю спроса. Регион исполнения вне зоны отбора."
     elif checks.get("stop_hit"):
         action = "Передать на внутреннюю проверку стоп-листа."
     elif checks.get("duplicate_hit"):
         action = "Сверить совпадение в CRM и документы перед решением."
+    elif submission is not None and submission <= now:
+        action = "Сверить продление срока. Использовать сигнал для истории спроса."
     else:
         action = "Сверить ТЗ и условия участия. Решение принимает менеджер."
     slots = {
@@ -630,6 +676,8 @@ def manager_fields(notice, item, record, checks, related):
         "Стоп-лист: " + checks.get("stop", "не проверено"),
         "ФНС / ЕГРЮЛ: " + checks.get("registry", "официальная проверка не подтверждена"),
     ]
+    if breakdown:
+        core.insert(11, "Факторы Lead Score: " + breakdown)
     if related:
         core += ["", "СВЯЗАННЫЕ СИГНАЛЫ ПО ИНН"] + related[:5]
     header = "\n".join(core)

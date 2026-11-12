@@ -206,16 +206,23 @@ def eligible(conn, target_ids=None, *, refresh=False):
     refresh_clause = ("OR last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS',"
                       "'INSUFFICIENT_CAPACITY','NONSTANDARD_REPORT','UNCERTAIN')"
                       if refresh and targets else "")
-    table_row = conn.execute(
-        "SELECT to_regclass('public.serviceit_vps_b2b_tender_doc_receipts')"
-    ).fetchone()
-    document_refresh = """
-        OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS','INSUFFICIENT_CAPACITY')
-            AND EXISTS (
-                SELECT 1 FROM serviceit_vps_b2b_tender_doc_receipts doc
-                WHERE doc.card_id=b.card_id AND doc.status='VERIFIED'
-                  AND doc.updated_at>last.updated_at))
-    """ if isinstance(table_row,tuple) and table_row[0] else ""
+    refresh_sources = (
+        "serviceit_vps_b2b_tender_doc_receipts",
+        "serviceit_vps_b2b_v19_research_receipts",
+        "serviceit_vps_b2b_v20_revision_receipts",
+    )
+    evidence_refresh = ""
+    for table in refresh_sources:
+        table_row = conn.execute("SELECT to_regclass(%s)", ("public." + table,)).fetchone()
+        if isinstance(table_row, tuple) and table_row[0]:
+            evidence_refresh += f"""
+                OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS','INSUFFICIENT_CAPACITY')
+                    AND EXISTS (
+                        SELECT 1 FROM {table} evidence
+                        WHERE evidence.card_id=b.card_id AND evidence.status='VERIFIED'
+                          AND evidence.source_hash=last.source_hash
+                          AND evidence.updated_at>last.updated_at))
+            """
     with conn.cursor() as cur:
         cur.execute(f"""
            SELECT b.card_id,b.source_id,b.notice_json,last.status,last.source_hash
@@ -232,7 +239,7 @@ def eligible(conn, target_ids=None, *, refresh=False):
              AND (%s::BIGINT[] IS NULL OR b.card_id=ANY(%s::BIGINT[]))
              AND (last.status IS NULL
                {refresh_clause}
-               {document_refresh}
+               {evidence_refresh}
                OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS')
                    AND EXISTS (
                        SELECT 1 FROM {TABLE} known

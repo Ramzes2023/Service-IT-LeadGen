@@ -261,19 +261,70 @@ def test_card13_arbitrary_different_company_stays_blocked():
         prepare(_notice("4672802"),item,[])
 
 
-def test_related_evidence_updates_an_existing_managed_score_once():
+def test_dossier_recalculates_preliminary_score_with_verified_factors():
+    from datetime import datetime, timezone
     from leadpilot.serviceit_b2b_dossier_consistency_v37 import (
-        DECISION, RECOMMENDATION, SCORE_FIELD, VERSION_FIELD, manager_fields,
+        BRIEF, DECISION, MANAGER_SCORE_VERSION, RECOMMENDATION, SCORE_FIELD,
+        VERSION_FIELD, manager_fields,
     )
 
-    record = REVIEWED["4677160"]
-    notice = {"subject": "Приобретение ПО и лицензий 1С"}
-    item = {REPORT: TAIL, SCORE_FIELD: 20, VERSION_FIELD: "svc-prelim-v1-FNS-UNVERIFIED",
+    record = {**REVIEWED["4678279"], "reviewed": True}
+    notice = {"subject": record["subject"]}
+    item = {REPORT: TAIL, SCORE_FIELD: 28, VERSION_FIELD: "svc-prelim-v1-FNS-UNVERIFIED+related-v1",
             DECISION: "Решение Ольги"}
-    related = ["№4672286 · Сопровождение ПО 1С 8.2"]
-    patch = manager_fields(notice, item, record, {}, related)
-    assert patch[SCORE_FIELD] == 28
+    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    related = ["№4675475 · Приобретение серверного оборудования"]
+    patch = manager_fields(notice, item, record, {}, related, now=now)
+    assert patch[SCORE_FIELD] == 92
+    assert patch[VERSION_FIELD] == MANAGER_SCORE_VERSION
+    assert "связанные сигналы 12/12" in patch[BRIEF]
     assert patch[RECOMMENDATION]
     assert DECISION not in patch
-    again = manager_fields(notice, {**item, **patch}, record, {}, related)
-    assert SCORE_FIELD not in again
+    assert manager_fields(notice, {**item, **patch}, record, {}, related, now=now) == patch
+
+
+def test_dossier_score_respects_geography_checks_and_expiry():
+    from datetime import datetime, timezone
+    from leadpilot.serviceit_b2b_dossier_consistency_v37 import (
+        BRIEF, SCORE_FIELD, VERSION_FIELD, manager_fields,
+    )
+
+    record = {**REVIEWED["4677160"], "reviewed": True}
+    notice = {"subject": record["subject"]}
+    item = {REPORT: TAIL, SCORE_FIELD: 48, VERSION_FIELD: "svc-b2b-evidence-priority-v2"}
+    related = ["№4672286 · Сопровождение ПО 1С 8.2"]
+    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    outside = manager_fields(notice, item, record, {}, related, now=now)
+    assert outside[SCORE_FIELD] == 49
+    assert "вне региона отбора" in outside[BRIEF]
+    local = {**record, "region": "Московская область"}
+    assert manager_fields(notice, item, local, {}, related, now=now)[SCORE_FIELD] == 100
+    assert manager_fields(notice, item, local, {"stop_hit": True}, related,
+                          now=now)[SCORE_FIELD] == 39
+    assert manager_fields(notice, item, local, {}, related,
+                          now=datetime(2026, 11, 17, tzinfo=timezone.utc))[SCORE_FIELD] == 39
+    manual = {**item, VERSION_FIELD: "manual", SCORE_FIELD: 55}
+    assert SCORE_FIELD not in manager_fields(notice, manual, local, {}, related, now=now)
+
+
+def test_only_attested_tender_content_supplies_service_fit():
+    from datetime import datetime, timezone
+    from leadpilot.serviceit_b2b_dossier_consistency_v37 import (
+        BRIEF, SCORE_FIELD, VERSION_FIELD, manager_fields,
+    )
+
+    notice = {"source": "B2B-Center", "tender_id": "4673999",
+              "subject": "Сопровождение 1С",
+              "source_url": "https://www.b2b-center.ru/market/view.html?id=4673999"}
+    item = {REPORT: TAIL, SCORE_FIELD: 20, VERSION_FIELD: "svc-prelim-v1-FNS-UNVERIFIED"}
+    lines = ["ПРОЧИТАННЫЙ ИСТОЧНИК / LOCATION: Место поставки: г. Москва "
+             "[https://www.b2b-center.ru/market/view.html?id=4673999]"]
+    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    record = reviewed_or_verified(notice, item, lines)
+    assert manager_fields(notice, item, record, {}, [], now=now)[SCORE_FIELD] == 25
+    lines.append("ПРОЧИТАННЫЙ ИСТОЧНИК / SCOPE: Сопровождение системы 1С:ERP "
+                 "[https://www.b2b-center.ru/market/view.html?id=4673999]")
+    attested = reviewed_or_verified(notice, item, lines)
+    scored = manager_fields(notice, item, attested, {}, [], now=now)
+    assert scored[SCORE_FIELD] == 55
+    assert "профиль услуг 30/30" in scored[BRIEF]

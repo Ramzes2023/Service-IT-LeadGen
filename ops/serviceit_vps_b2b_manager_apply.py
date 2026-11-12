@@ -6,6 +6,7 @@ import httpx
 
 from leadpilot.serviceit_b2b_dossier_consistency_v37 import (
     BRIEF, MANAGER_HEADER, SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, DECISION, INN,
+    MANAGER_SCORE_VERSION, MANAGED_SCORE_VERSIONS, manager_score_badge,
 )
 from leadpilot.serviceit_b2b_dossier_consistency_worker_v37 import _get, run_once
 from leadpilot.serviceit_enrichment_worker import Rest
@@ -40,13 +41,29 @@ def main():
                 ready = (item.get(BRIEF,"").startswith(MANAGER_HEADER)
                          and item.get(SCORE_FIELD) not in (None,"")
                          and bool(item.get(VERSION_FIELD)) and bool(item.get(BADGE_FIELD)))
+                if "--verify-score-v3" in sys.argv:
+                    score = item.get(SCORE_FIELD)
+                    version = item.get(VERSION_FIELD)
+                    if type(score) is int and 0 <= score <= 100:
+                        emit(f"CARD_{card}_SCORE", score)
+                    if version in MANAGED_SCORE_VERSIONS:
+                        score_ok = (type(score) is int and 0 <= score <= 100
+                                    and version == MANAGER_SCORE_VERSION
+                                    and item.get(BADGE_FIELD) == manager_score_badge(score)
+                                    and f"Lead Score: {score}/100 · {version}" in item.get(BRIEF, "")
+                                    and "Факторы Lead Score:" in item.get(BRIEF, ""))
+                        emit(f"CARD_{card}_SCORE_V3", "YES" if score_ok else "NO")
+                        ready &= score_ok
+                    else:
+                        emit(f"CARD_{card}_SCORE_V3", "OTHER_VERSION")
                 emit(f"CARD_{card}_READY","YES" if ready else "NO")
                 emit(f"CARD_{card}_INN","YES" if item.get(INN) else "NO")
                 emit(f"CARD_{card}_DECISION","PRESERVED" if item.get(DECISION) else "EMPTY")
                 if card == 27:
                     brief = item.get(BRIEF,"")
                     emit("CARD_27_RELATED","YES" if "4672286" in brief else "NO")
-                    emit("CARD_27_SCORE",item.get(SCORE_FIELD) or 0)
+                    if "--verify-score-v3" not in sys.argv:
+                        emit("CARD_27_SCORE",item.get(SCORE_FIELD) or 0)
                     emit("CARD_27_PASSPORT","YES" if all(f in brief for f in (
                         "0277071467", "АО «БЭСК»", "11 028 400", "16.11.2026 10:00", "Уфа",
                     )) else "NO")

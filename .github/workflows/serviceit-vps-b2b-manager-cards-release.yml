@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='7b52738'
+          old='12ea30c'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
           names=(serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py)
@@ -113,7 +113,7 @@ jobs:
           [[ "$rc" == 0 ]]
           grep -qx 'MANAGER_CARDS_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v37-release/status"
           grep -qx 'MANAGER_CARDS_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v37-release/status"
-      - name: Refresh and verify manager cards with attested Deep Research
+      - name: Recalculate Lead Score and verify the Bitrix readback
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +122,7 @@ jobs:
                 -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes -o ConnectTimeout=15)
           rc=0
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
-            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -" \
+            "docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --verify-score-v3" \
             < ops/serviceit_vps_b2b_manager_apply.py > "$stage/manager-status" 2>/dev/null || rc=$?
           grep -E '^MANAGER_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/manager-status" || true
           [[ "$rc" == 0 ]]

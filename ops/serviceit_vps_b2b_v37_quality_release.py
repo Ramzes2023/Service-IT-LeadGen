@@ -521,12 +521,20 @@ if 'serviceit_b2b_pdf_ocr.py' in files:
     assert '4677160' in recognize_pdf(buffer.getvalue()), 'OCR_SMOKE_TEXT_MISSING'
 print('V37_OFFLINE_SMOKE_PASS')
 """
+            smoke_tmpfs = (["--tmpfs", "/tmp:size=32m,mode=1777"]
+                           if release == "document-ocr" else [])
             res = call(["docker", "run", "--rm", "--network", "none",
-                        "--pull", "never", "--read-only", "--user", "10001:10001",
+                        "--pull", "never", "--read-only", *smoke_tmpfs,
+                        "--user", "10001:10001",
                         "--cap-drop", "ALL", "--pids-limit", "64", "--memory", "512m",
                         "--entrypoint", "python", next_image, "-B", "-c", smoke,
                         *files, *new_hashes], timeout=110, check=False)
             if release == "document-ocr" and res.returncode != 0:
+                # No production configuration, network or secret mounts in the smoke container.
+                diagnostic = res.stderr.strip().splitlines()
+                if diagnostic:
+                    detail = diagnostic[-1][:320]
+                    print(label + "_SMOKE_DIAGNOSTIC=" + detail, flush=True)
                 for code in ("OCR_SMOKE_FIXTURE_INVALID", "OCR_SMOKE_TEXT_MISSING",
                              "ModuleNotFoundError", "ImportError", "AssertionError"):
                     if code in res.stderr:

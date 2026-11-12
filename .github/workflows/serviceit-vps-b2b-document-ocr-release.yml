@@ -134,6 +134,9 @@ jobs:
           set -e
           grep -E '^DOCUMENT_OCR_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
             "$RUNNER_TEMP/v37-release/status" | head -30 || true
+          if [[ "$rc" != 0 ]]; then
+            grep -E '^DOCUMENT_OCR_RELEASE_SMOKE_DIAGNOSTIC=' "$RUNNER_TEMP/v37-release/status" | cut -c1-360 || true
+          fi
           [[ "$rc" == 0 ]]
           grep -qx 'DOCUMENT_OCR_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v37-release/status"
           grep -qx 'DOCUMENT_OCR_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v37-release/status"

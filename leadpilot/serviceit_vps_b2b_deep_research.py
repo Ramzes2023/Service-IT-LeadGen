@@ -711,8 +711,8 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
         # RouterAI/Bitrix dossier evidence. This also reuses finished async
         # Pro tasks for later V19/V20 consistency cycles.
         if (connection is not None and
-                env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED")=="YES"):
-            from .serviceit_b2b_tavily_research_pro_v46 import independently_verified_pages
+                env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED")=="YES"):
+            from .serviceit_b2b_tavily_research_mini_v47 import independently_verified_pages
             proven = optional(independently_verified_pages,connection,client,env,notice,browser) or []
             if proven:
                 previous = list(result.get("pages") or [])
@@ -721,7 +721,7 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
                 if additions:
                     result["pages"]=(previous[:1]+additions+previous[1:])[:MAX_PAGES]
                     result["status"]="PUBLIC_PAGES_INSPECTED"
-                    result["tavily_research_pro_public_verified"]=True
+                    result["tavily_research_mini_public_verified"]=True
         # Re-run the ordinary verified-buyer follow-up only after all safely
         # merged public sources, so the model/CRM dossier sees both providers.
         result = optional(followup_public_buyer_research, result, env, client, key) or result

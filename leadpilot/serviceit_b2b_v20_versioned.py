@@ -198,7 +198,8 @@ def run_once(env, client, conn):
              "V20_SIGNED_NOTICE_MISMATCH")
         before=original_nine(first)
         try:
-            findings=source_findings(first,notice,exact,client,enable_v18=True)
+            findings=source_findings(first,notice,exact,client,enable_v18=True,
+                                     connection=conn)
             draft,count=versioned_addendum(before,findings,notice["tender_id"])
         except Exception:
             # No invented facts, no repeated immediate paid queries.

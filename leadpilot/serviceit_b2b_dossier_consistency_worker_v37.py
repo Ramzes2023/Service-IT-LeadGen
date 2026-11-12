@@ -247,17 +247,20 @@ def eligible(conn, target_ids=None, *, refresh=False):
         return cur.fetchone()
 
 
-def _v11_quotes(conn, card, source_hash, current_report):
+def _v11_report(conn, card, source_hash):
     row = conn.execute("""
         SELECT after_fields,salt,digest FROM serviceit_vps_b2b_dossier_v11_receipts
         WHERE card_id=%s AND source_hash=%s AND status='VERIFIED'
     """, (card,source_hash)).fetchone()
     if not row or not isinstance(row[0],dict) or not row[1] or not row[2]:
-        return []
+        return ""
     fields, salt, digest = row
     if not secrets.compare_digest(compute_digest(fields,bytes(salt)),bytes(digest)):
-        return []
-    original = fields.get(REPORT,"")
+        return ""
+    return fields.get(REPORT,"")
+
+
+def _v11_quotes(original, current_report):
     refs = dict(re.findall(r"(?m)^\[(?:ОРИГИНАЛ = )?(\d+)\] (https://[^\s]+)$",original))
     categories = {label:category for category,label in LABELS.items()}
     result = []
@@ -269,9 +272,30 @@ def _v11_quotes(conn, card, source_hash, current_report):
     return result
 
 
-def verified_lines(conn,card,source_hash,report):
+def _v11_identity(report):
+    """Use only explicit buyer/INN pairs written in the attested V11 dossier."""
+    passport = report.split("01  ПАСПОРТ ЗАКУПКИ\n",1)
+    if len(passport) != 2:
+        return None
+    passport = passport[1].split("\n02  ",1)[0]
+    buyer = re.search(r"(?m)^Заказчик: ((?:АО|ООО|ПАО|ОАО) [^\n]{3,145}?) \(из публичного текста, не проверено ФНС\)$", passport)
+    inn = re.search(r"(?m)^ИНН: (\d{10}|\d{12}) \(публичный кандидат; НЕ ФНС\)$", passport)
+    if buyer and inn and _is_valid_inn(inn[1]):
+        return {"buyer":buyer[1], "inn":inn[1]}
+    registry = re.search(
+        r"(?m)^ЗАКАЗЧИК ПО ИЗВЕЩЕНИЮ ЕИС\n((?:АО|ООО|ПАО|ОАО) [^\n]{3,145}?), ИНН (\d{10}|\d{12})\.\n"
+        r"Реквизиты: (https://sprosradar\.ru/zakupki/223/(\d{11})/)\n"
+        r"Сверка наименования: https://tendik\.ru/tender/eis223/\4(?:\n|$)",
+        report,
+    )
+    if registry and _is_valid_inn(registry[2]):
+        return {"buyer":registry[1], "inn":registry[2], "legal_url":registry[3]}
+    return None
+
+
+def verified_lines(conn,card,source_hash,report,original=None):
     """Only source quotes in signed VERIFIED receipts and the current report."""
-    lines = _v11_quotes(conn,card,source_hash,report)
+    lines = _v11_quotes(_v11_report(conn,card,source_hash) if original is None else original,report)
     with conn.cursor() as cur:
         for name in ("serviceit_vps_b2b_v19_research_receipts",
                      "serviceit_vps_b2b_v20_revision_receipts"):
@@ -505,13 +529,15 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
             return {"status":"V41_UNCERTAIN_RECONCILIATION_BLOCKED",
                     "crm_writes":0}
         before=original_nine(first)
-        lines=verified_lines(conn,card,source_hash,before[REPORT])
+        original_v11 = _v11_report(conn,card,source_hash)
+        lines=verified_lines(conn,card,source_hash,before[REPORT],original_v11)
         try:
             if badge_repair:
                 patch,meta=badge_repair,{"status":"DRAFT"}
             else:
-                patch,meta=prepare(notice,first,lines)
-                record=reviewed_or_verified(notice,first,lines)
+                identity = _v11_identity(original_v11)
+                patch,meta=prepare(notice,first,lines,identity)
+                record=reviewed_or_verified(notice,first,lines,identity)
                 inn=(record or {}).get("inn") or first.get(INN)
                 checks=_manager_checks(conn,client,exact,webhook,rest.base,card,source,inn)
                 related=_related_signals(rest,conn,card,notice,inn)

@@ -42,6 +42,7 @@ def _setup(monkeypatch, *, preview=False, conflict=False):
                         })
     monkeypatch.setattr(worker, "original_nine",
                         lambda first: {x:"old verified dossier" for x in AI_FIELDS})
+    monkeypatch.setattr(worker, "_v11_report", lambda *args: "")
     monkeypatch.setattr(worker, "verified_lines", lambda *args,**kwargs: [])
     monkeypatch.setattr(worker, "Rest", lambda *args,**kwargs: MagicMock())
     monkeypatch.setattr(worker, "_manager_checks", lambda *args: {})
@@ -130,3 +131,14 @@ def test_manager_badge_repair_is_exact_and_bmp_safe():
     assert patch[BADGE_FIELD].startswith("❌ 48/100")
     assert all(ord(ch)<=0xFFFF for ch in patch[BADGE_FIELD])
     assert worker.partial_badge_repair(conn,27,"a"*64,{**item,BRIEF:"Другое"}) is None
+
+
+def test_v11_registry_identity_requires_same_exact_notice():
+    dossier = (
+        "01  ПАСПОРТ ЗАКУПКИ\nЗаказчик: не установлен\n02  ПРЕДМЕТ\n"
+        "ЗАКАЗЧИК ПО ИЗВЕЩЕНИЮ ЕИС\nООО «Башкирэнерго», ИНН 0277071467.\n"
+        "Реквизиты: https://sprosradar.ru/zakupki/223/32616566539/\n"
+        "Сверка наименования: https://tendik.ru/tender/eis223/32616566539"
+    )
+    assert worker._v11_identity(dossier)["inn"] == "0277071467"
+    assert worker._v11_identity(dossier.replace("eis223/32616566539", "eis223/32616566538")) is None

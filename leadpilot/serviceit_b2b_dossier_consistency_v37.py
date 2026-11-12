@@ -229,9 +229,9 @@ def extracted_verified(verified_lines):
     return found
 
 
-def _record_from_verified(notice, item, verified):
+def _record_from_verified(notice, item, verified, identity=None):
     parsed = extracted_verified(verified)
-    if not parsed:
+    if not parsed and not identity:
         return None
     tid = notice["tender_id"]
     record = {"reviewed": False, "buyer": "", "inn": "",
@@ -286,12 +286,14 @@ def _record_from_verified(notice, item, verified):
                 and not re.search(r"(?iu)(?:не\s+указан|не\s+раскрыт|не\s+задан)", amount)):
             record["budget"] = _text(amount, 175) + " (цитата источника)"
             record["tender_url"] = record["tender_url"] or ref
+    if identity:
+        record.update(identity)
     if not any((record["buyer"],record["deadline"],record["delivery"],record["budget"])):
         return None
     return record
 
 
-def reviewed_or_verified(notice, item, verified_lines):
+def reviewed_or_verified(notice, item, verified_lines, identity=None):
     _need(isinstance(notice, dict) and notice.get("source") == "B2B-Center",
           "SIGNED_NOTICE_REQUIRED")
     tid = notice.get("tender_id")
@@ -318,10 +320,10 @@ def reviewed_or_verified(notice, item, verified_lines):
         record["reviewed"] = True
         record.setdefault("budget", "")
         return record
-    return _record_from_verified(notice, item, verified_lines)
+    return _record_from_verified(notice, item, verified_lines, identity)
 
 
-def prepare(notice, item, verified_lines):
+def prepare(notice, item, verified_lines, identity=None):
     """Only the AI report/brief/limits/action and safe empty company fields.
 
     Immutable source sections 07 onward are preserved *byte-for-byte* except
@@ -330,7 +332,7 @@ def prepare(notice, item, verified_lines):
     _need(isinstance(item, dict) and all(
         isinstance(item.get(k), str) and item[k].strip() for k in AI_FIELDS),
         "NINE_AI_BASE_REQUIRED")
-    record = reviewed_or_verified(notice, item, verified_lines)
+    record = reviewed_or_verified(notice, item, verified_lines, identity)
     if record is None:
         return None, {"status": "NO_ATTESTED_NEW_FACTS"}
     tid = notice["tender_id"]
@@ -490,6 +492,19 @@ def prepare(notice, item, verified_lines):
                     raise ReconcileBlocked("EXISTING_COMPANY_CONFLICT_MANUAL_REVIEW")
             # Non-empty region stays untouched; it may be a manager-assigned
             # service region rather than the buyer's registered address.
+    elif identity and _is_valid_inn(record["inn"]) and record["buyer"]:
+        prior_inn = _text(item.get(INN),20)
+        if prior_inn and prior_inn != record["inn"]:
+            raise ReconcileBlocked("EXISTING_INN_CONFLICT_MANUAL_REVIEW")
+        if not prior_inn:
+            patch[INN] = record["inn"]
+        prior_name = _text(item.get(COMPANY),250)
+        normalize = lambda value: re.sub(r"[^а-яa-z0-9]", "", value.casefold())
+        signed_organizer = _text(notice.get("organizer"),250)
+        if (not prior_name or normalize(prior_name) == normalize(signed_organizer)):
+            patch[COMPANY] = record["buyer"]
+        if not item.get(REGION) and record["region"]:
+            patch[REGION] = record["region"]
     if any(key not in AI_FIELDS | {COMPANY,INN,REGION} for key in patch):
         raise ReconcileBlocked("DISALLOWED_CRM_FIELD")
     if len(patch[REPORT])>MAX_REPORT or any(len(v)>MAX_TEXT for k,v in patch.items()

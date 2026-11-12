@@ -1,5 +1,6 @@
 """Apply the manager format to the nine source-attested cards inventoried live."""
 import os
+import sys
 
 import httpx
 
@@ -25,8 +26,9 @@ def main():
         all_ready = True
         for card in TARGETS:
             try:
-                result = run_once(env,client,conn,target_ids={card},refresh=True)
-                emit(f"CARD_{card}_RESULT",result["status"])
+                if "--read-only" not in sys.argv:
+                    result = run_once(env,client,conn,target_ids={card},refresh=True)
+                    emit(f"CARD_{card}_RESULT",result["status"])
                 item = _get(rest,card)
                 ready = (item.get(BRIEF,"").startswith(MANAGER_HEADER)
                          and item.get(SCORE_FIELD) not in (None,"")
@@ -35,7 +37,12 @@ def main():
                 emit(f"CARD_{card}_INN","YES" if item.get(INN) else "NO")
                 emit(f"CARD_{card}_DECISION","PRESERVED" if item.get(DECISION) else "EMPTY")
                 if card == 27:
-                    emit("CARD_27_RELATED","YES" if "4672286" in item.get(BRIEF,"") else "NO")
+                    brief = item.get(BRIEF,"")
+                    emit("CARD_27_RELATED","YES" if "4672286" in brief else "NO")
+                    emit("CARD_27_SCORE",item.get(SCORE_FIELD) or 0)
+                    emit("CARD_27_PASSPORT","YES" if all(f in brief for f in (
+                        "0277071467", "АО «БЭСК»", "11 028 400", "16.11.2026 10:00", "Уфа",
+                    )) else "NO")
                 all_ready &= ready
             except Exception as exc:
                 emit(f"CARD_{card}_ERROR",type(exc).__name__.upper())

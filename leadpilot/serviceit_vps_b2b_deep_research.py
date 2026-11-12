@@ -628,7 +628,8 @@ def _merge_independent_tinyfish(candidate, fetched, tender_id):
     return result
 
 
-def source_findings(item, notice, env, client, *, enable_v18=False):
+def source_findings(item, notice, env, client, *, enable_v18=False,
+                    connection=None):
     hosts = host_allowlist(env)
     browser = None
     if (env.get("SERVICEIT_VPS_BROWSER_RESEARCH_ENABLED") == "YES"
@@ -693,6 +694,17 @@ def source_findings(item, notice, env, client, *, enable_v18=False):
         browser=browser, index=index) if v18
         else optional(brave_mirror_search,
             client, notice["tender_id"], notice["subject"], key))
+
+    # V44: Tavily replaces an exhausted Brave URL discovery step ONLY when
+    # both the original public publication and independently checked mirrors
+    # are missing. The PG one-use receipt ensures five-minute research loops
+    # never spend a second Tavily credit on the same signed tender.
+    # Tavily snippets/LLM answers are discarded; independent HTTPS/robots and
+    # exact B2B number/title verification happen inside the adapter.
+    if connection is not None and mirror is None and not page_proof:
+        from .serviceit_b2b_tavily_fallback_v44 import verified_mirror_search
+        mirror = optional(
+            verified_mirror_search, connection, client, env, notice, browser)
 
     def with_index(candidate):
         if not isinstance(candidate, dict):

@@ -522,6 +522,12 @@ MANAGER_HEADER = "КЛЮЧЕВАЯ ИНФОРМАЦИЯ"
 MANAGER_END = "──────── ПОДРОБНОЕ ДОСЬЕ ────────"
 
 
+def manager_score_badge(score):
+    """The live Bitrix string field retains BMP priority symbols."""
+    symbol = "✅" if score >= 80 else "⚠" if score >= 60 else "❌"
+    return symbol + " " + score_label(score).split(" ",1)[1]
+
+
 def manager_fields(notice, item, record, checks, related):
     """Build the short brief without converting unknown checks to clearance."""
     record = record or {}
@@ -551,7 +557,7 @@ def manager_fields(notice, item, record, checks, related):
         patch.update({SCORE_FIELD:score, VERSION_FIELD:MANAGER_SCORE_VERSION})
         score_valid = True
     if score_valid and not item.get(BADGE_FIELD):
-        patch[BADGE_FIELD] = score_label(score) + " · приоритет проверки"
+        patch[BADGE_FIELD] = manager_score_badge(score)
     version = patch.get(VERSION_FIELD, item.get(VERSION_FIELD)) or "не указана"
     status = item.get(PREFIX+"AI_STATUS") or "Не подтверждён"
     locality = ("Вне зоны Москва / Московская область" if region and

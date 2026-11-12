@@ -111,3 +111,22 @@ def test_selector_excludes_persistent_conflicts_and_uncertain_writes():
     assert "last.status='UNCERTAIN'" in sql
     assert "15 minutes" in sql
     assert "WRITE_INTENT" in sql
+
+
+def test_manager_badge_repair_is_exact_and_bmp_safe():
+    from leadpilot.serviceit_b2b_dossier_consistency_v37 import BRIEF, MANAGER_HEADER
+    from leadpilot.serviceit_kanban_presentation import SCORE_FIELD, BADGE_FIELD
+
+    conn = MagicMock()
+    desired = {BRIEF: MANAGER_HEADER + "\nФакты", BADGE_FIELD: "🔴 48/100"}
+    before = {BRIEF: "Старое", BADGE_FIELD: ""}
+    salt = b"a" * 16
+    conn.execute.return_value.fetchone.return_value = (
+        before, desired, salt, worker._digest(desired,salt),
+    )
+    item = {BRIEF: desired[BRIEF], BADGE_FIELD: "", SCORE_FIELD: 48}
+    patch = worker.partial_badge_repair(conn,27,"a"*64,item)
+    assert set(patch) == {BADGE_FIELD}
+    assert patch[BADGE_FIELD].startswith("❌ 48/100")
+    assert all(ord(ch)<=0xFFFF for ch in patch[BADGE_FIELD])
+    assert worker.partial_badge_repair(conn,27,"a"*64,{**item,BRIEF:"Другое"}) is None

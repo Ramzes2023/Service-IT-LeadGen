@@ -19,7 +19,7 @@ from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_b2b_dossier_v11 import LABELS, original_nine
 from .serviceit_b2b_dossier_consistency_v37 import (
     prepare, reviewed_or_verified, manager_fields, PROVEN_QUOTE, REPORT, ReconcileBlocked,
-    RELATED_PUBLIC, DECISION, MANAGER_PLACEHOLDER, INN,
+    RELATED_PUBLIC, DECISION, MANAGER_PLACEHOLDER, MANAGER_HEADER, BRIEF, INN, manager_score_badge,
 )
 from .bitrix_1062_mapping import _is_valid_inn
 from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD
@@ -161,6 +161,34 @@ def uncertain_no_effect_verified(conn,card,hash_,item):
     return True
 
 
+def partial_badge_repair(conn, card, source_hash, item):
+    row = conn.execute(f"""
+        SELECT before_fields,after_fields,salt,digest FROM {TABLE}
+        WHERE card_id=%s AND source_hash=%s AND status='UNCERTAIN'
+        ORDER BY attempt_no DESC LIMIT 1
+    """, (card,source_hash)).fetchone()
+    if not row:
+        return None
+    before, desired, salt, digest = row
+    if not (isinstance(before,dict) and isinstance(desired,dict)
+            and set(before)==set(desired) and set(desired)<=ALLOWED_PATCH
+            and isinstance(salt,(bytes,memoryview)) and isinstance(digest,(bytes,memoryview))
+            and secrets.compare_digest(_digest(desired,bytes(salt)),bytes(digest))):
+        return None
+    legacy = desired.get(BADGE_FIELD)
+    score = item.get(SCORE_FIELD)
+    if not (isinstance(legacy,str) and legacy.startswith(("🟢", "🟡", "🔴"))
+            and type(score) is int and 0 <= score <= 100
+            and item.get(BADGE_FIELD) in ("",None)
+            and item.get(BADGE_FIELD) == before.get(BADGE_FIELD)
+            and isinstance(desired.get(BRIEF),str) and desired[BRIEF].startswith(MANAGER_HEADER)):
+        return None
+    if any(item.get(k) != v and not (k==DECISION and v=="" and item.get(k) is None)
+           for k,v in desired.items() if k!=BADGE_FIELD):
+        return None
+    return {BADGE_FIELD:manager_score_badge(score)}
+
+
 def _sha(source):
     need(type(source) is str and re.fullmatch(r"B2B-CENTER-\d{5,12}",source),
          "SIGNED_SOURCE_REQUIRED")
@@ -175,7 +203,7 @@ def eligible(conn, target_ids=None, *, refresh=False):
              all(type(x) is int and 8<=x<=2000000000 for x in targets),
              "TARGET_SCOPE_INVALID")
     refresh_clause = ("OR last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS',"
-                      "'INSUFFICIENT_CAPACITY','NONSTANDARD_REPORT')"
+                      "'INSUFFICIENT_CAPACITY','NONSTANDARD_REPORT','UNCERTAIN')"
                       if refresh and targets else "")
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -471,23 +499,27 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
         src_url,title=safe_notice(notice,card,source,first)
         need(src_url==notice["source_url"] and bool(title),
              "V37_SIGNED_IDENTITY_CONFLICT")
-        if last_status=="UNCERTAIN" and not uncertain_no_effect_verified(
+        badge_repair = partial_badge_repair(conn,card,source_hash,first) if last_status=="UNCERTAIN" else None
+        if last_status=="UNCERTAIN" and not badge_repair and not uncertain_no_effect_verified(
                 conn,card,source_hash,first):
             return {"status":"V41_UNCERTAIN_RECONCILIATION_BLOCKED",
                     "crm_writes":0}
         before=original_nine(first)
         lines=verified_lines(conn,card,source_hash,before[REPORT])
         try:
-            patch,meta=prepare(notice,first,lines)
-            record=reviewed_or_verified(notice,first,lines)
-            inn=(record or {}).get("inn") or first.get(INN)
-            checks=_manager_checks(conn,client,exact,webhook,rest.base,card,source,inn)
-            related=_related_signals(rest,conn,card,notice,inn)
-            base_patch=patch or {}
-            revised=manager_fields(notice,{**first,**base_patch},record,checks,related)
-            patch={key:value for key,value in {**base_patch,**revised}.items() if first.get(key)!=value}
-            if not patch:
-                patch=None
+            if badge_repair:
+                patch,meta=badge_repair,{"status":"DRAFT"}
+            else:
+                patch,meta=prepare(notice,first,lines)
+                record=reviewed_or_verified(notice,first,lines)
+                inn=(record or {}).get("inn") or first.get(INN)
+                checks=_manager_checks(conn,client,exact,webhook,rest.base,card,source,inn)
+                related=_related_signals(rest,conn,card,notice,inn)
+                base_patch=patch or {}
+                revised=manager_fields(notice,{**first,**base_patch},record,checks,related)
+                patch={key:value for key,value in {**base_patch,**revised}.items() if first.get(key)!=value}
+                if not patch:
+                    patch=None
         except ReconcileBlocked:
             if preview:
                 return {"status":"V37_PREVIEW_CONFLICT_NO_WRITE",

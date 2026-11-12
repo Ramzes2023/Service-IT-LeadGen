@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='68929a5'
+          old='859c142'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
           names=(serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py)

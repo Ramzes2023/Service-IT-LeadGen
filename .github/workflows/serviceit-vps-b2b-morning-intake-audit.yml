@@ -61,11 +61,7 @@ jobs:
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
             'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - --research' \
             < ops/serviceit_vps_b2b_morning_intake_audit.py > "$stage/research"
-          grep -E '^INTAKE_[A-Z0-9_]+=[A-Z0-9_]+
- "$stage/research"
+          grep -E '^INTAKE_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/research"
           # Only public-source retrieval and exact CRM/PG GET/SELECT; no mutations.
-          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
-            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
-            < ops/serviceit_vps_b2b_card29_evidence_readonly.py > "$stage/card29"
-          grep -E '^CARD29_[A-Z0-9_]+=[A-Z0-9_]+
- "$stage/card29"
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' < ops/serviceit_vps_b2b_card29_evidence_readonly.py > "$stage/card29"
+          grep -E '^CARD29_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/card29"

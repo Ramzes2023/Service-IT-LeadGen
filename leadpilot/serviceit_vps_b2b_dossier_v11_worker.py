@@ -233,7 +233,9 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
             try:
                 with search_scope(card, source) if search_scope else nullcontext(True) as can_search:
                     options = {"enable_v18": True}
-                    if can_search and exact.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES":
+                    if can_search and (
+                            exact.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES"
+                            or exact.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED") == "YES"):
                         options["connection"] = connection
                     findings = source_findings(first, notice, exact, client, **options)
             except Exception:

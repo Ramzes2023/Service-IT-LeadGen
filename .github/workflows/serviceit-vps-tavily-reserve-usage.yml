@@ -37,6 +37,23 @@ jobs:
           core=serviceit-leadgen-vps-coordinator-1
           img="$(docker inspect --format '{{.Image}}' "$core")"
           [[ "$img" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker exec -i "$core" python -B - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import os
+
+          names = {
+              "CORE": "serviceit_vps_worker.py", "DEEP": "serviceit_vps_b2b_deep_research.py",
+              "V11": "serviceit_vps_b2b_dossier_v11_worker.py", "V19": "serviceit_b2b_v19_backfill.py",
+              "MINI": "serviceit_b2b_tavily_research_mini_v47.py",
+          }
+          for name, filename in names.items():
+              path = Path("/app/leadpilot") / filename
+              digest = hashlib.sha256(path.read_bytes()).hexdigest().upper() if path.is_file() else "MISSING"
+              print(f"TAVILY_RESERVE_SHA_{name}={digest}")
+          flag = os.environ.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED") == "YES"
+          print("TAVILY_RESERVE_ACTIVE=" + ("YES" if flag else "NO"))
+          PY
           docker run --rm -i --pull never --read-only --user 10001:10001 --cap-drop ALL \
             --mount type=bind,src=/etc/serviceit/secrets/tavily_api_key,dst=/run/tavily,readonly \
             --entrypoint python "$img" -B - <<'PY'
@@ -73,4 +90,4 @@ jobs:
               print("TAVILY_RESERVE_USAGE=UNVERIFIED")
           PY
           REMOTE
-          grep -E '^TAVILY_RESERVE_[A-Z_]+=[A-Z0-9_]+$' "$stage/status"
+          grep -E '^TAVILY_RESERVE_[A-Z0-9_]+=[A-Z0-9_]+$' "$stage/status"

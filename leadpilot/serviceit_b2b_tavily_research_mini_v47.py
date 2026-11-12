@@ -34,6 +34,8 @@ MAX_SOURCES = 24
 MAX_REPORT_CHARS = 120000
 API = "https://api.tavily.com"
 TABLE = "serviceit_vps_b2b_tavily_research_mini_v47"
+GAPS = "serviceit_vps_b2b_tavily_research_gaps"
+GAP_TTL_MINUTES = 30
 LOCK_ID = 693714610
 SCOPED = re.compile(r"B2B-CENTER-([0-9]{5,12})\Z")
 UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z")
@@ -57,6 +59,11 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
 );
 CREATE INDEX IF NOT EXISTS serviceit_vps_b2b_tavily_mini_started_idx
  ON {TABLE}(started_at);
+CREATE TABLE IF NOT EXISTS {GAPS} (
+  source_id VARCHAR(40) PRIMARY KEY,
+  card_id BIGINT NOT NULL,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -80,6 +87,8 @@ def activation_cutoff(env):
 
 def approved(env):
     return (activation_cutoff(env) is not None and (env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED")=="YES"
+            and env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED")!="YES"
+            and env.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED")!="YES"
             and env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED")=="YES"
             and env.get("SERVICEIT_VPS_WRITER_MODE")=="LIVE"
             and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED")=="YES"
@@ -126,7 +135,7 @@ def _usage(conn,client,key):
     # Reserve the WHOLE maximum cost per submitted/in-progress PRO request.
     reserved=conn.execute(f"""
         SELECT coalesce(sum(credits_reserved),0) FROM {TABLE}
-        WHERE status IN ('RESERVED','SUBMITTED','IN_PROGRESS')
+        WHERE status IN ('RESERVED','SUBMITTED','IN_PROGRESS','UNCERTAIN')
           AND started_at >= date_trunc('month',now())
     """).fetchone()[0]
     if not isinstance(reserved,int) or reserved<0:
@@ -139,12 +148,34 @@ def _notice(tender):
     return match.group(1) if match else None
 
 
+def nominate_gap(conn, env, card, source, *, missing):
+    """Queue a gap only after the primary dossier is written and read back."""
+    if not missing or not approved(env) or _notice(source) is None:
+        return False
+    with conn.transaction():
+        conn.execute(DDL)
+        row = conn.execute(f"""
+            INSERT INTO {GAPS}(source_id,card_id)
+            SELECT b.source_id,b.card_id
+            FROM serviceit_vps_b2b_inbox b
+            JOIN serviceit_vps_b2b_dossier_v11_receipts d
+              ON d.card_id=b.card_id AND d.status='VERIFIED'
+            WHERE b.card_id=%s AND b.source_id=%s AND b.state='VERIFIED'
+              AND b.received_at >= %s
+            ON CONFLICT(source_id) DO NOTHING RETURNING source_id
+        """, (card, source, activation_cutoff(env))).fetchone()
+    return row is not None
+
+
 def _candidate(conn,cutoff):
     rows=conn.execute(f"""
         SELECT b.card_id,b.source_id,b.notice_json,b.received_at
-        FROM serviceit_vps_b2b_inbox b
+        FROM {GAPS} g
+        JOIN serviceit_vps_b2b_inbox b ON b.source_id=g.source_id AND b.card_id=g.card_id
+        JOIN serviceit_vps_b2b_dossier_v11_receipts d ON d.card_id=b.card_id AND d.status='VERIFIED'
         LEFT JOIN {TABLE} r ON r.source_id=b.source_id
         WHERE b.state='VERIFIED' AND b.received_at >= %s
+          AND g.queued_at >= now() - interval '{GAP_TTL_MINUTES} minutes'
           AND r.source_id IS NULL
           AND b.source_id ~ '^B2B-CENTER-[0-9]{{5,12}}$'
         ORDER BY b.received_at, b.card_id LIMIT 80
@@ -282,11 +313,21 @@ def run_once(env,*,preview=False):
                 "SELECT pg_try_advisory_lock(%s)",(LOCK_ID,)).fetchone()[0]:
             return {"status":"RESEARCH_MINI_BUSY","writes":0}
         try:
+            if not preview:
+                with conn.transaction():
+                    conn.execute(f"""
+                        UPDATE {TABLE} SET status='UNCERTAIN',updated_at=now()
+                        WHERE status IN ('SUBMITTED','IN_PROGRESS')
+                          AND started_at < now() - interval '{GAP_TTL_MINUTES} minutes'
+                    """)
             row=conn.execute(f"""
-                SELECT source_hash,request_id,status FROM {TABLE}
-                WHERE status IN ('SUBMITTED','IN_PROGRESS')
-                ORDER BY started_at ASC LIMIT 1
-            """).fetchone()
+                SELECT m.source_hash,m.request_id,m.status FROM {TABLE} m
+                JOIN {GAPS} g ON g.source_id=m.source_id AND g.card_id=m.card_id
+                WHERE m.status IN ('SUBMITTED','IN_PROGRESS')
+                  AND m.started_at >= now() - interval '{GAP_TTL_MINUTES} minutes'
+                  AND g.queued_at >= %s
+                ORDER BY m.started_at ASC LIMIT 1
+            """, (activation_cutoff(env),)).fetchone()
             if row is not None:
                 if preview:
                     return {"status":"RESEARCH_MINI_PENDING_PREVIEW","writes":0}

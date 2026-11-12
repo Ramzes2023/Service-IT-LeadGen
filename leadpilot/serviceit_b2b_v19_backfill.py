@@ -67,7 +67,7 @@ def need(ok, why):
         raise V19Blocked(why)
 
 
-def select_one(connection, *, preview=False):
+def select_one(connection, *, preview=False, reserve_enabled=False):
     """Signed finished V11 cards only: four historical first, then new.
 
     Exclude current/newly created and previously V19 scanned/written cards.
@@ -84,6 +84,20 @@ def select_one(connection, *, preview=False):
                 ORDER BY b.received_at,b.source_id LIMIT 4
             """)
             return cur.fetchall()
+        pending_clause = ""
+        if reserve_enabled:
+            from .serviceit_b2b_tavily_research_mini_v47 import GAPS, TABLE as MINI_TABLE, GAP_TTL_MINUTES
+            cur.execute("SELECT to_regclass(%s), to_regclass(%s)", ("public." + GAPS, "public." + MINI_TABLE))
+            if all(cur.fetchone()):
+                pending_clause = f"""
+                    AND NOT EXISTS (
+                        SELECT 1 FROM {GAPS} g
+                        LEFT JOIN {MINI_TABLE} m ON m.source_id=g.source_id
+                        WHERE g.source_id=b.source_id AND g.card_id=b.card_id
+                          AND g.queued_at >= now() - interval '{GAP_TTL_MINUTES} minutes'
+                          AND (m.status IS NULL OR m.status IN ('SUBMITTED','IN_PROGRESS'))
+                    )
+                """
         cur.execute(f"""
             SELECT b.card_id,b.source_id,b.notice_json
             FROM serviceit_vps_b2b_inbox b
@@ -91,6 +105,7 @@ def select_one(connection, *, preview=False):
               ON v.card_id=b.card_id AND v.status='VERIFIED'
             WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL
               AND b.received_at < now()-interval '20 minutes'
+              {pending_clause}
               AND NOT EXISTS (
                 SELECT 1 FROM {TABLE} r
                 WHERE r.card_id=b.card_id AND (
@@ -282,7 +297,10 @@ def run_once(env, client, conn, *, preview=False):
     if not locked:
         return {"status":"V19_OTHER_DOSSIER_WORKER_ACTIVE","crm_writes":0}
     try:
-        records=select_one(conn,preview=preview)
+        if env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED") == "YES":
+            records=select_one(conn,preview=preview,reserve_enabled=True)
+        else:
+            records=select_one(conn,preview=preview)
         rows=records if preview else ([records] if records else [])
         if not rows:
             return {"status":"V19_NO_ELIGIBLE_CARDS","crm_writes":0}

@@ -35,6 +35,11 @@ NEIGHBORS = (
     "serviceit-b2b-vps-writer-1",
 )
 FILES = ('serviceit_b2b_v19_backfill.py', 'serviceit_b2b_v20_versioned.py', 'serviceit_b2b_dossier_v11.py')
+TAVILY_RESERVE_FILES = (
+    "serviceit_vps_worker.py", "serviceit_vps_b2b_deep_research.py",
+    "serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_v19_backfill.py",
+    "serviceit_b2b_tavily_research_mini_v47.py",
+)
 EIS_MIRROR_FILES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_eis_mirrors.py")
 ROUTERAI_RESEARCH_FILES = ("serviceit_b2b_routerai_deep.py", "serviceit_vps_b2b_dossier_v11_worker.py")
 TAVILY_GAPS_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_deep_research.py")
@@ -299,8 +304,10 @@ def run(run_id, new_hashes, old_hashes, *, files=FILES, release="v37"):
             and all(re.fullmatch(r"[0-9a-f]{64}", x) for x in new_hashes)
             and type(old_hashes) is tuple and len(old_hashes) == len(files)
             and all(re.fullmatch(r"[0-9a-f]{64}", digest)
-                    or (release == "eis-mirrors" and name == "serviceit_b2b_eis_mirrors.py"
-                        and digest == "MISSING")
+                    or (digest == "MISSING" and (release, name) in {
+                        ("eis-mirrors", "serviceit_b2b_eis_mirrors.py"),
+                        ("tavily-reserve", "serviceit_b2b_tavily_research_mini_v47.py"),
+                    })
                     for name, digest in zip(files, old_hashes)),
             "SOURCE_SHA_INPUT_INVALID")
     stage = ROOT / "staging" / (f"b2b-{release}-onefile-release-" + run_id)
@@ -431,6 +438,11 @@ if 'serviceit_vps_b2b_deep_research.py' in files:
 if 'serviceit_b2b_eis_mirrors.py' in files:
     from leadpilot.serviceit_b2b_eis_mirrors import EIS_MIRRORS, supplement_eis_mirrors
     assert len(EIS_MIRRORS)==2 and callable(supplement_eis_mirrors)
+if 'serviceit_b2b_tavily_research_mini_v47.py' in files:
+    from leadpilot.serviceit_b2b_tavily_research_mini_v47 import MODEL, approved, nominate_gap
+    from leadpilot.serviceit_vps_b2b_dossier_v11_worker import reserve_research_needed
+    assert MODEL=='mini' and not approved({})
+    assert callable(nominate_gap) and callable(reserve_research_needed)
 print('V37_OFFLINE_SMOKE_PASS')
 """
             res = call(["docker", "run", "--rm", "--network", "none",
@@ -495,6 +507,7 @@ print('V37_OFFLINE_SMOKE_PASS')
 def main():
     args = sys.argv[1:]
     profiles = {
+        "--tavily-reserve": (TAVILY_RESERVE_FILES, "tavily-reserve"),
         "--eis-mirrors": (EIS_MIRROR_FILES, "eis-mirrors"),
         "--routerai-research": (ROUTERAI_RESEARCH_FILES, "routerai-research"),
         "--tavily-gaps": (TAVILY_GAPS_FILES, "tavily-gaps"),

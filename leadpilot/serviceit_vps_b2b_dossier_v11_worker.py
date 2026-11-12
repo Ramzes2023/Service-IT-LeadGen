@@ -22,7 +22,7 @@ import httpx
 from .ai import config_from_env
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_eis_mirrors import registry_buyer_note, supplement_eis_mirrors
-from .serviceit_b2b_dossier_v11 import REPORT, compose, original_nine, DossierV11Blocked
+from .serviceit_b2b_dossier_v11 import REPORT, compose, evidence_rows, original_nine, DossierV11Blocked
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_b2b_routerai_deep import (
     MAX_PAGES, investigate_routerai, plan_research_step, public_documents,
@@ -32,7 +32,7 @@ from .serviceit_enrichment_worker import (
     Rest, normalized, validate_identity, fingerprint,
 )
 from .serviceit_vps_b2b_deep_research import (
-    safe_notice, source_findings,
+    published_buyer_inn_evidence, safe_notice, source_findings,
 )
 from .serviceit_vps_native_fence import PostgresNativeFence
 from .serviceit_vps_pg_queue import db, secret_file
@@ -288,6 +288,19 @@ def non_ai_unchanged(before, after):
                if k not in ignored)
 
 
+def reserve_research_needed(findings, report, coverage):
+    """Evaluate independently sourced business fields after the primary pass."""
+    if not coverage["deadline_public"]:
+        return True
+    if not (published_buyer_inn_evidence(findings) or findings.get("eis_registry_buyer")):
+        return True
+    _, facts = evidence_rows(findings, report)
+    categories = {fact["category"] for fact in facts}
+    return "BUDGET" not in categories or not categories.intersection(
+        {"ELIGIBILITY", "DOCUMENTS", "SUBMISSION"}
+    )
+
+
 def worker_once(env, client, connection, *, preview=False, search_scope=None):
     """No payment/outreach/score/stage/task/contacts. Old fields copied into PG."""
     need(live_permitted(env)
@@ -415,9 +428,21 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                  and non_ai_unchanged(fresh, result),
                  "EXACT_NINE_READBACK_NOT_VERIFIED")
             update_state(connection, card, "WRITE_INTENT", "VERIFIED")
+            reserve_status = "SKIPPED"
+            if env.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED") == "YES":
+                try:
+                    from .serviceit_b2b_tavily_research_mini_v47 import nominate_gap
+                    queued = nominate_gap(
+                        connection, env, card, source,
+                        missing=reserve_research_needed(findings, report, coverage),
+                    )
+                    reserve_status = "QUEUED" if queued else "NOT_NEEDED_OR_OUT_OF_SCOPE"
+                except Exception:
+                    reserve_status = "QUEUE_UNAVAILABLE"
             return {"status": "V11_NINE_FIELDS_VERIFIED", "crm_writes": 1,
                     "routerai_invoked": invoked,
                     "routerai_research_steps": research_steps,
+                    "tavily_reserve": reserve_status,
                     "source_pages": min(coverage["pages"], 9),
                     "quoted_facts": min(coverage["citations"], 16),
                     "deadline_public": coverage["deadline_public"],

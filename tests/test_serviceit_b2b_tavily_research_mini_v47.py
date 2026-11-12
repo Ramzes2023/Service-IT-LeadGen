@@ -155,3 +155,35 @@ def test_only_one_historical_b2b_record_is_not_eligible_after_activation():
     assert pro.activation_cutoff({
         "SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ACTIVE_SINCE":(
             now+timedelta(hours=1)).isoformat().replace("+00:00","Z")}) is None
+
+
+def test_complete_verified_dossier_skips_reserve(monkeypatch):
+    from leadpilot import serviceit_vps_b2b_dossier_v11_worker as worker
+
+    findings = {"eis_registry_buyer": {"inn": "0277071467"}}
+    coverage = {"deadline_public": True}
+    monkeypatch.setattr(worker, "published_buyer_inn_evidence", lambda _: None)
+    monkeypatch.setattr(worker, "evidence_rows", lambda *_: (
+        [], [{"category": "BUDGET"}, {"category": "SUBMISSION"}],
+    ))
+    assert not worker.reserve_research_needed(findings, {}, coverage)
+    assert worker.reserve_research_needed(findings, {}, {"deadline_public": False})
+    assert worker.reserve_research_needed({}, {}, coverage)
+    monkeypatch.setattr(worker, "evidence_rows", lambda *_: ([], [{"category": "BUDGET"}]))
+    assert worker.reserve_research_needed(findings, {}, coverage)
+
+
+def test_reserve_candidates_require_nomination_and_verified_primary_receipt():
+    conn = MagicMock()
+    conn.execute.return_value.fetchall.return_value = []
+    assert pro._candidate(conn, SINCE) is None
+    stmt, _ = conn.execute.call_args.args
+    assert f"FROM {pro.GAPS} g" in stmt
+    assert "d.status='VERIFIED'" in stmt
+    assert "g.queued_at >= now()" in stmt
+
+
+def test_no_database_write_for_complete_dossier():
+    conn = MagicMock()
+    assert not pro.nominate_gap(conn, {}, 27, "B2B-CENTER-4677160", missing=False)
+    conn.execute.assert_not_called()

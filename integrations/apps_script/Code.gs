@@ -368,6 +368,22 @@ function classifyServices_(title) {
       "|компьютер" + suffix + "|рабоч" + suffix + "\\s+станци" + suffix +
       "|монитор(?:ы|ов|ам|ами|е|а)?",
       "iu"
+    ),
+    "CLOUD": new RegExp(
+      "облачн" + suffix + "\\s+(?:сервис" + suffix + "|инфраструктур" + suffix +
+      "|платформ" + suffix + "|хранилищ" + suffix + "|решени" + suffix +
+      ")|(?:основн" + suffix + "|резервн" + suffix + ")\\s+облак" + suffix +
+      "|(?<!" + WORD + ")(?:iaas|paas|saas)(?!" + WORD + ")", "iu"
+    ),
+    "LICENSES": new RegExp(
+      "(?:приобретени" + suffix + "|закупк" + suffix +
+      "|продлени" + suffix + "|поставк" + suffix + ")\\s+" +
+      "(?:программн" + suffix + "\\s+)?лицензи" + suffix +
+      "\\s*(?:microsoft\\s*)?(?:teams|office\\s*365|m365|windows|exchange|sharepoint)" +
+      "|лицензи" + suffix + "\\s+(?:на\\s+)?(?:программн" + suffix +
+      "\\s+обеспечен" + suffix + "|по)" +
+      "|(?:продлени" + suffix + "|поставк" + suffix +
+      ")\\s+(?:лицензи" + suffix + "\\s+)?(?:microsoft\\s*)?(?:teams|m365|office\\s*365)", "iu"
     )
   };
   const result = [];

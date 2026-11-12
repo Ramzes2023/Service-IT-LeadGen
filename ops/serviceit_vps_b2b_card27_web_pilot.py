@@ -169,6 +169,8 @@ def main():
                               "башкирские": "FULL", "ооо": "OOO", INN: "VALUE"}
                     tokens = re.findall("|".join(labels), span)
                     print("CARD27_WEB_LABELS=" + "_".join(labels[t] for t in tokens), flush=True)
+            registry = findings.get("eis_registry_buyer") or {}
+            print("CARD27_WEB_EIS_REGISTRY_INN=" + ("YES" if registry.get("inn") == INN else "NO"), flush=True)
             report = source_only_investigation(findings)
             fields, _ = compose(notice, card, findings, report)
             print("CARD27_WEB_EIS_DOSSIER=" + ("YES" if all(

@@ -4,8 +4,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .bitrix_1062_mapping import _is_valid_inn
 from .serviceit_public_evidence_research import ResearchBlocked, _host, _page, _safe_model_excerpt
-from .serviceit_vps_b2b_deep_research import MAX_PAGES
+from .serviceit_vps_b2b_deep_research import MAX_PAGES, public_buyer_candidate
 
 
 EIS_NOTICE_NUMBER = re.compile(
@@ -42,6 +43,42 @@ def _source_eis_number(findings, notice, client):
     return None
 
 
+def _registry_buyer(rows):
+    """Require both exact registry mirrors to agree on the named buyer."""
+    pages = {urlsplit(row["url"]).hostname: row for row in rows}
+    if not {"tendik.ru", "sprosradar.ru"} <= set(pages):
+        return None
+    reference = public_buyer_candidate({
+        "status": "PUBLIC_PAGES_INSPECTED", "pages": [pages["tendik.ru"]],
+    })
+    if not reference:
+        return None
+    row = pages["sprosradar.ru"]
+    body = row["excerpt"]
+    name = re.search(r'[«"]([^»"]+)[»"]', reference)
+    if not name:
+        return None
+    # The registry mirror can print only the distinctive name, while the
+    # other mirror spells out the legal form. Match the same full name and
+    # require a single checksum-valid INN in that labelled buyer field.
+    tokens = re.findall(r"[^\W_]+", name[1])
+    if len(tokens) < 2:
+        return None
+    label = r"[^\w]+".join(map(re.escape, tokens))
+    matches = re.findall(
+        r"(?iu)\bзаказчик\s*[:—–-]?\s*"
+        r"(?:ООО\s+|АО\s+|ПАО\s+|общество\s+с\s+ограниченной\s+ответственностью\s+)?"
+        r'[«"]?' + label + r'[»"]?\s*[·,;:—–-]?\s*'
+        r"ИНН\s*[:№]?\s*(\d{10}|\d{12})(?!\d)",
+        body,
+    )
+    validated = {inn for inn in matches if _is_valid_inn(inn)}
+    if len(validated) != 1:
+        return None
+    return {"buyer": reference, "inn": next(iter(validated)),
+            "url": row["url"], "reference": pages["tendik.ru"]["url"]}
+
+
 def supplement_eis_mirrors(findings, notice, client):
     """Cross-check exact registry-linked public pages, with no provider credits."""
     try:
@@ -75,9 +112,25 @@ def supplement_eis_mirrors(findings, notice, client):
         added.append({"url": url, "excerpt": text[:7000]})
     if not added:
         return findings
-    return {**findings, "status": "PUBLIC_PAGES_INSPECTED",
+    result = {**findings, "status": "PUBLIC_PAGES_INSPECTED",
             "pages": (prior[:1] + added + prior[1:])[:MAX_PAGES],
             "model_excerpt": findings.get("model_excerpt") or _safe_model_excerpt(added[0]["excerpt"]),
             "eis_mirror_count": len(added)}
+    registry_buyer = _registry_buyer(added)
+    if registry_buyer:
+        result["eis_registry_buyer"] = registry_buyer
+    return result
 
 
+
+
+def registry_buyer_note(findings):
+    evidence = findings.get("eis_registry_buyer")
+    if not evidence:
+        return ""
+    return (
+        "\n\nЗАКАЗЧИК ПО ИЗВЕЩЕНИЮ ЕИС\n"
+        f"{evidence['buyer']}, ИНН {evidence['inn']}.\n"
+        f"Реквизиты: {evidence['url']}\n"
+        f"Сверка наименования: {evidence['reference']}"
+    )

@@ -1,0 +1,130 @@
+name: ServiceIT VPS V45 Tavily scoped new-signed B2B research guarded release
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: read
+concurrency:
+  group: serviceit-b2b-v44-search-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'Ramzes2023/Service-IT-LeadGen' &&
+      github.ref == 'refs/heads/main' && github.actor == 'Ramzes2023' &&
+      github.event_name == 'issue_comment' &&
+       github.event.issue.number == 589 &&
+       !github.event.issue.pull_request &&
+       github.event.comment.user.login == 'Ramzes2023' &&
+       github.event.comment.body == 'SERVICEIT_B2B_V45_TAVILY_SEARCH_SCOPE_RELEASE_489'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify reviewed NEW V45 and pinned pre-V45 OLD source hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed="$GITHUB_SHA"
+          old='5c3a40d45d56cdf7853bf67daf6236992f3c6e63'
+          git cat-file -e "$reviewed^{commit}"
+          git cat-file -e "$old^{commit}"
+          names=(serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_b2b_v19_backfill.py serviceit_b2b_v20_versioned.py serviceit_b2b_tavily_fallback_v44.py)
+          install -d -m 0700 "$RUNNER_TEMP/v45-release"
+          : > "$RUNNER_TEMP/v45-release/new-hashes"
+          : > "$RUNNER_TEMP/v45-release/old-hashes"
+          blobs=(911be9287e111217c319dd4c39d6c6950f9ef0bc
+            65cc08bec8db41488f6df75767b5327d0ff0a364
+            0da3d76b25b4e7524153c327ca6d6dd84b80a417
+            e9a31ae41025a89607069cdf02b741c9c13ae4a7
+            de666ea9d3e4feb0fd8b936b367021f385811323)
+          for i in "${!names[@]}"; do
+            name="${names[$i]}"
+            [[ "$(git hash-object "leadpilot/$name")" == "${blobs[$i]}" ]]
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v45-release/new-hashes"
+          done
+          for n in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_b2b_v19_backfill.py serviceit_b2b_v20_versioned.py serviceit_b2b_tavily_fallback_v44.py; do
+            git show "$old:leadpilot/$n" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/v45-release/old-hashes"
+          done
+          script=ops/serviceit_vps_b2b_v44_tavily_guarded_release.py
+          python -m py_compile "$script"
+          sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v45-release/script-sha"
+          [[ "$(wc -l < "$RUNNER_TEMP/v45-release/new-hashes")" == 5 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v45-release/old-hashes")" == 5 ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v45-release/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v45-release/hosts"
+          chmod 0600 "$RUNNER_TEMP/v45-release/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v45-release/hosts" >/dev/null
+      - name: Transfer exactly one nonsecret file plus release controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v45-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-v45-onefile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v45-release/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_b2b_v19_backfill.py serviceit_b2b_v20_versioned.py serviceit_b2b_tavily_fallback_v44.py; do
+            scp -i "$RUNNER_TEMP/v45-release/id" "${opts[@]}" \
+              "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$RUNNER_TEMP/v45-release/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v44_tavily_guarded_release.py "$target:$stage/activate.py"
+      - name: Offline smoke new one module and swap coordinator only with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v45-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t new < "$RUNNER_TEMP/v45-release/new-hashes"
+          mapfile -t old < "$RUNNER_TEMP/v45-release/old-hashes"
+          [[ "${#new[@]}" == 5 && "${#old[@]}" == 5 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/v45-release/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          args=()
+          for v in "${new[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$v'")
+          done
+          for v in "${old[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$v'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${args[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v45-release/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/v45-release/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 10 ]]
+          for value in "$@"; do [[ "$value" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-v45-onefile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" "$id" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^V45_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v45-release/status" | head -30 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'V45_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v45-release/status"
+          grep -qx 'V45_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v45-release/status"

@@ -31,7 +31,8 @@ from leadpilot.bitrix_metadata_audit import validate_webhook
 CARD = 29
 SOURCE = "B2B-CENTER-4677923"
 TABLE = "serviceit_vps_b2b_card29_primary_v1_receipt"
-LOCK_ID = 647792329
+from leadpilot.serviceit_vps_b2b_dossier_v11_worker import LOCK_ID as DOSSIER_LOCK_ID
+LOCK_ID = DOSSIER_LOCK_ID
 STATUS = PREFIX + "AI_STATUS"
 REPORT = PREFIX + "AI_FULL_REPORT"
 BRIEF = PREFIX + "AI_MANAGER_BRIEF"
@@ -101,7 +102,8 @@ def prepare(facts, docs, original, url):
     ) if x.casefold() in text.casefold()]
     full_old = original[REPORT]
     need(isinstance(full_old,str)
-         and "ТЕНДЕРНОЕ ДОСЬЕ V11" in full_old
+         and ("ТЕНДЕРНОЕ ДОСЬЕ V11" in full_old
+              or full_old.startswith("СЕРВИС ИТ | V37"))
          and 700 <= len(full_old) <= 9000
          and "ПЕРВИЧНЫЙ ИСТОЧНИК · ОБНОВЛЕНО" not in full_old,
          "OLDER_DOSSIER_NOT_UNMODIFIED")
@@ -195,6 +197,56 @@ def digest(payload,salt):
     return hashlib.sha256(salt+raw).digest()
 
 
+def attested_current_chain(conn, signed_source, v11_fields):
+    """Reconstruct ONLY verified versioned AI mutations, never an arbitrary edit.
+
+    V19/V20 publish complete nine-field post-images; V37 stores scoped patch
+    before/after and a salted digest. Unknown changes remain a hard blocker.
+    """
+    need(set(v11_fields)==AI_FIELDS, "V11_FIELDS_NOT_EXACT")
+    expected=dict(v11_fields)
+    source_hash=hashlib.sha256(signed_source.encode("ascii")).hexdigest()
+    for table in ("serviceit_vps_b2b_v19_research_receipts",
+                  "serviceit_vps_b2b_v20_revision_receipts"):
+        exists=conn.execute("SELECT to_regclass(%s)",("public."+table,)).fetchone()[0]
+        if not exists:
+            continue
+        rows=conn.execute(
+            "SELECT before_fields,after_fields FROM "+table+
+            " WHERE card_id=%s AND source_hash=%s AND status='VERIFIED'"
+            " ORDER BY updated_at ASC",(CARD,source_hash)
+        ).fetchall()
+        for before,after in rows:
+            need(type(before) is dict and type(after) is dict
+                 and set(before)==AI_FIELDS and set(after)==AI_FIELDS
+                 and all(expected[k]==before[k] for k in AI_FIELDS),
+                 "V19_V20_ATTESTATION_CHAIN_CONFLICT")
+            expected=dict(after)
+    table="serviceit_vps_b2b_dossier_consistency_v37_receipts"
+    exists=conn.execute("SELECT to_regclass(%s)",("public."+table,)).fetchone()[0]
+    if exists:
+        rows=conn.execute("""
+           SELECT status,before_fields,after_fields,salt,digest
+           FROM serviceit_vps_b2b_dossier_consistency_v37_receipts
+           WHERE card_id=%s AND source_hash=%s
+           ORDER BY attempt_no ASC
+        """,(CARD,source_hash)).fetchall()
+        for status,before,after,salt,proof in rows:
+            need(status!="UNCERTAIN","V37_PRIOR_UNCERTAIN_NO_REPLAY")
+            if status!="VERIFIED":
+                continue
+            need(type(before) is dict and type(after) is dict
+                 and set(before)==set(after)
+                 and isinstance(salt,(bytes,memoryview))
+                 and isinstance(proof,(bytes,memoryview))
+                 and secrets.compare_digest(digest(after,bytes(salt)),bytes(proof)),
+                 "V37_RECEIPT_DIGEST_INVALID")
+            need(all(expected[k]==before[k] for k in before if k in AI_FIELDS),
+                 "V37_BEFORE_CHAIN_CONFLICT")
+            expected.update({k:after[k] for k in after if k in AI_FIELDS})
+    return expected
+
+
 def read_card(rest):
     x=normalized(rest("crm.item.get",{
         "entityTypeId":1062,"id":CARD,"useOriginalUfNames":"Y"
@@ -239,7 +291,9 @@ def main():
                 need(v11 and isinstance(v11[0],dict) and set(v11[0])==AI_FIELDS,
                      "V11_BASE_NOT_ATTESTED")
                 original={k:item.get(k) for k in AI_FIELDS}
-                need(original==v11[0],"CRM_HAS_POST_V11_EDITS_OR_OTHER_WRITER")
+                expected=attested_current_chain(conn,SOURCE,v11[0])
+                need(original==expected,
+                     "CRM_HAS_UNATTESTED_EDITS_OR_CONCURRENT_WRITER")
                 native=conn.execute("""
                     SELECT to_regclass(%s)
                 """,("public."+TABLE,)).fetchone()[0]
@@ -254,6 +308,7 @@ def main():
             facts=b2b_primary_detail_facts(docs)
             patch=prepare(facts,docs,original,url)
             need(patch!=original,"NO_NEW_EVIDENCE")
+            emit("CHAIN_ATTESTED","YES")
             emit("EVIDENCE_READY","YES")
             emit("DATED_SOURCE_FIELDS",len(facts))
             emit("UPDATED_FIELD_COUNT",sum(patch[k]!=original[k] for k in AI_FIELDS))

@@ -1,4 +1,5 @@
 name: ServiceIT B2B card29 source-backed one-use dossier repair
+# Retry after independently verified V37 post-V11 audit chain (no untrusted edits).
 on:
   push:
     branches: [main]

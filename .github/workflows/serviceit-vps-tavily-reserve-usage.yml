@@ -20,6 +20,33 @@ jobs:
       VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
       VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
     steps:
+      - name: Probe Tavily API unauthenticated reachability from independent GitHub runner (no credits)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Read-only unauthenticated GET. No API key or research payload and no credit use.
+          # Record only status and JSON-vs-HTML classification, not server content.
+          code="$(curl --silent --show-error --max-redirs 0 --max-time 20 \
+            --output "$RUNNER_TEMP/tavily-public-probe.body" \
+            --write-out '%{http_code}' 'https://api.tavily.com/usage')" || code='NETWORK_ERROR'
+          if [[ "$code" =~ ^[0-9]{3}$ ]]; then
+            echo "TAVILY_RUNNER_UNAUTH_HTTP=$code"
+          else
+            echo 'TAVILY_RUNNER_UNAUTH_HTTP=NETWORK_ERROR'
+          fi
+          if python3 - "$RUNNER_TEMP/tavily-public-probe.body" <<'PY'
+          import json,sys
+          from pathlib import Path
+          try:
+              body=Path(sys.argv[1]).read_bytes()[:100000]
+              data=json.loads(body)
+              ok=isinstance(data,dict) and isinstance(data.get('detail'),dict)
+          except (OSError,ValueError,UnicodeDecodeError):
+              ok=False
+          print('TAVILY_RUNNER_DENIAL_FORMAT='+('JSON_API' if ok else 'NON_API_OR_UNVERIFIED'))
+          PY
+          then :; else exit 1; fi
+
       - name: Verify the mounted provider key with GET usage
         shell: bash
         run: |

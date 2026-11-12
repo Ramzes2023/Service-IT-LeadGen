@@ -628,6 +628,54 @@ def _merge_independent_tinyfish(candidate, fetched, tender_id):
     return result
 
 
+def verified_original_b2b_details(candidate, notice, client):
+    """Prefer the full, safely reduced ORIGINAL public B2B details over a 4k head.
+
+    Requires a canonical signed tender URL, robots + HTTPS GET, and exact
+    number/title proof in fetched visible text. Does not read vendor email
+    or search snippets, download gated files, or use an external AI provider.
+    """
+    from .serviceit_b2b_public_mirrors import detailed_public_excerpt
+    from .serviceit_public_evidence_research import _robots, _get, VisibleText
+    if not isinstance(candidate, dict) or not isinstance(notice, dict):
+        return candidate
+    url, tid, subject = (notice.get("source_url"), notice.get("tender_id"),
+                         notice.get("subject"))
+    if (type(url) is not str or type(tid) is not str
+            or type(subject) is not str or not re.fullmatch(r"\d{5,12}", tid)):
+        return candidate
+    parsed = urlsplit(url)
+    expected_path = re.fullmatch(
+        r"/(?:app/market-next|market)/[a-z0-9-]+/tender-(\d{5,12})/?",
+        parsed.path,
+    )
+    allowed = frozenset({"b2b-center.ru"})
+    try:
+        if (parsed.query or parsed.fragment or not expected_path
+                or expected_path.group(1) != tid
+                or _host(url, allowed) not in ("www.b2b-center.ru", "b2b-center.ru")):
+            return candidate
+        _robots(client, url, allowed)
+        raw = _get(client, url, allowed)
+        parser = VisibleText()
+        parser.feed(raw)
+        excerpt = detailed_public_excerpt(parser.parts, tid, subject)
+    except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError):
+        return candidate
+    if not excerpt:
+        return candidate
+    result = dict(candidate)
+    pages = list(result.get("pages") or [])
+    if any(type(p) is not dict for p in pages):
+        return candidate
+    original = next((p for p in pages if p.get("url") == url), {})
+    primary = {**original, "url": url, "excerpt": excerpt}
+    result["pages"] = ([primary] + [p for p in pages if p.get("url") != url])[:MAX_PAGES]
+    result["status"] = "PUBLIC_PAGES_INSPECTED"
+    result["original_b2b_detail_independently_read"] = True
+    return result
+
+
 def source_findings(item, notice, env, client, *, enable_v18=False,
                     connection=None):
     hosts = host_allowlist(env)
@@ -700,6 +748,7 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
             return candidate
         result = _merge_independent_tinyfish(
             candidate, tinyfish, notice["tender_id"])
+        result = verified_original_b2b_details(result, notice, client)
         result = dict(result)
         result["tinyfish_independent_stage"] = (
             "DISABLED_BY_SOURCE_POLICY" if not tinyfish_authorized else

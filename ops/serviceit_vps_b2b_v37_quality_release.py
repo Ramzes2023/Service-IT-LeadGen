@@ -64,6 +64,7 @@ EIS_MIRROR_FILES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_b2b_ei
 ROUTERAI_RESEARCH_FILES = ("serviceit_b2b_routerai_deep.py", "serviceit_vps_b2b_dossier_v11_worker.py")
 TAVILY_GAPS_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_deep_research.py")
 SEARCH_QUOTA_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_dossier_v11_worker.py")
+SERVICE_PROFILE_FILES = ("b2b_email_opportunity_bridge.py",)
 PUBLIC_HTML_FILES = ("serviceit_public_evidence_research.py",)
 PUBLIC_BUYER_FILES = ("serviceit_vps_b2b_deep_research.py", "serviceit_public_evidence_research.py")
 
@@ -491,6 +492,10 @@ if 'serviceit_vps_b2b_deep_research.py' in files:
         'url':'https://zakupki.kontur.ru/1234567_40',
         'excerpt':'Заказчик Общество с ограниченной ответственностью Управляющая компания «Учебный холдинг» ИНН-КПП 1234567894'}]})
     assert evidence['buyer_name']=='ООО УК «Учебный холдинг»' and evidence['inn']=='1234567894'
+if 'b2b_email_opportunity_bridge.py' in files:
+    from leadpilot.b2b_email_opportunity_bridge import classify_services
+    assert 'LICENSES' in classify_services('Приобретение лицензий Teams (продление)')
+    assert 'CLOUD' in classify_services('Предоставление доступа к облачным сервисам')
 if 'serviceit_b2b_eis_mirrors.py' in files:
     from leadpilot.serviceit_b2b_eis_mirrors import EIS_MIRRORS, supplement_eis_mirrors
     assert len(EIS_MIRRORS)==2 and callable(supplement_eis_mirrors)
@@ -607,6 +612,7 @@ def main():
         "--routerai-research": (ROUTERAI_RESEARCH_FILES, "routerai-research"),
         "--tavily-gaps": (TAVILY_GAPS_FILES, "tavily-gaps"),
         "--search-quota": (SEARCH_QUOTA_FILES, "search-quota"),
+        "--service-profile": (SERVICE_PROFILE_FILES, "service-profile"),
         "--public-html": (PUBLIC_HTML_FILES, "public-html"),
         "--public-buyer": (PUBLIC_BUYER_FILES, "public-buyer"),
     }

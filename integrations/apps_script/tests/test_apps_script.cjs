@@ -723,12 +723,48 @@ test('5-min polling automatically recovers post-cutover NO_MATCH without duplica
     ['SERVICEIT_EMAIL_'+MID]:'NO_MATCH'
   }});
   const result=e.context.pollAndDispatchB2B();
-  assert.strictEqual(result.recovered_nomatch_messages,1);
+  assert.strictEqual(result.recovered_missed_messages,1);
   assert.strictEqual(result.dispatched,1);
   assert.strictEqual(e.calls.dispatch.length,1);
   assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCHED:/);
   assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,0);
   assert.strictEqual(e.calls.dispatch.length,1);
+});
+
+test('DONE mail with missed second cloud/Teams tender is re-examined once after classifier update',()=>{
+  const mixed = [
+    'Организатор закупки: АО "ТЕСТ"',
+    'Предмет закупки: Услуги технической поддержки IT-инфраструктуры и серверов',
+    'https://www.b2b-center.ru/market/pravovoe-soprovozhdenie/tender-1234567/',
+    'Организатор закупки: АО "ДРУГАЯ"',
+    'Предмет закупки: Приобретение лицензий Teams (продление)',
+    'https://www.b2b-center.ru/market/podderzhka-serverov/tender-1234568/'
+  ].join('\n');
+  const msg=message(MID,{body:mixed,internalDate:CUTOVER+1000});
+  const e=environment({message:msg,properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+MID]:'DONE',
+    SERVICEIT_SOURCE_1234567:'DISPATCHED:before-classifier'
+  }});
+  const first=e.context.pollAndDispatchB2B();
+  assert.strictEqual(first.recovered_missed_messages,1);
+  assert.strictEqual(first.dispatched,1);
+  assert.strictEqual(e.calls.dispatch.length,1);
+  assert.strictEqual(e.calls.dispatch[0].notice.tender_id,'1234568');
+  assert.match(e.properties.SERVICEIT_SOURCE_1234567,/^DISPATCHED:/);
+  assert.match(e.properties.SERVICEIT_SOURCE_1234568,/^DISPATCHED:/);
+  assert.strictEqual(e.context.pollAndDispatchB2B().dispatched,0);
+});
+
+test('DONE mail before cutover cannot reopen previously retired sources',()=>{
+  const msg=message(MID,{internalDate:CUTOVER-1000});
+  const e=environment({message:msg,properties:{
+    SERVICEIT_AUTOMATION_ENABLED:'YES',
+    ['SERVICEIT_EMAIL_'+MID]:'DONE'
+  }});
+  assert.strictEqual(e.context.pollAndDispatchB2B().recovered_missed_messages,0);
+  assert.strictEqual(e.calls.dispatch.length,0);
+  assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'DONE');
 });
 
 test('post-cutover recovery fences historical NO_MATCH before activation',()=>{
@@ -738,7 +774,7 @@ test('post-cutover recovery fences historical NO_MATCH before activation',()=>{
     ['SERVICEIT_EMAIL_'+MID]:'NO_MATCH'
   }});
   const result=e.context.pollAndDispatchB2B();
-  assert.strictEqual(result.recovered_nomatch_messages,0);
+  assert.strictEqual(result.recovered_missed_messages,0);
   assert.strictEqual(result.dispatched,0);
   assert.strictEqual(e.calls.dispatch.length,0);
   assert.strictEqual(e.properties['SERVICEIT_EMAIL_'+MID],'NO_MATCH');

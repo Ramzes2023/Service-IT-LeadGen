@@ -29,9 +29,9 @@ from .serviceit_vps_worker import SEARCH_POLICY_START
 
 MODEL = "pro"
 MAX_PRO_CREDITS = 250
-PER_MONTH_MAX_TASKS = 24  # upper bound; the real account usage cap is stricter
+PER_MONTH_MAX_TASKS = 1000  # account's actual remaining included credits are authoritative
 MAX_SOURCES = 24
-MAX_REPORT_CHARS = 40000
+MAX_REPORT_CHARS = 120000
 API = "https://api.tavily.com"
 TABLE = "serviceit_vps_b2b_tavily_research_pro_v46"
 LOCK_ID = 693714610
@@ -119,22 +119,6 @@ def _usage(conn,client,key):
 def _notice(tender):
     match=SCOPED.fullmatch(tender)
     return match.group(1) if match else None
-
-
-def _next_signed(conn):
-    row=conn.execute(f"""
-       SELECT b.card_id,b.source_id,b.notice_json,b.received_at
-       FROM serviceit_vps_b2b_inbox b
-       LEFT JOIN {TABLE} t
-         ON t.source_hash=encode(sha256(convert_to(b.source_id,'UTF8')),'hex')
-       WHERE b.state='VERIFIED' AND t.source_hash IS NULL
-         AND b.received_at >= %s
-         AND b.source_id ~ '^B2B-CENTER-[0-9]{{5,12}}$'
-       ORDER BY b.received_at ASC LIMIT 1
-    """,(SEARCH_POLICY_START,)).fetchone()
-    # Avoid requiring pgcrypto: that extension is not guaranteed on the VPS.
-    # The production selection is reimplemented below without server hashing.
-    return row
 
 
 def _candidate(conn):

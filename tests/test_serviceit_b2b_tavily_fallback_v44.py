@@ -148,3 +148,26 @@ def test_verified_pages_include_only_independent_evidence(monkeypatch):
     assert got["status"]=="PUBLIC_PAGES_INSPECTED"
     assert got["pages"][0]["url"]==URL
     assert got["discovery"]=="TAVILY_URLS_WITH_INDEPENDENT_PUBLIC_READ"
+
+
+def test_readable_primary_with_missing_inn_can_gain_verified_tavily_page(monkeypatch):
+    from leadpilot import serviceit_vps_b2b_deep_research as research
+    from leadpilot import serviceit_b2b_public_mirrors as mirrors
+
+    monkeypatch.setattr(research, "host_allowlist", lambda env: frozenset({"b2b-center.ru"}))
+    monkeypatch.setattr(research, "secret_file", lambda *args, **kwargs: "")
+    monkeypatch.setattr(research, "brave_notice_page", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mirrors, "brave_mirror_search", lambda *args, **kwargs: None)
+    primary = {"url": NOTICE["source_url"], "excerpt": "Закупка № 4676478 Серверное оборудование"}
+    monkeypatch.setattr(research, "research_public", lambda *args, **kwargs: {
+        "status": "PUBLIC_PAGES_INSPECTED", "pages": [primary],
+    })
+    mirror = {"url": URL, "excerpt": "Заказчик: ООО «Учебная фирма». ИНН 1234567894"}
+    calls = []
+    monkeypatch.setattr(t, "verified_mirror_search", lambda *args: (
+        calls.append(args) or {"status": "PUBLIC_PAGES_INSPECTED", "pages": [mirror]}
+    ))
+    findings = research.source_findings({}, NOTICE, ENV, object(), connection=object())
+    assert len(calls) == 1
+    assert findings["pages"] == [primary, mirror]
+    assert research.published_buyer_inn_evidence(findings)["inn"] == "1234567894"

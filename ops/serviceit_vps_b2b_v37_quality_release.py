@@ -35,6 +35,7 @@ NEIGHBORS = (
     "serviceit-b2b-vps-writer-1",
 )
 FILES = ('serviceit_b2b_v19_backfill.py', 'serviceit_b2b_v20_versioned.py', 'serviceit_b2b_dossier_v11.py')
+TAVILY_GAPS_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_deep_research.py")
 SEARCH_QUOTA_FILES = ("serviceit_vps_worker.py", "serviceit_vps_b2b_dossier_v11_worker.py")
 PUBLIC_HTML_FILES = ("serviceit_public_evidence_research.py",)
 PUBLIC_BUYER_FILES = ("serviceit_vps_b2b_deep_research.py", "serviceit_public_evidence_research.py")
@@ -486,6 +487,7 @@ print('V37_OFFLINE_SMOKE_PASS')
 def main():
     args = sys.argv[1:]
     profiles = {
+        "--tavily-gaps": (TAVILY_GAPS_FILES, "tavily-gaps"),
         "--search-quota": (SEARCH_QUOTA_FILES, "search-quota"),
         "--public-html": (PUBLIC_HTML_FILES, "public-html"),
         "--public-buyer": (PUBLIC_BUYER_FILES, "public-buyer"),

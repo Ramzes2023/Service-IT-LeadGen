@@ -1,0 +1,165 @@
+name: ServiceIT B2B Tavily evidence fallback and activation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-tavily-activate.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Fetch exact reviewed public repository revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init --quiet .
+          git remote add origin https://github.com/Ramzes2023/Service-IT-LeadGen.git
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+      - name: Verify new and previous Tavily fallback module hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed="$GITHUB_SHA"
+          old='69cbc9e0442af88273c28520db17b29d75d3f648'
+          git cat-file -e "$reviewed^{commit}"
+          git cat-file -e "$old^{commit}"
+          names=(serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py)
+          install -d -m 0700 "$RUNNER_TEMP/v37-release"
+          : > "$RUNNER_TEMP/v37-release/new-hashes"
+          : > "$RUNNER_TEMP/v37-release/old-hashes"
+          blobs=(6394f1dd23a8a05985b9a364a58d4e4a712b9c7c 7c959b254c85801d61832fa8e5e9e87b5a0e815f)
+          for i in "${!names[@]}"; do
+            name="${names[i]}"
+            [[ "$(git hash-object "leadpilot/$name")" == "${blobs[i]}" ]]
+            git diff --quiet "$reviewed" HEAD -- "leadpilot/$name"
+            python -m py_compile "leadpilot/$name"
+            sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v37-release/new-hashes"
+            git show "$old:leadpilot/$name" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/v37-release/old-hashes"
+          done
+          script=ops/serviceit_vps_b2b_v37_quality_release.py
+          python -m py_compile "$script"
+          sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v37-release/script-sha"
+          [[ "$(wc -l < "$RUNNER_TEMP/v37-release/new-hashes")" == 2 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v37-release/old-hashes")" == 2 ]]
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/v37-release/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v37-release/hosts"
+          chmod 0600 "$RUNNER_TEMP/v37-release/"*
+          ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v37-release/hosts" >/dev/null
+      - name: Transfer two reviewed modules and release controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v37-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          stage="serviceit/staging/b2b-tavily-gaps-onefile-release-$GITHUB_RUN_ID"
+          ssh -T -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" "$target" \
+            "umask 077; install -d -m 0700 '$stage'"
+          for name in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py; do
+            scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
+              "leadpilot/$name" "$target:$stage/"
+          done
+          scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
+            ops/serviceit_vps_b2b_v37_quality_release.py "$target:$stage/activate.py"
+      - name: Test modules offline and deploy coordinator with rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+                -o UserKnownHostsFile="$RUNNER_TEMP/v37-release/hosts"
+                -o BatchMode=yes -o ConnectTimeout=15)
+          mapfile -t new < "$RUNNER_TEMP/v37-release/new-hashes"
+          mapfile -t old < "$RUNNER_TEMP/v37-release/old-hashes"
+          [[ "${#new[@]}" == 2 && "${#old[@]}" == 2 ]]
+          scriptsha="$(cat "$RUNNER_TEMP/v37-release/script-sha")"
+          [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
+          args=()
+          for v in "${new[@]}" "${old[@]}"; do
+            [[ "$v" =~ ^[a-f0-9]{64}$ ]]
+            args+=("'$v'")
+          done
+          remote="bash -s -- '$GITHUB_RUN_ID' '$scriptsha' ${args[*]}"
+          set +e
+          ssh -T -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" "$remote" \
+            > "$RUNNER_TEMP/v37-release/status" <<'REMOTE'
+          set -euo pipefail
+          id="$1"; sha="$2"; shift 2
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 4 ]]
+          for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
+          script="$HOME/serviceit/staging/b2b-tavily-gaps-onefile-release-$id/activate.py"
+          [[ -f "$script" && ! -L "$script" ]]
+          printf '%s  %s\n' "$sha" "$script" | sha256sum --check --status
+          python3 "$script" --tavily-gaps "$id" "$@"
+          REMOTE
+          rc=$?
+          set -e
+          grep -E '^TAVILY_GAPS_RELEASE_[A-Z0-9_]+=(YES|NO|NOT_NEEDED|UNVERIFIED|[A-Z0-9_]{4,90})$' \
+            "$RUNNER_TEMP/v37-release/status" | head -30 || true
+          [[ "$rc" == 0 ]]
+          grep -qx 'TAVILY_GAPS_RELEASE_VPS_LIVE_ENABLED=YES' "$RUNNER_TEMP/v37-release/status"
+          grep -qx 'TAVILY_GAPS_RELEASE_CRM_WRITES_BY_INSTALLER=NO' "$RUNNER_TEMP/v37-release/status"
+  activate:
+    needs: deploy
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - name: Fetch exact reviewed public repository revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init --quiet .
+          git remote add origin https://github.com/Ramzes2023/Service-IT-LeadGen.git
+          git fetch --no-tags origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+      - name: Check private key, test one public search, and activate on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          stage="$RUNNER_TEMP/tavily-activation"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/id" "$stage/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$stage/hosts" >/dev/null
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          target="$VPS_USER@$VPS_HOST"
+          remote="serviceit/staging/tavily-enable-$GITHUB_RUN_ID"
+          ssh -T -i "$stage/id" "${opts[@]}" "$target"             "umask 077; install -d -m 0700 '$remote'"
+          scp -i "$stage/id" "${opts[@]}" ops/serviceit_vps_b2b_tavily_enable.py             ops/serviceit_vps_b2b_v37_quality_release.py "$target:$remote/"
+          rc=0
+          ssh -T -i "$stage/id" "${opts[@]}" "$target"             "python3 -B '$remote/serviceit_vps_b2b_tavily_enable.py'"             > "$stage/status" 2>/dev/null || rc=$?
+          grep -E '^TAVILY_[A-Z0-9_]{3,42}=[A-Z0-9_]{1,55}$' "$stage/status" || true
+          [[ "$rc" == 0 ]]
+          grep -Eq '^TAVILY_ACTIVATION=(LIVE|ALREADY_LIVE)$' "$stage/status"

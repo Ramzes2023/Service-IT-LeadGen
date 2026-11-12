@@ -50,22 +50,29 @@ class SearchBudget:
     def __init__(self):
         self.remaining = 0
         self.sent = 0
+        self.reserve_tavily = False
 
     def check(self, request):
         if request.url.host not in SEARCH_HOSTS:
             return
-        if self.remaining <= 0:
+        is_tavily = request.url.host == "api.tavily.com"
+        minimum = int(self.reserve_tavily and not is_tavily)
+        if self.remaining <= minimum:
             raise httpx.RequestError("AUTOMATED_SEARCH_DISABLED_OR_LIMIT_REACHED", request=request)
         self.remaining -= 1
         self.sent += 1
+        if is_tavily:
+            self.reserve_tavily = False
 
     @contextmanager
-    def for_card(self, eligible):
+    def for_card(self, eligible, *, reserve_tavily=False):
         self.remaining = SEARCH_REQUESTS_PER_CARD if eligible else 0
+        self.reserve_tavily = eligible and reserve_tavily
         try:
             yield eligible
         finally:
             self.remaining = 0
+            self.reserve_tavily = False
 
 
 def safe_log(payload):
@@ -217,7 +224,10 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
                 SELECT received_at FROM serviceit_vps_b2b_inbox
                 WHERE card_id=%s AND source_id=%s AND state='VERIFIED'
             """, (card, source)).fetchone()
-            return budget.for_card(bool(row and row[0] >= SEARCH_POLICY_START))
+            return budget.for_card(
+                bool(row and row[0] >= SEARCH_POLICY_START),
+                reserve_tavily=env.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES",
+            )
 
         for _ in range(MAX_ITEMS):
             card = claim_one(connection)

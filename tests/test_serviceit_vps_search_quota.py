@@ -29,3 +29,17 @@ class SearchQuotaTest(TestCase):
                 client.get(brave)
         assert budget.sent == SEARCH_REQUESTS_PER_CARD
         assert len(sent) == SEARCH_REQUESTS_PER_CARD + 1
+
+    def test_new_b2b_card_reserves_last_request_for_tavily(self):
+        budget = SearchBudget()
+        brave = httpx.Request("GET", "https://api.search.brave.com/res/v1/web/search")
+        tavily = httpx.Request("POST", "https://api.tavily.com/search")
+        with budget.for_card(True, reserve_tavily=True):
+            for _ in range(SEARCH_REQUESTS_PER_CARD - 1):
+                budget.check(brave)
+            with self.assertRaises(httpx.RequestError):
+                budget.check(brave)
+            budget.check(tavily)
+            with self.assertRaises(httpx.RequestError):
+                budget.check(tavily)
+        assert budget.sent == SEARCH_REQUESTS_PER_CARD

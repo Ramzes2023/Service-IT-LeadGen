@@ -695,17 +695,6 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
         else optional(brave_mirror_search,
             client, notice["tender_id"], notice["subject"], key))
 
-    # V44: Tavily replaces an exhausted Brave URL discovery step ONLY when
-    # both the original public publication and independently checked mirrors
-    # are missing. The PG one-use receipt ensures five-minute research loops
-    # never spend a second Tavily credit on the same signed tender.
-    # Tavily snippets/LLM answers are discarded; independent HTTPS/robots and
-    # exact B2B number/title verification happen inside the adapter.
-    if connection is not None and mirror is None and not page_proof:
-        from .serviceit_b2b_tavily_fallback_v44 import verified_mirror_search
-        mirror = optional(
-            verified_mirror_search, connection, client, env, notice, browser)
-
     def with_index(candidate):
         if not isinstance(candidate, dict):
             return candidate
@@ -719,6 +708,23 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
         # Re-run the ordinary verified-buyer follow-up only after all safely
         # merged public sources, so the model/CRM dossier sees both providers.
         result = optional(followup_public_buyer_research, result, env, client, key) or result
+        # A readable notice may still omit the buyer or its INN. Try one
+        # bounded Tavily discovery for those gaps as well as missing pages.
+        if (connection is not None and env.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES"
+                and not optional(published_buyer_inn_evidence, result)):
+            from .serviceit_b2b_tavily_fallback_v44 import verified_mirror_search
+            found = optional(verified_mirror_search, connection, client, env, notice, browser)
+            if found:
+                if result.get("status") != "PUBLIC_PAGES_INSPECTED":
+                    result.update(found)
+                else:
+                    prior = result.get("pages") or []
+                    known = {page["url"] for page in prior}
+                    added = [page for page in found["pages"] if page["url"] not in known]
+                    if added:
+                        # The identity extractor checks the first three pages.
+                        result["pages"] = (prior[:1] + added + prior[1:])[:MAX_PAGES]
+                result["tavily_public_page_verified"] = True
         if v18:
             hints = (index.get("candidates") or []) if isinstance(index, dict) else []
             # Brave search hits are URL hints only; never factual proof.

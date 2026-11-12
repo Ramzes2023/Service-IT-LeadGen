@@ -133,14 +133,19 @@ def main():
         print("CARD27_WEB_SLUG_MATCH=" + ("YES" if urlsplit(url).path.replace(
             "/app/market-next/", "/market/", 1).rstrip("/") == urlsplit(DETAIL).path.rstrip("/")
             else "NO"), flush=True)
-        for kind, link in (("DETAIL", DETAIL), ("PROFILE", PROFILE)):
+        sources = (
+            ("KONTUR", REGISTER, "zakupki.kontur.ru"),
+            ("TENDIK", "https://tendik.ru/tender/eis223/32616566539", "tendik.ru"),
+            ("SPROSRADAR", "https://sprosradar.ru/zakupki/223/32616566539/", "sprosradar.ru"),
+            ("SIGNED", url, "b2b-center.ru"),
+        )
+        for kind, link, host in sources:
             try:
-                page = _page(client, link, frozenset({"b2b-energo.ru"}))
-                status = "VERIFIED" if (TENDER if kind == "DETAIL" else INN) in page["text"] else "NO_MATCH"
+                page = _page(client, link, frozenset({host}))
+                status = "VERIFIED" if TENDER in page["text"] else "NO_MATCH"
             except (ResearchBlocked, httpx.HTTPError) as error:
                 status = str(error) if isinstance(error, ResearchBlocked) else type(error).__name__.upper()
             print("CARD27_WEB_VPS_" + kind + "=" + status, flush=True)
-        assert urlsplit(url).hostname in {"www.b2b-center.ru", "b2b-center.ru"}
         print("CARD27_WEB_TENDER=" + tender, flush=True)
         print("CARD27_WEB_INN_IN_CRM=" + ("YES" if card.get(PREFIX+"COMPANY_INN") else "NO"), flush=True)
         for name in ("TAVILY_SEARCH", "TAVILY_RESEARCH_MINI"):

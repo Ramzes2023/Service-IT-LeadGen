@@ -29,6 +29,11 @@ NOTICE = {
     (["Адрес поставки: Московский район, Санкт-Петербург"], "OUTSIDE"),
     (["Место поставки: г. Уфа"], "OUTSIDE"),
     (["Место оказания услуг: Москва и Санкт-Петербург"], "MIXED"),
+    (["Адрес поставки / оказания услуг", "Россия, г. Москва, 121151, ул. Можайский Вал"], "MOSCOW"),
+    (["Адрес поставки / оказания услуг", "Россия, Краснодарский край, г. Краснодар"], "OUTSIDE"),
+    (["Адрес поставки / оказания услуг", "Россия, Московская область, г. Химки"], "MOSCOW"),
+    (["Адрес поставки / оказания услуг", "Россия, Тверская область"], "OUTSIDE"),
+    (["Адрес поставки / оказания услуг", "Москва и Тверская область"], "MIXED"),
     (["Место поставки: Москва", "Место оказания услуг: Казань"], "MIXED"),
     (["Место исполнения договора: по всей России"], "OUTSIDE"),
     (["Место поставки: дистанционно"], "UNKNOWN"),
@@ -141,3 +146,47 @@ def test_geo_flag_is_explicit_opt_in_and_invalid_values_fail(monkeypatch):
     flags["SERVICEIT_B2B_MOSCOW_ONLY_ENABLED"] = "MAYBE"
     with pytest.raises(bridge.B2BBlocked,match="B2B_MOSCOW_ONLY_FLAG_INVALID"):
         bridge.enabled(flags,writer=True)
+
+
+def test_official_number_title_identity_avoids_mirror_specific_number_label():
+    assert geo.same_official_tender_head(
+        "Тендеры Приобретение лицензий Teams (продление) № 4677923 "
+        "Организатор АО Азот-Взрыв Адрес поставки / оказания услуг",
+        "4677923", "Приобретение лицензий Teams (продление)")
+    assert not geo.same_official_tender_head(
+        "Тендеры Приобретение лицензий Teams (продление) № 4677924",
+        "4677923", "Приобретение лицензий Teams (продление)")
+    assert not geo.same_official_tender_head(
+        "Тендеры Приобретение лицензий 1С № 4677923",
+        "4677923", "Приобретение лицензий Teams (продление)")
+
+
+def test_original_b2b_official_page_moscow_supply_address(monkeypatch):
+    notice = {**NOTICE,
+        "tender_id": "4677923",
+        "subject": "Приобретение лицензий Teams (продление)",
+        "source_url": "https://www.b2b-center.ru/app/market-next/priobretenie-litsenzii-teams-prodlenie/tender-4677923/",
+    }
+    monkeypatch.setattr(geo, "_robots", lambda *a: None)
+    monkeypatch.setattr(geo, "_get", lambda *a:
+        "<h1>Приобретение лицензий Teams (продление)</h1><b>№ 4677923</b>"
+        "<div>Адрес поставки / оказания услуг</div>"
+        "<div>Россия, г. Москва, 121151, ул. Можайский Вал</div>"
+        "<div>Организатор ООО Краснодар</div>")
+    assert geo.check_public_procurement_location(notice, None) == "MOSCOW"
+
+
+def test_original_b2b_official_page_krasnodar_performance(monkeypatch):
+    notice = {**NOTICE,
+        "tender_id": "4677837",
+        "subject": "Услуги ТП для серверов Sparc M8-8 и Power E980",
+        "source_url": "https://www.b2b-center.ru/app/market-next/uslugi-tp-dlia-serverov-sparc-m8-8-i-power-e980/tender-4677837/",
+    }
+    monkeypatch.setattr(geo, "_robots", lambda *a: None)
+    monkeypatch.setattr(geo, "_get", lambda *a:
+        "<h1>Услуги ТП для серверов Sparc M8-8 и Power E980</h1>"
+        "<b>№ 4677837</b>"
+        "<div>Адрес поставки / оказания услуг</div>"
+        "<div>Россия, Краснодарский край, г. Краснодар</div>"
+        "<div>Организатор ООО Москва</div>")
+    assert geo.check_public_procurement_location(notice, None) == "OUTSIDE"

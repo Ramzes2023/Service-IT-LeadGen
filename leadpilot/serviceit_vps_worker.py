@@ -113,6 +113,14 @@ def exact_environment(env: dict) -> dict:
     result["SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"] = "YES"
     result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"
     result["SERVICEIT_B2B_V18_SEARCH_ENABLED"] = "YES"
+    # New evidence-only primary B2B detail fetch is enabled in the trusted
+    # LIVE coordinator only, never in offline/preview source fixtures.
+    result["SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED"] = (
+        "YES" if (env.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES"
+                  and env.get("SERVICEIT_WORKER_MODEL_PRIVACY_APPROVED") == "YES"
+                  and env.get("SERVICEIT_ROUTERAI_PRIVACY_APPROVED") == "YES_1062_21")
+        else "NO"
+    )
     # V19C: one safe additive follow-up per five-minute cycle. Failed
     # no-evidence scans retry no sooner than 24h; VERIFIED receipts are
     # never rewritten. Existing HOLD/STOP, commercial score and tasks intact.

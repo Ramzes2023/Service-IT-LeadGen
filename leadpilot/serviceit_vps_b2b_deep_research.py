@@ -981,7 +981,8 @@ def run_once(env, client, connection):
     _, signed_title = safe_notice(notice, card, source_id, item)
     # Read-only public search/JS fetch can fail; it is never a reason to
     # suppress the task or classify an unverified buyer as qualified.
-    findings = source_findings(item, notice, env, client)
+    findings = source_findings(item, notice, env, client,
+                               connection=connection)
     docs = public_documents(findings)
     fence = PostgresNativeFence(connection, RECEIPT)
     if fence.reserve(card) != "RESERVED":

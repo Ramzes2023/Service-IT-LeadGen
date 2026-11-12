@@ -1,5 +1,7 @@
 """Read-only trace of public B2B tender IDs from recent mail."""
+import hashlib
 import os
+from pathlib import Path
 import re
 import sys
 
@@ -101,6 +103,13 @@ def research():
     effective = exact_environment(env)
     emit("RESEARCH_ENABLED", "YES" if live_permitted(env) and
          effective.get("SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED") == "YES" else "NO")
+    from leadpilot.b2b_email_opportunity_bridge import classify_services
+    emit("RESEARCH_PROFILE_SHA", hashlib.sha256(
+        Path("/app/leadpilot/b2b_email_opportunity_bridge.py").read_bytes()).hexdigest().upper())
+    emit("RESEARCH_TEAMS_PROFILE", "YES" if "LICENSES" in
+         classify_services("Приобретение лицензий Teams (продление)") else "NO")
+    emit("RESEARCH_CLOUD_PROFILE", "YES" if "CLOUD" in
+         classify_services("Предоставление доступа к облачным сервисам") else "NO")
     tables = {
         "DOSSIER": "serviceit_vps_b2b_dossier_v11_receipts",
         "RESEARCH": "serviceit_vps_b2b_v19_research_receipts",

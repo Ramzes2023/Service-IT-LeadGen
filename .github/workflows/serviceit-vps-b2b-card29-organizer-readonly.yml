@@ -1,0 +1,51 @@
+name: ServiceIT B2B card29 verified organizer independent public audit
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-vps-b2b-card29-organizer-readonly.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-b2b-v37-search-release
+  cancel-in-progress: false
+jobs:
+  audit:
+    if: github.repository == 'Ramzes2023/Service-IT-LeadGen' && github.ref == 'refs/heads/main' && github.actor == 'Ramzes2023'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: "${{ vars.SERVICEIT_VPS_HOST }}"
+      VPS_USER: "${{ vars.SERVICEIT_VPS_DEPLOY_USER }}"
+      VPS_SSH_KEY: "${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}"
+      VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify no-write static source and locked SSH host
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_b2b_card29_organizer_public_readonly.py
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
+          root="$RUNNER_TEMP/organizer-audit"
+          install -d -m 0700 "$root"
+          printf '%s\n' "$VPS_SSH_KEY" > "$root/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$root/hosts"
+          chmod 0600 "$root/id" "$root/hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$root/hosts" >/dev/null
+      - name: Inspect exactly one real signed card and public legal sources without writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/organizer-audit"
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$root/hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          ssh -T -i "$root/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
+            < ops/serviceit_vps_b2b_card29_organizer_public_readonly.py > "$root/result"
+          grep -E '^ORG29_[A-Z0-9_]+=[A-Z0-9_]+$' "$root/result"
+          grep -qx 'ORG29_SIGNAL=VERIFIED' "$root/result"
+          grep -qx 'ORG29_ORIGINAL_SOURCE=VERIFIED' "$root/result"

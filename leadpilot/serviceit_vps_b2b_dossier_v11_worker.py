@@ -235,7 +235,7 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                     options = {"enable_v18": True}
                     if can_search and (
                             exact.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES"
-                            or exact.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED") == "YES"):
+                            or exact.get("SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED") == "YES"):
                         options["connection"] = connection
                     findings = source_findings(first, notice, exact, client, **options)
             except Exception:

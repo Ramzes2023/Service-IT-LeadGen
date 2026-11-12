@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/serviceit-vps-b2b-moscow-ingest-guarded-rollout.yml
       - ops/serviceit_vps_b2b_writer_geo_upgrade.py
+      - leadpilot/serviceit_b2b_moscow_geo.py
 permissions:
   contents: read
 concurrency:

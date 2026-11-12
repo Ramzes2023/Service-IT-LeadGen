@@ -58,7 +58,7 @@ jobs:
           for n in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_b2b_v19_backfill.py serviceit_b2b_v20_versioned.py serviceit_b2b_tavily_fallback_v44.py; do
             git show "$old:leadpilot/$n" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/v45-release/old-hashes"
           done
-          script=ops/serviceit_vps_b2b_v44_tavily_guarded_release.py
+          script=ops/serviceit_vps_b2b_v45_search_scope_release.py
           python -m py_compile "$script"
           sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v45-release/script-sha"
           [[ "$(wc -l < "$RUNNER_TEMP/v45-release/new-hashes")" == 5 ]]
@@ -86,7 +86,7 @@ jobs:
               "leadpilot/$name" "$target:$stage/"
           done
           scp -i "$RUNNER_TEMP/v45-release/id" "${opts[@]}" \
-            ops/serviceit_vps_b2b_v44_tavily_guarded_release.py "$target:$stage/activate.py"
+            ops/serviceit_vps_b2b_v45_search_scope_release.py "$target:$stage/activate.py"
       - name: Offline smoke new one module and swap coordinator only with rollback
         shell: bash
         run: |

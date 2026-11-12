@@ -35,6 +35,7 @@ PATH = "/integrations/serviceit/b2b-center/notice"
 MAX_BODY = 6000
 MAX_PER_CYCLE = 4
 MAX_PER_24H = 240
+MAX_GEO_ATTEMPTS = 3
 MANAGER_DECISION = PREFIX + "REVIEW_DECISION"
 INTERVAL_SECONDS = 300
 DDL = """
@@ -124,6 +125,15 @@ def migrate(connection):
             cur.execute(DDL)
 
 
+def migrate_geo_retry(connection):
+    with connection.transaction():
+        connection.execute("""
+            ALTER TABLE serviceit_vps_b2b_inbox
+            ADD COLUMN IF NOT EXISTS geo_retry_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS geo_attempts SMALLINT NOT NULL DEFAULT 0
+        """)
+
+
 def accept(connection, notice: dict, groups: list[str]) -> bool:
     # Store only signed, already sanitized public tender fields.
     source = "B2B-CENTER-" + notice["tender_id"]
@@ -150,7 +160,8 @@ def read_candidate(connection):
     with connection.cursor() as cur:
         cur.execute(
             "SELECT source_id,notice_json FROM serviceit_vps_b2b_inbox "
-            "WHERE state='PENDING' ORDER BY received_at,source_id LIMIT 1"
+            "WHERE state='PENDING' AND (geo_retry_at IS NULL OR geo_retry_at<=now()) "
+            "ORDER BY received_at,source_id LIMIT 1"
         )
         row = cur.fetchone()
     if not row:
@@ -178,6 +189,22 @@ def set_review(connection, source):
                 "WHERE source_id=%s AND state='PENDING' RETURNING source_id",
                 (source,))
             return cur.fetchone() is not None
+
+
+def defer_unconfirmed_geo(connection, source):
+    """Retry missing geographic evidence twice; no CRM write until a positive match."""
+    with connection.transaction():
+        row = connection.execute("""
+            UPDATE serviceit_vps_b2b_inbox
+            SET geo_attempts=geo_attempts+1,
+                geo_retry_at=CASE WHEN geo_attempts+1<%s THEN now()+interval '10 minutes' END,
+                state=CASE WHEN geo_attempts+1<%s THEN 'PENDING' ELSE 'REVIEW' END,
+                completed_at=CASE WHEN geo_attempts+1>=%s THEN now() END
+            WHERE source_id=%s AND state='PENDING' AND write_started_at IS NULL
+              AND (geo_retry_at IS NULL OR geo_retry_at<=now())
+            RETURNING source_id
+        """, (MAX_GEO_ATTEMPTS, MAX_GEO_ATTEMPTS, MAX_GEO_ATTEMPTS, source)).fetchone()
+        return row is not None
 
 
 def reserve_post(connection, source):
@@ -305,6 +332,9 @@ def deliver_one(connection, client, webhook, *, geo_only=False):
         # Explicitly source-proven Moscow/Moscow Oblast is the ONLY pass.
         from .serviceit_b2b_moscow_geo import check_public_procurement_location
         decision = check_public_procurement_location(notice, client)
+        if decision == "UNKNOWN":
+            return ("GEO_UNKNOWN" if defer_unconfirmed_geo(connection, source)
+                    else "ALREADY_RESERVED")
         if decision != "MOSCOW":
             return ("GEO_" + decision if set_review(connection, source)
                     else "ALREADY_RESERVED")
@@ -340,6 +370,7 @@ def worker_once(env: dict, *, client):
         return {"status": "B2B_WRITER_DISABLED", "crm_writes": 0}
     with db(env) as connection:
         migrate(connection)
+        migrate_geo_retry(connection)
         webhook = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
         preflight(ReadOnlyBitrix(webhook, client=client))
         uncertain_recovered = reconcile_uncertain(connection, client, webhook)

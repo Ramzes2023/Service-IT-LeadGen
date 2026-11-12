@@ -87,7 +87,9 @@ def test_writer_geo_review_fences_before_any_crm_post(monkeypatch, decision):
     monkeypatch.setattr(bridge, "positive_duplicate_control", lambda *args: True)
     monkeypatch.setattr(bridge, "exact_duplicate", lambda *args: [])
     monkeypatch.setattr(bridge, "set_review",
-                        lambda con,source: states.append(source) or True)
+                        lambda con,source: states.append(("REVIEW", source)) or True)
+    monkeypatch.setattr(bridge, "defer_unconfirmed_geo",
+                        lambda con,source: states.append(("DEFERRED", source)) or True)
     monkeypatch.setattr(bridge, "reserve_post",
                         lambda *args: pytest.fail("no irreversible reservation"))
     monkeypatch.setattr(bridge, "bitrix_call",
@@ -95,7 +97,8 @@ def test_writer_geo_review_fences_before_any_crm_post(monkeypatch, decision):
     monkeypatch.setattr(geo, "check_public_procurement_location",
                         lambda notice,client: decision)
     assert bridge.deliver_one(object(),object(),"test",geo_only=True) == "GEO_" + decision
-    assert states == ["B2B-CENTER-1234567"]
+    expected = "DEFERRED" if decision == "UNKNOWN" else "REVIEW"
+    assert states == [(expected, "B2B-CENTER-1234567")]
 
 
 def test_moscow_verified_pass_keeps_original_safe_writer_contract(monkeypatch):

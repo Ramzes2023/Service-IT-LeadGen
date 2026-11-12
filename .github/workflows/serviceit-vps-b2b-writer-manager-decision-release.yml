@@ -1,4 +1,4 @@
-name: ServiceIT B2B writer manager decision field release
+name: ServiceIT B2B writer bounded geography retries
 on:
   push:
     branches: [main]
@@ -36,7 +36,7 @@ jobs:
           helper=deploy/serviceit-vps-b2b-guarded-cutover.py
           installer=ops/serviceit_vps_b2b_writer_witness_release.py
           git diff --quiet 7b52738 HEAD -- "$helper"
-          old=$(git show "7b52738:$module" | sha256sum | cut -d' ' -f1)
+          old=$(git show "12ea30c:$module" | sha256sum | cut -d' ' -f1)
           new=$(sha256sum "$module" | cut -d' ' -f1)
           helper_sha=$(sha256sum "$helper" | cut -d' ' -f1)
           installer_sha=$(sha256sum "$installer" | cut -d' ' -f1)
@@ -57,6 +57,5 @@ jobs:
           scp -i "$dir/id" "${opts[@]}" "$installer" "$target:$stage/install.py"
           ssh -T -i "$dir/id" "${opts[@]}" "$target"             "test \"\$(sha256sum '$stage/install.py' | cut -d' ' -f1)\" = '$installer_sha' && python3 '$stage/install.py' --manager-decision '$GITHUB_RUN_ID' '$old' '$new' '$helper_sha'"
           ssh -T -i "$dir/id" "${opts[@]}" "$target" \
-            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' \
-            < ops/serviceit_vps_b2b_manager_inventory.py > "$dir/inventory"
-          grep -E '^MANAGER_[A-Z0-9_]+=[A-Z0-9_]+$' "$dir/inventory"
+            'docker exec -i serviceit-b2b-vps-writer-1 python -B -' \
+            < ops/serviceit_vps_b2b_requeue_verified_moscow.py

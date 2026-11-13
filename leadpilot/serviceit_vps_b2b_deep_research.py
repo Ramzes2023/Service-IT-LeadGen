@@ -755,7 +755,7 @@ def _primary_html_with_canonical_redirect(client, url, allowed, tender_id):
         client.event_hooks['response'].append(capture)
     try:
         try:
-            return _get(client,url,allowed)
+            return _get(client,url,allowed), url
         except ResearchBlocked:
             if not observed or observed[-1][0] not in {301,302,307,308}:
                 raise
@@ -769,7 +769,7 @@ def _primary_html_with_canonical_redirect(client, url, allowed, tender_id):
             or not re.fullmatch(r'/(?:app/market-next|market)/[a-z0-9-]+/tender-'+re.escape(tender_id)+r'/?',p.path)):
         raise ResearchBlocked('PRIMARY_REDIRECT_NOT_SAME_TENDER')
     _robots(client,target,allowed)
-    return _get(client,target,allowed)
+    return _get(client,target,allowed), target
 
 
 def verified_original_b2b_details(candidate, notice, client):
@@ -800,7 +800,7 @@ def verified_original_b2b_details(candidate, notice, client):
                 or _host(url, allowed) not in ("www.b2b-center.ru", "b2b-center.ru")):
             return candidate
         _robots(client, url, allowed)
-        raw = _primary_html_with_canonical_redirect(client,url,allowed,tid)
+        raw, read_url = _primary_html_with_canonical_redirect(client,url,allowed,tid)
         parser = VisibleText()
         parser.feed(raw)
         excerpt = detailed_public_excerpt(parser.parts, tid, subject)
@@ -822,14 +822,14 @@ def verified_original_b2b_details(candidate, notice, client):
                 and not target.fragment
                 and re.fullmatch(r"/firms/[a-z0-9-]+/[0-9]+/?", target.path)):
             profile_links.append((href, label))
-    primary = {**original, "url": url, "excerpt": excerpt,
+    primary = {**original, "url": read_url, "excerpt": excerpt,
                "profile_links": profile_links[:12]}
     # An email subject becomes scope evidence only after an exact occurrence
     # on the independently fetched, number-matched primary page.
     title = re.search(re.escape(" ".join(subject.split())), excerpt, re.I)
     if title and len(title[0]) <= 220:
         primary["verified_subject"] = title[0]
-    result["pages"] = ([primary] + [p for p in pages if p.get("url") != url])[:MAX_PAGES]
+    result["pages"] = ([primary] + [p for p in pages if p.get("url") not in {url,read_url}])[:MAX_PAGES]
     result["status"] = "PUBLIC_PAGES_INSPECTED"
     result["original_b2b_detail_independently_read"] = True
     visible = " ".join(parser.parts)

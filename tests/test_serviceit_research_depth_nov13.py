@@ -229,3 +229,5 @@ def test_primary_canonical_redirect_is_same_host_and_tender_only(monkeypatch,tar
         assert bool(found.get('original_b2b_detail_independently_read')) is allowed
         assert len(calls)==(2 if allowed else 1)
         assert not client.event_hooks['response']
+        if allowed:
+            assert found['pages'][0]['url']=='https://www.b2b-center.ru'+target

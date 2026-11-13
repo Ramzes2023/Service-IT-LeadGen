@@ -29,6 +29,12 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
         verified=all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title')
         ok &= verified
+        if not verified:
+            keys=[k for k,v in expected.items() if k!='title' and str(actual.get(k))!=str(v)]
+            print('BIDZAAR_CARD_'+str(card)+'_DIFF_FIELDS='+','.join(keys),flush=True)
+            for key in keys:
+                if key in ('assignedById','categoryId','stageId','UF_CRM_13_SVCIT_LEAD_SCORE','UF_CRM_13_SVCIT_SCORE_VERSION'):
+                    print('BIDZAAR_CARD_'+str(card)+'_DIFF_'+key+'='+str(expected[key])+' -> '+str(actual.get(key)),flush=True)
         print('BIDZAAR_CARD_'+str(card)+'_READBACK='+('YES' if verified else 'NO'),flush=True)
         print('BIDZAAR_CARD_'+str(card)+'_MANAGER_V2='+('YES' if actual.get('UF_CRM_13_SVCIT_SCORE_VERSION')=='svc-bidzaar-manager-v2' else 'NO'),flush=True)
         print('BIDZAAR_CARD_'+str(card)+'_PRIORITY_SYMBOL='+('YES' if str(actual.get('UF_CRM_13_SVCIT_AI_SCORE_BADGE','')).startswith(('✅','⚠','❌')) else 'NO'),flush=True)

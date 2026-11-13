@@ -37,3 +37,7 @@ def test_cursor_persist_failure_stops_before_next_request(monkeypatch):
 @pytest.mark.parametrize('url',['http://bidzaar.com/process/light/00000000-0000-0000-0000-000000000001','https://evil.test/process/light/00000000-0000-0000-0000-000000000001'])
 def test_wrong_source_is_rejected(url):
     with pytest.raises(ValueError):s.identity({**ROW,'link':url})
+
+
+def test_acrylic_shop_fixtures_are_not_it_equipment():
+    assert s.decision({**ROW,'name':'Производство и поставка торгового оборудования из акрила'},now=NOW)[0]=='OUT_OF_SCOPE'

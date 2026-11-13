@@ -40,6 +40,8 @@ def decision(row, *, now=None):
     groups = classify_services(row.get('name', ''))
     if not groups:
         return 'OUT_OF_SCOPE', []
+    if groups == ['KKT_EDO'] and re.search(r'акрил|витрин|стеллаж|мебел|манекен',row.get('name',''),re.I) and not re.search(r'ккт|тсд|касс|сканер|терминал',row.get('name',''),re.I):
+        return 'OUT_OF_SCOPE', []
     if row.get('status') != 'proposal':
         return 'NOT_OPEN', groups
     try:

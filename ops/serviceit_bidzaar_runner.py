@@ -14,6 +14,7 @@ worker=(root/'serviceit_bidzaar_worker.py').read_text()
 code='import os,sys,types\n'
 code+='os.environ["SERVICEIT_BIDZAAR_FEED_URL"]='+repr(url)+'\n'
 code+='os.environ["SERVICEIT_BIDZAAR_WRITE_ENABLED"]="YES"\n'
+code+='os.environ["SERVICEIT_BIDZAAR_EXTENDED_DOCUMENTS_OWNER"]="YES"\n'
 for name in ('b2b_email_opportunity_bridge','serviceit_b2b_moscow_geo','serviceit_bidzaar_source','serviceit_stage3_all_new_task_automation','serviceit_postcall_assistant'):
     source=(root/(name+'.py')).read_text()
     code+='m=types.ModuleType('+repr('leadpilot.'+name)+');m.__package__="leadpilot"\n'

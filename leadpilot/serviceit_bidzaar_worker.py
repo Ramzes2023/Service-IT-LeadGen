@@ -211,6 +211,13 @@ def dossier(client, env, row, peers, *, cached=None):
     fields[REPORT]=(report+'\n\nПЛАН РАБОТЫ МЕНЕДЖЕРА\n'+'\n'.join(manager[len(passport)+1:]))[:16000]
     fields[PREFIX+'AI_HYPOTHESIS']='Предложение для обсуждения: '+offer+'. Соответствие обязательным требованиям сверить с ТЗ.'
     fields[PREFIX+'AI_NEXT_ACTION']='Изучить приведённые требования, выбрать опубликованный контакт и подготовить уточнения по сценарию. После разговора сохранить итог и согласованный срок следующего действия.'
+    if cached is not None:
+        # Priority-only migrations must retain independently verified evidence.
+        marker='[SERVICEIT_PUBLIC_EVIDENCE_V1]'
+        pattern=r'\[SERVICEIT_PUBLIC_EVIDENCE_V1\].*?\[/SERVICEIT_PUBLIC_EVIDENCE_V1\]'
+        for key in (REPORT,BRIEF,LIMITS):
+            blocks=re.findall(pattern,str(cached.get(key,'')),re.S)
+            if blocks:fields[key]=str(fields.get(key,'')).split(marker)[0].rstrip()+'\n\n'+'\n'.join(blocks)
     return {k:(''.join(ch if ord(ch)<=0xffff else '•' for ch in v) if isinstance(v,str) else v) for k,v in fields.items()}
 
 
@@ -304,6 +311,8 @@ def reconcile_uncertain(conn,client,env):
 
 
 def repair_documents(conn,client,env,*,presentation_only=False):
+    if not presentation_only and env.get('SERVICEIT_BIDZAAR_EXTENDED_DOCUMENTS_OWNER')=='YES':
+        return 'EXTENDED_DOCUMENT_QUEUE_ACTIVE'
     row=conn.execute("""SELECT source_id,card_id,notice,expected FROM serviceit_bidzaar_inbox
         WHERE state='VERIFIED' AND (
           ((expected->>%s) IS DISTINCT FROM 'svc-bidzaar-service-fit-v4')

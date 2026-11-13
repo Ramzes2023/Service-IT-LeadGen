@@ -5,6 +5,7 @@ from leadpilot.serviceit_vps_pg_queue import db,secret_file
 from leadpilot.serviceit_enrichment_worker import Rest,normalized
 import httpx
 with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as client:
+    conn.execute('SELECT pg_advisory_lock(1062,604)')
     rest=Rest(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'),client)
     from leadpilot.serviceit_stage34_signed_readonly_sidecar import request,owner_type
     user=request(client,rest.base,'user.get',{'ID':605})['result']

@@ -206,3 +206,20 @@ def test_exact_fit_does_not_override_closed_or_out_of_region(changes):
 
 def test_license_purchase_is_not_service_exact_fit():
     assert not w.service_priority(dict(ROW,name='Поставка лицензий 1С'),[])[3]
+
+
+def test_live_legacy_retry_yields_to_extended_document_queue():
+    conn=MagicMock()
+    assert w.repair_documents(conn,None,{'SERVICEIT_BIDZAAR_EXTENDED_DOCUMENTS_OWNER':'YES'})=='EXTENDED_DOCUMENT_QUEUE_ACTIVE'
+    conn.execute.assert_not_called()
+
+
+def test_cached_priority_migration_retains_extended_contact_blocks(monkeypatch):
+    monkeypatch.setattr(w,'_model_research',lambda *args:[])
+    fields=w.dossier(None,{},ROW,[])
+    block='[SERVICEIT_PUBLIC_EVIDENCE_V1]\nПубличные контакты: info@company.ru\n[/SERVICEIT_PUBLIC_EVIDENCE_V1]'
+    for key in (w.REPORT,w.BRIEF,w.LIMITS):fields[key]+='\n\n'+block
+    monkeypatch.setattr(w,'_model_research',lambda *args:pytest.fail('Cached priority must not repeat paid research'))
+    actual=w.dossier(None,{},ROW,[],cached=fields)
+    for key in (w.REPORT,w.BRIEF,w.LIMITS):
+        assert block in actual[key] and actual[key].count('[SERVICEIT_PUBLIC_EVIDENCE_V1]')==1

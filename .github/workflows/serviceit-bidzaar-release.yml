@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar service-fit priority v4 and exact-match badges
+name: ServiceIT Bidzaar full-document queue handoff and contact preservation
 on:
   push:
     branches: [main]

@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation and boot diagnostics
+name: ServiceIT Bidzaar five-minute VPS activation with complete source dependencies
 on:
   push:
     branches: [main]
@@ -37,7 +37,7 @@ jobs:
           target="$VPS_USER@$VPS_HOST"
           remote="serviceit/bidzaar/staging-$GITHUB_RUN_ID"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
-          for file in leadpilot/serviceit_bidzaar_source.py leadpilot/serviceit_bidzaar_worker.py ops/serviceit_bidzaar_runner.py ops/serviceit_bidzaar_audit.py deploy/serviceit-bidzaar-feed.enc.b64; do
+          for file in leadpilot/b2b_email_opportunity_bridge.py leadpilot/serviceit_b2b_moscow_geo.py leadpilot/serviceit_bidzaar_source.py leadpilot/serviceit_bidzaar_worker.py ops/serviceit_bidzaar_runner.py ops/serviceit_bidzaar_audit.py deploy/serviceit-bidzaar-feed.enc.b64; do
             scp -i "$stage/id" "${opts[@]}" "$file" "$target:$remote/"
           done
       - name: Activate private five-minute schedule and verify first cycles
@@ -57,12 +57,13 @@ jobs:
           base64 -d "$stage/serviceit-bidzaar-feed.enc.b64" > "$stage/feed.enc"
           openssl pkeyutl -decrypt -inkey "$dir/recipient.pem" -in "$stage/feed.enc" -out "$stage/feed-url" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256
           chmod 0600 "$stage/feed-url"
-          for file in serviceit_bidzaar_source.py serviceit_bidzaar_worker.py serviceit_bidzaar_runner.py serviceit_bidzaar_audit.py; do
+          for file in b2b_email_opportunity_bridge.py serviceit_b2b_moscow_geo.py serviceit_bidzaar_source.py serviceit_bidzaar_worker.py serviceit_bidzaar_runner.py serviceit_bidzaar_audit.py; do
             python3 -m py_compile "$stage/$file"
             install -m 0600 "$stage/$file" "$dir/$file"
           done
           install -m 0600 "$stage/feed-url" "$dir/feed-url"
           rm -f "$stage/feed-url" "$stage/feed.enc"
+          python3 "$dir/serviceit_bidzaar_runner.py" --smoke
           python3 "$dir/serviceit_bidzaar_runner.py"
           python3 - "$dir" <<'PY'
           import subprocess,sys

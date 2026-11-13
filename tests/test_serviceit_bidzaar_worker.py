@@ -142,3 +142,18 @@ def test_normal_crm_progress_does_not_invalidate_dossier_or_hide_content_changes
     assert w.saved_fields_match(moved,expected)
     assert not w.saved_fields_match({**moved,w.SUMMARY:'Правка менеджера'},expected)
     assert not w.saved_fields_match({**moved,'categoryId':22},expected)
+
+
+def test_bank_account_is_not_presented_as_a_phone_contact(monkeypatch):
+    monkeypatch.setattr(w,'_model_research',lambda *a,**k:[])
+    fields=w.dossier(None,{},dict(ROW,description='Расчётный счёт 40817810099910004312'),[])
+    assert 'Именной контакт и телефон в прочитанных материалах не найдены' in fields[w.BRIEF]
+
+
+def test_cached_contacts_keep_source_but_drop_account_number(monkeypatch):
+    monkeypatch.setattr(w,'documents',lambda *a:pytest.fail('no download'))
+    cached={w.REPORT:'Исходные доказательства',w.LIMITS:'Прочитано документов: 1. Не обработано: 0.',
+      w.BRIEF:'Контакты с контекстом документа (принадлежность проверить): Счёт 40817810099910004312 | Источник: '+ROW['link']+'\nКонтакт Иван: +7 (495) 123-45-67 | Источник: '+ROW['link']+'\nПочему сейчас: срок подачи'}
+    fields=w.dossier(None,{},ROW,[],cached=cached)
+    assert '40817810099910004312' not in fields[w.BRIEF]
+    assert 'Контакт Иван: +7 (495) 123-45-67 | Источник: '+ROW['link'] in fields[w.BRIEF]

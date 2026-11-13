@@ -189,3 +189,18 @@ def test_only_first_automatic_pass_opens_followup_search(monkeypatch,last_status
     assert result['crm_writes']==0
     assert bool(opened)==opens
     assert budget.remaining==0
+
+
+def test_verified_inn_survives_provider_outage_but_tampered_receipt_does_not():
+    inn='1234567894'
+    report=('Заказчик: АО «Учебник»\n'
+            f'ИНН заказчика: {inn} (публичные реквизиты; текущий статус ФНС отдельно)\n'
+            'Независимые публичные реквизиты: https://company-example.ru/legal/')
+    fields={worker.INN:inn,worker.REPORT:report}
+    salt=b'a'*16
+    conn=MagicMock()
+    conn.execute.return_value.fetchall.return_value=[(fields,salt,worker._digest(fields,salt))]
+    assert worker._prior_verified_public_identity(conn,31,'b'*64,{worker.INN:inn})['inn']==inn
+    assert worker._prior_verified_public_identity(conn,31,'b'*64,{worker.INN:'7729058330'}) is None
+    conn.execute.return_value.fetchall.return_value=[(fields,salt,b'x'*32)]
+    assert worker._prior_verified_public_identity(conn,31,'b'*64,{worker.INN:inn}) is None

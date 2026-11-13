@@ -320,6 +320,32 @@ def _v11_identity(report):
     return None
 
 
+def _prior_verified_public_identity(conn, card, source_hash, item):
+    """Keep previously source-proven identity through a search-provider outage.
+
+    Only a checksum-verified completed receipt that wrote this exact INN and
+    cites its legal source can supply it. Never trust editable CRM prose.
+    """
+    if not _is_valid_inn(item.get(INN)):
+        return None
+    from .serviceit_b2b_dossier_consistency_v37 import _safe_url
+    rows = conn.execute(f'''SELECT after_fields,salt,digest FROM {TABLE}
+        WHERE card_id=%s AND source_hash=%s AND status='VERIFIED'
+          AND after_fields ? %s AND after_fields ? %s
+        ORDER BY attempt_no DESC LIMIT 3''', (card,source_hash,INN,REPORT)).fetchall()
+    for fields, salt, digest in rows:
+        if (not isinstance(fields,dict) or fields.get(INN) != item.get(INN)
+                or not secrets.compare_digest(_digest(fields,bytes(salt)),bytes(digest))):
+            continue
+        report = fields.get(REPORT, '')
+        buyer = re.search(r'(?m)^Заказчик: ((?:АО|ООО|ПАО|ОАО) [^\n]{3,145})$', report)
+        inn = re.search(r'(?m)^ИНН заказчика: (\d{10}|\d{12}) \(публичные реквизиты;', report)
+        source = re.search(r'(?m)^Независимые публичные реквизиты: (https://[^\s]+)$', report)
+        if buyer and inn and source and inn[1] == item[INN] and _safe_url(source[1]):
+            return {'buyer':buyer[1], 'inn':inn[1], 'legal_url':source[1]}
+    return None
+
+
 def verified_lines(conn,card,source_hash,report,original=None):
     """Only source quotes in signed VERIFIED receipts and the current report."""
     lines = _v11_quotes(_v11_report(conn,card,source_hash) if original is None else original,report)
@@ -620,10 +646,11 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False,searc
             if badge_repair:
                 patch,meta=badge_repair,{"status":"DRAFT"}
             else:
-                identity = _v11_identity(original_v11)
+                identity = (_v11_identity(original_v11)
+                            or _prior_verified_public_identity(conn,card,source_hash,first))
                 prior = reviewed_or_verified(notice,first,lines,identity) or {}
                 if (exact.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES"
-                        and not all(prior.get(k) for k in ("buyer","inn","deadline","delivery"))):
+                        and not all(prior.get(k) for k in ("buyer","inn","deadline","delivery","region"))):
                     from contextlib import nullcontext
                     # The coordinator's client otherwise rejects every
                     # search API call outside V11. Only the first new-card
@@ -635,6 +662,10 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False,searc
                     with scope:
                         fresh_identity, fresh_lines = fresh_primary_evidence(notice,first,client,exact)
                     if fresh_identity:
+                        name = lambda value: re.findall(r'(?iu)[а-яёa-z0-9]+',str(value).casefold())
+                        if (identity and identity.get('buyer') and fresh_identity.get('buyer')
+                                and name(identity['buyer']) != name(fresh_identity['buyer'])):
+                            raise ReconcileBlocked('FRESH_BUYER_CONFLICT_WITH_VERIFIED_IDENTITY')
                         identity = {**(identity or {}), **fresh_identity}
                         lines = fresh_lines + lines
                 patch,meta=prepare(notice,first,lines,identity)

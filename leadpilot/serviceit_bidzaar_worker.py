@@ -149,7 +149,7 @@ def dossier(client, env, row, peers, *, cached=None):
     for doc in evidence:
         for line in doc['text'].splitlines():
             if (re.search(r'[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}',line)
-                or re.search(r'(?:\+7|8)[ (.-]*\d{3}[ ).-]*\d{3}[ -]*\d{2}[ -]*\d{2}',line)):
+                or re.search(r'(?<!\d)(?:\+7|8)[ (.-]*\d{3}[ ).-]*\d{3}[ -]*\d{2}[ -]*\d{2}(?!\d)',line)):
                 entry=line.strip()[:350]+' | Источник: '+doc['url']
                 if entry not in contacts:contacts.append(entry)
     contact_text='\n'.join(contacts[:4]) or 'Именной контакт и телефон в прочитанных материалах не найдены.'

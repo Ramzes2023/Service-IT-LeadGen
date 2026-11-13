@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation with lifecycle-aware dossier verification
+name: ServiceIT Bidzaar five-minute VPS activation with lifecycle-aware verification and bounded contact extraction
 on:
   push:
     branches: [main]

@@ -523,6 +523,47 @@ def _related_signals(rest, conn, card, notice, inn):
     return list(signals.values())[:5]
 
 
+def fresh_primary_evidence(notice, item, client, env):
+    """Fill missing passport data from the newly read exact primary source.
+
+    No model or CRM writes. The caller's V37 intent/readback receipt records
+    all resulting fields; manager decisions remain out of scope.
+    """
+    from .serviceit_vps_b2b_deep_research import (
+        verified_original_b2b_details, public_buyer_candidate,
+        followup_public_buyer_research, published_buyer_inn_evidence, _self_buyer,
+    )
+    from .serviceit_b2b_routerai_deep import source_only_investigation
+    from .serviceit_b2b_dossier_consistency_v37 import _record_from_verified
+
+    found = verified_original_b2b_details(
+        {"status": "PUBLIC_SOURCE_NOT_READABLE", "pages": []}, notice, client)
+    if not found.get("original_b2b_detail_independently_read"):
+        return {}, []
+    key = secret_file(env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True) or ""
+    try:
+        found = followup_public_buyer_research(found, env, client, key)
+    except (ValueError, httpx.HTTPError):
+        pass
+    buyer = public_buyer_candidate(found)
+    identity = {"buyer": buyer, "tender_url": notice["source_url"]} if buyer else {}
+    if any(_self_buyer(row) == buyer for row in found.get("pages", []) if buyer):
+        identity["organizer"] = buyer + " (закупка для собственных нужд)"
+    inn = published_buyer_inn_evidence(found)
+    if inn:
+        identity.update(inn=inn["inn"], legal_url=inn["public_source"])
+    facts = source_only_investigation(found)["facts"]
+    lines = [f'ПРОЧИТАННЫЙ ИСТОЧНИК / {f["category"]}: {f["quote"]} [{f["url"]}]'
+             for f in facts]
+    record = _record_from_verified(notice, item, lines, identity) or {}
+    record = {k: v for k, v in record.items() if v and k != "reviewed"}
+    if found.get("document_access") == "AUTH_REQUIRED":
+        record["document_access"] = "AUTH_REQUIRED"
+        record["documents"] = "Оригиналы на B2B доступны после входа; полное ТЗ не прочитано"
+    record["_fresh_source_lines"] = lines[:12]
+    return record, lines
+
+
 def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
     """Never mutate on preview; one card per normal cycle; versioned receipts."""
     if env.get(ENABLED)!="YES":
@@ -580,10 +621,19 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
                 patch,meta=badge_repair,{"status":"DRAFT"}
             else:
                 identity = _v11_identity(original_v11)
+                prior = reviewed_or_verified(notice,first,lines,identity) or {}
+                if (exact.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES"
+                        and not all(prior.get(k) for k in ("buyer","inn","deadline","delivery"))):
+                    fresh_identity, fresh_lines = fresh_primary_evidence(notice,first,client,exact)
+                    if fresh_identity:
+                        identity = {**(identity or {}), **fresh_identity}
+                        lines = fresh_lines + lines
                 patch,meta=prepare(notice,first,lines,identity)
                 record=reviewed_or_verified(notice,first,lines,identity)
                 inn=(record or {}).get("inn") or first.get(INN)
                 checks=_manager_checks(conn,client,exact,webhook,rest.base,card,source,inn)
+                if (record or {}).get("document_access") == "AUTH_REQUIRED":
+                    checks["documents"] = "B2B требует входа для оригиналов; " + checks.get("documents", "")
                 related=_related_signals(rest,conn,card,notice,inn)
                 base_patch=patch or {}
                 revised=manager_fields(notice,{**first,**base_patch},record,checks,related)

@@ -71,6 +71,12 @@ PRIMARY_DETAIL_FILES = (
     "serviceit_b2b_public_mirrors.py", "serviceit_b2b_routerai_deep.py",
     "serviceit_vps_b2b_deep_research.py", "serviceit_vps_worker.py",
 )
+RESEARCH_DEPTH_FILES = (
+    "serviceit_b2b_public_mirrors.py", "serviceit_b2b_routerai_deep.py",
+    "serviceit_vps_b2b_deep_research.py", "serviceit_b2b_tender_documents.py",
+    "serviceit_vps_b2b_document_worker.py", "serviceit_b2b_dossier_consistency_v37.py",
+    "serviceit_b2b_dossier_consistency_worker_v37.py",
+)
 
 GATES = {
     "SERVICEIT_VPS_WRITER_MODE": "LIVE",
@@ -620,6 +626,7 @@ def main():
         "--public-html": (PUBLIC_HTML_FILES, "public-html"),
         "--public-buyer": (PUBLIC_BUYER_FILES, "public-buyer"),
         "--primary-detail": (PRIMARY_DETAIL_FILES, "primary-detail"),
+        "--research-depth": (RESEARCH_DEPTH_FILES, "research-depth"),
     }
     files, release = profiles.get(args[0] if args else "", (FILES, "v37"))
     if release != "v37":

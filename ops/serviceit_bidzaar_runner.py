@@ -25,6 +25,15 @@ try:
     import re
     for line in result.stdout.splitlines():
         if re.fullmatch(r'BIDZAAR_[A-Z_]+=[A-Z0-9_]+',line):print(line,flush=True)
+    if result.returncode:
+        for line in result.stderr.splitlines():
+            match=re.match(r'^([A-Za-z]+(?:Error|Exception)):',line)
+            if match:print('BIDZAAR_BOOT_ERROR='+match[1].upper(),flush=True)
+            missing=re.search(r"No module named '(leadpilot\.[a-z0-9_]+)'",line)
+            if missing:print('BIDZAAR_MISSING_MODULE='+missing[1].replace('.','_').upper(),flush=True)
+            imp=re.search(r"cannot import name '([a-zA-Z0-9_]+)'",line)
+            if imp:print('BIDZAAR_MISSING_SYMBOL='+imp[1].upper(),flush=True)
+        print('BIDZAAR_PROCESS_EXIT='+str(result.returncode),flush=True)
     raise SystemExit(result.returncode)
 except subprocess.TimeoutExpired:
     print('BIDZAAR_STATUS=CYCLE_TIMEOUT',flush=True)

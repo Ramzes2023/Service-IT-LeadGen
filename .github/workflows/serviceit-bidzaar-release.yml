@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation
+name: ServiceIT Bidzaar five-minute VPS activation and boot diagnostics
 on:
   push:
     branches: [main]

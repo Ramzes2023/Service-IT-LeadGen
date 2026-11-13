@@ -106,6 +106,10 @@ def dossier(client, env, row, peers):
     fields={INN:row['inn'],PREFIX+'COMPANY_NAME':str(row.get('legalName') or row.get('publisherName'))[:250],
             BRIEF:'СЕРВИС ИТ | BIDZAAR\n'+'\n'.join(passport+related)[:3500],REPORT:report[:12000],
             SUMMARY:row['name'][:1000],LIMITS:limitations,SCORE_FIELD:score,
+            PREFIX+'AI_STATUS':('RouterAI: цитаты проверены' if any(r.get('provider')=='RouterAI' for r in reports) else 'Разбор первоисточника; RouterAI не подтверждён'),
+            PREFIX+'AI_QUOTE':('\n'.join(quotes[:2])[:3500] or 'Подтверждённые цитаты не извлечены'),
+            PREFIX+'AI_HYPOTHESIS':'Соответствие направлениям: '+', '.join(groups)+'. Требования к участнику необходимо сверить с документами.',
+            PREFIX+'AI_RECOMMENDATION':'Рассмотреть участие после проверки обязательных условий; автоматическое одобрение не выполнялось.',
             VERSION_FIELD:'svc-bidzaar-evidence-v1',BADGE_FIELD:score_label(score),
             PREFIX+'AI_NEXT_ACTION':'Проверить требования и подготовить решение об участии по приведённым источникам.'}
     return fields

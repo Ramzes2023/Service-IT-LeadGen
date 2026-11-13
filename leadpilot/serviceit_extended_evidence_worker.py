@@ -76,6 +76,8 @@ def patch(conn,rest,client,card,before,fields):
     if not set(fields)<= {REPORT,BRIEF,LIMITS}:raise ValueError('EXTENSION_FIELDS_INVALID')
     # Share the existing Bidzaar writer's lock only around CRM reconciliation.
     if not conn.execute('SELECT pg_try_advisory_lock(1062,604)').fetchone()[0]:return False
+    if not conn.execute('SELECT pg_try_advisory_lock(6754819001)').fetchone()[0]:
+        conn.execute('SELECT pg_advisory_unlock(1062,604)');return False
     try:
         actual=get(rest,card)
         save_snapshot(conn,card,actual)
@@ -104,7 +106,9 @@ def patch(conn,rest,client,card,before,fields):
             conn.execute("UPDATE serviceit_extended_evidence_receipts SET status='VERIFIED',updated_at=now() WHERE card_id=%s",(card,))
             if bid:conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED' WHERE card_id=%s",(card,))
         return True
-    finally:conn.execute('SELECT pg_advisory_unlock(1062,604)')
+    finally:
+        conn.execute('SELECT pg_advisory_unlock(6754819001)')
+        conn.execute('SELECT pg_advisory_unlock(1062,604)')
 
 
 def run():

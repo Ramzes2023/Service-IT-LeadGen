@@ -83,6 +83,31 @@ def main():
             if found.get('status') != 'PUBLIC_PAGES_INSPECTED':
                 continue
             report = source_only_investigation(found)
+            if card == 31:
+                from leadpilot.serviceit_b2b_dossier_consistency_worker_v37 import fresh_primary_evidence, _v11_report, _v11_identity, verified_lines, original_nine, _sha
+                from leadpilot.serviceit_b2b_dossier_consistency_v37 import reviewed_or_verified, REPORT
+                original = _v11_report(conn,card,_sha(source))
+                prior = reviewed_or_verified(notice,item,verified_lines(conn,card,_sha(source),item[REPORT],original),_v11_identity(original)) or {}
+                fresh, _ = fresh_primary_evidence(notice,item,client,env)
+                for field in ('buyer','inn','deadline','delivery','region','payment'):
+                    emit(key+'PRIOR_'+field.upper(), 'YES' if prior.get(field) else 'NO')
+                    emit(key+'FRESH_'+field.upper(), 'YES' if fresh.get(field) else 'NO')
+                for i, fact in enumerate(f for f in report['facts'] if f['category']=='LOCATION'):
+                    print('DEPTH_PUBLIC_LOCATION_HEX_'+str(i)+'='+fact['quote'].encode('utf8').hex().upper(),flush=True)
+                from leadpilot.serviceit_vps_b2b_deep_research import _company_requisites_page, _public_company_self_declaration, _free_requisites_candidates
+                buyer = public_buyer_candidate(found)
+                candidates = _free_requisites_candidates(client,buyer,env)
+                for i, entry in enumerate(candidates):
+                    from urllib.parse import urlsplit
+                    host = urlsplit(entry['url']).hostname
+                    emit(key+'LEGAL_HOST_'+str(i),host.replace('.','_').replace('-','_'))
+                    try:
+                        page = _company_requisites_page(client,entry['url'],frozenset({host}))
+                        emit(key+'LEGAL_READ_'+str(i),len(page['text']))
+                    except Exception as exc:
+                        emit(key+'LEGAL_READ_'+str(i),str(exc) if re.fullmatch('[A-Z_]{1,80}',str(exc)) else type(exc).__name__)
+                direct = _public_company_self_declaration(client,buyer,[{'url':'https://www.medicina.ru/polzovatelskoe-soglashenie/'}],'')
+                emit(key+'OFFICIAL_DIRECT_INN','YES' if direct else 'NO')
             for category in ('BUYER','DEADLINE','LOCATION','PAYMENT','SCOPE','ELIGIBILITY','BUDGET','DOCUMENTS'):
                 emit(key+'FACTS_'+category, sum(f.get('category') == category for f in report['facts']))
             from leadpilot.serviceit_b2b_free_public_fallback import read_free_public_mirror

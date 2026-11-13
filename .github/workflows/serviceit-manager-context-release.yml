@@ -95,3 +95,8 @@ jobs:
           grep -E '^B2B_TASK_AUX_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED)$' \
             "$RUNNER_TEMP/task-aux/status" | head -25
           grep -qx 'B2B_TASK_AUX_ACTIVATED=YES' "$RUNNER_TEMP/task-aux/status"
+      - name: Report bounded activation or rollback status
+        if: always()
+        shell: bash
+        run: |
+          grep -E '^B2B_TASK_AUX_[A-Z0-9_]+=(YES|NO|FAILED|NOT_NEEDED)$' "$RUNNER_TEMP/task-aux/status" || true

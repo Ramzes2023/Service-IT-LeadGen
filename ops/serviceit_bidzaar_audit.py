@@ -27,10 +27,11 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     ok=True
     for card,expected in rows:
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
-        verified=all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title')
+        verified=all(str(actual.get(k))==str(v) for k,v in expected.items() if k not in {'title','stageId','assignedById'})
+        print('BIDZAAR_CARD_'+str(card)+'_STAGE_CHANGED='+('YES' if actual.get('stageId')!=expected.get('stageId') else 'NO'),flush=True)
         ok &= verified
         if not verified:
-            keys=[k for k,v in expected.items() if k!='title' and str(actual.get(k))!=str(v)]
+            keys=[k for k,v in expected.items() if k not in {'title','stageId','assignedById'} and str(actual.get(k))!=str(v)]
             print('BIDZAAR_CARD_'+str(card)+'_DIFF_FIELDS='+','.join(keys),flush=True)
             for key in keys:
                 if key in ('assignedById','categoryId','stageId','UF_CRM_13_SVCIT_LEAD_SCORE','UF_CRM_13_SVCIT_SCORE_VERSION'):

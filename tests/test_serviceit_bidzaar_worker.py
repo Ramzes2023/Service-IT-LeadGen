@@ -134,3 +134,11 @@ def test_presentation_upgrade_preserves_document_evidence_without_model(monkeypa
     assert fields[w.PREFIX+'AI_QUOTE']=='Точная цитата'
     assert 'Условия оплаты' in fields[w.REPORT]
     assert w.PREFIX+'REVIEW_DECISION' not in fields
+
+
+def test_normal_crm_progress_does_not_invalidate_dossier_or_hide_content_changes():
+    expected={'stageId':'DT1062_21:NEW','assignedById':605,'categoryId':21,w.SUMMARY:'Поставка серверов'}
+    moved={**expected,'stageId':'DT1062_21:PREPARATION','assignedById':606}
+    assert w.saved_fields_match(moved,expected)
+    assert not w.saved_fields_match({**moved,w.SUMMARY:'Правка менеджера'},expected)
+    assert not w.saved_fields_match({**moved,'categoryId':22},expected)

@@ -131,7 +131,7 @@ def dossier(client, env, row, peers, *, cached=None):
             PREFIX+'AI_QUOTE':('\n'.join(quotes[:2])[:3500] or 'Подтверждённые цитаты не извлечены'),
             PREFIX+'AI_HYPOTHESIS':'Соответствие направлениям: '+', '.join(groups)+'. Требования к участнику необходимо сверить с документами.',
             PREFIX+'AI_RECOMMENDATION':'Рассмотреть участие после проверки обязательных условий; автоматическое одобрение не выполнялось.',
-            VERSION_FIELD:'svc-bidzaar-manager-v2',BADGE_FIELD:('✅' if score>=80 else '⚠' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1],
+            VERSION_FIELD:'svc-bidzaar-manager-v2',BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1],
             PREFIX+'AI_NEXT_ACTION':'Проверить требования и подготовить решение об участии по приведённым источникам.'}
     if cached is not None:
         fields={k:v for k,v in cached.items() if k in fields}
@@ -139,7 +139,7 @@ def dossier(client, env, row, peers, *, cached=None):
         old_docs=re.search(r'Прочитано документов: (\d+)',str(cached.get(LIMITS,'')))
         score=60+10*bool(old_docs and int(old_docs[1]))+8*bool('Источник:' in report)+12*bool(peers)
         fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-manager-v2',
-            BADGE_FIELD:('✅' if score>=80 else '⚠' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1]})
+            BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1]})
     offers={'1C':'сопровождение и развитие 1С','IT_STAFFING':'предоставление IT-специалистов',
             'IT_SUPPORT':'поддержка IT-инфраструктуры','CRM':'внедрение и сопровождение CRM',
             'KKT_EDO':'кассовые решения и ЭДО','SERVERS':'поставка и настройка IT-оборудования',
@@ -245,6 +245,12 @@ def deliver(conn,client,env):
 
 
 
+def saved_fields_match(actual,expected):
+    """Saved dossier integrity; stage/owner/title belong to CRM lifecycle."""
+    return all(str(actual.get(k))==str(v) for k,v in expected.items()
+               if k not in {'title','stageId','assignedById'})
+
+
 def reconcile_uncertain(conn,client,env):
     rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
     for source,expected in conn.execute("SELECT source_id,expected FROM serviceit_bidzaar_inbox WHERE state IN ('POST_UNCERTAIN','UPDATE_UNCERTAIN') LIMIT 10").fetchall():
@@ -252,7 +258,7 @@ def reconcile_uncertain(conn,client,env):
         if len(matches)!=1:continue
         card=matches[0]
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
-        if all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
+        if saved_fields_match(actual,expected):
             conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED',card_id=%s WHERE source_id=%s AND state IN ('POST_UNCERTAIN','UPDATE_UNCERTAIN')",(card,source))
 
 
@@ -269,7 +275,7 @@ def repair_documents(conn,client,env,*,presentation_only=False):
     rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
     params={'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'}
     actual=normalized(rest('crm.item.get',params)['item'])
-    if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
+    if not saved_fields_match(actual,expected):
         return 'DOCUMENT_RETRY_CONFLICT'
     if expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v2':
         conn.execute('UPDATE serviceit_bidzaar_inbox SET document_attempts=document_attempts+1 WHERE source_id=%s',(source,))
@@ -283,7 +289,7 @@ def repair_documents(conn,client,env,*,presentation_only=False):
     if count(patch)<=count(expected) and not new_model and expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v2':return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
     # Recheck after network/model work, before any update of managed fields.
     actual=normalized(rest('crm.item.get',params)['item'])
-    if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
+    if not saved_fields_match(actual,expected):
         return 'DOCUMENT_RETRY_CONFLICT'
     combined={**expected,**patch}
     reserved=conn.execute("UPDATE serviceit_bidzaar_inbox SET state='UPDATE_UNCERTAIN',expected=%s::jsonb WHERE source_id=%s AND state='VERIFIED' RETURNING source_id",(json.dumps(combined,ensure_ascii=False),source)).fetchone()
@@ -292,7 +298,7 @@ def repair_documents(conn,client,env,*,presentation_only=False):
     response.raise_for_status()
     if 'error' in response.json():return 'DOCUMENT_UPDATE_UNCERTAIN'
     actual=normalized(rest('crm.item.get',params)['item'])
-    if not all(str(actual.get(k))==str(v) for k,v in combined.items() if k!='title'):
+    if not saved_fields_match(actual,combined):
         return 'DOCUMENT_UPDATE_UNCERTAIN'
     conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED' WHERE source_id=%s AND state='UPDATE_UNCERTAIN'",(source,))
     return 'DOCUMENT_UPDATE_VERIFIED'
@@ -313,7 +319,7 @@ def manager_tasks(conn,client,env):
     verified=0
     for card,expected in rows:
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
-        if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):continue
+        if not saved_fields_match(actual,expected):continue
         try:
             status=process_card(client,runtime,card,native_fence=PostgresNativeFence(conn,'TASK_V1'))
             verified+=int(status=='INTERNAL_REVIEW_TASK_READBACK_VERIFIED')

@@ -386,7 +386,7 @@ def _company_requisites_page(client, url, hosts):
         raw = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
     parser = VisibleText(); parser.feed(raw)
     return {"url":url, "text":" ".join(parser.parts)[:64000],
-            "links":parser.links[:150], "emails":parser.mail[:30],
+            "links":parser.links[:1000], "emails":parser.mail[:30],
             "phones":parser.tel[:30], "complete_visible":True}
 
 
@@ -442,7 +442,8 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
             pass
     results = []
     attempted = set()
-    for raw in urls:
+    followed_legal_links = 0
+    for position, raw in enumerate(urls):
         if len(attempted) >= 8 or len(results) >= 3:
             break
         if not isinstance(raw, str) or raw in attempted:
@@ -464,6 +465,7 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                 parser = VisibleText()
                 parser.feed(_get(client, raw, frozenset({host})))
                 page["text"] = " ".join(parser.parts)[:64000]
+                page["links"] = parser.links[:1000]
             body = " ".join(page["text"].split())
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, KeyError):
             continue
@@ -479,6 +481,23 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                                   context):
                 if _is_valid_inn(inn):
                     valid.append(inn)
+        if not valid and legal.search(body) and followed_legal_links < 2:
+            # Official pages often put INN in a linked legal agreement,
+            # not next to the company name on the home/about page.
+            linked = []
+            for href, label in page.get("links", [])[:1000]:
+                if not re.search(r'(?iu)реквизит|юридическ|пользовательск\w*\s+соглаш|rekvizit|polzovatelskoe-soglashenie', label+' '+href):
+                    continue
+                target = urljoin(raw,href)
+                p = urlsplit(target)
+                if (p.scheme != 'https' or p.hostname != host or p.query or p.fragment
+                        or target in attempted or target in linked):
+                    continue
+                linked.append(target)
+                followed_legal_links += 1
+                if followed_legal_links == 2:
+                    break
+            urls[position+1:position+1] = linked
         if len(set(valid)) != 1:
             continue
         inn = valid[0]
@@ -724,6 +743,35 @@ def _merge_independent_tinyfish(candidate, fetched, tender_id):
     return result
 
 
+def _primary_html_with_canonical_redirect(client, url, allowed, tender_id):
+    """Permit one same-host canonical redirect to the SAME tender only."""
+    from .serviceit_public_evidence_research import _get, _robots
+    observed = []
+    def capture(response):
+        if str(response.request.url) == url:
+            observed.append((response.status_code, response.headers.get('location','')))
+    hooked = isinstance(client,httpx.Client)
+    if hooked:
+        client.event_hooks['response'].append(capture)
+    try:
+        try:
+            return _get(client,url,allowed)
+        except ResearchBlocked:
+            if not observed or observed[-1][0] not in {301,302,307,308}:
+                raise
+    finally:
+        if hooked:
+            client.event_hooks['response'].remove(capture)
+    target = urljoin(url,observed[-1][1])
+    origin,p = urlsplit(url),urlsplit(target)
+    if (p.scheme != 'https' or p.hostname != origin.hostname or p.query or p.fragment
+            or p.username or p.password or p.port not in (None,443)
+            or not re.fullmatch(r'/(?:app/market-next|market)/[a-z0-9-]+/tender-'+re.escape(tender_id)+r'/?',p.path)):
+        raise ResearchBlocked('PRIMARY_REDIRECT_NOT_SAME_TENDER')
+    _robots(client,target,allowed)
+    return _get(client,target,allowed)
+
+
 def verified_original_b2b_details(candidate, notice, client):
     """Prefer the full, safely reduced ORIGINAL public B2B details over a 4k head.
 
@@ -752,7 +800,7 @@ def verified_original_b2b_details(candidate, notice, client):
                 or _host(url, allowed) not in ("www.b2b-center.ru", "b2b-center.ru")):
             return candidate
         _robots(client, url, allowed)
-        raw = _get(client, url, allowed)
+        raw = _primary_html_with_canonical_redirect(client,url,allowed,tid)
         parser = VisibleText()
         parser.feed(raw)
         excerpt = detailed_public_excerpt(parser.parts, tid, subject)

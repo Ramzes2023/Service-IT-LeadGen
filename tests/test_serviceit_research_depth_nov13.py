@@ -193,3 +193,39 @@ def test_document_discovery_gets_search_scope_only_on_initial_scan(monkeypatch,p
     assert got['crm_writes']==0 and 'RETRY_12H' in got['status']
     assert bool(opened) is (not prior_scan)
     assert budget.sent == (0 if prior_scan else 3)
+
+
+def test_requisites_follow_same_site_legal_link_before_other_candidates(monkeypatch):
+    from leadpilot import serviceit_public_evidence_research as public
+    seen=[]
+    def page(client,url,hosts):
+        seen.append(url)
+        body='АО «Учебник» ИНН 1234567894' if url.endswith('/agreement/') else 'АО «Учебник» Описание компании'
+        return {'url':url,'text':body,'emails':[],'phones':[], 'links':[
+            ('https://other.invalid/legal/','Юридическая информация'),
+            ('/agreement/','Пользовательское соглашение')]}
+    monkeypatch.setattr(public,'_page',page)
+    found=deep._public_company_self_declaration(None,'АО «Учебник»',[{'url':'https://company-example.ru/'}],'')
+    assert found['inn']=='1234567894'
+    assert seen==['https://company-example.ru/','https://company-example.ru/agreement/']
+
+
+@pytest.mark.parametrize('target,allowed',[
+    ('/market/updated-public-title/tender-1234567/',True),
+    ('/market/other/tender-9999999/',False),('/login/',False),
+    ('https://other.invalid/market/title/tender-1234567/',False),
+    ('/market/title/tender-1234567/?token=private',False)])
+def test_primary_canonical_redirect_is_same_host_and_tender_only(monkeypatch,target,allowed):
+    from leadpilot import serviceit_public_evidence_research as public
+    monkeypatch.setattr(public,'_robots',lambda *a:None)
+    monkeypatch.setattr(public,'_public_dns',lambda host:True)
+    calls=[]
+    def response(request):
+        calls.append(str(request.url))
+        return (httpx.Response(307,headers={'location':target}) if len(calls)==1 else
+                httpx.Response(200,text='<p>'+TEXT+'</p>',headers={'content-type':'text/html'}))
+    with httpx.Client(transport=httpx.MockTransport(response),trust_env=False) as client:
+        found=deep.verified_original_b2b_details({'pages':[]},NOTICE,client)
+        assert bool(found.get('original_b2b_detail_independently_read')) is allowed
+        assert len(calls)==(2 if allowed else 1)
+        assert not client.event_hooks['response']

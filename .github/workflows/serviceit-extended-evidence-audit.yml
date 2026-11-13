@@ -1,13 +1,16 @@
 name: ServiceIT public evidence independent readback
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-extended-evidence-audit.yml]
   workflow_run:
-    workflows: [ServiceIT all-document queue and public company contacts v4]
+    workflows: [ServiceIT all-document queue and public company contacts v5]
     types: [completed]
 permissions:
   contents: read
 jobs:
   audit:
-    if: github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'push' || github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment: serviceit-vps-readonly
@@ -17,6 +20,9 @@ jobs:
       VPS_SSH_KEY: ${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}
       VPS_KNOWN_HOSTS: ${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Independently read saved evidence and CRM fields
         shell: bash
         run: |
@@ -28,6 +34,10 @@ jobs:
           chmod 0600 "$stage/"*
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            ssh -T -i "$stage/id" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' < ops/serviceit_extended_evidence_audit.py
+            exit
+          fi
           ssh -T -i "$stage/id" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           dir="$HOME/serviceit/evidence"

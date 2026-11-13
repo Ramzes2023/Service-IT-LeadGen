@@ -1,4 +1,4 @@
-name: ServiceIT all-document queue and public company contacts v4
+name: ServiceIT all-document queue and public company contacts v5
 on:
   push:
     branches: [main]
@@ -88,7 +88,7 @@ jobs:
           assert rows[-1] in actual
           print('EXT_FIVE_MINUTE_SCHEDULE=VERIFIED')
           PY
-          for cycle in 1 2 3 4 5 6; do
+          for cycle in {1..16}; do
             python3 "$dir/serviceit_extended_evidence_runner.py"
           done
           python3 "$dir/serviceit_extended_evidence_runner.py" --audit

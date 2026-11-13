@@ -137,6 +137,10 @@ def public_documents(findings: dict) -> list[dict]:
         if len(text) >= 30:
             docs.append({"source_id": len(docs) + 1,
                          "url": url, "text": text[:MAX_DOCUMENT_CHARS]})
+            subject = entry.get("verified_subject")
+            if (isinstance(subject, str) and 10 <= len(subject) <= 220
+                    and subject in text and _clean_public_segment(subject)):
+                docs[-1]["verified_subject"] = subject
     return docs
 
 
@@ -248,7 +252,7 @@ def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
         ("OTHER", r"(?iu)\bорганизатор\s*[:：—-]?\s*"
                   r"(?:ПАО|ООО|АО|ОАО|ЗАО)\s*[«\"][^»\"]{3,100}[»\"]"),
         ("PAYMENT", r"(?iu)\bусловия\s+оплаты\s*(?:[:：—-]\s*)?"
-                    r"(?:предпочтительно\s+)?(?:отсрочка|оплата|предоплата|аванс)"
+                    r"(?:предпочтительно\s+)?(?:отсрочка|оплата|предоплата|постоплата|аванс)"
                     r"[^.;]{5,125}"),
         # New B2B layouts render the label and value in separate HTML nodes:
         # "Условия поставки / оказания услуг" then "электронная поставка".
@@ -258,7 +262,7 @@ def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
                      r"\s*(?:[:：—-]\s*)?[^\n]{8,100}"),
         ("LOCATION", r"(?iu)\bадрес\s+поставки(?:\s*/\s*оказания\s+услуг)?"
                      r"\s*(?:[:：—-]\s*)?(?:Россия[,]?\s*)?"
-                     r"(?:г[.]?\s*Москва|Московская\s+область)[^\n]{8,130}"),
+                     r"(?:(?:г[.]?\s*)?Москва|Московская\s+область)[^\n]{8,130}"),
         ("EVALUATION", r"(?iu)\bпри\s+выборе\s+победителя\s+учитывается"
                        r"\s*[:：—-]\s*[^.;]{8,110}"),
         ("DOCUMENTS", r"(?iu)\bподгрузка\s+документации\s+к\s+заявке\s+"
@@ -337,6 +341,14 @@ def extract_source_facts(docs: list[dict]) -> list[dict]:
     # Explicit B2B fields are more useful than generic site-menu phrases.
     # Prioritize these verified primary-page labels within the 16-fact cap.
     facts = b2b_primary_detail_facts(docs)
+    for doc in docs[:MAX_PAGES]:
+        subject = doc.get("verified_subject")
+        if (isinstance(subject, str) and subject in doc.get("text", "")
+                and 10 <= len(subject) <= 220):
+            facts.insert(0, {"source_id": doc["source_id"], "url": doc["url"],
+                            "quote": subject, "category": "SCOPE",
+                            "finding": "Предмет подтверждён первичной страницей закупки"})
+    facts = facts[:16]
     seen = {(row["source_id"],row["quote"]) for row in facts}
     for doc in docs[:MAX_PAGES]:
         text = doc.get("text", "")

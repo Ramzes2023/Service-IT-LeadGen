@@ -27,7 +27,12 @@ def main():
         emit(key, env.get(key, 'MISSING'))
     for name in ('serviceit_vps_b2b_deep_research.py', 'serviceit_b2b_tender_documents.py', 'serviceit_vps_b2b_document_worker.py', 'serviceit_vps_b2b_dossier_v11_worker.py', 'serviceit_b2b_dossier_consistency_v37.py'):
         emit('HASH_' + name.removesuffix('.py').upper(), hashlib.sha256((Path('/app/leadpilot') / name).read_bytes()).hexdigest())
-    with db(env) as conn, conn.transaction(), httpx.Client(trust_env=False, follow_redirects=False, timeout=14) as client:
+    def status(response):
+        providers = {'api.search.brave.com':'BRAVE', 'api.search.tinyfish.ai':'FREE_SEARCH'}
+        provider = providers.get(response.request.url.host)
+        if provider:
+            emit(provider+'_HTTP', response.status_code)
+    with db(env) as conn, conn.transaction(), httpx.Client(trust_env=False, follow_redirects=False, timeout=14, event_hooks={'response':[status]}) as client:
         conn.execute('SET TRANSACTION READ ONLY')
         rest = Rest(secret_file(env, 'SERVICEIT_BITRIX_WEBHOOK'), client)
         rows = conn.execute('''SELECT b.card_id,b.source_id,b.notice_json,COALESCE(v.status,'NONE'),COALESCE(d.status,'NONE')
@@ -49,6 +54,15 @@ def main():
             emit(key+'SCORE', item.get(SCORE_FIELD, 'NONE'))
             emit(key+'BRIEF_LENGTH', len(item.get(PREFIX+'AI_MANAGER_BRIEF') or ''))
             emit(key+'REPORT_LENGTH', len(item.get(PREFIX+'AI_FULL_REPORT') or ''))
+            if docs == 'VERIFIED':
+                stored = conn.execute('SELECT scanned_count,comment_id,salt,digest FROM serviceit_vps_b2b_tender_doc_receipts WHERE card_id=%s', (card,)).fetchone()
+                from leadpilot.serviceit_vps_b2b_document_worker import _timeline_call
+                comment = _timeline_call(client, secret_file(env, 'SERVICEIT_BITRIX_WEBHOOK'), 'crm.timeline.comment.get', {'id':stored[1]})
+                body = comment.get('COMMENT', '')
+                emit(key+'DOWNLOADED_DOCUMENTS', stored[0])
+                emit(key+'DOCUMENT_ATTACHMENTS', len(comment.get('FILES') or {}))
+                emit(key+'DOCUMENT_REPORT_VERIFIED', 'YES' if hashlib.sha256(bytes(stored[2])+body.encode('utf8')).digest()==bytes(stored[3]) else 'NO')
+                emit(key+'DOCUMENT_ROUTERAI_USED', 'YES' if 'RouterAI: цитаты проверены' in body else 'NO')
             if card < 29:
                 continue
             found = verified_original_b2b_details({'status':'PUBLIC_SOURCE_NOT_READABLE','pages':[]}, notice, client)
@@ -63,6 +77,7 @@ def main():
             emit(key+'COMPANY_PAGES', len(research.get('pages') or []))
             emit(key+'COMPANY_CANDIDATES', research.get('index_candidates', 0))
             emit(key+'COMPANY_FETCHES', research.get('external_fetch_attempts', 0))
+            emit(key+'FALLBACK_CANDIDATES', research.get('requisites_fallback_candidates', 0))
             emit(key+'REQUISITES_EXTRA_SEARCH', env.get('SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED', 'MISSING'))
             emit(key+'FRESH_INN', 'YES' if published_buyer_inn_evidence(enriched) else 'NO')
             if found.get('status') != 'PUBLIC_PAGES_INSPECTED':
@@ -70,7 +85,11 @@ def main():
             report = source_only_investigation(found)
             for category in ('BUYER','DEADLINE','LOCATION','PAYMENT','SCOPE','ELIGIBILITY','BUDGET','DOCUMENTS'):
                 emit(key+'FACTS_'+category, sum(f.get('category') == category for f in report['facts']))
-            evidence = inspect_public_documents(client, found, notice['tender_id'], enable_ocr=True)
+            from leadpilot.serviceit_b2b_free_public_fallback import read_free_public_mirror
+            alternative = read_free_public_mirror(notice, env, client, index_hints=[]) or {}
+            emit(key+'ALTERNATIVE_FULL_PAGES', len(alternative.get('pages') or []))
+            combined = {**found, 'pages':(found.get('pages', [])+alternative.get('pages', []))[:6]}
+            evidence = inspect_public_documents(client, combined, notice['tender_id'], enable_ocr=True)
             emit(key+'DOC_LINKS', evidence['discovered'])
             emit(key+'DOCS_READ', len(evidence['documents']))
             for reason,count in evidence['rejections'].items():
@@ -91,6 +110,8 @@ def main():
                 emit(label+'_INN_POSITION', match.start() if match else 0)
             except Exception as exc:
                 emit(label+'_READ', type(exc).__name__)
+                if re.fullmatch(r'[A-Z_]{1,80}', str(exc)):
+                    emit(label+'_REASON', str(exc))
     emit('CRM_WRITES', 0)
 
 

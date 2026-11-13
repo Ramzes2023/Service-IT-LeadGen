@@ -84,3 +84,45 @@ def test_combined_inn_kpp_label_on_independent_public_company_page(monkeypatch):
     evidence=deep._public_company_self_declaration(None,'АО «Учебник»',[{'url':'https://uch-company.ru/requisites/'}],'')
     assert evidence['inn']=='1234567894'
     assert evidence['fns_verified'] is False
+
+
+def test_fetched_licence_title_and_plain_moscow_are_preserved(monkeypatch):
+    from leadpilot.b2b_email_opportunity_bridge import classify_services
+    actual=TEXT.replace('г. Москва','Россия, Москва').replace('отсрочка платежа 30 календарных дней', 'постоплата: указать да или нет')
+    monkeypatch.setattr('leadpilot.serviceit_public_evidence_research._robots', lambda *a:None)
+    monkeypatch.setattr('leadpilot.serviceit_public_evidence_research._get', lambda *a:'<p>'+actual+'</p>')
+    found=deep.verified_original_b2b_details({'pages':[]},NOTICE,None)
+    facts=ai.source_only_investigation(found)['facts']
+    lines=[f'ПРОЧИТАННЫЙ ИСТОЧНИК / {f["category"]}: {f["quote"]} [{f["url"]}]' for f in facts]
+    record=consistency._record_from_verified(NOTICE,{},lines)
+    assert record['region']=='Москва'
+    assert any(classify_services(x) for x in record['service_evidence'])
+    assert 'постоплата' in record['payment']
+    different={**NOTICE,'subject':'Несуществующее внедрение 1С'}
+    assert not deep.verified_original_b2b_details({'pages':[]},different,None).get('pages')
+
+
+def test_free_search_never_returns_snippet_inn_as_evidence(monkeypatch):
+    monkeypatch.setattr(deep,'secret_file',lambda *a,**k:'x'*32)
+    def handler(request):
+        return httpx.Response(200,json={'results':[
+            {'url':'https://registry-example.ru/company/123','snippet':'АО «Учебник» ИНН 1234567894'},
+            {'url':'http://127.0.0.1/private','snippet':'АО «Учебник» ИНН 1234567894'}]})
+    with httpx.Client(transport=httpx.MockTransport(handler),trust_env=False) as client:
+        rows=deep._free_requisites_candidates(client,'АО «Учебник»',{
+            'SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED':'YES',
+            'SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED':'YES'})
+    assert rows==[{'url':'https://registry-example.ru/company/123'}]
+
+
+def test_long_official_page_and_registry_contact_separation(monkeypatch):
+    from leadpilot import serviceit_public_evidence_research as public
+    source='https://cbr.ru/registries/rcb/ecb/orginfo/?id=123456'
+    page={'text':'Раздел меню '*700,'url':source,'emails':[],'phones':[]}
+    monkeypatch.setattr(public,'_page',lambda *a:dict(page,text=page['text'][:7000]))
+    monkeypatch.setattr(public,'_get',lambda *a:'<p>'+page['text']+'АО «Учебник» ИНН 1234567894</p>')
+    monkeypatch.setattr(public,'_contacts',lambda *a:[{'type':'phone','value':'+74950000000'}])
+    evidence=deep._public_company_self_declaration(None,'АО «Учебник»',[{'url':source}],'')
+    assert evidence['inn']=='1234567894'
+    assert evidence['contacts']==[]
+    assert evidence['provenance']=='PUBLIC_REGISTRY_REQUISITES'

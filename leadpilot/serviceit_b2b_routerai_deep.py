@@ -422,9 +422,33 @@ def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeou
             "manager_questions": ["Что нужно подтвердить?"],
         },
     }, ensure_ascii=False)
-    return validate_inference(_routerai_json(
+    report = validate_inference(_routerai_json(
         client, config, _SYSTEM, prompt, max_tokens=6200, timeout=timeout,
     ), docs)
+    return complete_source_coverage(report, docs)
+
+
+def complete_source_coverage(report, docs):
+    """Retain literal primary fields even when a valid model omits them.
+
+    No extra network/model calls. Use the same sanitized independently read
+    documents as validation. Cover categories first, then extra details, so
+    16 technical phrases cannot crowd out a published deadline or payment.
+    """
+    source = extract_source_facts(docs)
+    candidates = list(report.get("facts", [])) + source
+    facts, seen, categories = [], set(), set()
+    for distinct_category in (True, False):
+        for fact in candidates:
+            identity = (fact["url"], fact["quote"], fact["category"])
+            if identity in seen or (distinct_category and fact["category"] in categories):
+                continue
+            facts.append(fact)
+            seen.add(identity)
+            categories.add(fact["category"])
+            if len(facts) == 16:
+                return {**report, "facts": facts}
+    return {**report, "facts": facts}
 
 
 def _routerai_json(client, config, system, prompt, *, max_tokens, timeout):

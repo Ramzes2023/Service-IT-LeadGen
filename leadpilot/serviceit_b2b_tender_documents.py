@@ -140,12 +140,15 @@ def candidate_links(client, findings, tender_id, *, max_pages=6):
         except (TenderDocumentBlocked, ResearchBlocked,
                 httpx.HTTPError, ValueError, TypeError):
             continue
-        for href, label in parser.links[:180]:
+        # Navigation/lot tables can place the attachments well after link 180.
+        # Read the bounded full link list before ranking TZ/contract files.
+        for href, label in parser.links[:2000]:
             if not isinstance(href, str) or len(href) > 900:
                 continue
             dest = urljoin(url, href)
             try:
-                official = exact_eis_mirror and public_eis_attachment(dest)
+                official = (exact_eis_mirror or base_host in {
+                    "b2b-center.ru", "www.b2b-center.ru"}) and public_eis_attachment(dest)
                 if not official:
                     host = public_market_url(dest)
                     fail(host == base_host, "DOCUMENT_CROSS_HOST_LINK")
@@ -153,7 +156,7 @@ def candidate_links(client, findings, tender_id, *, max_pages=6):
                 # Dynamic download URLs are allowed only with explicit
                 # document/download labels AND a download-looking endpoint.
                 dynamic = (bool(re.search(r"(?i)(?:download|attachment|file)", dest))
-                           and any(w in label for w in (
+                           and any(w in label.casefold() for w in (
                                "скачать", "документ", "тз", "download", "файл")))
                 if not suffix and not dynamic and not official:
                     continue
@@ -404,5 +407,6 @@ def inspect_public_documents(client, findings, tender_id, *, max_pages=6,
                     else "DOCUMENT_PARSE_FAILED")
             reasons[code] = reasons.get(code, 0) + 1
     return {"documents": documents, "discovered": len(candidates),
+            "access_status": findings.get("document_access", "PUBLIC_LINKS" if candidates else "NO_PUBLIC_LINKS"),
             "eis_links": sum(public_eis_attachment(row["url"]) for row in candidates),
             "rejections": reasons}

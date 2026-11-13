@@ -229,7 +229,7 @@ PUBLIC_BUYER_LABEL = re.compile(
 )
 PUBLIC_SELF_BUYER = re.compile(
     r'(?iu)\bорганизатор\s*[:—–-]?\s*' + BUYER_NAME
-    + r'\s+процедура\s+проводится\s*[:—–-]?\s*для\s+собственных\s+нужд\b'
+    + r'[\s.;]+процедура\s+проводится\s*[:—–-]?\s*для\s+собственных\s+нужд\b'
 )
 FULL_BUYER_FORMS = {
     "общество с ограниченной ответственностью": "ООО",
@@ -260,7 +260,7 @@ def _self_buyer(row):
         if _host(url, frozenset({"b2b-center.ru"})) not in {
                 "b2b-center.ru", "www.b2b-center.ru"}:
             return ""
-        tender = re.fullmatch(r"/app/market-next/[a-z0-9-]+/tender-([0-9]{5,12})/?",
+        tender = re.fullmatch(r"/(?:app/market-next|market)/[a-z0-9-]+/tender-([0-9]{5,12})/?",
                              urlsplit(url).path)
         body = " ".join(row["excerpt"].split())
         if not tender or not re.search(r"(?<!\d)№\s*" + tender[1] + r"(?!\d)", body):
@@ -396,7 +396,7 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                 r'(?iu)(?:ООО|ПАО|АО|ОАО|ЗАО|Общество\s+с\s+'
                 r'ограниченной\s+ответственностью)\s*[«"]',
                 context, maxsplit=1)[0]
-            for inn in re.findall(r'(?iu)\bИНН\s*(?:[/№:]|\s){0,6}(\d{10}|\d{12})(?!\d)',
+            for inn in re.findall(r'(?iu)\bИНН\s*(?:[/–-]\s*КПП\s*)?(?:[/№:]|\s){0,6}(\d{10}|\d{12})(?!\d)',
                                   context):
                 if _is_valid_inn(inn):
                     valid.append(inn)
@@ -468,11 +468,17 @@ def followup_public_buyer_research(findings, env, client, key):
         return {**findings, "independent_company_research": {
             **(previous if isinstance(previous, dict) else {}), "public_inn": linked,
         }}
-    if isinstance(previous, dict) and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY":
-        return findings
+    # A successful company search may contain only candidate pages, not INN.
+    # Reuse those candidates; do not let its status suppress requisites lookup.
+    reusable = (isinstance(previous, dict)
+                and previous.get("company_name_provenance") ==
+                    "PUBLIC_BUYER_LABEL_LEGAL_IDENTITY_UNVERIFIED")
+    if (isinstance(previous, dict) and not reusable
+            and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY"):
+        return findings  # Unattributed prior search must not trigger a second query.
     from .serviceit_independent_company_research import independent_company_research
     try:
-        independent = independent_company_research(
+        independent = dict(previous) if reusable else independent_company_research(
             client, company_name=buyer, signal_kind="tender",
             source_host="b2b-center.ru", search_token=key,
             llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
@@ -669,10 +675,24 @@ def verified_original_b2b_details(candidate, notice, client):
     if any(type(p) is not dict for p in pages):
         return candidate
     original = next((p for p in pages if p.get("url") == url), {})
-    primary = {**original, "url": url, "excerpt": excerpt}
+    # Carry exact first-party profile links to the buyer resolver. Previously
+    # only the text survived, so the linked-profile path was never reachable.
+    profile_links = []
+    for href, label in parser.links[:2000]:
+        target = urlsplit(urljoin(url, href))
+        if (target.hostname == parsed.hostname and not target.query
+                and not target.fragment
+                and re.fullmatch(r"/firms/[a-z0-9-]+/[0-9]+/?", target.path)):
+            profile_links.append((href, label))
+    primary = {**original, "url": url, "excerpt": excerpt,
+               "profile_links": profile_links[:12]}
     result["pages"] = ([primary] + [p for p in pages if p.get("url") != url])[:MAX_PAGES]
     result["status"] = "PUBLIC_PAGES_INSPECTED"
     result["original_b2b_detail_independently_read"] = True
+    visible = " ".join(parser.parts)
+    if re.search(r"(?iu)документация\s+от\s+организатора\s*[:.]?\s*"
+                 r"доступно\s+зарегистрированным\s+пользователям", visible):
+        result["document_access"] = "AUTH_REQUIRED"
     return result
 
 

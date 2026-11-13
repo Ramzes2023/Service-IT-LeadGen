@@ -12,6 +12,7 @@ from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
 from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
 from leadpilot.serviceit_kanban_presentation import SCORE_FIELD
 from leadpilot.bitrix_1062_mapping import _is_valid_inn
+from leadpilot.serviceit_vps_worker import exact_environment
 
 
 def emit(k, v):
@@ -21,7 +22,7 @@ def emit(k, v):
 
 
 def main():
-    env = dict(os.environ)
+    env = exact_environment(dict(os.environ))
     for key in ('SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED', 'SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED', 'SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED', 'SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED'):
         emit(key, env.get(key, 'MISSING'))
     for name in ('serviceit_vps_b2b_deep_research.py', 'serviceit_b2b_tender_documents.py', 'serviceit_vps_b2b_document_worker.py', 'serviceit_vps_b2b_dossier_v11_worker.py', 'serviceit_b2b_dossier_consistency_v37.py'):
@@ -53,6 +54,7 @@ def main():
             found = verified_original_b2b_details({'status':'PUBLIC_SOURCE_NOT_READABLE','pages':[]}, notice, client)
             emit(key+'PRIMARY', 'YES' if found.get('original_b2b_detail_independently_read') else 'NO')
             emit(key+'BUYER', 'YES' if public_buyer_candidate(found) else 'NO')
+            emit(key+'DOC_ACCESS', found.get('document_access', 'UNKNOWN'))
             emit(key+'PROFILE_LINKS', sum(len(x.get('profile_links', [])) for x in found.get('pages', [])))
             if found.get('status') != 'PUBLIC_PAGES_INSPECTED':
                 continue

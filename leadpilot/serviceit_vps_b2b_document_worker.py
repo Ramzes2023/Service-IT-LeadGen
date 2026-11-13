@@ -506,12 +506,15 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
         docs = evidence["documents"]
         if preview:
             return {"status": "TDI_PREVIEW", "crm_writes": 0,
+                    "access_status": evidence.get("access_status", "UNKNOWN"),
                     "documents_readable": len(docs),
                     "links_found": evidence["discovered"],
                     "eis_links": evidence.get("eis_links",0)}
         if not docs:
             save_no_documents(connection, card, source)
-            return {"status": "TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H",
+            return {"status": ("TDI_PUBLIC_DOCUMENTS_REQUIRE_LOGIN_RETRY_12H"
+                               if evidence.get("access_status") == "AUTH_REQUIRED"
+                               else "TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H"),
                     "crm_writes": 0, "documents_readable": 0,
                     "links_found": evidence["discovered"],
                     "eis_links": evidence.get("eis_links",0),

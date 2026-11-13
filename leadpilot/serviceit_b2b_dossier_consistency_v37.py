@@ -235,7 +235,13 @@ def extracted_verified(verified_lines):
             continue
         if category in ("DEADLINE", "LOCATION", "BUYER", "BUDGET",
                         "PROCEDURE", "ELIGIBILITY", "SUBMISSION", "DOCUMENTS",
-                        "SCOPE", "TECHNOLOGY"):
+                        "SCOPE", "TECHNOLOGY", "PAYMENT", "EVALUATION", "GUARANTEE"):
+            if (category == "LOCATION" and re.search(
+                    r"(?iu)(?:адрес\s+поставки|место\s+исполнения|место\s+поставки)", quote)
+                    and not re.search(r"(?iu)юридическ\w*\s+адрес", quote)):
+                prior = found.get(category, ("", ""))[0]
+                if not re.search(r"(?iu)(?:адрес\s+поставки|место\s+исполнения|место\s+поставки)", prior):
+                    found[category] = (quote, url)
             found.setdefault(category, (quote, url))
     return found
 
@@ -270,7 +276,7 @@ def _record_from_verified(notice, item, verified, identity=None):
             context = quote[max(0, date.start()-65):date.start()]
             if re.search(
                     r"(?iu)(?:срок\s+подачи|при[её]м\s+заяв|"
-                    r"окончани[ея]|дедлайн|заявки\s+до)", context):
+                    r"окончани[ея]|дедлайн|заявки\s+до|актуально\s+до)", context):
                 record["deadline"] = (
                     date.group(1)+" "+date.group(2)+" МСК (цитата источника)")
                 record["tender_url"] = record["tender_url"] or url
@@ -292,6 +298,10 @@ def _record_from_verified(notice, item, verified, identity=None):
         record["terms"] = _text(parsed["ELIGIBILITY"][0], 180)
     if "DOCUMENTS" in parsed:
         record["documents"] = _text(parsed["DOCUMENTS"][0], 180)
+    for category, key in (("PAYMENT", "payment"), ("EVALUATION", "evaluation"),
+                          ("GUARANTEE", "guarantee"), ("SUBMISSION", "submission")):
+        if category in parsed:
+            record[key] = _text(parsed[category][0], 240)
     if "BUDGET" in parsed:
         amount, ref = parsed["BUDGET"]
         if (re.search(r"(?iu)(?:начальн\w*\s+цен|стоимост|бюджет|сумм\w*\s+закупки)", amount)
@@ -354,6 +364,11 @@ def prepare(notice, item, verified_lines, identity=None):
     if old_report.count(anchor) != 1:
         return None, {"status": "NONSTANDARD_REPORT_MANUAL_REVIEW"}
     tail = old_report[old_report.index(anchor):]
+    fresh_lines = [line for line in record.get("_fresh_source_lines", [])
+                   if isinstance(line, str) and PROVEN_QUOTE.fullmatch(line)
+                   and line not in tail]
+    if fresh_lines:
+        tail += "\n\nПОВТОРНАЯ СВЕРКА С ПЕРВОИСТОЧНИКОМ\n" + "\n".join(fresh_lines)
     # V18 indexed leads are explicitly UNVERIFIED. Keep them visible as
     # historical leads instead of silently deleting the old 06A section.
     # Do not promote their text into the canonical facts above.
@@ -408,6 +423,10 @@ def prepare(notice, item, verified_lines, identity=None):
         "Документы: " + (record["documents"] or "требуется проверить"),
         "",
         "03  ПОРЯДОК УЧАСТИЯ",
+        "Условия оплаты: " + (record.get("payment") or "не раскрыты в прочитанных источниках"),
+        "Критерии оценки: " + (record.get("evaluation") or "не раскрыты в прочитанных источниках"),
+        "Обеспечение: " + (record.get("guarantee") or "не установлено"),
+        "Подача заявки: " + (record.get("submission") or "уточняется по документации"),
         "Проверить критерии допуска, документы участника и правила подачи",
         "Проверить наличие аванса, банковских гарантий, условия оплаты и санкции",
         "Срок подачи заявок и закупочные файлы перепроверить на площадке",

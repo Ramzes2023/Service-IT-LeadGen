@@ -270,4 +270,10 @@ if __name__=='__main__':
     try:main()
     except Exception as exc:
         print('BIDZAAR_ERROR='+type(exc).__name__.upper())
+        import traceback
+        frame=traceback.extract_tb(exc.__traceback__)[-1]
+        print('BIDZAAR_ERROR_LINE='+str(frame.lineno))
+        reason=str(exc)
+        if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',reason):
+            print('BIDZAAR_ERROR_REASON='+reason)
         raise SystemExit(2)

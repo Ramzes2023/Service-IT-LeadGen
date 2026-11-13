@@ -29,6 +29,8 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         verified=all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title')
         ok &= verified
         print('BIDZAAR_CARD_'+str(card)+'_READBACK='+('YES' if verified else 'NO'),flush=True)
+        print('BIDZAAR_CARD_'+str(card)+'_MANAGER_V2='+('YES' if actual.get('UF_CRM_13_SVCIT_SCORE_VERSION')=='svc-bidzaar-manager-v2' else 'NO'),flush=True)
+        print('BIDZAAR_CARD_'+str(card)+'_PRIORITY_SYMBOL='+('YES' if str(actual.get('UF_CRM_13_SVCIT_AI_SCORE_BADGE','')).startswith(('✅','⚠','❌')) else 'NO'),flush=True)
         limits=actual.get('UF_CRM_13_SVCIT_AI_LIMITATIONS','') or ''
         for label,pattern in [('DOCS_READ',r'Прочитано документов: (\d+)'),('DOCS_UNPROCESSED',r'Не обработано: (\d+)')]:
             match=re.search(pattern,limits)

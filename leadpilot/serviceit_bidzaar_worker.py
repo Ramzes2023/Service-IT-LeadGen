@@ -90,13 +90,13 @@ def documents(client, row):
     return docs, failures+max(0,len(files)-6)
 
 
-def dossier(client, env, row, peers):
-    docs,missing=documents(client,row)
+def dossier(client, env, row, peers, *, cached=None):
+    docs,missing=documents(client,row) if cached is None else ([],0)
     # API description is a separate attested source, not a downloaded file.
     description='\n'.join([row.get('name',''),row.get('description','')])[:24000]
     api_doc={'url':row['link'],'text':description}
     evidence=[api_doc,*docs]
-    reports=_model_research(client,env,docs or [api_doc])
+    reports=_model_research(client,env,docs or [api_doc]) if cached is None else []
     if docs:
         reports+=_model_research(client,env,[api_doc],use_model=False)
     quotes=[]
@@ -120,7 +120,7 @@ def dossier(client, env, row, peers):
               'Направления: '+', '.join(groups),'Источник: '+row['link']]
     limitations=f'Прочитано документов: {len(docs)}. Не обработано: {missing}. ФНС не проверена. '
     limitations+='Ненайденные условия не считаются отсутствующими; сверить актуальную редакцию перед участием.'
-    related=['Карточка №'+str(p) for p in peers]
+    related=[p if isinstance(p,str) else 'Карточка №'+str(p) for p in peers]
     report='\n'.join(passport+['','ДОКАЗАТЕЛЬСТВА ИЗ ИЗВЕЩЕНИЯ И ДОКУМЕНТОВ',*quotes[:12],
          '', 'ПРОЧИТАННЫЕ ФАЙЛЫ',*[d['url']+' · SHA256 '+d['sha256'][:12] for d in docs],
          '', 'СВЯЗАННЫЕ СИГНАЛЫ ПО ИНН',*related, '',limitations])
@@ -131,8 +131,46 @@ def dossier(client, env, row, peers):
             PREFIX+'AI_QUOTE':('\n'.join(quotes[:2])[:3500] or 'Подтверждённые цитаты не извлечены'),
             PREFIX+'AI_HYPOTHESIS':'Соответствие направлениям: '+', '.join(groups)+'. Требования к участнику необходимо сверить с документами.',
             PREFIX+'AI_RECOMMENDATION':'Рассмотреть участие после проверки обязательных условий; автоматическое одобрение не выполнялось.',
-            VERSION_FIELD:'svc-bidzaar-evidence-v1',BADGE_FIELD:score_label(score),
+            VERSION_FIELD:'svc-bidzaar-manager-v2',BADGE_FIELD:('✅' if score>=80 else '⚠' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1],
             PREFIX+'AI_NEXT_ACTION':'Проверить требования и подготовить решение об участии по приведённым источникам.'}
+    if cached is not None:
+        fields={k:v for k,v in cached.items() if k in fields}
+        report=str(cached.get(REPORT,'')).split('\n\nПЛАН РАБОТЫ МЕНЕДЖЕРА')[0]
+        old_docs=re.search(r'Прочитано документов: (\d+)',str(cached.get(LIMITS,'')))
+        score=60+10*bool(old_docs and int(old_docs[1]))+8*bool('Источник:' in report)+12*bool(peers)
+        fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-manager-v2',
+            BADGE_FIELD:('✅' if score>=80 else '⚠' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1]})
+    offers={'1C':'сопровождение и развитие 1С','IT_STAFFING':'предоставление IT-специалистов',
+            'IT_SUPPORT':'поддержка IT-инфраструктуры','CRM':'внедрение и сопровождение CRM',
+            'KKT_EDO':'кассовые решения и ЭДО','SERVERS':'поставка и настройка IT-оборудования',
+            'CLOUD':'облачная инфраструктура','LICENSES':'поставка и продление лицензий'}
+    offer='; '.join(offers.get(g,g) for g in groups)
+    contacts=[]
+    for doc in evidence:
+        for line in doc['text'].splitlines():
+            if (re.search(r'[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}',line)
+                or re.search(r'(?:\+7|8)[ (.-]*\d{3}[ ).-]*\d{3}[ -]*\d{2}[ -]*\d{2}',line)):
+                entry=line.strip()[:350]+' | Источник: '+doc['url']
+                if entry not in contacts:contacts.append(entry)
+    contact_text='\n'.join(contacts[:4]) or 'Именной контакт и телефон в прочитанных материалах не найдены.'
+    pitch=('Здравствуйте! По закупке «'+row['name'][:180]+'» хотим уточнить требования. '
+           'Кто отвечает за техническую часть? Какие требования обязательны, '
+           'допустимы ли альтернативы и каков порядок уточнений до подачи заявки?')
+    manager=['ГОТОВАЯ КАРТОЧКА ДЛЯ МЕНЕДЖЕРА',*passport,
+             'Отрасль компании: не подтверждена первоисточником; предмет закупки не равен отрасли.',
+             'Что предложить (гипотеза): '+offer,
+             'Кому обращаться: опубликованному контактному лицу закупки; роль для уточнения — закупки / IT.',
+             'Контакты с контекстом документа (принадлежность проверить): '+contact_text,
+             'Почему сейчас: открыт приём предложений до '+row['acceptanceEndDate']+'.',
+             'Короткий сценарий разговора: '+pitch,
+             'Связанные сигналы по тому же ИНН: '+str(len(peers))+'. '+
+             ('Повторная потребность: +12 к приоритету; это не подтверждение интереса клиента.' if peers else 'Дополнительных сигналов в CRM не найдено.'),
+             *related[:4],
+             'После разговора: зафиксировать потребность, интерес (да / нет / неясно), возражения и согласованный следующий шаг со сроком.']
+    fields[BRIEF]='\n'.join(manager)[:7000]
+    fields[REPORT]=(report+'\n\nПЛАН РАБОТЫ МЕНЕДЖЕРА\n'+'\n'.join(manager[len(passport)+1:]))[:16000]
+    fields[PREFIX+'AI_HYPOTHESIS']='Предложение для обсуждения: '+offer+'. Соответствие обязательным требованиям сверить с ТЗ.'
+    fields[PREFIX+'AI_NEXT_ACTION']='Изучить приведённые требования, выбрать опубликованный контакт и подготовить уточнения по сценарию. После разговора сохранить итог и согласованный срок следующего действия.'
     return {k:(''.join(ch if ord(ch)<=0xffff else '•' for ch in v) if isinstance(v,str) else v) for k,v in fields.items()}
 
 
@@ -154,6 +192,20 @@ def crm_matches(rest, filters):
     raise ValueError('CRM_MATCHES_INCOMPLETE')
 
 
+def related_signals(rest, peers, inn):
+    details=[]
+    for card in peers[:12]:
+        item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
+        if str(item.get('categoryId'))!='21' or item.get(INN)!=inn:continue
+        details.append('Карточка №'+str(card)+': '+str(item.get(SUMMARY) or item.get('title') or 'Без названия')[:250]+
+                       '. Источник: '+str(item.get(PREFIX+'SIGNAL_SOURCE') or 'не указан')+
+                       '. Дата создания: '+str(item.get('createdTime') or 'не указана')+
+                       '. Стадия: '+str(item.get('stageId') or 'не указана')+
+                       '. Сигнал: '+str(item.get(PREFIX+'SIGNAL_URL') or 'ссылка отсутствует')+
+                       '. Связь подтверждена совпадением ИНН '+inn+'.')
+    return details
+
+
 def deliver(conn,client,env):
     rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
     result={'verified':0,'filtered':0,'uncertain':0}
@@ -168,8 +220,8 @@ def deliver(conn,client,env):
         if duplicate:
             conn.execute("UPDATE serviceit_bidzaar_inbox SET state='EXISTING',card_id=%s WHERE source_id=%s",(duplicate[0],source));continue
         peers=crm_matches(rest,{INN:row['inn']})
-        fields=dossier(client,env,row,peers)
-        fields.update({'title':'BIDZAAR · '+row['name'][:180],'categoryId':21,'stageId':'DT1062_21:NEW',
+        fields=dossier(client,env,row,related_signals(rest,peers,row['inn']))
+        fields.update({'title':'BIDZAAR · '+row['name'][:180],'categoryId':21,'stageId':'DT1062_21:NEW','assignedById':605,
             PREFIX+'SIGNAL_ID':source,PREFIX+'SIGNAL_KIND':'tender-opportunity',
             PREFIX+'SIGNAL_SOURCE':'Bidzaar API',PREFIX+'SIGNAL_URL':row['link'],
             PREFIX+'SUGGESTED_SERVICE':', '.join(decision(row)[1]),
@@ -205,12 +257,13 @@ def reconcile_uncertain(conn,client,env):
 
 
 
-def repair_documents(conn,client,env):
+def repair_documents(conn,client,env,*,presentation_only=False):
     row=conn.execute("""SELECT source_id,card_id,notice,expected FROM serviceit_bidzaar_inbox
-        WHERE state='VERIFIED' AND document_attempts<2
-          AND ((expected->>%s) ~ 'Не обработано: [1-9]'
-               OR (expected->>%s) NOT LIKE 'RouterAI:%%')
-        ORDER BY document_attempts,card_id LIMIT 1""",(LIMITS,PREFIX+'AI_STATUS')).fetchone()
+        WHERE state='VERIFIED' AND (
+          ((expected->>%s) IS DISTINCT FROM 'svc-bidzaar-manager-v2')
+          OR (NOT %s AND document_attempts<2 AND ((expected->>%s) ~ 'Не обработано: [1-9]'
+               OR (expected->>%s) NOT LIKE 'RouterAI:%%')))
+        ORDER BY document_attempts,card_id LIMIT 1""",(VERSION_FIELD,presentation_only,LIMITS,PREFIX+'AI_STATUS')).fetchone()
     if not row:return 'NO_DOCUMENT_RETRY'
     source,card,notice,expected=row
     rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
@@ -218,14 +271,16 @@ def repair_documents(conn,client,env):
     actual=normalized(rest('crm.item.get',params)['item'])
     if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
         return 'DOCUMENT_RETRY_CONFLICT'
-    conn.execute('UPDATE serviceit_bidzaar_inbox SET document_attempts=document_attempts+1 WHERE source_id=%s',(source,))
+    if expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v2':
+        conn.execute('UPDATE serviceit_bidzaar_inbox SET document_attempts=document_attempts+1 WHERE source_id=%s',(source,))
     peers=[peer for peer in crm_matches(rest,{INN:notice['inn']}) if peer!=card]
-    patch=dossier(client,env,notice,peers)
+    patch=dossier(client,env,notice,related_signals(rest,peers,notice['inn']),
+                  cached=expected if expected.get(VERSION_FIELD)!='svc-bidzaar-manager-v2' else None)
     def count(fields):
         m=re.search(r'Прочитано документов: (\d+)',fields.get(LIMITS,''))
         return int(m[1]) if m else 0
     new_model=patch.get(PREFIX+'AI_STATUS','').startswith('RouterAI:') and not expected.get(PREFIX+'AI_STATUS','').startswith('RouterAI:')
-    if count(patch)<=count(expected) and not new_model:return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
+    if count(patch)<=count(expected) and not new_model and expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v2':return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
     # Recheck after network/model work, before any update of managed fields.
     actual=normalized(rest('crm.item.get',params)['item'])
     if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
@@ -241,6 +296,33 @@ def repair_documents(conn,client,env):
         return 'DOCUMENT_UPDATE_UNCERTAIN'
     conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED' WHERE source_id=%s AND state='UPDATE_UNCERTAIN'",(source,))
     return 'DOCUMENT_UPDATE_VERIFIED'
+
+
+def manager_tasks(conn,client,env):
+    from .serviceit_stage3_all_new_task_automation import process_card
+    from .serviceit_vps_native_fence import PostgresNativeFence
+    runtime={**env,'SERVICEIT_BITRIX_WEBHOOK':secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),
+             'SERVICEIT_STAGE3_TASK_WRITE_ENABLED':'YES_1062_21_INTERNAL_REVIEW',
+             'SERVICEIT_VPS_TASK_ASSIGNEE_ID':'605',
+             'SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED':'YES_1062_21_INTERNAL_MANAGER'}
+    rows=conn.execute("""SELECT b.card_id,b.expected FROM serviceit_bidzaar_inbox b
+        LEFT JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='TASK_V1'
+        WHERE b.state='VERIFIED' AND r.card_id IS NULL
+          AND b.expected->>%s='svc-bidzaar-manager-v2' ORDER BY b.card_id LIMIT 8""",(VERSION_FIELD,)).fetchall()
+    rest=Rest(runtime['SERVICEIT_BITRIX_WEBHOOK'],client)
+    verified=0
+    for card,expected in rows:
+        actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
+        if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):continue
+        try:
+            status=process_card(client,runtime,card,native_fence=PostgresNativeFence(conn,'TASK_V1'))
+            verified+=int(status=='INTERNAL_REVIEW_TASK_READBACK_VERIFIED')
+            print('BIDZAAR_MANAGER_TASK='+status,flush=True)
+        except Exception as exc:
+            print('BIDZAAR_MANAGER_TASK_ERROR='+type(exc).__name__.upper(),flush=True)
+            reason=str(exc)
+            if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',reason):print('BIDZAAR_MANAGER_TASK_REASON='+reason,flush=True)
+    return verified
 
 
 def main():
@@ -261,9 +343,19 @@ def main():
             print('BIDZAAR_ROWS='+str(fetched['rows']))
             if env.get('SERVICEIT_BIDZAAR_WRITE_ENABLED')=='YES':
                 reconcile_uncertain(conn,client,env)
+                for _ in range(4):
+                    upgraded=repair_documents(conn,client,exact_environment(env),presentation_only=True)
+                    print('BIDZAAR_PRESENTATION='+upgraded,flush=True)
+                    if upgraded!='DOCUMENT_UPDATE_VERIFIED':break
                 print('BIDZAAR_DOCUMENT_REPAIR='+repair_documents(conn,client,exact_environment(env)),flush=True)
                 result=deliver(conn,client,exact_environment(env))
                 for key,value in result.items():print('BIDZAAR_'+key.upper()+'='+str(value))
+                print('BIDZAAR_TASKS_VERIFIED='+str(manager_tasks(conn,client,env)),flush=True)
+                try:
+                    from .serviceit_postcall_assistant import run as postcall
+                    print('BIDZAAR_POSTCALL='+postcall(conn,client,env),flush=True)
+                except Exception as exc:
+                    print('BIDZAAR_POSTCALL_ERROR='+type(exc).__name__.upper(),flush=True)
         finally:conn.execute('SELECT pg_advisory_unlock(1062,604)')
 
 if __name__=='__main__':

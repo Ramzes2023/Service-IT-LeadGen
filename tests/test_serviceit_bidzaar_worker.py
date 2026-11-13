@@ -99,3 +99,38 @@ def test_sixth_document_is_not_displaced_by_api_description(monkeypatch):
     monkeypatch.setattr(w,'_model_research',research)
     w.dossier(None,{},ROW,[])
     assert model_inputs==[d['url'] for d in docs]
+
+
+def test_manager_card_contains_sourced_contacts_and_bmp_priority(monkeypatch):
+    monkeypatch.setattr(w,'_model_research',lambda *a,**k:[])
+    row={**ROW,'description':'Контакт закупки: Иван, +7 (495) 123-45-67, tender@example.ru'}
+    fields=w.dossier(None,{},row,[])
+    assert 'tender@example.ru' in fields[w.BRIEF]
+    assert ROW['link'] in fields[w.BRIEF]
+    assert 'Короткий сценарий разговора' in fields[w.BRIEF]
+    assert 'Отрасль компании: не подтверждена' in fields[w.BRIEF]
+    assert fields[w.BADGE_FIELD].startswith('⚠')
+    assert all(ord(c)<=65535 for c in fields[w.BADGE_FIELD])
+
+
+def test_related_signal_requires_same_inn_and_includes_substance():
+    def rest(method,args):
+        return {'item':{'categoryId':21,w.INN:ROW['inn'] if args['id']==17 else '7700000000',
+                        w.SUMMARY:'Внедрение 1С',w.PREFIX+'SIGNAL_SOURCE':'B2B',
+                        w.PREFIX+'SIGNAL_URL':'https://example.test/tender',
+                        'createdTime':'2026-11-12','stageId':'NEW'}}
+    related=w.related_signals(rest,[17,19],ROW['inn'])
+    assert len(related)==1
+    assert 'Внедрение 1С' in related[0] and '2026-11-12' in related[0]
+    assert ROW['inn'] in related[0]
+
+
+def test_presentation_upgrade_preserves_document_evidence_without_model(monkeypatch):
+    monkeypatch.setattr(w,'documents',lambda *a:pytest.fail('no redownload'))
+    monkeypatch.setattr(w,'_model_research',lambda *a,**kw:pytest.fail('no paid repeat'))
+    old={w.REPORT:'Условия оплаты. Источник: https://example.test/spec',w.LIMITS:'Прочитано документов: 5. Не обработано: 0.',w.PREFIX+'AI_STATUS':'RouterAI: цитаты проверены',w.PREFIX+'AI_QUOTE':'Точная цитата',w.PREFIX+'REVIEW_DECISION':'manager-owned'}
+    fields=w.dossier(None,{},ROW,[],cached=old)
+    assert fields[w.LIMITS]==old[w.LIMITS]
+    assert fields[w.PREFIX+'AI_QUOTE']=='Точная цитата'
+    assert 'Условия оплаты' in fields[w.REPORT]
+    assert w.PREFIX+'REVIEW_DECISION' not in fields

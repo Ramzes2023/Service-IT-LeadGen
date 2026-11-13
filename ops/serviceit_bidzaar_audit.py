@@ -43,6 +43,14 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         for label,pattern in [('DOCS_READ',r'Прочитано документов: (\d+)'),('DOCS_UNPROCESSED',r'Не обработано: (\d+)')]:
             match=re.search(pattern,limits)
             print('BIDZAAR_CARD_'+str(card)+'_'+label+'='+(match[1] if match else 'UNKNOWN'),flush=True)
+        brief=str(actual.get('UF_CRM_13_SVCIT_AI_MANAGER_BRIEF',''))
+        peers=re.search(r'Связанные сигналы по тому же ИНН: (\d+)',brief)
+        docs=re.search(r'Прочитано документов: (\d+)',limits)
+        if peers and docs:
+            predicted=60+10*bool(int(docs[1]))+8*bool('Источник:' in str(actual.get('UF_CRM_13_SVCIT_AI_QUOTE','')))+12*bool(int(peers[1]))
+            score_ok=str(actual.get('UF_CRM_13_SVCIT_LEAD_SCORE'))==str(predicted)
+            print('BIDZAAR_CARD_'+str(card)+'_SCORE_RULE_MATCH='+('YES' if score_ok else 'NO'),flush=True)
+            ok &= score_ok
         report=actual.get('UF_CRM_13_SVCIT_AI_FULL_REPORT','') or ''
         print('BIDZAAR_CARD_'+str(card)+'_QUOTED_SOURCES='+str(report.count('Источник:')),flush=True)
         status=actual.get('UF_CRM_13_SVCIT_AI_STATUS','')

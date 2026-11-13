@@ -157,3 +157,10 @@ def test_cached_contacts_keep_source_but_drop_account_number(monkeypatch):
     fields=w.dossier(None,{},ROW,[],cached=cached)
     assert '40817810099910004312' not in fields[w.BRIEF]
     assert 'Контакт Иван: +7 (495) 123-45-67 | Источник: '+ROW['link'] in fields[w.BRIEF]
+
+
+def test_cached_score_requires_quoted_fact_not_just_passport_source(monkeypatch):
+    monkeypatch.setattr(w,'documents',lambda *a:pytest.fail('no download'))
+    cached={w.REPORT:'Источник: '+ROW['link'],w.LIMITS:'Прочитано документов: 0. Не обработано: 0.',w.PREFIX+'AI_QUOTE':'Подтверждённые цитаты не извлечены'}
+    assert w.dossier(None,{},ROW,[],cached=cached)[w.SCORE_FIELD]==60
+    assert w.dossier(None,{},ROW,['Карточка №17: другой тендер'],cached=cached)[w.SCORE_FIELD]==72

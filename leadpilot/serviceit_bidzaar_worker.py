@@ -142,7 +142,7 @@ def dossier(client, env, row, peers, *, cached=None):
             if separator and source.startswith('https://bidzaar.com/'):
                 evidence.append({'url':source,'text':context})
         old_docs=re.search(r'Прочитано документов: (\d+)',str(cached.get(LIMITS,'')))
-        score=60+10*bool(old_docs and int(old_docs[1]))+8*bool('Источник:' in report)+12*bool(peers)
+        score=60+10*bool(old_docs and int(old_docs[1]))+8*bool('Источник:' in str(cached.get(PREFIX+'AI_QUOTE','')))+12*bool(peers)
         fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-manager-v3',
             BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1]})
     offers={'1C':'сопровождение и развитие 1С','IT_STAFFING':'предоставление IT-специалистов',

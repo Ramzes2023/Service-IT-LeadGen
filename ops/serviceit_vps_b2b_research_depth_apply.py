@@ -22,7 +22,7 @@ def main():
         rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
         rows=conn.execute('''SELECT b.card_id FROM serviceit_vps_b2b_inbox b
             JOIN serviceit_vps_b2b_dossier_v11_receipts v ON b.card_id=v.card_id
-            WHERE b.state='VERIFIED' AND v.status='VERIFIED' AND b.card_id>=29
+            WHERE b.state='VERIFIED' AND v.status='VERIFIED' AND b.card_id>=11
             ORDER BY b.card_id LIMIT 20''').fetchall()
         ok=bool(rows)
         for (card,) in rows:

@@ -204,3 +204,21 @@ def test_verified_inn_survives_provider_outage_but_tampered_receipt_does_not():
     assert worker._prior_verified_public_identity(conn,31,'b'*64,{worker.INN:'7729058330'}) is None
     conn.execute.return_value.fetchall.return_value=[(fields,salt,b'x'*32)]
     assert worker._prior_verified_public_identity(conn,31,'b'*64,{worker.INN:inn}) is None
+
+
+def test_related_candidates_include_later_pages_without_counting_duplicate_tenders(monkeypatch):
+    inn = '7729058330'
+    rest = MagicMock(side_effect=[{'items': [], 'next': 50}, {'items': [
+        {'id': '25', 'categoryId': 21, worker.INN: inn},
+        {'id': '27', 'categoryId': 21, worker.INN: inn}]}])
+    conn = MagicMock()
+    peer = {'tender_id': '4678279'}
+    conn.execute.return_value.fetchall.return_value = [
+        (25, 'B2B-CENTER-4678279', peer), (27, 'B2B-CENTER-4678279', peer)]
+    monkeypatch.setattr(worker, '_get', lambda *args: {worker.INN: inn})
+    monkeypatch.setattr(worker, 'safe_notice', lambda *args: (
+        'https://www.b2b-center.ru/market/servers/tender-4678279/', 'Поставка'))
+    signals = worker._related_signals(rest, conn, 17, NOTICE, inn)
+    assert [call.args[1]['start'] for call in rest.call_args_list] == [0, 50]
+    assert conn.execute.call_args.args[1][1] == [25, 27]
+    assert len(signals) == 1

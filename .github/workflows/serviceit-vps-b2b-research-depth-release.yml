@@ -35,10 +35,10 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='93c63c81d26cb5fbe8b1032c0c84f6a64bbea7e2'
+          old='4f92eff4db5b07ed583d98c45343f1e28ce12f59'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
-          names=(serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py serviceit_vps_worker.py)
+          names=(serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py serviceit_vps_worker.py serviceit_b2b_eis_mirrors.py)
           install -d -m 0700 "$RUNNER_TEMP/v37-release"
           : > "$RUNNER_TEMP/v37-release/new-hashes"
           : > "$RUNNER_TEMP/v37-release/old-hashes"
@@ -50,8 +50,8 @@ jobs:
           script=ops/serviceit_vps_b2b_v37_quality_release.py
           python -m py_compile "$script"
           sha256sum "$script" | cut -d' ' -f1 > "$RUNNER_TEMP/v37-release/script-sha"
-          [[ "$(wc -l < "$RUNNER_TEMP/v37-release/new-hashes")" == 8 ]]
-          [[ "$(wc -l < "$RUNNER_TEMP/v37-release/old-hashes")" == 8 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v37-release/new-hashes")" == 9 ]]
+          [[ "$(wc -l < "$RUNNER_TEMP/v37-release/old-hashes")" == 9 ]]
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
           [[ -n "$VPS_SSH_KEY" && -n "$VPS_KNOWN_HOSTS" ]]
@@ -59,7 +59,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/v37-release/hosts"
           chmod 0600 "$RUNNER_TEMP/v37-release/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/v37-release/hosts" >/dev/null
-      - name: Transfer eight reviewed modules and release controller
+      - name: Transfer nine reviewed modules and release controller
         shell: bash
         run: |
           set -euo pipefail
@@ -70,7 +70,7 @@ jobs:
           stage="serviceit/staging/b2b-research-depth-onefile-release-$GITHUB_RUN_ID"
           ssh -T -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" "$target" \
             "umask 077; install -d -m 0700 '$stage'"
-          for name in serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py serviceit_vps_worker.py; do
+          for name in serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py serviceit_vps_worker.py serviceit_b2b_eis_mirrors.py; do
             scp -i "$RUNNER_TEMP/v37-release/id" "${opts[@]}" \
               "leadpilot/$name" "$target:$stage/"
           done
@@ -85,7 +85,7 @@ jobs:
                 -o BatchMode=yes -o ConnectTimeout=15)
           mapfile -t new < "$RUNNER_TEMP/v37-release/new-hashes"
           mapfile -t old < "$RUNNER_TEMP/v37-release/old-hashes"
-          [[ "${#new[@]}" == 8 && "${#old[@]}" == 8 ]]
+          [[ "${#new[@]}" == 9 && "${#old[@]}" == 9 ]]
           scriptsha="$(cat "$RUNNER_TEMP/v37-release/script-sha")"
           [[ "$scriptsha" =~ ^[a-f0-9]{64}$ ]]
           args=()
@@ -99,7 +99,7 @@ jobs:
             > "$RUNNER_TEMP/v37-release/status" <<'REMOTE'
           set -euo pipefail
           id="$1"; sha="$2"; shift 2
-          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 16 ]]
+          [[ "$id" =~ ^[0-9]{7,16}$ && "$sha" =~ ^[a-f0-9]{64}$ && "$#" == 18 ]]
           for v in "$@"; do [[ "$v" =~ ^[a-f0-9]{64}$ ]]; done
           script="$HOME/serviceit/staging/b2b-research-depth-onefile-release-$id/activate.py"
           [[ -f "$script" && ! -L "$script" ]]

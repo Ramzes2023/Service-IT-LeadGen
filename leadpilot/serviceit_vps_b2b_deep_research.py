@@ -582,11 +582,12 @@ def followup_public_buyer_research(findings, env, client, key):
         return findings  # Unattributed prior search must not trigger a second query.
     from .serviceit_independent_company_research import independent_company_research
     try:
-        independent = dict(previous) if reusable else independent_company_research(
+        independent = (dict(previous) if reusable else {"status":"FREE_REQUISITES_DISCOVERY", "pages":[]}
+                       if not key else independent_company_research(
             client, company_name=buyer, signal_kind="tender",
             source_host="b2b-center.ru", search_token=key,
             llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
-        )
+        ))
     except (ValueError, httpx.HTTPError):
         return findings
     if not isinstance(independent, dict):
@@ -915,6 +916,8 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
         # The coordinator enables the verified public-detail path explicitly.
         if env.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES":
             result = verified_original_b2b_details(result, notice, client)
+            from .serviceit_b2b_eis_mirrors import supplement_eis_mirrors
+            result = optional(supplement_eis_mirrors,result,notice,client) or result
         result = dict(result)
         result["tinyfish_independent_stage"] = (
             "DISABLED_BY_SOURCE_POLICY" if not tinyfish_authorized else

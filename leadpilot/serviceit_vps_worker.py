@@ -53,6 +53,8 @@ class SearchBudget:
         self.reserve_tavily = False
 
     def check(self, request):
+        if request.url.host == "api.search.brave.com":
+            raise httpx.RequestError("BRAVE_DISABLED_BY_OWNER", request=request)
         if request.url.host not in SEARCH_HOSTS:
             return
         is_tavily = request.url.host == "api.tavily.com"
@@ -101,8 +103,8 @@ def exact_environment(env: dict) -> dict:
     result = dict(env)
     result["SERVICEIT_BITRIX_WEBHOOK"] = secret_file(
         env, "SERVICEIT_BITRIX_WEBHOOK")
-    result["SERVICEIT_BRAVE_SEARCH_API_KEY"] = secret_file(
-        env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)
+    result["SERVICEIT_BRAVE_SEARCH_API_KEY"] = ""
+    result["SERVICEIT_BRAVE_SEARCH_API_KEY_FILE"] = ""
     result["ROUTERAI_API_KEY"] = secret_file(
         env, "SERVICEIT_ROUTERAI_API_KEY")
     result["AI_PROVIDER"] = "routerai"
@@ -111,7 +113,7 @@ def exact_environment(env: dict) -> dict:
     result["AI_ENABLE"] = "1"
     result["SERVICEIT_PUBLIC_RESEARCH_ENABLED"] = "YES"
     result["SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED"] = "YES"
-    result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"
+    result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "NO"
     result["SERVICEIT_B2B_V18_SEARCH_ENABLED"] = "YES"
     # New evidence-only primary B2B detail fetch is enabled in the trusted
     # LIVE coordinator only, never in offline/preview source fixtures.

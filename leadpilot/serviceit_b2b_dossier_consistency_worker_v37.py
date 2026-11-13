@@ -250,6 +250,16 @@ def eligible(conn, target_ids=None, *, refresh=False):
                          AND peer.updated_at>last.updated_at))
                OR (last.status='VERIFIED'
                    AND last.updated_at < now() - interval '72 hours')
+               OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS')
+                   AND EXISTS (
+                       SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts peer_v11
+                       WHERE peer_v11.card_id<>b.card_id AND peer_v11.status='VERIFIED'
+                         AND peer_v11.updated_at>last.updated_at
+                         AND peer_v11.after_fields->>'{INN}' IS NOT NULL
+                         AND (peer_v11.after_fields->>'{INN}'=v.after_fields->>'{INN}'
+                              OR EXISTS (SELECT 1 FROM {TABLE} known
+                                  WHERE known.card_id=b.card_id AND known.status='VERIFIED'
+                                    AND known.after_fields->>'{INN}'=peer_v11.after_fields->>'{INN}'))))
                OR (last.status IN (
                     'NO_ATTESTED_NEW_FACTS','INSUFFICIENT_CAPACITY',
                     'NONSTANDARD_REPORT')
@@ -505,17 +515,23 @@ def _related_signals(rest, conn, card, notice, inn):
     # read still have to establish the same buyer and immutable source.
     peers = set()
     try:
-        result = rest("crm.item.list", {
-            "entityTypeId": 1062, "useOriginalUfNames": "Y",
-            "filter": {"categoryId": 21, INN: inn},
-            "select": ["id", "categoryId", INN], "start": 0,
-        })
-        for row in strict_bitrix_items(result):
-            raw_id = str(row.get("id"))
-            if (raw_id.isascii() and raw_id.isdecimal() and 8 <= int(raw_id) <= 2_000_000_000
-                    and int(raw_id) != card and row.get(INN) == inn
-                    and str(row.get("categoryId")) == "21"):
-                peers.add(int(raw_id))
+        offset=0
+        for _ in range(10):
+            result = rest("crm.item.list", {
+                "entityTypeId": 1062, "useOriginalUfNames": "Y",
+                "filter": {"categoryId": 21, INN: inn},
+                "select": ["id", "categoryId", INN], "start": offset,
+            })
+            for row in strict_bitrix_items(result):
+                raw_id = str(row.get("id"))
+                if (raw_id.isascii() and raw_id.isdecimal() and 8 <= int(raw_id) <= 2_000_000_000
+                        and int(raw_id) != card and row.get(INN) == inn
+                        and str(row.get("categoryId")) == "21"):
+                    peers.add(int(raw_id))
+            next_page=result.get('next')
+            if not isinstance(next_page,int) or isinstance(next_page,bool) or next_page<=offset:
+                break
+            offset=next_page
     except (ValueError, TypeError, KeyError, httpx.HTTPError):
         pass
     rows = conn.execute(f"""

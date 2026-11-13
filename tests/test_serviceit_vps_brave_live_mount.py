@@ -99,12 +99,12 @@ def test_guarded_workflow_does_not_consume_brave_key_from_github_secrets():
 def test_existing_worker_keeps_three_queries_max_and_optional_fallback():
     worker = Path("leadpilot/serviceit_vps_worker.py").read_text("utf8")
     company = Path("leadpilot/serviceit_independent_company_research.py").read_text("utf8")
-    assert 'secret_file(\n        env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True)' in worker
+    assert 'BRAVE_DISABLED_BY_OWNER' in worker
     assert "MAX_SEARCH_CALLS = 3" in company
     assert "query_indices=(0, 2)" in company
     assert "context_candidates(" in company
     assert "FREE_GDELT_NEWS_ONLY" in company
-    assert '"SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "YES"' in worker
+    assert '"SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] = "NO"' in worker
 
 
 def test_brave_activator_checks_overlay_scoping_without_using_secret_values(monkeypatch):

@@ -27,8 +27,15 @@ def _source_eis_number(findings, notice, client):
     if (_host(url, hosts) not in {"www.b2b-center.ru", "b2b-center.ru"}
             or not match or match[1] != tid or parsed.query):
         return None
-    texts = [p["excerpt"] for p in findings.get("pages", [])
-             if isinstance(p, dict) and p.get("url") == url and isinstance(p.get("excerpt"), str)]
+    texts = []
+    for row in findings.get('pages', []):
+        if not isinstance(row,dict) or not isinstance(row.get('excerpt'),str):
+            continue
+        candidate=urlsplit(row.get('url',''))
+        if (candidate.scheme=='https' and candidate.hostname==parsed.hostname
+                and not candidate.query and not candidate.fragment
+                and re.fullmatch(r'/(?:app/market-next|market)/[a-z0-9-]+/tender-'+re.escape(tid)+r'/?',candidate.path)):
+            texts.append(row['excerpt'])
     for text in texts:
         numbers = set(EIS_NOTICE_NUMBER.findall(text))
         if len(numbers) == 1 and re.search(r"№\s*" + re.escape(tid) + r"(?!\d)", text):

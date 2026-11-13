@@ -10,7 +10,7 @@ for key in ('SERVICEIT_TINYFISH_API_KEY_FILE','SERVICEIT_TAVILY_SEARCH_API_KEY_F
     if key in other:env[key]=other[key]
 code='import os,sys,types\nos.environ.update('+repr(env)+')\n'
 # Current reviewed dependencies, independent of the coordinator image's age.
-for name in ('serviceit_b2b_tender_documents','serviceit_company_contacts','serviceit_extended_documents'):
+for name in ('serviceit_bitrix_list_shape','serviceit_b2b_tender_documents','serviceit_company_contacts','serviceit_extended_documents'):
     source=(root/(name+'.py')).read_text()
     code+='m=types.ModuleType('+repr('leadpilot.'+name)+');m.__package__="leadpilot";sys.modules[m.__name__]=m\nexec('+repr(source)+',m.__dict__)\n'
 if '--audit' in sys.argv:worker=(root/'serviceit_extended_evidence_audit.py').read_text()

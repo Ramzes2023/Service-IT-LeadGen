@@ -40,13 +40,23 @@ def read(client,url,robots):
             'emails':parser.mail[:50],'phones':parser.tel[:50]}
 
 
-def identity(page,inn):
-    # Require a labelled legal identifier; a random account number is not proof.
-    return bool(re.search(r'\bИНН\s*(?:/\s*КПП)?\s*[:№-]?\s*'+re.escape(inn)+r'(?!\d)',page['text'],re.I))
+def identity(page,inn,name=''):
+    text=page['text']
+    matches=list(re.finditer(r'\bИНН\s*(?:/\s*КПП)?\s*[:№-]?\s*(\d{10,12})(?!\d)',text,re.I))
+    if not matches or {m[1] for m in matches}!={inn}:return False
+    path=urlsplit(page['url']).path
+    if path not in ('','/') and not re.search(r'contact|requis|rekviz|about|privacy|policy|legal|company|kontak|o-komp|sveden',path,re.I):
+        return False
+    if name:
+        words=[w for w in re.findall(r'[а-яёa-z0-9]+',name.lower()) if len(w)>2 and w not in {'ооо','пао','оао','зао','общество','ограниченной','ответственностью','акционерное','публичное'}]
+        if not words:return False
+        # Legal name and INN must appear together in the site's own legal block.
+        if not any(all(word in text[max(0,m.start()-700):m.end()+700].lower() for word in words) for m in matches):return False
+    return True
 
 
-def extract(pages,inn):
-    proof={urlsplit(p['url']).hostname:p['url'] for p in pages if identity(p,inn)}
+def extract(pages,inn,name=''):
+    proof={urlsplit(p['url']).hostname:p['url'] for p in pages if identity(p,inn,name)}
     contacts=[];seen=set()
     for page in pages:
         host=urlsplit(page['url']).hostname
@@ -122,7 +132,7 @@ def search(client,env,inn,name):
             candidate=urljoin(url,href).split('#')[0]
             if urlsplit(candidate).hostname==host and re.search(r'контакт|реквизит|contact|requis|privacy|политик|о компании|about',label+' '+href,re.I) and candidate not in seen and candidate not in queue:
                 queue.append(candidate)
-    contacts=extract(pages,inn)
+    contacts=extract(pages,inn,name)
     return {'status':'VERIFIED' if contacts else 'NOT_FOUND' if provider!='NONE' else 'SEARCH_UNAVAILABLE','contacts':contacts,'provider':provider,'pages_checked':len(pages),'checked_at':datetime.now(timezone.utc).isoformat()}
 
 

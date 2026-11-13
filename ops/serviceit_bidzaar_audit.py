@@ -1,5 +1,6 @@
 """Read-only acceptance of Bidzaar queue and exact saved CRM payloads."""
 import os
+import re
 from leadpilot.serviceit_vps_pg_queue import db,secret_file
 from leadpilot.serviceit_enrichment_worker import Rest,normalized
 import httpx
@@ -14,6 +15,12 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         verified=all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title')
         ok &= verified
         print('BIDZAAR_CARD_'+str(card)+'_READBACK='+('YES' if verified else 'NO'),flush=True)
+        limits=actual.get('UF_CRM_13_SVCIT_AI_LIMITATIONS','') or ''
+        for label,pattern in [('DOCS_READ',r'Прочитано документов: (\d+)'),('DOCS_UNPROCESSED',r'Не обработано: (\d+)')]:
+            match=re.search(pattern,limits)
+            print('BIDZAAR_CARD_'+str(card)+'_'+label+'='+(match[1] if match else 'UNKNOWN'),flush=True)
+        report=actual.get('UF_CRM_13_SVCIT_AI_FULL_REPORT','') or ''
+        print('BIDZAAR_CARD_'+str(card)+'_QUOTED_SOURCES='+str(report.count('Источник:')),flush=True)
         status=actual.get('UF_CRM_13_SVCIT_AI_STATUS','')
         print('BIDZAAR_CARD_'+str(card)+'_ROUTERAI='+('YES' if 'RouterAI: цитаты проверены' in status else 'NO'),flush=True)
     print('BIDZAAR_CRM_WRITES=0',flush=True)

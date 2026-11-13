@@ -1,7 +1,7 @@
 """Public corporate contacts: search hints never count as identity evidence."""
-import re
+import re,time
 from datetime import datetime,timezone
-from urllib.parse import urlsplit,urljoin
+from urllib.parse import urlsplit,urljoin,unquote
 from urllib.robotparser import RobotFileParser
 from .serviceit_public_evidence_research import _host,_public_dns,VisibleText
 from .serviceit_vps_pg_queue import secret_file
@@ -18,23 +18,40 @@ def safe(url):
     except (ValueError,TypeError):return False
 
 
-def read(client,url,robots):
-    if not safe(url):return None
+def read(client,url,robots,depth=0):
+    if depth>3 or not safe(url):return None
     p=urlsplit(url);origin=p.scheme+'://'+p.netloc
     if origin not in robots:
-        response=client.get(origin+'/robots.txt',timeout=7,follow_redirects=False)
-        if response.status_code==404:robots[origin]=None
-        elif response.status_code==200 and len(response.content)<100000:
-            robot=RobotFileParser();robot.parse(response.text.splitlines());robots[origin]=robot
-        else:return None
+        target=origin+'/robots.txt'
+        for redirect in range(4):
+            if not safe(target) or urlsplit(target).path!='/robots.txt':return None
+            with client.stream('GET',target,timeout=7,follow_redirects=False) as response:
+                if response.status_code in (301,302,303,307,308):
+                    target=urljoin(target,response.headers.get('location',''));continue
+                if response.status_code==404:robots[origin]=None;break
+                if response.status_code!=200:return None
+                data=bytearray()
+                for chunk in response.iter_bytes():
+                    data.extend(chunk)
+                    if len(data)>100000:return None
+                text=bytes(data).decode('utf-8','replace')
+                if re.search(r'<(?:html|body|script)\b',text,re.I):return None
+                robot=RobotFileParser();robot.parse(text.splitlines());robots[origin]=robot;break
+        if origin not in robots:return None
     if robots[origin] and not robots[origin].can_fetch('ServiceITResearch',url):return None
-    # Redirects need a fresh host/DNS/robots check; never follow implicitly.
     with client.stream('GET',url,timeout=8,follow_redirects=False,headers={'User-Agent':'ServiceITResearch/1.0'}) as response:
-        if response.status_code!=200 or 'text/html' not in response.headers.get('content-type',''):return None
+        if response.status_code in (301,302,303,307,308):
+            return read(client,urljoin(url,response.headers.get('location','')),robots,depth+1)
+        media=response.headers.get('content-type','').lower()
+        pdf='application/pdf' in media
+        if response.status_code!=200 or not (pdf or 'text/html' in media):return None
         data=bytearray()
         for chunk in response.iter_bytes():
             data.extend(chunk)
-            if len(data)>600000:return None
+            if len(data)>(4000000 if pdf else 1000000):return None
+        if pdf:
+            from .serviceit_b2b_tender_documents import extract_text
+            return {'url':url,'text':extract_text(bytes(data),'.pdf'),'links':[],'emails':[],'phones':[]}
         parser=VisibleText();parser.feed(bytes(data).decode(response.encoding or 'utf-8','replace'))
     return {'url':url,'text':'\n'.join(parser.parts)[:100000],'links':parser.links[:200],
             'emails':parser.mail[:50],'phones':parser.tel[:50]}
@@ -44,8 +61,8 @@ def identity(page,inn,name=''):
     text=page['text']
     matches=list(re.finditer(r'\bИНН\s*(?:/\s*КПП)?\s*[:№-]?\s*(\d{10,12})(?!\d)',text,re.I))
     if not matches or {m[1] for m in matches}!={inn}:return False
-    path=urlsplit(page['url']).path
-    if path not in ('','/') and not re.search(r'contact|requis|rekviz|about|privacy|policy|legal|company|kontak|o-komp|sveden',path,re.I):
+    path=unquote(urlsplit(page['url']).path)
+    if path not in ('','/') and not re.search(r'contact|requis|rekviz|about|privacy|policy|legal|company|kontak|o-komp|sveden|контакт|реквизит|компани|политик',path,re.I):
         return False
     if name:
         words=[w for w in re.findall(r'[а-яёa-z0-9]+',name.lower()) if len(w)>2 and w not in {'ооо','пао','оао','зао','общество','ограниченной','ответственностью','акционерное','публичное'}]
@@ -81,11 +98,11 @@ def extract(pages,inn,name=''):
             for pattern,label in [(r'отдел\s+закупок|закупочн\w*\s+отдел','отдел закупок'),(r'ит[- ]отдел|отдел\s+информационных\s+технологий','ИТ-отдел'),(r'отдел\s+кадров|подбор\s+персонала','отдел персонала')]:
                 if re.search(pattern,context,re.I):role=label+' (по контексту страницы; уточнить при обращении)';break
             contacts.append({'kind':kind,'value':value,'role':role,'context':context.strip(),'url':page['url'],'identity_url':proof[host]})
-    return contacts[:30]
+    return sorted(contacts,key=lambda c:c['role'].startswith('общий'))[:30]
 
 
 def search(client,env,inn,name):
-    urls=[];provider='NONE';query=f'"{inn}" контакты реквизиты официальный сайт'
+    started=time.monotonic();urls=[];provider='NONE';query=f'"{inn}" контакты реквизиты официальный сайт'
     key=secret_file(env,'SERVICEIT_TINYFISH_API_KEY',optional=True)
     if key:
         try:
@@ -119,7 +136,7 @@ def search(client,env,inn,name):
     pages=[];robots={};queue=[];seen=set()
     for url in urls:
         if safe(url):queue.append(url)
-    while queue and len(seen)<12:
+    while queue and len(seen)<12 and time.monotonic()-started<70:
         url=queue.pop(0)
         if url in seen:continue
         seen.add(url)

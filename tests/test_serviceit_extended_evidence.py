@@ -144,3 +144,26 @@ def test_source_inventory_reads_all_three_receipts_and_verifies_ids(monkeypatch)
     monkeypatch.setattr(worker,'get',lambda rest,card:seen.append(card) or {'id':card})
     assert [i['id'] for i in worker.source_inventory(Conn(),None)]==[11,29,33,35,37]
     assert seen==[11,29,33,35,37]
+
+
+def test_contact_reader_follows_public_canonical_redirect_and_checks_robots(monkeypatch):
+    monkeypatch.setattr(contacts,'safe',lambda url:url.startswith('https://acme.ru/'))
+    def handler(request):
+        if request.url.path=='/robots.txt':return httpx.Response(200,text='User-agent: *\nDisallow: /private')
+        if request.url.path=='/contacts':return httpx.Response(301,headers={'Location':'/contacts/'})
+        if request.url.path=='/contacts/':return httpx.Response(200,headers={'Content-Type':'text/html'},text='<p>ИНН 7707083893</p><p>info@acme.ru</p>')
+        raise AssertionError('Must not read prohibited page')
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        cache={};page=contacts.read(client,'https://acme.ru/contacts',cache)
+        assert page['url']=='https://acme.ru/contacts/' and 'info@acme.ru' in page['text']
+        assert contacts.read(client,'https://acme.ru/private',cache) is None
+
+
+def test_contact_redirect_does_not_enter_private_network(monkeypatch):
+    monkeypatch.setattr(contacts,'safe',lambda url:url.startswith('https://acme.ru/'))
+    def handler(request):
+        assert request.url.host=='acme.ru'
+        if request.url.path=='/robots.txt':return httpx.Response(404)
+        return httpx.Response(302,headers={'Location':'http://127.0.0.1/secret'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert contacts.read(client,'https://acme.ru/contacts',{}) is None

@@ -13,7 +13,9 @@ from .bitrix_1062_mapping import _is_valid_inn
 DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  inn TEXT PRIMARY KEY,name TEXT NOT NULL,result JSONB,next_attempt_at TIMESTAMPTZ DEFAULT now());
  CREATE TABLE IF NOT EXISTS serviceit_extended_evidence_receipts (
- card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());'''
+ card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());
+ ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS reader_version INTEGER NOT NULL DEFAULT 1;
+ UPDATE serviceit_company_contact_cache SET reader_version=2,next_attempt_at=now() WHERE reader_version<2 AND result->>'status'='NOT_FOUND';'''
 BEGIN='[SERVICEIT_PUBLIC_EVIDENCE_V1]';END='[/SERVICEIT_PUBLIC_EVIDENCE_V1]'
 
 
@@ -108,14 +110,13 @@ def run():
                 conn.execute('INSERT INTO serviceit_company_contact_cache(inn,name) VALUES(%s,%s) ON CONFLICT DO NOTHING',(inn,str(item.get(COMPANY) or '')[:250]))
         for card,notice in conn.execute("SELECT card_id,notice FROM serviceit_bidzaar_inbox WHERE state='VERIFIED'").fetchall():
             docs.register(conn,card,notice.get('files',[]))
-        print('EXT_DOCUMENT_CHUNKS='+str(docs.process(conn,client,env,batch=6)),flush=True)
-        row=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() ORDER BY next_attempt_at,inn LIMIT 1').fetchone()
-        if row:
-            inn,name=row
+        print('EXT_DOCUMENT_CHUNKS='+str(docs.process(conn,client,env,batch=8)),flush=True)
+        rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2').fetchall()
+        for inn,name in rows:
             # Reserve before external requests, preventing a crash from burning calls every five minutes.
             conn.execute("UPDATE serviceit_company_contact_cache SET next_attempt_at=now()+interval '1 day' WHERE inn=%s",(inn,))
             result=contacts.search(client,env,inn,name)
-            conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']=='SEARCH_UNAVAILABLE',inn))
+            conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,reader_version=2,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']=='SEARCH_UNAVAILABLE',inn))
             print('EXT_CONTACT_SEARCH='+result['status'],flush=True)
         updated=0
         for item in items:

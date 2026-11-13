@@ -405,7 +405,11 @@ function classifyServices_(title) {
     "|консультант\\s*плюс.{0,100}(?:сопровождени|адаптаци|поставк|продлени|лицензи)" + suffix,
     "iu"
   );
-  if (consultantPlusLicense.test(title) && result.indexOf("LICENSES") < 0) {
+  // B2B's 13 Nov 2026 digest 4681383 uses a product-only catalogue name.
+  // Keep this exact branded database title; avoid generic articles/jobs.
+  const consultantPlusCatalog = /^\\s*консультант\\s*плюс\\s*\\(\\s*справочно[- ]правовые\\s+базы\\s+данных\\s*\\)\\s*\\.?\\s*$/iu;
+  if ((consultantPlusLicense.test(title) || consultantPlusCatalog.test(title)) &&
+      result.indexOf("LICENSES") < 0) {
     result.push("LICENSES");
   }
   const context = new RegExp(

@@ -32,13 +32,16 @@ CREATE TABLE IF NOT EXISTS serviceit_bidzaar_inbox (
 def persist(conn, rows, cursor):
     with conn.transaction():
         for row in rows:
-            conn.execute('''INSERT INTO serviceit_bidzaar_inbox(source_id,modified,notice)
-              VALUES(%s,%s,%s::jsonb) ON CONFLICT(source_id) DO UPDATE SET
+            verdict,_=decision(row)
+            state='PENDING' if verdict=='ELIGIBLE' else 'FILTERED'
+            conn.execute('''INSERT INTO serviceit_bidzaar_inbox(source_id,modified,notice,state,reason)
+              VALUES(%s,%s,%s::jsonb,%s,%s) ON CONFLICT(source_id) DO UPDATE SET
               modified=excluded.modified,notice=excluded.notice,
               state=CASE WHEN serviceit_bidzaar_inbox.state IN ('PENDING','FILTERED')
-                THEN 'PENDING' ELSE serviceit_bidzaar_inbox.state END,
+                THEN excluded.state ELSE serviceit_bidzaar_inbox.state END,
+              reason=excluded.reason,
               updated_at=now() WHERE excluded.modified>serviceit_bidzaar_inbox.modified''',
-              (identity(row),row['lastModified'],json.dumps(row,ensure_ascii=False)))
+              (identity(row),row['lastModified'],json.dumps(row,ensure_ascii=False),state,verdict))
         conn.execute('UPDATE serviceit_bidzaar_cursor SET cursor=%s WHERE singleton', (cursor,))
 
 

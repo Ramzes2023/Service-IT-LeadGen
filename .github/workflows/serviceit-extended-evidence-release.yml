@@ -1,4 +1,4 @@
-name: ServiceIT all-document queue and public company contacts
+name: ServiceIT all-document queue and public company contacts v2
 on:
   push:
     branches: [main]

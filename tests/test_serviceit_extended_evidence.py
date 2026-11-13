@@ -95,3 +95,15 @@ def test_crm_update_preserves_fields_and_requires_readback(monkeypatch):
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert worker.patch(conn,Rest(),client,35,before,{worker.REPORT:'new'})
     assert len(sent)==1 and any("status='VERIFIED'" in sql for sql,args in conn.calls)
+
+
+def test_excel_reads_fourth_sheet_and_full_long_cell():
+    from io import BytesIO
+    import zipfile
+    stream=BytesIO()
+    with zipfile.ZipFile(stream,'w') as archive:
+        archive.writestr('xl/workbook.xml','<workbook/>')
+        for n in range(1,6):
+            archive.writestr(f'xl/worksheets/sheet{n}.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c t="inlineStr"><is><t>'+str(n)+'x'*220+'</t></is></c></row></sheetData></worksheet>')
+    text=docs.full_extract(stream.getvalue(),'.xlsx')
+    assert '5'+'x'*220 in text and 'sheet4.xml' in text

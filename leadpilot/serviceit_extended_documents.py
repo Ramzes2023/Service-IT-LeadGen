@@ -41,6 +41,35 @@ def legacy_doc(data):
     return text
 
 
+def full_extract(data,kind):
+    if kind!='.xlsx':return extract_text(data,kind)
+    from . import serviceit_b2b_tender_documents as parser
+    ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    with parser._safe_archive(data) as archive:
+        if 'xl/workbook.xml' not in archive.namelist():raise ValueError('DOCUMENT_XLSX_NOT_VALID')
+        shared=[];parts=[]
+        if 'xl/sharedStrings.xml' in archive.namelist():
+            root=parser.XML.fromstring(archive.read('xl/sharedStrings.xml'))
+            shared=[' '.join(t.text for t in si.iter(ns+'t') if t.text) for si in root.iter(ns+'si')]
+        for name in archive.namelist():
+            if not re.fullmatch(r'xl/worksheets/sheet[0-9]+\.xml',name):continue
+            root=parser.XML.fromstring(archive.read(name));parts.append(name)
+            for row in root.iter(ns+'row'):
+                cells=[]
+                for cell in row.iter(ns+'c'):
+                    value=cell.find(ns+'v')
+                    if cell.get('t')=='inlineStr':text=' '.join(t.text for t in cell.iter(ns+'t') if t.text)
+                    elif value is None or value.text is None:text=''
+                    elif cell.get('t')=='s':
+                        index=int(value.text)
+                        if not 0<=index<len(shared):raise ValueError('DOCUMENT_XLSX_STRING_INVALID')
+                        text=shared[index]
+                    else:text=value.text
+                    if text:cells.append(text)
+                if cells:parts.append(' | '.join(cells))
+        return '\n'.join(parts)
+
+
 def download(client,url,name):
     p=urlsplit(url)
     if p.scheme!='https' or p.netloc!='bidzaar.com' or p.query or p.fragment or not re.fullmatch(r'/api/filestorage/files/download/[0-9a-fA-F-]{36}',p.path):
@@ -76,9 +105,9 @@ def download(client,url,name):
                             if suffix not in ('.doc','.docx','.pdf','.xlsx','.txt'):
                                 raise ValueError('ARCHIVE_CONTAINS_UNSUPPORTED_DOCUMENT')
                             payload=archive.read(member)
-                            parts.append(member.filename+'\n'+(legacy_doc(payload) if suffix=='.doc' else extract_text(payload,suffix)))
+                            parts.append(member.filename+'\n'+(legacy_doc(payload) if suffix=='.doc' else full_extract(payload,suffix)))
                     text='\n'.join(parts)
-                else:text=legacy_doc(raw) if kind=='.doc' else extract_text(raw,kind)
+                else:text=legacy_doc(raw) if kind=='.doc' else full_extract(raw,kind)
             finally:
                 parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES=previous
             if len(text)>=1000000:raise ValueError('DOCUMENT_TEXT_TOO_LARGE')

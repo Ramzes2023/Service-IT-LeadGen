@@ -75,7 +75,7 @@ def extract(pages,inn):
 
 
 def search(client,env,inn,name):
-    urls=[];provider='NONE';query=f'"{inn}" "{name[:100]}" контакты реквизиты официальный сайт'
+    urls=[];provider='NONE';query=f'"{inn}" контакты реквизиты официальный сайт'
     key=secret_file(env,'SERVICEIT_TINYFISH_API_KEY',optional=True)
     if key:
         try:
@@ -90,6 +90,22 @@ def search(client,env,inn,name):
                 response=client.post('https://api.tavily.com/search',headers={'Authorization':'Bearer '+key},json={'query':query,'search_depth':'basic','max_results':8,'include_answer':False,'include_raw_content':False},timeout=20)
                 response.raise_for_status();urls=[r['url'] for r in response.json().get('results',[]) if isinstance(r,dict) and isinstance(r.get('url'),str)];provider='TAVILY'
             except Exception:pass
+    # INN often finds registries first. A separate name query discovers the
+    # corporate site, whose legal page must still prove this exact INN.
+    if name.strip():
+        query=name[:150]+' официальный сайт контакты реквизиты'
+        tiny=secret_file(env,'SERVICEIT_TINYFISH_API_KEY',optional=True)
+        tavily=secret_file(env,'SERVICEIT_TAVILY_SEARCH_API_KEY',optional=True)
+        try:
+            if tiny:
+                response=client.get('https://api.search.tinyfish.ai',params={'query':query,'location':'RU','language':'ru','page':0},headers={'X-API-Key':tiny},timeout=20)
+                response.raise_for_status();extra=response.json().get('results',[]);provider='TINYFISH'
+            elif tavily:
+                response=client.post('https://api.tavily.com/search',headers={'Authorization':'Bearer '+tavily},json={'query':query,'search_depth':'basic','max_results':8,'include_answer':False,'include_raw_content':False},timeout=20)
+                response.raise_for_status();extra=response.json().get('results',[]);provider='TAVILY'
+            else:extra=[]
+            urls += [r['url'] for r in extra if isinstance(r,dict) and isinstance(r.get('url'),str)]
+        except Exception:pass
     pages=[];robots={};queue=[];seen=set()
     for url in urls:
         if safe(url):queue.append(url)

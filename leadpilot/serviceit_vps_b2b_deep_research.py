@@ -473,6 +473,9 @@ def followup_public_buyer_research(findings, env, client, key):
     reusable = (isinstance(previous, dict)
                 and previous.get("company_name_provenance") ==
                     "PUBLIC_BUYER_LABEL_LEGAL_IDENTITY_UNVERIFIED")
+    if (isinstance(previous, dict) and not reusable
+            and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY"):
+        return findings  # Unattributed prior search must not trigger a second query.
     from .serviceit_independent_company_research import independent_company_research
     try:
         independent = dict(previous) if reusable else independent_company_research(

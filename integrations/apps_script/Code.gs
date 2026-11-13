@@ -396,6 +396,18 @@ function classifyServices_(title) {
   Object.keys(patterns).forEach(function (key) {
     if (patterns[key].test(title)) result.push(key);
   });
+  // Source-backed software-service procurements, not generic consultant jobs.
+  // Covers both "КонсультантПлюс" and "Консультант Плюс" with a procurement
+  // action; keep the existing LICENSES contract for the VPS coordinator.
+  const consultantPlusLicense = new RegExp(
+    "(?:поставк|сопровождени|адаптаци|продлени|предоставлени)" + suffix +
+    ".{0,180}консультант\\s*плюс" +
+    "|консультант\\s*плюс.{0,100}(?:сопровождени|адаптаци|поставк|продлени|лицензи)" + suffix,
+    "iu"
+  );
+  if (consultantPlusLicense.test(title) && result.indexOf("LICENSES") < 0) {
+    result.push("LICENSES");
+  }
   const context = new RegExp(
     "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +
@@ -612,11 +624,11 @@ function processMessage_(messageId, remainingDispatchBudget) {
  * Only post-activation authenticated notices with NO source receipt may be
  * marked PENDING. Nothing can undo a source reservation or security review.
  */
-function recoverPostCutoverMissedV5_(ids) {
+function recoverPostCutoverMissedV6_(ids) {
   const props = scriptProperties_();
   const activation = Math.max(Number(privateConfig_().cutoverMs),
     Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0));
-  const revision = "B2B_CLASSIFIER_V5";
+  const revision = "B2B_CLASSIFIER_V6";
   let checked = 0, queued = 0;
   for (const id of ids) {
     if (checked >= 4) break;
@@ -664,7 +676,7 @@ function pollAndDispatchB2B() {
   try {
     assertMailbox_();
     const ids = listVendorMessageIds_().reverse();
-    const recovered = recoverPostCutoverMissedV5_(ids);
+    const recovered = recoverPostCutoverMissedV6_(ids);
     const pending = [];
     for (const id of ids) {
       const state = props.getProperty("SERVICEIT_EMAIL_" + id) || "";

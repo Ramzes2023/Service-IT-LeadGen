@@ -56,3 +56,34 @@ def test_persistence_keeps_written_cards_out_of_create_queue():
     assert "IN ('PENDING','FILTERED')" in sql
     assert 'excluded.modified>serviceit_bidzaar_inbox.modified' in sql
     assert conn.transaction.called
+
+
+def test_same_file_named_redirect_is_downloaded(monkeypatch):
+    url='https://bidzaar.com/api/filestorage/files/download/00000000-0000-0000-0000-000000000001'
+    seen=[]
+    def handler(request):
+        seen.append(str(request.url))
+        if len(seen)==1:return httpx.Response(302,headers={'Location':'./00000000-0000-0000-0000-000000000001/requirements.txt'})
+        return httpx.Response(200,content='Требования к участнику и порядок оплаты'.encode())
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        docs,failed=w.documents(client,{**ROW,'files':[{'name':'requirements.txt','url':url}]})
+    assert failed==0 and len(docs)==1 and len(seen)==2
+    assert docs[0]['url']==url
+
+
+def test_different_document_redirect_is_rejected():
+    url='https://bidzaar.com/api/filestorage/files/download/00000000-0000-0000-0000-000000000001'
+    def handler(request):
+        return httpx.Response(302,headers={'Location':'./00000000-0000-0000-0000-000000000002/requirements.txt'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        docs,failed=w.documents(client,{**ROW,'files':[{'name':'requirements.txt','url':url}]})
+    assert not docs and failed==1
+
+
+def test_document_repair_never_overwrites_manager_changes(monkeypatch):
+    conn=MagicMock();conn.execute.return_value.fetchone.return_value=('BIDZAAR-X',33,ROW,{w.BRIEF:'old'})
+    monkeypatch.setattr(w,'secret_file',lambda *a:'unused')
+    monkeypatch.setattr(w,'Rest',lambda *a:lambda *a:{'item':{w.BRIEF:'manager edit'}})
+    monkeypatch.setattr(w,'dossier',lambda *a:pytest.fail('must not invoke model after conflict'))
+    assert w.repair_documents(conn,None,{})=='DOCUMENT_RETRY_CONFLICT'
+    assert len(conn.execute.call_args_list)==1

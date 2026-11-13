@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urljoin, unquote
 import httpx
 from .serviceit_bidzaar_source import collect, decision, identity, UUID
 from .serviceit_vps_pg_queue import db, secret_file
@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS serviceit_bidzaar_inbox (
  source_id TEXT PRIMARY KEY, modified TIMESTAMPTZ NOT NULL, notice JSONB NOT NULL,
  state TEXT NOT NULL DEFAULT 'PENDING', card_id BIGINT, expected JSONB,
  reason TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ALTER TABLE serviceit_bidzaar_inbox ADD COLUMN IF NOT EXISTS document_attempts INTEGER NOT NULL DEFAULT 0;
 '''
 
 
@@ -61,11 +62,25 @@ def documents(client, row):
             if kind not in {'.pdf','.docx','.xlsx','.txt','.zip'}:
                 raise ValueError('DOCUMENT_FORMAT_UNSUPPORTED')
             data=bytearray()
-            with client.stream('GET',url,timeout=25,follow_redirects=False) as response:
-                response.raise_for_status()
-                for chunk in response.iter_bytes():
-                    data.extend(chunk)
-                    if len(data)>4000000:raise ValueError('DOCUMENT_TOO_LARGE')
+            current=url
+            for redirect in range(3):
+                with client.stream('GET',current,timeout=25,follow_redirects=False) as response:
+                    if response.status_code in (301,302,303,307,308):
+                        target=urljoin(current,response.headers.get('location',''))
+                        dest=urlsplit(target)
+                        suffix=dest.path.removeprefix(p.path+'/')
+                        if (redirect==2 or dest.scheme!='https' or dest.netloc!='bidzaar.com'
+                            or dest.query or dest.fragment or not dest.path.startswith(p.path+'/')
+                            or not suffix or '/' in unquote(suffix) or '\\' in unquote(suffix)
+                            or unquote(suffix) in ('.','..')):
+                            raise ValueError('DOCUMENT_REDIRECT_REJECTED')
+                        current=target
+                        continue
+                    response.raise_for_status()
+                    for chunk in response.iter_bytes():
+                        data.extend(chunk)
+                        if len(data)>4000000:raise ValueError('DOCUMENT_TOO_LARGE')
+                    break
             text=extract_text(bytes(data),kind)
             if not text.strip():raise ValueError('DOCUMENT_EMPTY_TEXT')
             docs.append({'url':url,'text':text[:24000],'kind':kind,'bytes':len(data),
@@ -177,13 +192,52 @@ def deliver(conn,client,env):
 
 def reconcile_uncertain(conn,client,env):
     rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
-    for source,expected in conn.execute("SELECT source_id,expected FROM serviceit_bidzaar_inbox WHERE state='POST_UNCERTAIN' LIMIT 10").fetchall():
+    for source,expected in conn.execute("SELECT source_id,expected FROM serviceit_bidzaar_inbox WHERE state IN ('POST_UNCERTAIN','UPDATE_UNCERTAIN') LIMIT 10").fetchall():
         matches=crm_matches(rest,{PREFIX+'SIGNAL_ID':source})
         if len(matches)!=1:continue
         card=matches[0]
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
         if all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
-            conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED',card_id=%s WHERE source_id=%s AND state='POST_UNCERTAIN'",(card,source))
+            conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED',card_id=%s WHERE source_id=%s AND state IN ('POST_UNCERTAIN','UPDATE_UNCERTAIN')",(card,source))
+
+
+
+def repair_documents(conn,client,env):
+    row=conn.execute("""SELECT source_id,card_id,notice,expected FROM serviceit_bidzaar_inbox
+        WHERE state='VERIFIED' AND document_attempts<2
+          AND ((expected->>%s) ~ 'Не обработано: [1-9]'
+               OR (expected->>%s) NOT LIKE 'RouterAI:%%')
+        ORDER BY document_attempts,card_id LIMIT 1""",(LIMITS,PREFIX+'AI_STATUS')).fetchone()
+    if not row:return 'NO_DOCUMENT_RETRY'
+    source,card,notice,expected=row
+    rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
+    params={'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'}
+    actual=normalized(rest('crm.item.get',params)['item'])
+    if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
+        return 'DOCUMENT_RETRY_CONFLICT'
+    conn.execute('UPDATE serviceit_bidzaar_inbox SET document_attempts=document_attempts+1 WHERE source_id=%s',(source,))
+    peers=[peer for peer in crm_matches(rest,{INN:notice['inn']}) if peer!=card]
+    patch=dossier(client,env,notice,peers)
+    def count(fields):
+        m=re.search(r'Прочитано документов: (\d+)',fields.get(LIMITS,''))
+        return int(m[1]) if m else 0
+    new_model=patch.get(PREFIX+'AI_STATUS','').startswith('RouterAI:') and not expected.get(PREFIX+'AI_STATUS','').startswith('RouterAI:')
+    if count(patch)<=count(expected) and not new_model:return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
+    # Recheck after network/model work, before any update of managed fields.
+    actual=normalized(rest('crm.item.get',params)['item'])
+    if not all(str(actual.get(k))==str(v) for k,v in expected.items() if k!='title'):
+        return 'DOCUMENT_RETRY_CONFLICT'
+    combined={**expected,**patch}
+    reserved=conn.execute("UPDATE serviceit_bidzaar_inbox SET state='UPDATE_UNCERTAIN',expected=%s::jsonb WHERE source_id=%s AND state='VERIFIED' RETURNING source_id",(json.dumps(combined,ensure_ascii=False),source)).fetchone()
+    if not reserved:return 'DOCUMENT_RETRY_BUSY'
+    response=client.post(rest.base+'/crm.item.update.json',json={**params,'fields':patch},timeout=20,follow_redirects=False)
+    response.raise_for_status()
+    if 'error' in response.json():return 'DOCUMENT_UPDATE_UNCERTAIN'
+    actual=normalized(rest('crm.item.get',params)['item'])
+    if not all(str(actual.get(k))==str(v) for k,v in combined.items() if k!='title'):
+        return 'DOCUMENT_UPDATE_UNCERTAIN'
+    conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED' WHERE source_id=%s AND state='UPDATE_UNCERTAIN'",(source,))
+    return 'DOCUMENT_UPDATE_VERIFIED'
 
 
 def main():
@@ -204,6 +258,7 @@ def main():
             print('BIDZAAR_ROWS='+str(fetched['rows']))
             if env.get('SERVICEIT_BIDZAAR_WRITE_ENABLED')=='YES':
                 reconcile_uncertain(conn,client,env)
+                print('BIDZAAR_DOCUMENT_REPAIR='+repair_documents(conn,client,exact_environment(env)),flush=True)
                 result=deliver(conn,client,exact_environment(env))
                 for key,value in result.items():print('BIDZAAR_'+key.upper()+'='+str(value))
         finally:conn.execute('SELECT pg_advisory_unlock(1062,604)')

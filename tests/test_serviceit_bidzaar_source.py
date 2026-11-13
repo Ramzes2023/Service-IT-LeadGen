@@ -41,3 +41,27 @@ def test_wrong_source_is_rejected(url):
 
 def test_acrylic_shop_fixtures_are_not_it_equipment():
     assert s.decision({**ROW,'name':'Производство и поставка торгового оборудования из акрила'},now=NOW)[0]=='OUT_OF_SCOPE'
+
+
+def test_api_second_precision_overlap_keeps_rows_and_checkpoint():
+    import httpx
+    endpoint='https://bidzaar.com/api/aggregator-integrator/supplier/00000000-0000-0000-0000-000000000001/procedures/purchases'
+    cursor='2026-11-13T10:01:00.844331Z'
+    rows=[{**ROW,'lastModified':t} for t in ['2026-11-13T10:01:00.023658Z','2026-11-13T10:01:00.112188Z']]
+    with httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={'items':rows}))) as client:
+        saved=[]
+        result=s.collect(client,endpoint,cursor,lambda r,c:saved.append((r,c)))
+    assert saved==[(rows,cursor)]
+    assert result['cursor']==cursor
+    assert result['status']=='CAUGHT_UP'
+
+
+@pytest.mark.parametrize('times',[
+ ['2026-11-13T10:00:59.999999Z'],
+ ['2026-11-13T10:01:01Z','2026-11-13T10:01:00.9Z']])
+def test_true_backwards_page_remains_rejected(times):
+    import httpx
+    endpoint='https://bidzaar.com/api/aggregator-integrator/supplier/00000000-0000-0000-0000-000000000001/procedures/purchases'
+    with httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={'items':[{**ROW,'lastModified':t} for t in times]}))) as client:
+        with pytest.raises(ValueError,match='BIDZAAR_CURSOR_ORDER_INVALID'):
+            s.fetch_page(client,endpoint,'2026-11-13T10:01:00.844331Z')

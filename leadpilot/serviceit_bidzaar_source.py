@@ -78,7 +78,9 @@ def fetch_page(client, endpoint, cursor, *, page_size=100):
     rows = result.get('items') if isinstance(result, dict) else None
     if not isinstance(rows, list) or len(rows) > page_size:
         raise ValueError('BIDZAAR_PAGE_INVALID')
-    previous = since
+    # Bidzaar truncates FromDate to whole seconds. Accept the inclusive
+    # second bucket, retain every row, and let durable upserts deduplicate.
+    previous = since.replace(microsecond=0)
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError('BIDZAAR_ROW_INVALID')
@@ -105,7 +107,8 @@ def collect(client, endpoint, cursor, persist_page, *, max_pages=12):
         rows = fetch_page(client, endpoint, cursor)
         if not rows:
             return {'status': 'CAUGHT_UP', 'rows': total, 'cursor': cursor}
-        next_cursor = rows[-1]['lastModified']
+        next_cursor = (rows[-1]['lastModified']
+                       if timestamp(rows[-1]['lastModified']) > timestamp(cursor) else cursor)
         persist_page(rows, next_cursor)
         total += len(rows)
         if len(rows) < 100:

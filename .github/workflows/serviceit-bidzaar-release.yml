@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation with bounded cursor regression probe
+name: ServiceIT Bidzaar five-minute VPS activation with inclusive second-bucket recovery
 on:
   push:
     branches: [main]

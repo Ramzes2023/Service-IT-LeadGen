@@ -158,3 +158,34 @@ def test_related_crm_card_is_shown_even_when_public_tender_is_already_known(monk
     signals = worker._related_signals(rest, conn, 17, NOTICE, inn)
     assert len(signals) == 1
     assert signals[0].startswith("Карточка №25 · №4678279 ·")
+
+
+@pytest.mark.parametrize('last_status,preview,opens', [(None,False,True),('VERIFIED',False,False),(None,True,False)])
+def test_only_first_automatic_pass_opens_followup_search(monkeypatch,last_status,preview,opens):
+    from contextlib import contextmanager
+    import httpx
+    from leadpilot.serviceit_vps_worker import SearchBudget
+    conn,cur=_setup(monkeypatch,preview=preview,conflict=True)
+    monkeypatch.setattr(worker,'eligible',lambda *a,**k:(*ROW[:3],last_status,None))
+    monkeypatch.setattr(worker,'reviewed_or_verified',lambda *a:{})
+    monkeypatch.setattr(worker,'reserve',lambda *a:1)
+    monkeypatch.setattr(worker,'mark',lambda *a:None)
+    budget=SearchBudget()
+    opened=[]
+    @contextmanager
+    def scope(card,source):
+        opened.append(card)
+        with budget.for_card(True):
+            budget.remaining=3
+            yield
+    def fresh(*args):
+        request=httpx.Request('GET','https://api.search.tinyfish.ai/')
+        if opens:
+            for i in range(3): budget.check(request)
+        with pytest.raises(httpx.RequestError): budget.check(request)
+        return {},[]
+    monkeypatch.setattr(worker,'fresh_primary_evidence',fresh)
+    result=worker.run_once({**ENV,'SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED':'YES'},object(),conn,preview=preview,search_scope=scope)
+    assert result['crm_writes']==0
+    assert bool(opened)==opens
+    assert budget.remaining==0

@@ -75,7 +75,7 @@ RESEARCH_DEPTH_FILES = (
     "serviceit_b2b_public_mirrors.py", "serviceit_b2b_routerai_deep.py",
     "serviceit_vps_b2b_deep_research.py", "serviceit_b2b_tender_documents.py",
     "serviceit_vps_b2b_document_worker.py", "serviceit_b2b_dossier_consistency_v37.py",
-    "serviceit_b2b_dossier_consistency_worker_v37.py",
+    "serviceit_b2b_dossier_consistency_worker_v37.py", "serviceit_vps_worker.py",
 )
 
 GATES = {

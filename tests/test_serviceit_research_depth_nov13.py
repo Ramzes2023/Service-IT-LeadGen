@@ -126,3 +126,70 @@ def test_long_official_page_and_registry_contact_separation(monkeypatch):
     assert evidence['inn']=='1234567894'
     assert evidence['contacts']==[]
     assert evidence['provenance']=='PUBLIC_REGISTRY_REQUISITES'
+
+
+def test_delivery_label_embedded_in_previous_value_does_not_hide_real_address():
+    lines=[f'ПРОЧИТАННЫЙ ИСТОЧНИК / LOCATION: {q} [{URL}]' for q in (
+        'Условия поставки / оказания услуг За счет поставщика Адрес поставки / оказания услуг Россия',
+        'Адрес поставки / оказания услуг Россия, Москва, Тестовая улица, 10')]
+    assert consistency._record_from_verified(NOTICE,{},lines)['region']=='Москва'
+
+
+@pytest.mark.parametrize('status,size,success', [(200,180000,True),(403,100,False),(200,1100000,False)])
+def test_large_legal_page_reader_preserves_access_and_size_limits(monkeypatch,status,size,success):
+    from leadpilot import serviceit_public_evidence_research as public
+    def unavailable(*args):
+        raise public.ResearchBlocked('RESEARCH_PAGE_UNAVAILABLE')
+    monkeypatch.setattr(public,'_page',unavailable)
+    monkeypatch.setattr(public,'_public_dns',lambda host:True)
+    html='<style>'+('x'*size)+'</style><p>АО «Учебник» ИНН 1234567894</p>'
+    with httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(status,text=html,headers={'content-type':'text/html; charset=utf-8'})),trust_env=False) as client:
+        if success:
+            page=deep._company_requisites_page(client,'https://company-example.ru/',frozenset({'company-example.ru'}))
+            assert page['text']=='АО «Учебник» ИНН 1234567894'
+        else:
+            with pytest.raises(public.ResearchBlocked):
+                deep._company_requisites_page(client,'https://company-example.ru/',frozenset({'company-example.ru'}))
+
+
+@pytest.mark.parametrize('prior_scan',[False,True])
+def test_document_discovery_gets_search_scope_only_on_initial_scan(monkeypatch,prior_scan):
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+    from leadpilot import serviceit_vps_b2b_document_worker as worker
+    from leadpilot.serviceit_vps_worker import SearchBudget
+    conn=MagicMock()
+    conn.cursor.return_value.__enter__.return_value.fetchone.return_value=(True,)
+    conn.execute.return_value.fetchone.return_value=(1,) if prior_scan else None
+    monkeypatch.setattr(worker,'live_permitted',lambda env:True)
+    monkeypatch.setattr(worker,'exact_environment',lambda env:env)
+    monkeypatch.setattr(worker,'selected',lambda *a,**k:(31,'B2B-CENTER-1234567',NOTICE))
+    monkeypatch.setattr(worker,'secret_file',lambda *a,**k:'fake')
+    monkeypatch.setattr(worker,'Rest',lambda *a:lambda *a,**k:{'item':{field:'ready' for field in worker.AI_FIELDS}})
+    monkeypatch.setattr(worker,'normalized',lambda item:item)
+    monkeypatch.setattr(worker,'validate_identity',lambda *a:None)
+    monkeypatch.setattr(worker,'safe_notice',lambda *a:(URL,NOTICE['subject']))
+    monkeypatch.setattr(worker,'inspect_public_documents',lambda *a,**k:{'documents':[],'discovered':0})
+    monkeypatch.setattr(worker,'save_no_documents',lambda *a:None)
+    monkeypatch.setattr('leadpilot.serviceit_b2b_eis_mirrors.supplement_eis_mirrors',lambda found,*a,**k:found)
+    budget=SearchBudget(); opened=[]
+    @contextmanager
+    def scope(card,source):
+        opened.append(card)
+        with budget.for_card(True):
+            budget.remaining=3
+            yield
+    def discover(*a):
+        request=httpx.Request('GET','https://api.search.tinyfish.ai/')
+        if not prior_scan:
+            for i in range(3): budget.check(request)
+        with pytest.raises(httpx.RequestError): budget.check(request)
+        return {'status':'PUBLIC_RESEARCH_INCOMPLETE','pages':[]}
+    monkeypatch.setattr(worker,'source_findings',discover)
+    env={worker.ENABLED:'YES','SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED':'YES',
+         'SERVICEIT_VPS_BROWSER_PROXY_ISOLATION_VERIFIED':'YES',
+         'SERVICEIT_ROUTERAI_PRIVACY_APPROVED':'YES_1062_21'}
+    got=worker.run_once(env,None,conn,search_scope=scope)
+    assert got['crm_writes']==0 and 'RETRY_12H' in got['status']
+    assert bool(opened) is (not prior_scan)
+    assert budget.sent == (0 if prior_scan else 3)

@@ -357,6 +357,39 @@ def _free_requisites_candidates(client, buyer, env):
     return [{"url": url} for url in urls[:8]]
 
 
+def _company_requisites_page(client, url, hosts):
+    """Bounded 1 MiB legal-page reader after the common 160k HTML reader.
+
+    Larger corporate menus must not look like missing requisites. Robots,
+    public DNS, HTTPS and no redirects/auth-wall rules remain mandatory.
+    """
+    from .serviceit_public_evidence_research import _page, _public_dns, VisibleText, AGENT
+    try:
+        return _page(client, url, hosts)
+    except ResearchBlocked as exc:
+        if str(exc) != "RESEARCH_PAGE_UNAVAILABLE":
+            raise
+    # _page already passed robots before fetching the unavailable/large HTML.
+    host = _host(url, hosts)
+    if not _public_dns(host):
+        raise ResearchBlocked("RESEARCH_DNS_UNVERIFIED")
+    with client.stream("GET", url, follow_redirects=False, timeout=10,
+                       headers={"User-Agent":AGENT, "Accept":"text/html"}) as response:
+        if response.status_code != 200 or "text/html" not in response.headers.get("content-type", ""):
+            raise ResearchBlocked("RESEARCH_PAGE_UNAVAILABLE")
+        chunks, size = [], 0
+        for chunk in response.iter_bytes():
+            size += len(chunk)
+            if size > 1_048_576:
+                raise ResearchBlocked("RESEARCH_PAGE_OVERSIZED")
+            chunks.append(chunk)
+        raw = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+    parser = VisibleText(); parser.feed(raw)
+    return {"url":url, "text":" ".join(parser.parts)[:64000],
+            "links":parser.links[:150], "emails":parser.mail[:30],
+            "phones":parser.tel[:30], "complete_visible":True}
+
+
 def _public_company_self_declaration(client, buyer, known_pages, token, *, allow_extra_discovery=False):
     """Bounded public-only company/site discovery; not legal FNS verification.
 
@@ -423,8 +456,8 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
             if any(host == p or host.endswith("." + p)
                    for p in (MARKETPLACES | MIRRORS)):
                 continue
-            page = _page(client, raw, frozenset({host}))
-            if len(page["text"]) >= 6990:
+            page = _company_requisites_page(client, raw, frozenset({host}))
+            if len(page["text"]) >= 6990 and not page.get("complete_visible"):
                 # Legal details often follow large navigation menus. Keep
                 # the full bounded visible page locally, never in a prompt.
                 from .serviceit_public_evidence_research import _get, VisibleText
@@ -435,7 +468,7 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, KeyError):
             continue
         valid = []
-        for label in list(legal.finditer(body))[:8]:
+        for label in list(legal.finditer(body))[:64]:
             context = body[label.end():label.end()+480]
             # Never read the subsidiary's or another organization’s INN.
             context = re.split(

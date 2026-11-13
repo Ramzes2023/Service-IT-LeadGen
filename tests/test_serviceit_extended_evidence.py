@@ -126,3 +126,21 @@ def test_identity_requires_own_legal_page_name_and_unique_inn():
     assert not contacts.identity(page,'7707083893','ООО Бета')
     assert not contacts.identity({**page,'url':'https://news.ru/blog/client-story'},'7707083893','ООО Альфа')
     assert not contacts.identity({**page,'text':page['text']+' ИНН 7707083894'},'7707083893','ООО Альфа')
+
+
+def test_source_inventory_reads_all_three_receipts_and_verifies_ids(monkeypatch):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchone(self):return self.rows[0]
+        def fetchall(self):return self.rows
+    class Conn:
+        def execute(self,sql,args=()):
+            if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
+            if 'serviceit_bidzaar_inbox' in sql:return Result([(33,),(35,)])
+            if 'serviceit_vps_b2b_inbox' in sql:return Result([(11,),(29,)])
+            return Result([(3,),(7,),(11,),(37,)])
+    seen=[]
+    monkeypatch.setattr(worker,'get',lambda rest,card:seen.append(card) or {'id':card})
+    assert [i['id'] for i in worker.source_inventory(Conn(),None)]==[11,29,33,35,37]
+    assert seen==[11,29,33,35,37]

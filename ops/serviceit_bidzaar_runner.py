@@ -9,14 +9,15 @@ root=Path(__file__).resolve().parent
 feed=root/'feed-url'
 if not feed.is_file() or feed.is_symlink() or feed.stat().st_mode & 0o077:
     raise SystemExit('BIDZAAR_CONFIGURATION_NOT_PRIVATE')
-url=feed.read_text().strip()
-source=(root/'serviceit_bidzaar_source.py').read_text()
+url='' if '--smoke' in sys.argv else feed.read_text().strip()
 worker=(root/'serviceit_bidzaar_worker.py').read_text()
 code='import os,sys,types\n'
 code+='os.environ["SERVICEIT_BIDZAAR_FEED_URL"]='+repr(url)+'\n'
 code+='os.environ["SERVICEIT_BIDZAAR_WRITE_ENABLED"]="YES"\n'
-code+='m=types.ModuleType("leadpilot.serviceit_bidzaar_source");m.__package__="leadpilot"\n'
-code+='sys.modules[m.__name__]=m\nexec('+repr(source)+',m.__dict__)\n'
+for name in ('b2b_email_opportunity_bridge','serviceit_b2b_moscow_geo','serviceit_bidzaar_source'):
+    source=(root/(name+'.py')).read_text()
+    code+='m=types.ModuleType('+repr('leadpilot.'+name)+');m.__package__="leadpilot"\n'
+    code+='sys.modules[m.__name__]=m\nexec('+repr(source)+',m.__dict__)\n'
 code+='scope={"__name__":"__main__","__package__":"leadpilot"}\nexec('+repr(worker)+',scope)\n'
 try:
     result=subprocess.run(['/usr/bin/docker','exec','-i','serviceit-leadgen-vps-coordinator-1',

@@ -94,8 +94,11 @@ def dossier(client, env, row, peers):
     docs,missing=documents(client,row)
     # API description is a separate attested source, not a downloaded file.
     description='\n'.join([row.get('name',''),row.get('description','')])[:24000]
-    evidence=[{'url':row['link'],'text':description},*docs][:6]
-    reports=_model_research(client,env,evidence)
+    api_doc={'url':row['link'],'text':description}
+    evidence=[api_doc,*docs]
+    reports=_model_research(client,env,docs or [api_doc])
+    if docs:
+        reports+=_model_research(client,env,[api_doc],use_model=False)
     quotes=[]
     evidence_by_url={d['url']:d['text'] for d in evidence}
     for report in reports:

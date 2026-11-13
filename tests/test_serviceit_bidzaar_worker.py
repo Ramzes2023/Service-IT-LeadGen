@@ -87,3 +87,15 @@ def test_document_repair_never_overwrites_manager_changes(monkeypatch):
     monkeypatch.setattr(w,'dossier',lambda *a:pytest.fail('must not invoke model after conflict'))
     assert w.repair_documents(conn,None,{})=='DOCUMENT_RETRY_CONFLICT'
     assert len(conn.execute.call_args_list)==1
+
+
+def test_sixth_document_is_not_displaced_by_api_description(monkeypatch):
+    docs=[{'url':ROW['link']+'/file'+str(i),'text':'Условия оплаты и сроки поставки','sha256':'a'*64} for i in range(6)]
+    monkeypatch.setattr(w,'documents',lambda *a:(docs,0))
+    model_inputs=[]
+    def research(client,env,evidence,*,use_model=True):
+        if use_model:model_inputs.extend(d['url'] for d in evidence)
+        return []
+    monkeypatch.setattr(w,'_model_research',research)
+    w.dossier(None,{},ROW,[])
+    assert model_inputs==[d['url'] for d in docs]

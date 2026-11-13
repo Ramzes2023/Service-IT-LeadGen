@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation with verified document redirects
+name: ServiceIT Bidzaar five-minute VPS activation with complete document evidence
 on:
   push:
     branches: [main]

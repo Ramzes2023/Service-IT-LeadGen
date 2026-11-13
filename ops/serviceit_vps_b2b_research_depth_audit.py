@@ -7,7 +7,7 @@ import httpx
 from leadpilot.serviceit_vps_pg_queue import db, secret_file
 from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
 from leadpilot.serviceit_b2b_hold_ai_fields import PREFIX
-from leadpilot.serviceit_vps_b2b_deep_research import verified_original_b2b_details, public_buyer_candidate, published_buyer_inn_evidence
+from leadpilot.serviceit_vps_b2b_deep_research import verified_original_b2b_details, public_buyer_candidate, published_buyer_inn_evidence, followup_public_buyer_research
 from leadpilot.serviceit_b2b_routerai_deep import source_only_investigation
 from leadpilot.serviceit_b2b_tender_documents import inspect_public_documents
 from leadpilot.serviceit_kanban_presentation import SCORE_FIELD
@@ -56,6 +56,15 @@ def main():
             emit(key+'BUYER', 'YES' if public_buyer_candidate(found) else 'NO')
             emit(key+'DOC_ACCESS', found.get('document_access', 'UNKNOWN'))
             emit(key+'PROFILE_LINKS', sum(len(x.get('profile_links', [])) for x in found.get('pages', [])))
+            search_key = secret_file(env, 'SERVICEIT_BRAVE_SEARCH_API_KEY', optional=True) or ''
+            enriched = followup_public_buyer_research(found, env, client, search_key)
+            research = enriched.get('independent_company_research') or {}
+            emit(key+'COMPANY_STATUS', research.get('status', 'NONE'))
+            emit(key+'COMPANY_PAGES', len(research.get('pages') or []))
+            emit(key+'COMPANY_CANDIDATES', research.get('index_candidates', 0))
+            emit(key+'COMPANY_FETCHES', research.get('external_fetch_attempts', 0))
+            emit(key+'REQUISITES_EXTRA_SEARCH', env.get('SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED', 'MISSING'))
+            emit(key+'FRESH_INN', 'YES' if published_buyer_inn_evidence(enriched) else 'NO')
             if found.get('status') != 'PUBLIC_PAGES_INSPECTED':
                 continue
             report = source_only_investigation(found)
@@ -67,6 +76,21 @@ def main():
             for reason,count in evidence['rejections'].items():
                 if re.fullmatch(r'[A-Z0-9_]{1,70}', reason):
                     emit(key+reason, count)
+        from leadpilot.serviceit_public_evidence_research import _robots, _get, VisibleText
+        for label, url, domain in (
+                ('OFFICIAL_MEDICINA', 'https://www.medicina.ru/polzovatelskoe-soglashenie/', 'medicina.ru'),
+                ('OFFICIAL_CBR', 'https://cbr.ru/registries/rcb/ecb/orginfo/?id=11012061', 'cbr.ru')):
+            try:
+                _robots(client, url, frozenset({domain}))
+                raw = _get(client, url, frozenset({domain}))
+                parser = VisibleText(); parser.feed(raw)
+                body = ' '.join(parser.parts)
+                emit(label+'_READ', 'YES')
+                emit(label+'_LENGTH', len(body))
+                match = re.search(r'(?iu)\bИНН\s*(?:/\s*КПП\s*)?[: ]*(\d{10})', body)
+                emit(label+'_INN_POSITION', match.start() if match else 0)
+            except Exception as exc:
+                emit(label+'_READ', type(exc).__name__)
     emit('CRM_WRITES', 0)
 
 

@@ -1,4 +1,4 @@
-name: ServiceIT B2B research depth live audit
+name: ServiceIT B2B research depth live source and requisites audit
 on:
   push:
     branches: [main]

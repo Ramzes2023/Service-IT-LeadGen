@@ -449,7 +449,7 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
     need(100 <= len(result) <= MAX_REPORT, "TDI_REPORT_OVERSIZED")
     return "".join("•" if ord(char) > 0xffff else char for char in result)
 
-def run_once(env, client, connection, *, preview=False, target_card=None):
+def run_once(env, client, connection, *, preview=False, target_card=None, search_scope=None):
     if env.get(ENABLED, "NO") != "YES":
         return {"status": "TDI_DISABLED", "crm_writes": 0}
     need(live_permitted(env)
@@ -485,7 +485,14 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
                  for k in AI_FIELDS), "TDI_NINE_EXISTING_AI_REQUIRED")
         try:
             if target_card is None:
-                findings = source_findings(before, notice, exact_environment(env), client)
+                from contextlib import nullcontext
+                prior_scan = connection.execute(
+                    'SELECT 1 FROM serviceit_vps_b2b_tender_doc_receipts WHERE card_id=%s',
+                    (card,)).fetchone() if callable(search_scope) else True
+                scope = (search_scope(card,source) if callable(search_scope)
+                         and not prior_scan and not preview else nullcontext())
+                with scope:
+                    findings = source_findings(before, notice, exact_environment(env), client)
             else:
                 from .serviceit_public_evidence_research import _page, ResearchBlocked
                 findings = {"status":"PUBLIC_RESEARCH_INCOMPLETE","pages":[]}

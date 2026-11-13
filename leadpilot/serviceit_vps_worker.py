@@ -237,6 +237,15 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
                 reserve_tavily=env.get("SERVICEIT_VPS_B2B_TAVILY_SEARCH_ENABLED") == "YES",
             )
 
+        @contextmanager
+        def b2b_followup_search_scope(card, source):
+            # Each followup opens this only for its first new-card receipt.
+            # Three URL-discovery calls max; direct public GETs are unchanged.
+            with b2b_search_scope(card, source) as permitted:
+                budget.remaining = min(budget.remaining, 3)
+                budget.reserve_tavily = False
+                yield permitted
+
         for _ in range(MAX_ITEMS):
             card = claim_one(connection)
             if card is None:
@@ -323,7 +332,8 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
         if env.get("SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED", "NO") == "YES":
             try:
                 from .serviceit_vps_b2b_document_worker import run_once as docs_once
-                tender_docs = docs_once(followup_env, client, connection)
+                tender_docs = docs_once(followup_env, client, connection,
+                                       search_scope=b2b_followup_search_scope)
             except Exception:
                 tender_docs = {"status": "TDI_CHECK_FAILED", "crm_writes": 0}
         # V19 additive, one-use supplement for prior V11-signed cards.
@@ -354,7 +364,8 @@ def _run_once(env: dict, *, client: httpx.Client, budget: SearchBudget) -> dict:
             try:
                 from .serviceit_b2b_dossier_consistency_worker_v37 import (
                     run_once as consistency_once)
-                consistency = consistency_once(exact_env, client, connection)
+                consistency = consistency_once(exact_env, client, connection,
+                                               search_scope=b2b_followup_search_scope)
             except Exception:
                 consistency = {"status": "V37_CHECK_FAILED", "crm_writes": 0}
         # Independent bounded public-source retry after the existing CRM

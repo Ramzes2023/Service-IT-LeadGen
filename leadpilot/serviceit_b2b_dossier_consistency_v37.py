@@ -236,11 +236,11 @@ def extracted_verified(verified_lines):
         if category in ("DEADLINE", "LOCATION", "BUYER", "BUDGET",
                         "PROCEDURE", "ELIGIBILITY", "SUBMISSION", "DOCUMENTS",
                         "SCOPE", "TECHNOLOGY", "PAYMENT", "EVALUATION", "GUARANTEE"):
-            if (category == "LOCATION" and re.search(
+            if (category == "LOCATION" and re.match(
                     r"(?iu)(?:адрес\s+поставки|место\s+исполнения|место\s+поставки)", quote)
                     and not re.search(r"(?iu)юридическ\w*\s+адрес", quote)):
                 prior = found.get(category, ("", ""))[0]
-                if not re.search(r"(?iu)(?:адрес\s+поставки|место\s+исполнения|место\s+поставки)", prior):
+                if not re.match(r"(?iu)(?:адрес\s+поставки|место\s+исполнения|место\s+поставки)", prior):
                     found[category] = (quote, url)
             found.setdefault(category, (quote, url))
     return found

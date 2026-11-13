@@ -564,7 +564,7 @@ def fresh_primary_evidence(notice, item, client, env):
     return record, lines
 
 
-def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
+def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False,search_scope=None):
     """Never mutate on preview; one card per normal cycle; versioned receipts."""
     if env.get(ENABLED)!="YES":
         return {"status":"V37_DISABLED","crm_writes":0}
@@ -624,7 +624,16 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
                 prior = reviewed_or_verified(notice,first,lines,identity) or {}
                 if (exact.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES"
                         and not all(prior.get(k) for k in ("buyer","inn","deadline","delivery"))):
-                    fresh_identity, fresh_lines = fresh_primary_evidence(notice,first,client,exact)
+                    from contextlib import nullcontext
+                    # The coordinator's client otherwise rejects every
+                    # search API call outside V11. Only the first new-card
+                    # pass may open a bounded scope; later refreshes use
+                    # direct public sources without recurring search costs.
+                    scope = (search_scope(card,source) if callable(search_scope)
+                             and last_status is None and not preview
+                             else nullcontext())
+                    with scope:
+                        fresh_identity, fresh_lines = fresh_primary_evidence(notice,first,client,exact)
                     if fresh_identity:
                         identity = {**(identity or {}), **fresh_identity}
                         lines = fresh_lines + lines

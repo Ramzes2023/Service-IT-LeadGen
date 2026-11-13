@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation with contextual manager tasks and priority
+name: ServiceIT Bidzaar five-minute VPS activation with lifecycle-aware dossier verification
 on:
   push:
     branches: [main]

@@ -1,4 +1,4 @@
-name: ServiceIT contextual manager tasks for future B2B cards
+name: ServiceIT contextual manager tasks preserving the existing overlay chain
 on:
   push:
     branches: [main]

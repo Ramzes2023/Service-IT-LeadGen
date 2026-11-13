@@ -137,6 +137,12 @@ def manager_task_fields(item, card, uid, binding, *, now):
     require(type(item) is dict and type(card) is int and 8 <= card
             and type(uid) is int and uid > 0
             and type(binding) is str, "TASK_DRAFT_INPUT_INVALID")
+    brief=item.get(PREFIX+'AI_MANAGER_BRIEF')
+    if isinstance(brief,str) and len(brief)>100:
+        summary=str(item.get(PREFIX+'AI_SUMMARY') or item.get('title') or 'Закупка')
+        return {'TITLE':('Проработать закупку: '+summary)[:230],
+                'DESCRIPTION':(brief[:6500]+'\n\nРезультат работы: решение по закупке; после фактического разговора — резюме, интерес клиента, возражения и следующий шаг с датой. Неподтверждённый интерес не считать согласием клиента.'),
+                'RESPONSIBLE_ID':uid,'UF_CRM_TASK':[binding]}
     classification = classify_signal({
         "title": item.get("title") or "",
         "description": "",

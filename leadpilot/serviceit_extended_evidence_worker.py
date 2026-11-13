@@ -12,6 +12,7 @@ from .bitrix_1062_mapping import _is_valid_inn
 
 DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  inn TEXT PRIMARY KEY,name TEXT NOT NULL,result JSONB,next_attempt_at TIMESTAMPTZ DEFAULT now());
+ CREATE TABLE IF NOT EXISTS serviceit_extended_card_inventory (card_id BIGINT PRIMARY KEY,snapshot JSONB NOT NULL);
  CREATE TABLE IF NOT EXISTS serviceit_extended_evidence_receipts (
  card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());
  ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS reader_version INTEGER NOT NULL DEFAULT 1;
@@ -55,10 +56,19 @@ def source_inventory(conn,rest):
             if type(card) is int and card>=8:ids.add(card)
     items=[]
     for card in sorted(ids):
-        try:items.append(get(rest,card))
+        cached=conn.execute('SELECT snapshot FROM serviceit_extended_card_inventory WHERE card_id=%s',(card,)).fetchone()
+        if cached:
+            items.append(cached[0]);continue
+        try:
+            item=get(rest,card);save_snapshot(conn,card,item);items.append(item)
         except ValueError as exc:
             if str(exc)!='CARD_SCOPE_INVALID':raise
     return items
+
+
+def save_snapshot(conn,card,item):
+    snapshot={key:item.get(key) for key in ('id','categoryId',INN,COMPANY,REPORT,BRIEF,LIMITS)}
+    conn.execute('INSERT INTO serviceit_extended_card_inventory(card_id,snapshot) VALUES(%s,%s::jsonb) ON CONFLICT(card_id) DO UPDATE SET snapshot=excluded.snapshot',(card,json.dumps(snapshot,ensure_ascii=False)))
 
 
 def patch(conn,rest,client,card,before,fields):
@@ -68,6 +78,7 @@ def patch(conn,rest,client,card,before,fields):
     if not conn.execute('SELECT pg_try_advisory_lock(1062,604)').fetchone()[0]:return False
     try:
         actual=get(rest,card)
+        save_snapshot(conn,card,actual)
         if any(actual.get(k)!=before.get(k) for k in (REPORT,BRIEF,LIMITS,INN)):return False
         receipt=conn.execute('SELECT expected,status FROM serviceit_extended_evidence_receipts WHERE card_id=%s',(card,)).fetchone()
         if receipt and receipt[1]=='UNCERTAIN':
@@ -87,6 +98,7 @@ def patch(conn,rest,client,card,before,fields):
         response.raise_for_status()
         if len(response.content)>256000 or 'error' in response.json():raise ValueError('EXTENSION_UPDATE_UNCERTAIN')
         after=get(rest,card)
+        save_snapshot(conn,card,after)
         if any(str(after.get(k,''))!=str(v) for k,v in fields.items()):raise ValueError('EXTENSION_READBACK_MISMATCH')
         with conn.transaction():
             conn.execute("UPDATE serviceit_extended_evidence_receipts SET status='VERIFIED',updated_at=now() WHERE card_id=%s",(card,))

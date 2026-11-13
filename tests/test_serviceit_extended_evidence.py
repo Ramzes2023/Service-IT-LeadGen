@@ -136,6 +136,8 @@ def test_source_inventory_reads_all_three_receipts_and_verifies_ids(monkeypatch)
         def fetchall(self):return self.rows
     class Conn:
         def execute(self,sql,args=()):
+            if sql.startswith('SELECT snapshot'):return Result([None])
+            if sql.startswith('INSERT INTO serviceit_extended_card_inventory'):return Result([None])
             if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
             if 'serviceit_bidzaar_inbox' in sql:return Result([(33,),(35,)])
             if 'serviceit_vps_b2b_inbox' in sql:return Result([(11,),(29,)])
@@ -167,3 +169,18 @@ def test_contact_redirect_does_not_enter_private_network(monkeypatch):
         return httpx.Response(302,headers={'Location':'http://127.0.0.1/secret'})
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert contacts.read(client,'https://acme.ru/contacts',{}) is None
+
+
+def test_finished_cards_use_snapshot_without_repeated_crm_reads(monkeypatch):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchone(self):return self.rows[0]
+        def fetchall(self):return self.rows
+    class Conn:
+        def execute(self,sql,args=()):
+            if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
+            if sql.startswith('SELECT snapshot'):return Result([({'id':35,worker.INN:'7707083893'},)])
+            return Result([(35,)])
+    monkeypatch.setattr(worker,'get',lambda *args:pytest.fail('Completed cards must not be reread every five minutes'))
+    assert worker.source_inventory(Conn(),None)==[{'id':35,worker.INN:'7707083893'}]

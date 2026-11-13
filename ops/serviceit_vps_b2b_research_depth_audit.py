@@ -23,6 +23,7 @@ def emit(k, v):
 
 def main():
     env = exact_environment(dict(os.environ))
+    emit('BRAVE_KEY_DISABLED', 'YES' if not env.get('SERVICEIT_BRAVE_SEARCH_API_KEY_FILE') and not env.get('SERVICEIT_BRAVE_SEARCH_API_KEY') else 'NO')
     for key in ('SERVICEIT_VPS_B2B_DEEP_RESEARCH_ENABLED', 'SERVICEIT_VPS_TENDER_DOC_INTEL_ENABLED', 'SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED', 'SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED'):
         emit(key, env.get(key, 'MISSING'))
     for name in ('serviceit_vps_b2b_deep_research.py', 'serviceit_b2b_tender_documents.py', 'serviceit_vps_b2b_document_worker.py', 'serviceit_vps_b2b_dossier_v11_worker.py', 'serviceit_b2b_dossier_consistency_v37.py'):
@@ -52,6 +53,7 @@ def main():
             emit(key+'INN_VALID', 'YES' if _is_valid_inn(item.get(PREFIX+'COMPANY_INN')) else 'NO')
             emit(key+'DECISION_EMPTY', 'YES' if not item.get(PREFIX+'REVIEW_DECISION') else 'NO')
             emit(key+'SCORE', item.get(SCORE_FIELD, 'NONE'))
+            emit(key+'RELATED_VISIBLE','YES' if 'СВЯЗАННЫЕ СИГНАЛЫ ПО ИНН' in (item.get(PREFIX+'AI_MANAGER_BRIEF') or '') else 'NO')
             emit(key+'BRIEF_LENGTH', len(item.get(PREFIX+'AI_MANAGER_BRIEF') or ''))
             emit(key+'REPORT_LENGTH', len(item.get(PREFIX+'AI_FULL_REPORT') or ''))
             if docs == 'VERIFIED':

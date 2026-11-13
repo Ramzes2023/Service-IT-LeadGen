@@ -13,7 +13,7 @@ class SearchQuotaTest(TestCase):
             sent.append(request.url.host)
             return httpx.Response(200, json={})
 
-        brave = "https://api.search.brave.com/res/v1/web/search"
+        brave = "https://api.search.tinyfish.ai/"
         with httpx.Client(transport=httpx.MockTransport(respond), event_hooks={"request": [budget.check]}) as client:
             for old_provider in (brave, "https://api.search.tinyfish.ai/", "https://api.tavily.com/search"):
                 with self.assertRaises(httpx.RequestError):
@@ -32,7 +32,7 @@ class SearchQuotaTest(TestCase):
 
     def test_new_b2b_card_reserves_last_request_for_tavily(self):
         budget = SearchBudget()
-        brave = httpx.Request("GET", "https://api.search.brave.com/res/v1/web/search")
+        brave = httpx.Request("GET", "https://api.search.tinyfish.ai/")
         tavily = httpx.Request("POST", "https://api.tavily.com/search")
         with budget.for_card(True, reserve_tavily=True):
             for _ in range(SEARCH_REQUESTS_PER_CARD - 1):
@@ -43,3 +43,12 @@ class SearchQuotaTest(TestCase):
             with self.assertRaises(httpx.RequestError):
                 budget.check(tavily)
         assert budget.sent == SEARCH_REQUESTS_PER_CARD
+
+
+def test_brave_is_blocked_even_inside_an_authorized_search_scope():
+    import pytest
+    budget=SearchBudget()
+    with budget.for_card(True):
+        with pytest.raises(httpx.RequestError,match="BRAVE_DISABLED_BY_OWNER"):
+            budget.check(httpx.Request("GET","https://api.search.brave.com/res/v1/web/search"))
+    assert budget.sent==0

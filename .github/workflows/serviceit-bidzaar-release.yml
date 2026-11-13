@@ -1,0 +1,82 @@
+name: ServiceIT Bidzaar five-minute VPS activation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-bidzaar-release.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-bidzaar-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: ${{ vars.SERVICEIT_VPS_HOST }}
+      VPS_USER: ${{ vars.SERVICEIT_VPS_DEPLOY_USER }}
+      VPS_SSH_KEY: ${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Transfer reviewed worker and encrypted supplier configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/bidzaar"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/"*
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
+          target="$VPS_USER@$VPS_HOST"
+          remote="serviceit/bidzaar/staging-$GITHUB_RUN_ID"
+          ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
+          for file in leadpilot/serviceit_bidzaar_source.py leadpilot/serviceit_bidzaar_worker.py ops/serviceit_bidzaar_runner.py ops/serviceit_bidzaar_audit.py deploy/serviceit-bidzaar-feed.enc.b64; do
+            scp -i "$stage/id" "${opts[@]}" "$file" "$target:$remote/"
+          done
+      - name: Activate private five-minute schedule and verify first cycles
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/bidzaar"
+          ssh -T -i "$stage/id" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes "$VPS_USER@$VPS_HOST" "bash -s -- '$GITHUB_RUN_ID'" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          id="$1"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          dir="$HOME/serviceit/bidzaar"
+          stage="$dir/staging-$id"
+          exec 9>"$dir/cycle.lock"
+          flock -w 300 9
+          base64 -d "$stage/serviceit-bidzaar-feed.enc.b64" > "$stage/feed.enc"
+          openssl pkeyutl -decrypt -inkey "$dir/recipient.pem" -in "$stage/feed.enc" -out "$stage/feed-url" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256
+          chmod 0600 "$stage/feed-url"
+          for file in serviceit_bidzaar_source.py serviceit_bidzaar_worker.py serviceit_bidzaar_runner.py serviceit_bidzaar_audit.py; do
+            python3 -m py_compile "$stage/$file"
+            install -m 0600 "$stage/$file" "$dir/$file"
+          done
+          install -m 0600 "$stage/feed-url" "$dir/feed-url"
+          rm -f "$stage/feed-url" "$stage/feed.enc"
+          python3 "$dir/serviceit_bidzaar_runner.py"
+          python3 - "$dir" <<'PY'
+          import subprocess,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          old=subprocess.run(['crontab','-l'],capture_output=True,text=True)
+          if old.returncode not in (0,1):raise SystemExit('CRONTAB_READ_FAILED')
+          rows=[r for r in old.stdout.splitlines() if not r.endswith('# SERVICEIT_BIDZAAR_V1')]
+          rows.append(f'*/5 * * * * /usr/bin/flock -n {root}/cycle.lock /usr/bin/python3 {root}/serviceit_bidzaar_runner.py >>{root}/status.log 2>&1 # SERVICEIT_BIDZAAR_V1')
+          subprocess.run(['crontab','-'],input='\n'.join(rows)+'\n',text=True,check=True)
+          readback=subprocess.run(['crontab','-l'],capture_output=True,text=True,check=True).stdout
+          assert rows[-1] in readback
+          print('BIDZAAR_FIVE_MINUTE_SCHEDULE=VERIFIED')
+          PY
+          python3 "$dir/serviceit_bidzaar_runner.py"
+          docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - < "$dir/serviceit_bidzaar_audit.py"
+          REMOTE

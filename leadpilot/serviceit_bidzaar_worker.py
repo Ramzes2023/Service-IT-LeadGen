@@ -115,7 +115,7 @@ def dossier(client, env, row, peers):
             PREFIX+'AI_RECOMMENDATION':'Рассмотреть участие после проверки обязательных условий; автоматическое одобрение не выполнялось.',
             VERSION_FIELD:'svc-bidzaar-evidence-v1',BADGE_FIELD:score_label(score),
             PREFIX+'AI_NEXT_ACTION':'Проверить требования и подготовить решение об участии по приведённым источникам.'}
-    return fields
+    return {k:(''.join(ch if ord(ch)<=0xffff else '•' for ch in v) if isinstance(v,str) else v) for k,v in fields.items()}
 
 
 def crm_matches(rest, filters):

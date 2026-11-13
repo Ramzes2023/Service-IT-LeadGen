@@ -37,7 +37,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
                 if key in ('assignedById','categoryId','stageId','UF_CRM_13_SVCIT_LEAD_SCORE','UF_CRM_13_SVCIT_SCORE_VERSION'):
                     print('BIDZAAR_CARD_'+str(card)+'_DIFF_'+key+'='+str(expected[key])+' -> '+str(actual.get(key)),flush=True)
         print('BIDZAAR_CARD_'+str(card)+'_READBACK='+('YES' if verified else 'NO'),flush=True)
-        print('BIDZAAR_CARD_'+str(card)+'_MANAGER_V2='+('YES' if actual.get('UF_CRM_13_SVCIT_SCORE_VERSION')=='svc-bidzaar-manager-v2' else 'NO'),flush=True)
+        print('BIDZAAR_CARD_'+str(card)+'_MANAGER_READY='+('YES' if actual.get('UF_CRM_13_SVCIT_SCORE_VERSION')=='svc-bidzaar-manager-v3' else 'NO'),flush=True)
         print('BIDZAAR_CARD_'+str(card)+'_PRIORITY_SYMBOL='+('YES' if str(actual.get('UF_CRM_13_SVCIT_AI_SCORE_BADGE','')).startswith(('✅','⚠','❌')) else 'NO'),flush=True)
         limits=actual.get('UF_CRM_13_SVCIT_AI_LIMITATIONS','') or ''
         for label,pattern in [('DOCS_READ',r'Прочитано документов: (\d+)'),('DOCS_UNPROCESSED',r'Не обработано: (\d+)')]:
@@ -48,7 +48,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         status=actual.get('UF_CRM_13_SVCIT_AI_STATUS','')
         print('BIDZAAR_CARD_'+str(card)+'_ROUTERAI='+('YES' if 'RouterAI: цитаты проверены' in status else 'NO'),flush=True)
     for label,query in [
-        ('MANAGER_V2_PENDING',"SELECT count(*) FROM serviceit_bidzaar_inbox WHERE state='VERIFIED' AND (expected->>'UF_CRM_13_SVCIT_SCORE_VERSION') IS DISTINCT FROM 'svc-bidzaar-manager-v2'"),
+        ('MANAGER_READY_PENDING',"SELECT count(*) FROM serviceit_bidzaar_inbox WHERE state='VERIFIED' AND (expected->>'UF_CRM_13_SVCIT_SCORE_VERSION') IS DISTINCT FROM 'svc-bidzaar-manager-v3'"),
         ('TASKS_VERIFIED',"SELECT count(*) FROM serviceit_bidzaar_inbox b JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='TASK_V1' AND r.status='VERIFIED' WHERE b.state='VERIFIED'")]:
         print('BIDZAAR_'+label+'='+str(conn.execute(query).fetchone()[0]),flush=True)
     present=conn.execute("SELECT to_regclass('serviceit_postcall_assistant')").fetchone()[0]

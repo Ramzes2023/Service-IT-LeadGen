@@ -131,14 +131,19 @@ def dossier(client, env, row, peers, *, cached=None):
             PREFIX+'AI_QUOTE':('\n'.join(quotes[:2])[:3500] or 'Подтверждённые цитаты не извлечены'),
             PREFIX+'AI_HYPOTHESIS':'Соответствие направлениям: '+', '.join(groups)+'. Требования к участнику необходимо сверить с документами.',
             PREFIX+'AI_RECOMMENDATION':'Рассмотреть участие после проверки обязательных условий; автоматическое одобрение не выполнялось.',
-            VERSION_FIELD:'svc-bidzaar-manager-v2',BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1],
+            VERSION_FIELD:'svc-bidzaar-manager-v3',BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1],
             PREFIX+'AI_NEXT_ACTION':'Проверить требования и подготовить решение об участии по приведённым источникам.'}
     if cached is not None:
         fields={k:v for k,v in cached.items() if k in fields}
         report=str(cached.get(REPORT,'')).split('\n\nПЛАН РАБОТЫ МЕНЕДЖЕРА')[0]
+        prior=str(cached.get(BRIEF,'')).partition('Контакты с контекстом документа (принадлежность проверить): ')[2].split('\nПочему сейчас:',1)[0]
+        for line in prior.splitlines():
+            context,separator,source=line.rpartition(' | Источник: ')
+            if separator and source.startswith('https://bidzaar.com/'):
+                evidence.append({'url':source,'text':context})
         old_docs=re.search(r'Прочитано документов: (\d+)',str(cached.get(LIMITS,'')))
         score=60+10*bool(old_docs and int(old_docs[1]))+8*bool('Источник:' in report)+12*bool(peers)
-        fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-manager-v2',
+        fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-manager-v3',
             BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1]})
     offers={'1C':'сопровождение и развитие 1С','IT_STAFFING':'предоставление IT-специалистов',
             'IT_SUPPORT':'поддержка IT-инфраструктуры','CRM':'внедрение и сопровождение CRM',
@@ -266,7 +271,7 @@ def reconcile_uncertain(conn,client,env):
 def repair_documents(conn,client,env,*,presentation_only=False):
     row=conn.execute("""SELECT source_id,card_id,notice,expected FROM serviceit_bidzaar_inbox
         WHERE state='VERIFIED' AND (
-          ((expected->>%s) IS DISTINCT FROM 'svc-bidzaar-manager-v2')
+          ((expected->>%s) IS DISTINCT FROM 'svc-bidzaar-manager-v3')
           OR (NOT %s AND document_attempts<2 AND ((expected->>%s) ~ 'Не обработано: [1-9]'
                OR (expected->>%s) NOT LIKE 'RouterAI:%%')))
         ORDER BY document_attempts,card_id LIMIT 1""",(VERSION_FIELD,presentation_only,LIMITS,PREFIX+'AI_STATUS')).fetchone()
@@ -277,16 +282,16 @@ def repair_documents(conn,client,env,*,presentation_only=False):
     actual=normalized(rest('crm.item.get',params)['item'])
     if not saved_fields_match(actual,expected):
         return 'DOCUMENT_RETRY_CONFLICT'
-    if expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v2':
+    if expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v3':
         conn.execute('UPDATE serviceit_bidzaar_inbox SET document_attempts=document_attempts+1 WHERE source_id=%s',(source,))
     peers=[peer for peer in crm_matches(rest,{INN:notice['inn']}) if peer!=card]
     patch=dossier(client,env,notice,related_signals(rest,peers,notice['inn']),
-                  cached=expected if expected.get(VERSION_FIELD)!='svc-bidzaar-manager-v2' else None)
+                  cached=expected if expected.get(VERSION_FIELD)!='svc-bidzaar-manager-v3' else None)
     def count(fields):
         m=re.search(r'Прочитано документов: (\d+)',fields.get(LIMITS,''))
         return int(m[1]) if m else 0
     new_model=patch.get(PREFIX+'AI_STATUS','').startswith('RouterAI:') and not expected.get(PREFIX+'AI_STATUS','').startswith('RouterAI:')
-    if count(patch)<=count(expected) and not new_model and expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v2':return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
+    if count(patch)<=count(expected) and not new_model and expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v3':return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
     # Recheck after network/model work, before any update of managed fields.
     actual=normalized(rest('crm.item.get',params)['item'])
     if not saved_fields_match(actual,expected):
@@ -314,7 +319,7 @@ def manager_tasks(conn,client,env):
     rows=conn.execute("""SELECT b.card_id,b.expected FROM serviceit_bidzaar_inbox b
         LEFT JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='TASK_V1'
         WHERE b.state='VERIFIED' AND r.card_id IS NULL
-          AND b.expected->>%s='svc-bidzaar-manager-v2' ORDER BY b.card_id LIMIT 8""",(VERSION_FIELD,)).fetchall()
+          AND b.expected->>%s='svc-bidzaar-manager-v3' ORDER BY b.card_id LIMIT 8""",(VERSION_FIELD,)).fetchall()
     rest=Rest(runtime['SERVICEIT_BITRIX_WEBHOOK'],client)
     verified=0
     for card,expected in rows:
@@ -349,7 +354,7 @@ def main():
             print('BIDZAAR_ROWS='+str(fetched['rows']))
             if env.get('SERVICEIT_BIDZAAR_WRITE_ENABLED')=='YES':
                 reconcile_uncertain(conn,client,env)
-                for _ in range(4):
+                for _ in range(12):
                     upgraded=repair_documents(conn,client,exact_environment(env),presentation_only=True)
                     print('BIDZAAR_PRESENTATION='+upgraded,flush=True)
                     if upgraded!='DOCUMENT_UPDATE_VERIFIED':break

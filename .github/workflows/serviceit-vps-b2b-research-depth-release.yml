@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           reviewed="$GITHUB_SHA"
-          old='e52d880da16ed3e384630e3c6555b7a4e04bfdc1'
+          old='ebd19cae1687b36069e5a36cb6ec3b8386bfa0db'
           git cat-file -e "$reviewed^{commit}"
           git cat-file -e "$old^{commit}"
           names=(serviceit_b2b_public_mirrors.py serviceit_b2b_routerai_deep.py serviceit_vps_b2b_deep_research.py serviceit_b2b_tender_documents.py serviceit_vps_b2b_document_worker.py serviceit_b2b_dossier_consistency_v37.py serviceit_b2b_dossier_consistency_worker_v37.py)

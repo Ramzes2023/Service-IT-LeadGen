@@ -289,7 +289,7 @@ def _record_from_verified(notice, item, verified, identity=None):
             record["delivery"] = _text(quote, 200) + " (цитата источника)"
             if re.search(r"(?iu)московск\w*\s+обл",quote):
                 record["region"] = "Московская область"
-            elif re.search(r"(?iu)\bг(?:ород)?[.\s]+москва\b",quote):
+            elif re.search(r"(?iu)\b(?:г(?:ород)?[.\s]+)?москва\b",quote):
                 record["region"] = "Москва"
             record["tender_url"] = record["tender_url"] or url
     if "PROCEDURE" in parsed:

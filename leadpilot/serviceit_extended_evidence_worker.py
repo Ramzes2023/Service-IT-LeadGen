@@ -43,6 +43,22 @@ def inventory(rest):
     raise ValueError('CARD_INVENTORY_INCOMPLETE')
 
 
+def source_inventory(conn,rest):
+    ids=set()
+    # These are durable IDs of our existing and future ingested cards, not
+    # guessed ranges or arbitrary CRM items. Every ID gets a scoped live GET.
+    for table in ('serviceit_bidzaar_inbox','serviceit_vps_b2b_inbox','serviceit_vps_new_cards'):
+        if conn.execute('SELECT to_regclass(%s)',(table,)).fetchone()[0] is None:continue
+        for (card,) in conn.execute('SELECT DISTINCT card_id FROM '+table+' WHERE card_id IS NOT NULL').fetchall():
+            if type(card) is int and card>=8:ids.add(card)
+    items=[]
+    for card in sorted(ids):
+        try:items.append(get(rest,card))
+        except ValueError as exc:
+            if str(exc)!='CARD_SCOPE_INVALID':raise
+    return items
+
+
 def patch(conn,rest,client,card,before,fields):
     if not fields or all(str(before.get(k,''))==str(v) for k,v in fields.items()):return False
     if not set(fields)<= {REPORT,BRIEF,LIMITS}:raise ValueError('EXTENSION_FIELDS_INVALID')
@@ -84,7 +100,7 @@ def run():
         if not conn.execute('SELECT pg_try_advisory_lock(1062,706)').fetchone()[0]:return
         conn.execute(DDL);conn.execute(docs.DDL)
         rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
-        items=inventory(rest)
+        items=source_inventory(conn,rest)
         print('EXT_CARDS_SCANNED='+str(len(items)),flush=True)
         for item in items:
             card=int(item['id']);inn=str(item.get(INN) or '')

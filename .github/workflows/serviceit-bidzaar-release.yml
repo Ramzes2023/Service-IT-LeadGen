@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation with complete source dependencies
+name: ServiceIT Bidzaar five-minute VPS activation with verified document redirects
 on:
   push:
     branches: [main]
@@ -78,6 +78,7 @@ jobs:
           assert rows[-1] in readback
           print('BIDZAAR_FIVE_MINUTE_SCHEDULE=VERIFIED')
           PY
+          python3 "$dir/serviceit_bidzaar_runner.py"
           python3 "$dir/serviceit_bidzaar_runner.py"
           docker exec -i serviceit-leadgen-vps-coordinator-1 python -B - < "$dir/serviceit_bidzaar_audit.py"
           REMOTE

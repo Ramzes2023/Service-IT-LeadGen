@@ -20,6 +20,7 @@ def test_consultantplus_it_procurements_are_classified_as_existing_licenses():
         'Оказание услуг по адаптации и сопровождению экземпляров Систем "КонсультантПлюс" на основе специального лицензионного сервисного программного обеспечения для ООО «СТАРСТРОЙ» и регионов (согласно ТЗ)',
         'RFP_ поставка ИПС «Консультант Плюс».',
         "Закупка лицензий Microsoft Teams",
+        "Консультант Плюс (справочно-правовые базы данных)",
         "Сопровождение консультантов по вопросам персонала",
         "Статья о КонсультантПлюс и трудовом законодательстве",
         "Поставка канцелярских принадлежностей",
@@ -44,7 +45,8 @@ process.stdout.write(JSON.stringify(titles.map(title => context.classifyServices
     assert "LICENSES" in classifications[0], "4674919 missed by Gmail"
     assert "LICENSES" in classifications[1], "4680694 missed by Gmail"
     assert "LICENSES" in classifications[2], "existing Teams support regressed"
-    assert all(not row for row in classifications[3:]), "unrelated texts matched"
+    assert "LICENSES" in classifications[3], "4681383 bare catalogue title missed by Gmail"
+    assert all(not row for row in classifications[4:]), "unrelated texts matched"
 
 
 def test_once_per_revision_recovery_preserves_source_receipts_and_review():

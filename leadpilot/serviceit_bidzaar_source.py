@@ -85,6 +85,9 @@ def fetch_page(client, endpoint, cursor, *, page_size=100):
         identity(row)
         current = timestamp(row.get('lastModified'))
         if current < previous:
+            print('BIDZAAR_BACKSTEP_MICROSECONDS='+str(int((previous-current).total_seconds()*1000000)),flush=True)
+            print('BIDZAAR_BEFORE_CURSOR_MICROSECONDS='+str(max(0,int((since-current).total_seconds()*1000000))),flush=True)
+            print('BIDZAAR_CHECKPOINT_UTC='+since.strftime('%Y%m%dT%H%M%S%f'),flush=True)
             raise ValueError('BIDZAAR_CURSOR_ORDER_INVALID')
         previous = current
     return rows

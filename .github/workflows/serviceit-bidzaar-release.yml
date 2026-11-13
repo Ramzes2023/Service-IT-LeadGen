@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar five-minute VPS activation with precise cursor diagnostics
+name: ServiceIT Bidzaar five-minute VPS activation with bounded cursor regression probe
 on:
   push:
     branches: [main]

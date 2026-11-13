@@ -1,4 +1,4 @@
-name: ServiceIT B2B remaining new-card source coverage audit
+name: ServiceIT B2B primary transport and remaining coverage audit
 on:
   push:
     branches: [main]

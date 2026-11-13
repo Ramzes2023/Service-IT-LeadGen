@@ -32,6 +32,10 @@ def main():
         provider = providers.get(response.request.url.host)
         if provider:
             emit(provider+'_HTTP', response.status_code)
+        if response.request.url.host in {'b2b-center.ru','www.b2b-center.ru'}:
+            path = response.request.url.path
+            label = 'ROBOTS' if path == '/robots.txt' else ('DETAIL31' if '4679263' in path else 'OTHER')
+            emit('B2B_'+label+'_HTTP', response.status_code)
     with db(env) as conn, conn.transaction(), httpx.Client(trust_env=False, follow_redirects=False, timeout=14, event_hooks={'response':[status]}) as client:
         conn.execute('SET TRANSACTION READ ONLY')
         rest = Rest(secret_file(env, 'SERVICEIT_BITRIX_WEBHOOK'), client)
@@ -96,7 +100,7 @@ def main():
                     print('DEPTH_PUBLIC_LOCATION_HEX_'+str(i)+'='+fact['quote'].encode('utf8').hex().upper(),flush=True)
                 from leadpilot.serviceit_vps_b2b_deep_research import _company_requisites_page, _public_company_self_declaration, _free_requisites_candidates
                 buyer = public_buyer_candidate(found)
-                candidates = _free_requisites_candidates(client,buyer,env)
+                candidates = []  # Prior audit already checked the candidate hosts.
                 for i, entry in enumerate(candidates):
                     from urllib.parse import urlsplit
                     host = urlsplit(entry['url']).hostname

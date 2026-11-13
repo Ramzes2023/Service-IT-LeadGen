@@ -14,7 +14,7 @@ from .serviceit_enrichment_worker import Rest, normalized
 from .b2b_github_to_bitrix import bitrix_call
 from .serviceit_bitrix_list_shape import strict_bitrix_items
 from .serviceit_b2b_dossier_consistency_v37 import PREFIX, INN, BRIEF, REPORT, SUMMARY, LIMITS
-from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD, score_label
+from .serviceit_kanban_presentation import SCORE_FIELD, VERSION_FIELD, BADGE_FIELD
 from .serviceit_b2b_tender_documents import extract_text
 from .serviceit_vps_b2b_document_worker import _model_research
 
@@ -90,6 +90,42 @@ def documents(client, row):
     return docs, failures+max(0,len(files)-6)
 
 
+def service_priority(row, peers):
+    """Business fit from procurement subject, independent of document availability."""
+    from .serviceit_b2b_moscow_geo import classify_location_lines
+    title = row.get('name', '')
+    groups = set(decision(row)[1])
+    service = bool(re.search(r'сопровожд|поддержк|обслуживан|аутсорс|аутстафф|администрир|обновлен|исправлен', title, re.I))
+    development = bool(re.search(r'внедрен|разработ|создани|создать|доработ|автоматизац|интеграц', title, re.I))
+    if ('1C' in groups and service) or ('IT_SUPPORT' in groups and service) or 'IT_STAFFING' in groups:
+        base, exact, reason = 90, True, 'сопровождение 1С / IT-поддержка / аутсорсинг специалистов'
+    elif '1C' in groups and development:
+        base, exact, reason = 85, True, 'разработка или внедрение на платформе 1С'
+    elif groups.intersection({'CRM', 'KKT_EDO'}) and (service or development):
+        base, exact, reason = 85, True, 'услуги по CRM, кассам или ЭДО'
+    elif '1C' in groups:
+        base, exact, reason = 75, False, 'направление 1С; состав услуг требует уточнения'
+    else:
+        base, exact, reason = 60, False, 'смежная IT-закупка; профильные услуги не подтверждены названием'
+    geo = classify_location_lines(['Адрес поставки: '+a for a in row.get('deliveryAddresses', [])])
+    geo_points = 5 if geo == 'MOSCOW' else 0
+    repeat_points = 3 if peers else 0
+    score = min(98 if exact else 83 if '1C' in groups else 78, base + geo_points + repeat_points)
+    explanation = (f'{reason}: {base}; Москва / МО: +{geo_points}; связанные сигналы: +{repeat_points}. '
+                   'Доступность документов, бюджета и контактов не снижает соответствие услугам.')
+    status = decision(row)[0]
+    if status != 'ELIGIBLE':
+        score = min(score, 39 if status in ('EXPIRED', 'NOT_OPEN', 'OUT_OF_SCOPE') else 59)
+        exact = False
+        explanation += ' Требует проверки: '+status+'.'
+    badge = ('★ ТОЧНОЕ ПОПАДАНИЕ | ' if exact else '⚠ ') + str(score)+'/100 — '+('высокий приоритет' if score >= 80 else 'средний приоритет' if score >= 60 else 'требует проверки')
+    return score, badge, explanation, exact
+
+
+def priority_title(row, peers=()):
+    return ('★ ПРИОРИТЕТ · ' if service_priority(row, peers)[3] else '')+'BIDZAAR · '+row['name'][:180]
+
+
 def dossier(client, env, row, peers, *, cached=None):
     docs,missing=documents(client,row) if cached is None else ([],0)
     # API description is a separate attested source, not a downloaded file.
@@ -113,7 +149,7 @@ def dossier(client, env, row, peers, *, cached=None):
     budget_text=(str(budget)+' '+str(row.get('currency',''))
                  if isinstance(budget,(int,float)) and not isinstance(budget,bool) and budget>0
                  else 'Не раскрыт; ноль в API не считается бюджетом')
-    score=60+10*bool(docs)+8*bool(quotes)+12*bool(peers)
+    score,badge,priority_reason,_=service_priority(row,peers)
     passport=[row['name'], 'Заказчик: '+str(row.get('legalName') or row.get('publisherName')),
               'ИНН: '+row['inn'], 'Место исполнения: '+'; '.join(row['deliveryAddresses']),
               'Подача до: '+row['acceptanceEndDate'], 'Бюджет: '+budget_text,
@@ -131,7 +167,7 @@ def dossier(client, env, row, peers, *, cached=None):
             PREFIX+'AI_QUOTE':('\n'.join(quotes[:2])[:3500] or 'Подтверждённые цитаты не извлечены'),
             PREFIX+'AI_HYPOTHESIS':'Соответствие направлениям: '+', '.join(groups)+'. Требования к участнику необходимо сверить с документами.',
             PREFIX+'AI_RECOMMENDATION':'Рассмотреть участие после проверки обязательных условий; автоматическое одобрение не выполнялось.',
-            VERSION_FIELD:'svc-bidzaar-manager-v3',BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1],
+            VERSION_FIELD:'svc-bidzaar-service-fit-v4',BADGE_FIELD:badge,
             PREFIX+'AI_NEXT_ACTION':'Проверить требования и подготовить решение об участии по приведённым источникам.'}
     if cached is not None:
         fields={k:v for k,v in cached.items() if k in fields}
@@ -141,10 +177,8 @@ def dossier(client, env, row, peers, *, cached=None):
             context,separator,source=line.rpartition(' | Источник: ')
             if separator and source.startswith('https://bidzaar.com/'):
                 evidence.append({'url':source,'text':context})
-        old_docs=re.search(r'Прочитано документов: (\d+)',str(cached.get(LIMITS,'')))
-        score=60+10*bool(old_docs and int(old_docs[1]))+8*bool('Источник:' in report)+12*bool(peers)
-        fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-manager-v3',
-            BADGE_FIELD:('✅' if score>=80 else '⚠️' if score>=60 else '❌')+' '+score_label(score).split(' ',1)[1]})
+        fields.update({SCORE_FIELD:score,VERSION_FIELD:'svc-bidzaar-service-fit-v4',
+            BADGE_FIELD:badge})
     offers={'1C':'сопровождение и развитие 1С','IT_STAFFING':'предоставление IT-специалистов',
             'IT_SUPPORT':'поддержка IT-инфраструктуры','CRM':'внедрение и сопровождение CRM',
             'KKT_EDO':'кассовые решения и ЭДО','SERVERS':'поставка и настройка IT-оборудования',
@@ -162,6 +196,7 @@ def dossier(client, env, row, peers, *, cached=None):
            'Кто отвечает за техническую часть? Какие требования обязательны, '
            'допустимы ли альтернативы и каков порядок уточнений до подачи заявки?')
     manager=['ГОТОВАЯ КАРТОЧКА ДЛЯ МЕНЕДЖЕРА',*passport,
+             badge, 'Почему такой приоритет: '+priority_reason,
              'Отрасль компании: не подтверждена первоисточником; предмет закупки не равен отрасли.',
              'Что предложить (гипотеза): '+offer,
              'Кому обращаться: опубликованному контактному лицу закупки; роль для уточнения — закупки / IT.',
@@ -169,7 +204,7 @@ def dossier(client, env, row, peers, *, cached=None):
              'Почему сейчас: открыт приём предложений до '+row['acceptanceEndDate']+'.',
              'Короткий сценарий разговора: '+pitch,
              'Связанные сигналы по тому же ИНН: '+str(len(peers))+'. '+
-             ('Повторная потребность: +12 к приоритету; это не подтверждение интереса клиента.' if peers else 'Дополнительных сигналов в CRM не найдено.'),
+             ('Повторная потребность: +3 к приоритету; это не подтверждение интереса клиента.' if peers else 'Дополнительных сигналов в CRM не найдено.'),
              *related[:4],
              'После разговора: зафиксировать потребность, интерес (да / нет / неясно), возражения и согласованный следующий шаг со сроком.']
     fields[BRIEF]='\n'.join(manager)[:7000]
@@ -226,7 +261,7 @@ def deliver(conn,client,env):
             conn.execute("UPDATE serviceit_bidzaar_inbox SET state='EXISTING',card_id=%s WHERE source_id=%s",(duplicate[0],source));continue
         peers=crm_matches(rest,{INN:row['inn']})
         fields=dossier(client,env,row,related_signals(rest,peers,row['inn']))
-        fields.update({'title':'BIDZAAR · '+row['name'][:180],'categoryId':21,'stageId':'DT1062_21:NEW','assignedById':605,
+        fields.update({'title':priority_title(row,peers),'categoryId':21,'stageId':'DT1062_21:NEW','assignedById':605,
             PREFIX+'SIGNAL_ID':source,PREFIX+'SIGNAL_KIND':'tender-opportunity',
             PREFIX+'SIGNAL_SOURCE':'Bidzaar API',PREFIX+'SIGNAL_URL':row['link'],
             PREFIX+'SUGGESTED_SERVICE':', '.join(decision(row)[1]),
@@ -271,7 +306,7 @@ def reconcile_uncertain(conn,client,env):
 def repair_documents(conn,client,env,*,presentation_only=False):
     row=conn.execute("""SELECT source_id,card_id,notice,expected FROM serviceit_bidzaar_inbox
         WHERE state='VERIFIED' AND (
-          ((expected->>%s) IS DISTINCT FROM 'svc-bidzaar-manager-v3')
+          ((expected->>%s) IS DISTINCT FROM 'svc-bidzaar-service-fit-v4')
           OR (NOT %s AND document_attempts<2 AND ((expected->>%s) ~ 'Не обработано: [1-9]'
                OR (expected->>%s) NOT LIKE 'RouterAI:%%')))
         ORDER BY document_attempts,card_id LIMIT 1""",(VERSION_FIELD,presentation_only,LIMITS,PREFIX+'AI_STATUS')).fetchone()
@@ -282,20 +317,23 @@ def repair_documents(conn,client,env,*,presentation_only=False):
     actual=normalized(rest('crm.item.get',params)['item'])
     if not saved_fields_match(actual,expected):
         return 'DOCUMENT_RETRY_CONFLICT'
-    if expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v3':
+    if expected.get(VERSION_FIELD)=='svc-bidzaar-service-fit-v4':
         conn.execute('UPDATE serviceit_bidzaar_inbox SET document_attempts=document_attempts+1 WHERE source_id=%s',(source,))
     peers=[peer for peer in crm_matches(rest,{INN:notice['inn']}) if peer!=card]
     patch=dossier(client,env,notice,related_signals(rest,peers,notice['inn']),
-                  cached=expected if expected.get(VERSION_FIELD)!='svc-bidzaar-manager-v3' else None)
+                  cached=expected if expected.get(VERSION_FIELD)!='svc-bidzaar-service-fit-v4' else None)
     def count(fields):
         m=re.search(r'Прочитано документов: (\d+)',fields.get(LIMITS,''))
         return int(m[1]) if m else 0
     new_model=patch.get(PREFIX+'AI_STATUS','').startswith('RouterAI:') and not expected.get(PREFIX+'AI_STATUS','').startswith('RouterAI:')
-    if count(patch)<=count(expected) and not new_model and expected.get(VERSION_FIELD)=='svc-bidzaar-manager-v3':return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
+    if count(patch)<=count(expected) and not new_model and expected.get(VERSION_FIELD)=='svc-bidzaar-service-fit-v4':return 'DOCUMENT_RETRY_NO_IMPROVEMENT'
     # Recheck after network/model work, before any update of managed fields.
     actual=normalized(rest('crm.item.get',params)['item'])
     if not saved_fields_match(actual,expected):
         return 'DOCUMENT_RETRY_CONFLICT'
+    # Preserve a title edited by the manager; decorate only our own title.
+    if actual.get('title') == expected.get('title') and 'title' in expected:
+        patch['title']=priority_title(notice,peers)
     combined={**expected,**patch}
     reserved=conn.execute("UPDATE serviceit_bidzaar_inbox SET state='UPDATE_UNCERTAIN',expected=%s::jsonb WHERE source_id=%s AND state='VERIFIED' RETURNING source_id",(json.dumps(combined,ensure_ascii=False),source)).fetchone()
     if not reserved:return 'DOCUMENT_RETRY_BUSY'
@@ -303,7 +341,7 @@ def repair_documents(conn,client,env,*,presentation_only=False):
     response.raise_for_status()
     if 'error' in response.json():return 'DOCUMENT_UPDATE_UNCERTAIN'
     actual=normalized(rest('crm.item.get',params)['item'])
-    if not saved_fields_match(actual,combined):
+    if not saved_fields_match(actual,combined) or ('title' in patch and actual.get('title')!=patch['title']):
         return 'DOCUMENT_UPDATE_UNCERTAIN'
     conn.execute("UPDATE serviceit_bidzaar_inbox SET state='VERIFIED' WHERE source_id=%s AND state='UPDATE_UNCERTAIN'",(source,))
     return 'DOCUMENT_UPDATE_VERIFIED'
@@ -319,7 +357,7 @@ def manager_tasks(conn,client,env):
     rows=conn.execute("""SELECT b.card_id,b.expected FROM serviceit_bidzaar_inbox b
         LEFT JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='TASK_V1'
         WHERE b.state='VERIFIED' AND r.card_id IS NULL
-          AND b.expected->>%s='svc-bidzaar-manager-v3' ORDER BY b.card_id LIMIT 8""",(VERSION_FIELD,)).fetchall()
+          AND b.expected->>%s='svc-bidzaar-service-fit-v4' ORDER BY b.card_id LIMIT 8""",(VERSION_FIELD,)).fetchall()
     rest=Rest(runtime['SERVICEIT_BITRIX_WEBHOOK'],client)
     verified=0
     for card,expected in rows:

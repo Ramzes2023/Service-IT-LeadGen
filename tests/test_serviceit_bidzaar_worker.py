@@ -157,3 +157,52 @@ def test_cached_contacts_keep_source_but_drop_account_number(monkeypatch):
     fields=w.dossier(None,{},ROW,[],cached=cached)
     assert '40817810099910004312' not in fields[w.BRIEF]
     assert 'Контакт Иван: +7 (495) 123-45-67 | Источник: '+ROW['link'] in fields[w.BRIEF]
+
+
+@pytest.mark.parametrize('title,score', [
+    ('Сопровождение 1С Бухгалтерия',95),
+    ('IT-аутсорсинг рабочих мест и серверов',95),
+    ('Техническая поддержка информационных систем',95),
+    ('Предоставление IT-специалистов',95),
+    ('Создание системы Антифрод на платформе 1С:Предприятие',90),
+    ('Внедрение Битрикс24 CRM',90),
+])
+def test_core_service_priority_without_documents_or_budget(title,score):
+    result=w.service_priority(dict(ROW,name=title),[])
+    assert result[0]==score and result[3]
+    assert result[1].startswith('★ ТОЧНОЕ ПОПАДАНИЕ')
+    assert w.priority_title(dict(ROW,name=title)).startswith('★ ПРИОРИТЕТ')
+    assert all(ord(c)<=65535 for c in result[1])
+
+
+def test_hardware_cannot_outrank_service_with_documents_and_repeat_signals(monkeypatch):
+    monkeypatch.setattr(w,'_model_research',lambda *a,**k:[])
+    hardware=w.dossier(None,{},ROW,[17,19],cached={w.LIMITS:'Прочитано документов: 6.',w.REPORT:'Источник: verified'})
+    service=w.dossier(None,{},dict(ROW,name='Сопровождение 1С'),[])
+    assert hardware[w.SCORE_FIELD] < service[w.SCORE_FIELD]
+    assert not hardware[w.BADGE_FIELD].startswith('★')
+    assert service[w.SCORE_FIELD]==95
+
+
+def test_old_service_card_rescored_without_paid_research(monkeypatch):
+    monkeypatch.setattr(w,'_model_research',lambda *a,**k:pytest.fail('no repeat research'))
+    cached={w.LIMITS:'Прочитано документов: 3.',w.REPORT:'Точная цитата из документа',w.SCORE_FIELD:78}
+    fields=w.dossier(None,{},dict(ROW,name='Сопровождение 1С'),[],cached=cached)
+    assert fields[w.SCORE_FIELD]==95
+    assert fields[w.LIMITS]==cached[w.LIMITS]
+    assert 'Точная цитата' in fields[w.REPORT]
+    assert 'Почему такой приоритет:' in fields[w.BRIEF]
+
+
+@pytest.mark.parametrize('changes',[
+    {'acceptanceEndDate':'2020-01-01T00:00:00Z'},
+    {'status':'closed'},
+    {'deliveryAddresses':['Казань']},
+])
+def test_exact_fit_does_not_override_closed_or_out_of_region(changes):
+    result=w.service_priority({**ROW,'name':'Сопровождение 1С',**changes},[])
+    assert result[0]<60 and not result[3]
+
+
+def test_license_purchase_is_not_service_exact_fit():
+    assert not w.service_priority(dict(ROW,name='Поставка лицензий 1С'),[])[3]

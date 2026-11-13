@@ -15,10 +15,11 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('MANAGER_605_ACTIVE='+str(u.get('ACTIVE')),flush=True)
     binding=owner_type(client,rest.base)
     for card in (11,29,33,35):
-        tasks=request(client,rest.base,'tasks.task.list',{'filter':{'UF_CRM_TASK':binding+'_'+str(card)},'select':['ID','RESPONSIBLE_ID','UF_CRM_TASK'],'start':0})
+        tasks=request(client,rest.base,'tasks.task.list',{'filter':{'UF_CRM_TASK':binding+'_'+str(card)},'select':['ID','RESPONSIBLE_ID','UF_CRM_TASK','DESCRIPTION'],'start':0})
         items=tasks['result']['tasks']
         exact=[t for t in items if binding+'_'+str(card) in t.get('ufCrmTask',t.get('UF_CRM_TASK',[]))]
         print('MANAGER_CARD_'+str(card)+'_TASKS='+str(len(exact)),flush=True)
+        print('MANAGER_CARD_'+str(card)+'_CONTEXTUAL='+('YES' if any('ГОТОВАЯ КАРТОЧКА ДЛЯ МЕНЕДЖЕРА' in str(t.get('description',t.get('DESCRIPTION',''))) for t in exact) else 'NO'),flush=True)
         print('MANAGER_CARD_'+str(card)+'_ASSIGNEES='+','.join(str(t.get('responsibleId',t.get('RESPONSIBLE_ID'))) for t in exact),flush=True)
     for state,count in conn.execute('SELECT state,count(*) FROM serviceit_bidzaar_inbox GROUP BY state').fetchall():
         if state.isupper():print('BIDZAAR_COUNT_'+state+'='+str(count),flush=True)
@@ -39,5 +40,14 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('BIDZAAR_CARD_'+str(card)+'_QUOTED_SOURCES='+str(report.count('Источник:')),flush=True)
         status=actual.get('UF_CRM_13_SVCIT_AI_STATUS','')
         print('BIDZAAR_CARD_'+str(card)+'_ROUTERAI='+('YES' if 'RouterAI: цитаты проверены' in status else 'NO'),flush=True)
+    for label,query in [
+        ('MANAGER_V2_PENDING',"SELECT count(*) FROM serviceit_bidzaar_inbox WHERE state='VERIFIED' AND (expected->>'UF_CRM_13_SVCIT_SCORE_VERSION') IS DISTINCT FROM 'svc-bidzaar-manager-v2'"),
+        ('TASKS_VERIFIED',"SELECT count(*) FROM serviceit_bidzaar_inbox b JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='TASK_V1' AND r.status='VERIFIED' WHERE b.state='VERIFIED'")]:
+        print('BIDZAAR_'+label+'='+str(conn.execute(query).fetchone()[0]),flush=True)
+    present=conn.execute("SELECT to_regclass('serviceit_postcall_assistant')").fetchone()[0]
+    print('BIDZAAR_POSTCALL_SCHEMA='+('YES' if present else 'NO'),flush=True)
+    if present:
+        for state,count in conn.execute('SELECT state,count(*) FROM serviceit_postcall_assistant GROUP BY state').fetchall():
+            if state in ('RESERVED','VERIFIED','UNCERTAIN'):print('BIDZAAR_POSTCALL_'+state+'='+str(count),flush=True)
     print('BIDZAAR_CRM_WRITES=0',flush=True)
     if not ok:raise SystemExit(2)

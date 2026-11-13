@@ -67,7 +67,7 @@ def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch):
     monkeypatch.setattr(docs,'_model_research',lambda client,env,inputs:seen.extend(inputs) or [])
     docs.process(conn,None,{})
     assert len(seen[0]['text'])==24000
-    assert conn.updates[0][0]=='EXTRACTED' and conn.updates[0][1]==48000
+    assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==48000
 
 
 def test_crm_update_preserves_fields_and_requires_readback(monkeypatch):
@@ -107,3 +107,22 @@ def test_excel_reads_fourth_sheet_and_full_long_cell():
             archive.writestr(f'xl/worksheets/sheet{n}.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c t="inlineStr"><is><t>'+str(n)+'x'*220+'</t></is></c></row></sheetData></worksheet>')
     text=docs.full_extract(stream.getvalue(),'.xlsx')
     assert '5'+'x'*220 in text and 'sheet4.xml' in text
+
+
+def test_inventory_handles_nested_records_and_empty_last_page(monkeypatch):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    calls=[]
+    def rest(method,args):
+        calls.append(args)
+        return {'items':[[{'id':11,'categoryId':21},{'id':29,'categoryId':21}]]} if args['filter']['>id']==0 else {'items':[[]]}
+    monkeypatch.setattr(worker,'get',lambda rest,card:{'id':card})
+    assert worker.inventory(rest)==[{'id':11},{'id':29}]
+    assert calls[0]['select']==['id','categoryId'] and calls[1]['filter']['>id']==29
+
+
+def test_identity_requires_own_legal_page_name_and_unique_inn():
+    page={'url':'https://acme.ru/contacts','text':'ООО Альфа ИНН 7707083893'}
+    assert contacts.identity(page,'7707083893','ООО Альфа')
+    assert not contacts.identity(page,'7707083893','ООО Бета')
+    assert not contacts.identity({**page,'url':'https://news.ru/blog/client-story'},'7707083893','ООО Альфа')
+    assert not contacts.identity({**page,'text':page['text']+' ИНН 7707083894'},'7707083893','ООО Альфа')

@@ -124,6 +124,7 @@ def register(conn,card,files):
 
 
 def process(conn,client,env,*,batch=6):
+    conn.execute("UPDATE serviceit_extended_documents SET status='FAILED',error=COALESCE(error,'WORKER_INTERRUPTED') WHERE status='RETRY' AND attempts>=3 AND next_attempt_at<=now()")
     rows=conn.execute("SELECT card_id,url,name FROM serviceit_extended_documents WHERE status IN ('PENDING','RETRY') AND attempts<3 AND next_attempt_at<=now() ORDER BY attempts,card_id,url LIMIT %s",(batch,)).fetchall()
     done=[]
     for card,url,name in rows:

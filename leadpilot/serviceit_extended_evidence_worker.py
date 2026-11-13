@@ -32,7 +32,8 @@ def get(rest,card):
 def inventory(rest):
     items=[];last=0
     for _ in range(100):
-        page=strict_bitrix_items(rest('crm.item.list',{'entityTypeId':1062,'useOriginalUfNames':'Y','filter':{'categoryId':21,'>id':last},'order':{'id':'ASC'},'select':['id']}))
+        result=rest('crm.item.list',{'entityTypeId':1062,'useOriginalUfNames':'Y','filter':{'categoryId':21,'>id':last},'order':{'id':'ASC'},'select':['id','categoryId']} )
+        page=[] if result.get('items')==[[]] else strict_bitrix_items(result)
         if not page:return items
         ids=[int(i['id']) for i in page]
         if ids!=sorted(set(ids)) or min(ids)<=last:raise ValueError('CARD_PAGINATION_INVALID')

@@ -1,4 +1,4 @@
-name: ServiceIT all-document queue and public company contacts v2
+name: ServiceIT all-document queue and public company contacts v3
 on:
   push:
     branches: [main]
@@ -41,7 +41,7 @@ jobs:
           target="$VPS_USER@$VPS_HOST"
           remote="serviceit/evidence/staging-$GITHUB_RUN_ID"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
-          for file in leadpilot/serviceit_b2b_tender_documents.py leadpilot/serviceit_extended_documents.py leadpilot/serviceit_company_contacts.py leadpilot/serviceit_extended_evidence_worker.py ops/serviceit_extended_evidence_runner.py ops/serviceit_extended_evidence_audit.py; do
+          for file in leadpilot/serviceit_bitrix_list_shape.py leadpilot/serviceit_b2b_tender_documents.py leadpilot/serviceit_extended_documents.py leadpilot/serviceit_company_contacts.py leadpilot/serviceit_extended_evidence_worker.py ops/serviceit_extended_evidence_runner.py ops/serviceit_extended_evidence_audit.py; do
             scp -i "$stage/id" "${opts[@]}" "$file" "$target:$remote/"
           done
       - name: Build isolated legacy converter, activate and verify live backlog
@@ -70,7 +70,7 @@ jobs:
           DOCKER
           docker build -t "serviceit-evidence:$id" "$stage"
           docker run --rm --network none --read-only --entrypoint sh "serviceit-evidence:$id" -c 'command -v antiword >/dev/null && python -c "import striprtf.striprtf"'
-          for file in serviceit_b2b_tender_documents.py serviceit_extended_documents.py serviceit_company_contacts.py serviceit_extended_evidence_worker.py serviceit_extended_evidence_runner.py serviceit_extended_evidence_audit.py; do
+          for file in serviceit_bitrix_list_shape.py serviceit_b2b_tender_documents.py serviceit_extended_documents.py serviceit_company_contacts.py serviceit_extended_evidence_worker.py serviceit_extended_evidence_runner.py serviceit_extended_evidence_audit.py; do
             python3 -m py_compile "$stage/$file"
             install -m 0600 "$stage/$file" "$dir/$file"
           done

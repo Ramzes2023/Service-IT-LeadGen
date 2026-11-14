@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: [.github/workflows/serviceit-extended-evidence-audit.yml]
   workflow_run:
-    workflows: [ServiceIT all-document queue and public company contacts v9]
+    workflows: [ServiceIT all-document queue and public company contacts v10]
     types: [completed]
 permissions:
   contents: read

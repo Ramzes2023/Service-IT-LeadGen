@@ -19,6 +19,9 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     count=0;bad=0;contact_cards=0;contact_values=0
     for card,expected,status in conn.execute('SELECT card_id,expected,status FROM serviceit_extended_evidence_receipts').fetchall():
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
+        if conn.execute("SELECT to_regclass('serviceit_stage_handoff')").fetchone()[0]:
+            stage=conn.execute('SELECT target_stage,status FROM serviceit_stage_handoff WHERE card_id=%s',(card,)).fetchone()
+            if stage:print('EXT_CARD_'+str(card)+'_STAGE_VERIFIED='+('YES' if stage[1]=='VERIFIED' and actual.get('stageId')==stage[0] else 'NO'))
         ok=str(actual.get('categoryId'))=='21' and status=='VERIFIED' and all(str(actual.get(k,''))==str(v) for k,v in expected.items())
         if not ok:
             print('EXT_CARD_'+str(card)+'_RECEIPT_STATUS='+status)
@@ -37,5 +40,8 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('EXT_CARD_'+str(card)+'_CONTACTS='+str(visible if ok else 0))
     print('EXT_CARDS_READBACK='+str(count));print('EXT_CARDS_MISMATCH='+str(bad))
     print('EXT_CONTACT_CARDS='+str(contact_cards));print('EXT_VISIBLE_CONTACT_VALUES='+str(contact_values))
+    if conn.execute("SELECT to_regclass('serviceit_stage_handoff')").fetchone()[0]:
+        for stage,status,n in conn.execute('SELECT target_stage,status,count(*) FROM serviceit_stage_handoff GROUP BY 1,2').fetchall():
+            print('EXT_STAGE_'+re.sub('[^A-Z0-9_]','_',stage.upper())+'_'+status+'='+str(n))
     print('EXT_CRM_WRITES=0')
     if bad:raise SystemExit(2)

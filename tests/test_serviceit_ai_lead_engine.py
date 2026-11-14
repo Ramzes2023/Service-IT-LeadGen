@@ -12,7 +12,7 @@ COMPANY={"inn":"7700000009","name":"DEMO COMPANY-001","region":"Москва",
 SIGNAL={"signal_type":"new_store", "signal_date":"2026-10-31",
         "source_url":"https://example.invalid/serviceit-demo/request/001",
         "evidence":"УЧЕБНЫЙ СИГНАЛ: компания открывает новую торговую точку и изучает 1С"}
-KEYS=("company_registry","source","existing_customer","crm_dedup","stop_list","legal_basis","contact")
+KEYS=("source","existing_customer","crm_dedup","stop_list","legal_basis","contact")
 
 
 def report(*,checks=None,signals=None, ai=None,demo=False):
@@ -26,7 +26,7 @@ def test_unknown_company_wide_gates_never_become_verified_even_high_score():
     assert out["status"]=="HOLD_UNVERIFIED"
     assert out["crm_handoff_eligible"] is False
     assert out["outreach_authorized_by_this_module"] is False
-    assert len(out["unverified_checks"])==7
+    assert len(out["unverified_checks"])==6
     assert out["score_version"]=="mvp-2026-10-v1"
 
 
@@ -114,3 +114,9 @@ def test_untrusted_check_states_rejected(value):
     checks={"crm_dedup":value}
     with pytest.raises(QualificationBlocked,match="GATE_STATE_INVALID"):
         report(checks=checks)
+
+
+def test_optional_registry_does_not_block_manager_review():
+    checks={name:"VERIFIED" for name in KEYS}
+    checks["company_registry"]="UNKNOWN"
+    assert report(checks=checks)["crm_handoff_eligible"] is True

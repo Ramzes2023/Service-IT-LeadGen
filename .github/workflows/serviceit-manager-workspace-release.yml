@@ -1,0 +1,91 @@
+name: ServiceIT manager call outcomes and profit workspace
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-manager-workspace-release.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-manager-workspace-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: ${{ vars.SERVICEIT_VPS_HOST }}
+      VPS_USER: ${{ vars.SERVICEIT_VPS_DEPLOY_USER }}
+      VPS_SSH_KEY: ${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test calculations, input ownership, outcomes and layout preservation
+        run: |
+          python -m pip install pytest httpx
+          python -m pytest -q tests/test_serviceit_manager_workspace.py
+      - name: Stage independent workspace runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/workspace"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/"*
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]{1,30}$ && "$VPS_USER" != root ]]
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
+          target="$VPS_USER@$VPS_HOST"
+          remote="serviceit/manager-workspace/staging-$GITHUB_RUN_ID"
+          ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
+          for file in leadpilot/serviceit_manager_workspace.py leadpilot/serviceit_postcall_assistant.py ops/serviceit_manager_workspace_runner.py; do
+            scp -i "$stage/id" "${opts[@]}" "$file" "$target:$remote/"
+          done
+      - name: Install five-minute worker with permission-aware first run
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/workspace"
+          ssh -T -i "$stage/id" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes "$VPS_USER@$VPS_HOST" "bash -s -- '$GITHUB_RUN_ID'" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          id="$1"
+          [[ "$id" =~ ^[0-9]{7,16}$ ]]
+          dir="$HOME/serviceit/manager-workspace"
+          stage="$dir/staging-$id"
+          exec 9>"$dir/cycle.lock"
+          flock -w 300 9
+          install -d -m 0700 "$dir/backup-$id"
+          for file in serviceit_manager_workspace.py serviceit_postcall_assistant.py serviceit_manager_workspace_runner.py; do
+            python3 -m py_compile "$stage/$file"
+            if [[ -f "$dir/$file" ]]; then cp -p "$dir/$file" "$dir/backup-$id/$file"; fi
+            install -m 0600 "$stage/$file" "$dir/$file"
+          done
+          if ! python3 "$dir/serviceit_manager_workspace_runner.py" > "$dir/release-$id.log"; then
+            for file in "$dir/backup-$id/"*.py; do
+              [[ -f "$file" ]] && cp -p "$file" "$dir/"
+            done
+            cat "$dir/release-$id.log"
+            exit 2
+          fi
+          cat "$dir/release-$id.log"
+          python3 - "$dir" <<'PY'
+          import subprocess,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          old=subprocess.run(['crontab','-l'],capture_output=True,text=True)
+          if old.returncode not in (0,1):raise SystemExit('CRONTAB_READ_FAILED')
+          (root/'crontab-before.txt').write_text(old.stdout)
+          lines=[r for r in old.stdout.splitlines() if not r.endswith('# SERVICEIT_MANAGER_WORKSPACE_V1')]
+          lines.append(f'*/5 * * * * /usr/bin/flock -n {root}/cycle.lock /usr/bin/python3 {root}/serviceit_manager_workspace_runner.py >>{root}/status.log 2>&1 # SERVICEIT_MANAGER_WORKSPACE_V1')
+          subprocess.run(['crontab','-'],input='\n'.join(lines)+'\n',text=True,check=True)
+          actual=subprocess.run(['crontab','-l'],capture_output=True,text=True,check=True).stdout
+          assert lines[-1] in actual
+          assert all(r in actual.splitlines() for r in old.stdout.splitlines() if not r.endswith('# SERVICEIT_MANAGER_WORKSPACE_V1'))
+          print('WORKSPACE_FIVE_MINUTE_SCHEDULE=VERIFIED')
+          print('WORKSPACE_EXISTING_SCHEDULES=PRESERVED')
+          PY
+          REMOTE

@@ -1,5 +1,5 @@
 """Durable all-file queue. Batch size is throughput, never a document cap."""
-import hashlib,json,os,re,resource,shutil,subprocess,tempfile
+import hashlib,json,os,re,time,shutil,subprocess,tempfile
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit,urljoin,unquote
 import httpx
@@ -11,10 +11,14 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,
  text_content TEXT,sha256 TEXT,reports JSONB,error TEXT,analyzed_chars INTEGER NOT NULL DEFAULT 0,
  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- PRIMARY KEY(card_id,url));'''
+ PRIMARY KEY(card_id,url));
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS parser_version INTEGER NOT NULL DEFAULT 1;
+ UPDATE serviceit_extended_documents SET parser_version=2,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<2 AND error IN ('DOCUMENT_FORMAT_UNSUPPORTED','DOCUMENT_EMPTY_TEXT');'''
 
 
 def _limits():
+    import resource
     resource.setrlimit(resource.RLIMIT_CPU,(10,10))
     resource.setrlimit(resource.RLIMIT_AS,(256*1024*1024,256*1024*1024))
     resource.setrlimit(resource.RLIMIT_FSIZE,(16*1024*1024,16*1024*1024))
@@ -41,7 +45,59 @@ def legacy_doc(data):
     return text
 
 
+def recognize(data,kind):
+    """Bounded full-file OCR; never silently accept only the first pages."""
+    from io import BytesIO
+    if kind=='.pdf':
+        from pypdf import PdfReader
+        count=len(PdfReader(BytesIO(data),strict=True).pages)
+        if not 1<=count<=20:raise ValueError('OCR_PAGE_LIMIT_EXCEEDED')
+    else:count=1
+    if not shutil.which('tesseract') or (kind=='.pdf' and not shutil.which('pdftoppm')):
+        raise ValueError('OCR_ENGINE_UNAVAILABLE')
+    def command(args):
+        result=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+            timeout=30,preexec_fn=_limits,env={**os.environ,'OMP_THREAD_LIMIT':'1'})
+        if result.returncode or len(result.stdout)>1000000:raise ValueError('OCR_CONVERSION_FAILED')
+        return result.stdout.decode('utf-8','replace').strip()
+    started=time.monotonic()
+    with tempfile.TemporaryDirectory(prefix='serviceit-ocr-') as folder:
+        source=os.path.join(folder,'source'+kind)
+        with open(source,'wb') as output:output.write(data)
+        parts=[]
+        for page in range(1,count+1):
+            if time.monotonic()-started>120:raise ValueError('OCR_TIME_LIMIT_EXCEEDED')
+            image=source
+            if kind=='.pdf':
+                prefix=os.path.join(folder,'page')
+                command(['pdftoppm','-f',str(page),'-l',str(page),'-singlefile','-scale-to','2200','-png',source,prefix])
+                image=prefix+'.png'
+            text=command(['tesseract',image,'stdout','-l','rus+eng+chi_sim','--psm','3'])
+            if not text:raise ValueError('OCR_PAGE_EMPTY')
+            parts.append('Страница '+str(page)+'\n'+text)
+        return 'OCR: распознанный текст; цифры и реквизиты требуют сверки с оригиналом.\n'+'\n'.join(parts)
+
+
 def full_extract(data,kind):
+    if kind=='.rtf':return legacy_doc(data)
+    if kind in ('.png','.jpg','.jpeg'):return recognize(data,kind)
+    if kind=='.pdf':
+        text=extract_text(data,kind)
+        return text if text.strip() else recognize(data,kind)
+    if kind=='.xls':
+        import xlrd
+        book=xlrd.open_workbook(file_contents=data,on_demand=True)
+        try:
+            parts=[];size=0
+            for sheet in book.sheets():
+                parts.append(sheet.name)
+                for row in range(sheet.nrows):
+                    text=' | '.join(str(value) for value in sheet.row_values(row) if value!='')
+                    size+=len(text)
+                    if size>1000000:raise ValueError('DOCUMENT_TEXT_TOO_LARGE')
+                    if text:parts.append(text)
+            return '\n'.join(parts)
+        finally:book.release_resources()
     if kind!='.xlsx':return extract_text(data,kind)
     from . import serviceit_b2b_tender_documents as parser
     ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
@@ -75,7 +131,7 @@ def download(client,url,name):
     if p.scheme!='https' or p.netloc!='bidzaar.com' or p.query or p.fragment or not re.fullmatch(r'/api/filestorage/files/download/[0-9a-fA-F-]{36}',p.path):
         raise ValueError('DOCUMENT_URL_INVALID')
     kind=PurePosixPath(name).suffix.lower()
-    if kind not in ('.doc','.docx','.pdf','.xlsx','.txt','.zip'):raise ValueError('DOCUMENT_FORMAT_UNSUPPORTED')
+    if kind not in ('.doc','.docx','.pdf','.xlsx','.xls','.rtf','.png','.jpg','.jpeg','.txt','.zip'):raise ValueError('DOCUMENT_FORMAT_UNSUPPORTED')
     current=url
     for redirect in range(3):
         with client.stream('GET',current,timeout=20,follow_redirects=False) as response:
@@ -102,7 +158,7 @@ def download(client,url,name):
                         for member in archive.infolist():
                             if member.is_dir():continue
                             suffix=PurePosixPath(member.filename).suffix.lower()
-                            if suffix not in ('.doc','.docx','.pdf','.xlsx','.txt'):
+                            if suffix not in ('.doc','.docx','.pdf','.xlsx','.xls','.rtf','.png','.jpg','.jpeg','.txt'):
                                 raise ValueError('ARCHIVE_CONTAINS_UNSUPPORTED_DOCUMENT')
                             payload=archive.read(member)
                             parts.append(member.filename+'\n'+(legacy_doc(payload) if suffix=='.doc' else full_extract(payload,suffix)))
@@ -131,7 +187,7 @@ def process(conn,client,env,*,batch=6):
         conn.execute("UPDATE serviceit_extended_documents SET attempts=attempts+1,status='RETRY',next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s",(card,url))
         try:
             document=download(client,url,name)
-            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,error=NULL,updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],card,url))
+            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,reports=%s::jsonb,error=NULL,updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],json.dumps([{'provider':'OCR','facts':[]}] if document['text'].startswith('OCR:') else []),card,url))
             done.append((card,document))
         except Exception as exc:
             reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()
@@ -160,6 +216,7 @@ def render(conn,card):
     for name,url,status,reports,error in rows:
         lines.append(f'{name}: '+('прочитан' if status=='READ' else 'в очереди' if status in ('PENDING','RETRY','EXTRACTED') else 'не прочитан: '+str(error)))
         lines.append('Источник: '+url)
+        if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')
         seen=set()
         for report in reports or []:
             for fact in report.get('facts',[]):

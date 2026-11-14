@@ -184,3 +184,37 @@ def test_finished_cards_use_snapshot_without_repeated_crm_reads(monkeypatch):
             return Result([(35,)])
     monkeypatch.setattr(worker,'get',lambda *args:pytest.fail('Completed cards must not be reread every five minutes'))
     assert worker.source_inventory(Conn(),None)==[{'id':35,worker.INN:'7707083893'}]
+
+
+def test_rtf_extension_uses_existing_converter(monkeypatch):
+    monkeypatch.setattr(docs,'legacy_doc',lambda data:'Договор поставки')
+    assert docs.full_extract(b'{\\rtf1}', '.rtf')=='Договор поставки'
+
+
+def test_empty_pdf_requests_ocr_but_text_pdf_does_not(monkeypatch):
+    monkeypatch.setattr(docs,'extract_text',lambda data,kind:'')
+    monkeypatch.setattr(docs,'recognize',lambda data,kind:'OCR: полный текст')
+    assert docs.full_extract(b'pdf','.pdf').startswith('OCR:')
+    monkeypatch.setattr(docs,'extract_text',lambda data,kind:'Исходный текст')
+    assert docs.full_extract(b'pdf','.pdf')=='Исходный текст'
+
+
+def test_ocr_command_has_no_shell_and_marks_uncertainty(monkeypatch):
+    from types import SimpleNamespace
+    calls=[]
+    monkeypatch.setattr(docs.shutil,'which',lambda name:'/usr/bin/'+name)
+    def run(args,**kwargs):
+        calls.append((args,kwargs))
+        return SimpleNamespace(returncode=0,stdout=b'Battery BRP-38-6000-1')
+    monkeypatch.setattr(docs.subprocess,'run',run)
+    text=docs.recognize(b'png','.png')
+    assert text.startswith('OCR:') and 'Battery' in text
+    assert calls[0][0][0]=='tesseract' and not calls[0][1].get('shell')
+    assert calls[0][1]['timeout']==30
+
+
+def test_ocr_empty_page_is_not_marked_read(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(docs.shutil,'which',lambda name:'/usr/bin/'+name)
+    monkeypatch.setattr(docs.subprocess,'run',lambda *args,**kw:SimpleNamespace(returncode=0,stdout=b''))
+    with pytest.raises(ValueError,match='OCR_PAGE_EMPTY'):docs.recognize(b'png','.png')

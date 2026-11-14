@@ -161,6 +161,8 @@ def run():
                 limit=re.sub(r'Не обработано: \d+',f'Не обработано: {total-read}',limit)
                 fields[LIMITS]=limit
             updated+=patch(conn,rest,client,card,item,fields)
+        from .serviceit_evidence_stage_handoff import advance
+        advance(conn,rest,client,items,get)
         print('EXT_CARDS_UPDATED='+str(updated),flush=True)
         for status,count in conn.execute('SELECT status,count(*) FROM serviceit_extended_documents GROUP BY status').fetchall():print('EXT_DOCUMENTS_'+status+'='+str(count),flush=True)
         for status,count in conn.execute("SELECT coalesce(result->>'status','PENDING'),count(*) FROM serviceit_company_contact_cache GROUP BY 1").fetchall():print('EXT_COMPANIES_'+status+'='+str(count),flush=True)

@@ -19,12 +19,9 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=25) as cl
  assert all(P+x in fields for x in CODES)
  layout=call('crm.item.details.configuration.get',{'entityTypeId':1062,'scope':'C','extras':{'categoryId':21}})
  owned={s['name']:s for s in layout if s['name'].startswith('serviceit_workspace_')}
- assert set(owned)=={'serviceit_workspace_totals','serviceit_workspace_call','serviceit_workspace_finance'}
- assert layout[0]['name']=='serviceit_workspace_totals'
  displayed={e['name'] for s in owned.values() for e in s['elements']}
- assert displayed=={P+x for x in CODES}
- print('WORKSPACE_AUDIT_SECTIONS=3',flush=True)
- print('WORKSPACE_AUDIT_TOTALS_AT_TOP=YES',flush=True)
+ assert not displayed.intersection({P+x for x in CODES})
+ print('WORKSPACE_AUDIT_REJECTED_SECTIONS=REMOVED',flush=True)
  stages=call('crm.status.list',{'filter':{'ENTITY_ID':'DYNAMIC_1062_STAGE_21'}})
  expected={'SVCIT_CALL_YES':'#2FC6A0','SVCIT_CALL_NO':'#FF5752','SVCIT_CALL_UNCLEAR':'#FFA900'}
  for code,color in expected.items():

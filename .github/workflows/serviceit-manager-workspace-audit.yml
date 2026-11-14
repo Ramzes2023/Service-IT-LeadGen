@@ -1,3 +1,4 @@
+# Verify removal of rejected left-side presentation, preserving stored inputs.
 name: ServiceIT manager workspace independent readback
 on:
   push:

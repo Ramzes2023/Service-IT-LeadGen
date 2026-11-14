@@ -14,7 +14,9 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  PRIMARY KEY(card_id,url));
  ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS parser_version INTEGER NOT NULL DEFAULT 1;
  UPDATE serviceit_extended_documents SET parser_version=2,status='PENDING',attempts=0,next_attempt_at=now()
- WHERE parser_version<2 AND error IN ('DOCUMENT_FORMAT_UNSUPPORTED','DOCUMENT_EMPTY_TEXT');'''
+ WHERE parser_version<2 AND error IN ('DOCUMENT_FORMAT_UNSUPPORTED','DOCUMENT_EMPTY_TEXT');
+ UPDATE serviceit_extended_documents SET parser_version=3,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<3 AND error='OCR_ENGINE_UNAVAILABLE';'''
 
 
 def _limits():

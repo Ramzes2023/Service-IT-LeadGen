@@ -34,3 +34,27 @@ jobs:
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
             'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' < ops/serviceit_manager_workspace_probe.py
+      - name: Check existing CRM setup credentials without disclosing them
+        env:
+          ADMIN_HOOK: ${{ secrets.SERVICEIT_BITRIX_CRM_ADMIN_ONETIME_WEBHOOK }}
+          STANDARD_HOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
+        run: |
+          python - <<'PY'
+          import os,json,urllib.request,urllib.error
+          for label in ('ADMIN_HOOK','STANDARD_HOOK'):
+              base=os.environ.get(label,'').strip().rstrip('/')
+              if not base:
+                  print('WORKSPACE_'+label+'=MISSING');continue
+              if not base.startswith('https://serviseit.bitrix24.ru/rest/'):
+                  print('WORKSPACE_'+label+'=WRONG_PORTAL');continue
+              args={'moduleId':'crm','filter':{'entityId':'CRM_13','fieldName':'UF_CRM_13_SVCIT_AI_STATUS'}}
+              req=urllib.request.Request(base+'/userfieldconfig.list.json',data=json.dumps(args).encode(),headers={'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=20) as r:data=json.load(r)
+                  print('WORKSPACE_'+label+'='+('READY' if 'result' in data else str(data.get('error','ERROR'))))
+              except urllib.error.HTTPError as e:
+                  try:code=json.load(e).get('error','HTTP_ERROR')
+                  except Exception:code='HTTP_ERROR'
+                  print('WORKSPACE_'+label+'='+str(code))
+              except Exception:print('WORKSPACE_'+label+'=TRANSPORT_ERROR')
+          PY

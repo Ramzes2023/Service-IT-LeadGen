@@ -255,3 +255,15 @@ def test_search_tries_second_provider_after_unusable_results(monkeypatch):
 def test_legal_section_does_not_extract_regulator_contacts():
     page={'url':'https://clinic.ru/patient/','text':'Полное наименование: ООО Альфа ИНН 7707083893 mail@alpha.ru\nРоспотребнадзор hotline@regulator.ru'}
     assert [c['value'] for c in contacts.extract([page],'7707083893','ООО Альфа')]==['mail@alpha.ru']
+
+
+def test_reviewed_seed_is_fetched_and_still_requires_exact_identity(monkeypatch):
+    seen=[]
+    monkeypatch.setattr(contacts,'safe',lambda url:True)
+    monkeypatch.setattr(contacts,'search_urls',lambda *args,**kwargs:([],'NONE'))
+    def read(client,url,robots):
+        seen.append(url)
+        return {'url':url,'text':'Полное наименование: ООО Альфа ИНН 7707083893 wrong@alpha.ru','links':[]}
+    monkeypatch.setattr(contacts,'read',read)
+    result=contacts.search(None,{},'7729674716','Клиника К31')
+    assert seen==['https://www.k31.ru/patient/'] and result['contacts']==[]

@@ -17,7 +17,8 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  CREATE TABLE IF NOT EXISTS serviceit_extended_evidence_receipts (
  card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());
  ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS reader_version INTEGER NOT NULL DEFAULT 1;
- UPDATE serviceit_company_contact_cache SET reader_version=3,next_attempt_at=now() WHERE reader_version<3 AND result->>'status' IN ('NOT_FOUND','SEARCH_UNAVAILABLE');'''
+ UPDATE serviceit_company_contact_cache SET reader_version=3,next_attempt_at=now() WHERE reader_version<3 AND result->>'status' IN ('NOT_FOUND','SEARCH_UNAVAILABLE');
+ UPDATE serviceit_company_contact_cache SET reader_version=4,next_attempt_at=now() WHERE reader_version<4 AND inn='7729674716' AND result->>'status'!='VERIFIED';'''
 BEGIN='[SERVICEIT_PUBLIC_EVIDENCE_V1]';END='[/SERVICEIT_PUBLIC_EVIDENCE_V1]'
 
 
@@ -140,7 +141,7 @@ def run():
             futures=[(inn,executor.submit(contacts.search,client,env,inn,name,documents)) for inn,name,documents in pending]
             for inn,future in futures:
                 result=future.result()
-                conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,reader_version=3,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']!='VERIFIED',inn))
+                conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,reader_version=4,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']!='VERIFIED',inn))
                 print('EXT_CONTACT_SEARCH='+result['status'],flush=True)
                 print('EXT_CONTACT_PAGES='+str(result['pages_checked']),flush=True)
         updated=0

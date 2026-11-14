@@ -218,3 +218,40 @@ def test_ocr_empty_page_is_not_marked_read(monkeypatch):
     monkeypatch.setattr(docs.shutil,'which',lambda name:'/usr/bin/'+name)
     monkeypatch.setattr(docs.subprocess,'run',lambda *args,**kw:SimpleNamespace(returncode=0,stdout=b''))
     with pytest.raises(ValueError,match='OCR_PAGE_EMPTY'):docs.recognize(b'png','.png')
+
+
+def test_group_legal_sections_do_not_mix_company_contacts():
+    page={'url':'https://clinic.ru/patient/','text':'Полное наименование: ООО Альфа ИНН 7707083893 info@alpha.ru +7 (495) 123-45-67\nПолное наименование: ООО Бета ИНН 7707083894 info@beta.ru +7 (495) 111-22-33','emails':['footer@beta.ru'],'phones':[]}
+    result=contacts.extract([page],'7707083893','ООО Альфа')
+    assert {c['value'] for c in result}=={'info@alpha.ru','+7 (495) 123-45-67'}
+    unrelated={'url':'https://clinic.ru/contact','text':'other@clinic.ru'}
+    assert contacts.extract([page,unrelated],'7707083893','ООО Альфа')==result
+
+
+def test_source_document_proof_is_local_not_marketplace_wide():
+    doc={'url':'https://bidzaar.com/api/filestorage/files/download/abc','text':'ООО Альфа ИНН 7707083893 mail@alpha.ru','scoped':True}
+    unrelated={'url':'https://bidzaar.com/contacts','text':'support@bidzaar.com'}
+    result=contacts.extract([doc,unrelated],'7707083893','ООО Альфа')
+    assert [c['value'] for c in result]==['mail@alpha.ru']
+
+
+def test_www_contact_page_matches_legal_page_only_on_same_domain():
+    pages=[{'url':'https://www.alpha.ru/legal','text':'ООО Альфа ИНН 7707083893'}, {'url':'https://alpha.ru/contact','text':'mail@alpha.ru'}, {'url':'https://fakealpha.ru/contact','text':'mail@fakealpha.ru'}]
+    assert [c['value'] for c in contacts.extract(pages,'7707083893','ООО Альфа')]==['mail@alpha.ru']
+
+
+def test_search_tries_second_provider_after_unusable_results(monkeypatch):
+    calls=[]
+    def search_urls(client,env,query,prefer_tavily=False):
+        calls.append(prefer_tavily)
+        return (['https://alpha.ru/contacts'],'TAVILY') if prefer_tavily else (['https://dead.ru/'],'TINYFISH')
+    monkeypatch.setattr(contacts,'search_urls',search_urls)
+    monkeypatch.setattr(contacts,'safe',lambda url:True)
+    monkeypatch.setattr(contacts,'read',lambda client,url,robots: {'url':url,'text':'ООО Альфа ИНН 7707083893 mail@alpha.ru','links':[]} if 'alpha' in url else None)
+    result=contacts.search(None,{},'7707083893','ООО Альфа')
+    assert True in calls and result['status']=='VERIFIED'
+
+
+def test_legal_section_does_not_extract_regulator_contacts():
+    page={'url':'https://clinic.ru/patient/','text':'Полное наименование: ООО Альфа ИНН 7707083893 mail@alpha.ru\nРоспотребнадзор hotline@regulator.ru'}
+    assert [c['value'] for c in contacts.extract([page],'7707083893','ООО Альфа')]==['mail@alpha.ru']

@@ -1,4 +1,4 @@
-name: ServiceIT manager call outcomes and profit workspace
+name: ServiceIT manager workspace using owner-approved setup connection
 on:
   push:
     branches: [main]
@@ -41,7 +41,7 @@ jobs:
           target="$VPS_USER@$VPS_HOST"
           remote="serviceit/manager-workspace/staging-$GITHUB_RUN_ID"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
-          for file in leadpilot/serviceit_manager_workspace.py leadpilot/serviceit_postcall_assistant.py ops/serviceit_manager_workspace_runner.py; do
+          for file in leadpilot/serviceit_manager_workspace.py leadpilot/serviceit_postcall_assistant.py ops/serviceit_manager_workspace_runner.py deploy/serviceit-workspace-setup.enc.b64; do
             scp -i "$stage/id" "${opts[@]}" "$file" "$target:$remote/"
           done
       - name: Install five-minute worker with permission-aware first run
@@ -64,7 +64,8 @@ jobs:
             if [[ -f "$dir/$file" ]]; then cp -p "$dir/$file" "$dir/backup-$id/$file"; fi
             install -m 0600 "$stage/$file" "$dir/$file"
           done
-          if ! python3 "$dir/serviceit_manager_workspace_runner.py" > "$dir/release-$id.log"; then
+          install -m 0600 "$stage/serviceit-workspace-setup.enc.b64" "$dir/serviceit-workspace-setup.enc.b64"
+          if ! python3 "$dir/serviceit_manager_workspace_runner.py" --setup-encrypted > "$dir/release-$id.log"; then
             for file in "$dir/backup-$id/"*.py; do
               [[ -f "$file" ]] && cp -p "$file" "$dir/"
             done
@@ -72,6 +73,7 @@ jobs:
             exit 2
           fi
           cat "$dir/release-$id.log"
+          rm -f "$dir/serviceit-workspace-setup.enc.b64" "$stage/serviceit-workspace-setup.enc.b64"
           python3 - "$dir" <<'PY'
           import subprocess,sys
           from pathlib import Path

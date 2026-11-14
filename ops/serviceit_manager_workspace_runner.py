@@ -1,8 +1,16 @@
 """Isolated host runner. Uses existing mounted credentials inside coordinator."""
 from pathlib import Path
-import re,subprocess,sys
+import re,subprocess,sys,base64
 root=Path(__file__).resolve().parent
 code='import os,sys,types\n'
+if '--setup-encrypted' in sys.argv:
+ encrypted=base64.b64decode((root/'serviceit-workspace-setup.enc.b64').read_bytes(),validate=False)
+ decrypted=subprocess.run(['openssl','pkeyutl','-decrypt','-inkey',str(root.parent/'bidzaar/recipient.pem'),'-pkeyopt','rsa_padding_mode:oaep','-pkeyopt','rsa_oaep_md:sha256','-pkeyopt','rsa_mgf1_md:sha256'],input=encrypted,capture_output=True)
+ if decrypted.returncode:raise SystemExit('SETUP_DECRYPT_FAILED')
+ hook=decrypted.stdout.decode().strip()
+ if not re.fullmatch(r'https://serviseit\.bitrix24\.ru/rest/1607/[A-Za-z0-9]+/?',hook):raise SystemExit('SETUP_HOOK_INVALID')
+ code+='os.environ["SERVICEIT_WORKSPACE_SETUP_WEBHOOK"]='+repr(hook)+'\n'
+ code+='os.environ["SERVICEIT_WORKSPACE_SETUP"]="YES"\n'
 source=(root/'serviceit_postcall_assistant.py').read_text()
 code+='m=types.ModuleType("leadpilot.serviceit_postcall_assistant");m.__package__="leadpilot"\n'
 code+='sys.modules[m.__name__]=m\nexec('+repr(source)+',m.__dict__)\n'

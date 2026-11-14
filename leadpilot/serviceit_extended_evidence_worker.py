@@ -1,5 +1,6 @@
 """All-card public contact enrichment and durable document backlog processor."""
 import json,os,re,traceback
+from concurrent.futures import ThreadPoolExecutor
 import httpx
 from . import serviceit_extended_documents as docs
 from . import serviceit_company_contacts as contacts
@@ -16,7 +17,7 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  CREATE TABLE IF NOT EXISTS serviceit_extended_evidence_receipts (
  card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());
  ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS reader_version INTEGER NOT NULL DEFAULT 1;
- UPDATE serviceit_company_contact_cache SET reader_version=2,next_attempt_at=now() WHERE reader_version<2 AND result->>'status'='NOT_FOUND';'''
+ UPDATE serviceit_company_contact_cache SET reader_version=3,next_attempt_at=now() WHERE reader_version<3 AND result->>'status' IN ('NOT_FOUND','SEARCH_UNAVAILABLE');'''
 BEGIN='[SERVICEIT_PUBLIC_EVIDENCE_V1]';END='[/SERVICEIT_PUBLIC_EVIDENCE_V1]'
 
 
@@ -128,12 +129,20 @@ def run():
             docs.register(conn,card,notice.get('files',[]))
         print('EXT_DOCUMENT_CHUNKS='+str(docs.process(conn,client,env,batch=8)),flush=True)
         rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2').fetchall()
+        pending=[]
         for inn,name in rows:
-            # Reserve before external requests, preventing a crash from burning calls every five minutes.
             conn.execute("UPDATE serviceit_company_contact_cache SET next_attempt_at=now()+interval '1 day' WHERE inn=%s",(inn,))
-            result=contacts.search(client,env,inn,name)
-            conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,reader_version=2,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']=='SEARCH_UNAVAILABLE',inn))
-            print('EXT_CONTACT_SEARCH='+result['status'],flush=True)
+            evidence=conn.execute("SELECT d.url,d.text_content FROM serviceit_extended_documents d JOIN serviceit_extended_card_inventory i USING(card_id) WHERE i.snapshot->>%s=%s AND d.status='READ' AND NOT (d.reports @> '[{\"provider\":\"OCR\"}]'::jsonb) ORDER BY d.card_id,d.url",(INN,inn)).fetchall()
+            documents=[{'url':url,'text':text,'emails':[],'phones':[],'links':[],'scoped':True} for url,text in evidence if text]
+            pending.append((inn,name,documents))
+        # Network work only runs in threads; PostgreSQL and CRM remain serialized.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures=[(inn,executor.submit(contacts.search,client,env,inn,name,documents)) for inn,name,documents in pending]
+            for inn,future in futures:
+                result=future.result()
+                conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,reader_version=3,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']!='VERIFIED',inn))
+                print('EXT_CONTACT_SEARCH='+result['status'],flush=True)
+                print('EXT_CONTACT_PAGES='+str(result['pages_checked']),flush=True)
         updated=0
         for item in items:
             card=int(item['id']);inn=str(item.get(INN) or '')

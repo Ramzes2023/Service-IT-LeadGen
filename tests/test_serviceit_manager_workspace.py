@@ -53,10 +53,11 @@ def test_interest_remains_explicit_and_titles_idempotent():
 def test_layout_keeps_existing_sections_and_fields_and_is_idempotent():
  original=[{'name':'ai','title':'AI и приоритет','type':'section','elements':[{'name':'OLD_FIELD','optionFlags':'0'}]}, {'name':'custom','title':'Мой раздел','elements':[{'name':'CUSTOM','optionFlags':'1'}]}]
  after=w.layout_plan(original)
- assert after[0]['title']=='Сервис ИТ | Общие итоги'
- assert after[1]==original[0] and after[-1]==original[1]
+ assert after==original
  assert after==w.layout_plan(after)
- assert len([e for s in after for e in s['elements']])==len(w.SPECS)+2
+ rejected={'name':'serviceit_workspace_call','elements':[{'name':w.P+'POST_NEED'},{'name':'FOREIGN'}]}
+ assert w.layout_plan([rejected,*original])==[{'name':'serviceit_workspace_call','elements':[{'name':'FOREIGN'}]},*original]
+ assert w.layout_plan([{'name':'serviceit_workspace_finance','elements':[{'name':w.P+'FIN_REVENUE'}]},*original])==original
 
 
 def test_concurrent_manager_change_blocks_update():

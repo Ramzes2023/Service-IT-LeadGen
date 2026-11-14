@@ -149,28 +149,18 @@ def totals(items,basis_enum):
 
 
 def layout_plan(before):
+ """Withdraw the rejected left-side presentation without deleting stored data."""
  require(isinstance(before,list) and bool(before),'COMMON_LAYOUT_MISSING')
- owned=[('serviceit_workspace_totals','Сервис ИТ | Общие итоги',('ALL_TOTALS',)),
-  ('serviceit_workspace_call','Сервис ИТ | Итог разговора',('POST_INTEREST','POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_DUE','POST_NOTES','POST_BADGE','POST_SUMMARY')),
-  ('serviceit_workspace_finance','Сервис ИТ | Финансы и распределение прибыли',('FIN_REVENUE','FIN_COSTS','FIN_BASIS','FIN_PROFIT','FIN_DEVELOPER','FIN_MANAGER','FIN_COMPANY','FIN_STATUS'))]
- names={n for n,_,_ in owned};wanted={P+x for x in SPECS}
- original=deepcopy(before);kept=[];elements={}
- for section in original:
+ owned={'serviceit_workspace_totals','serviceit_workspace_call','serviceit_workspace_finance'}
+ fields={P+x for x in SPECS}
+ result=[]
+ for section in deepcopy(before):
   require(isinstance(section,dict) and isinstance(section.get('elements'),list),'LAYOUT_INVALID')
-  remaining=[]
-  for e in section['elements']:
-   if e['name'] in wanted:
-    require(e['name'] not in elements,'LAYOUT_DUPLICATE_FIELD');elements[e['name']]=e
-   else:remaining.append(e)
-  section['elements']=remaining
-  if section.get('name') not in names:kept.append(section)
-  else:require(not remaining,'OWN_SECTION_HAS_FOREIGN_FIELDS')
- added=[{'name':n,'title':title,'type':'section','elements':[elements.get(P+x,{'name':P+x,'optionFlags':'1'}) for x in fields]} for n,title,fields in owned]
- # Top summary; call block immediately below existing priority panel.
- index=next((i+1 for i,s in enumerate(kept) if 'приоритет' in s.get('title','').lower()),0)
- result=[added[0],*kept[:index],added[1],added[2],*kept[index:]]
- allnames=[e['name'] for s in result for e in s['elements']]
- require(len(allnames)==len(set(allnames)),'LAYOUT_DUPLICATE_FIELD')
+  if section.get('name') in owned:
+   section['elements']=[e for e in section['elements'] if e.get('name') not in fields]
+   if not section['elements']:continue
+  result.append(section)
+ require(bool(result),'COMMON_LAYOUT_MISSING')
  return result
 
 

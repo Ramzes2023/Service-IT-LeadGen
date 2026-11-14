@@ -1,4 +1,4 @@
-name: ServiceIT manager workspace using owner-approved setup connection
+name: ServiceIT remove rejected left-side workspace presentation
 on:
   push:
     branches: [main]

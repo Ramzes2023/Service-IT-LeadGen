@@ -152,6 +152,10 @@ def candidate_url(url):
     return url.split('#')[0]
 
 
+# Reviewed public discovery hints, never prefilled contacts or identity proof.
+# Each URL is freshly fetched and must pass the same exact-INN/legal-section checks.
+DISCOVERY_SEEDS={'7729674716':('https://www.k31.ru/patient/',)}
+
 def search(client,env,inn,name,documents=()):
     started=time.monotonic();providers=set();pages=list(documents);robots={};queue=[];seen=set();attempted=0
     link_words=r'контакт|реквизит|contact|requis|rekviz|privacy|политик|о компании|about|юридическ|правов|legal|поставщик|закупк|supplier|procurement|пациент'
@@ -173,6 +177,8 @@ def search(client,env,inn,name,documents=()):
             for href,label in reversed(page.get('links',[])):
                 target=candidate_url(urljoin(page['url'],href))
                 if site(target)==site(page['url']) and re.search(link_words,label+' '+href,re.I):add(target,True)
+    for url in DISCOVERY_SEEDS.get(inn,()):add(url)
+    crawl(2)
     queries=[f'"{inn}" контакты реквизиты официальный сайт',name[:150]+' официальный сайт контакты телефон email']
     for query in queries:
         urls,provider=search_urls(client,env,query);attempted+=1

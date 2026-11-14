@@ -15,7 +15,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     for status,count in conn.execute("SELECT coalesce(result->>'status','PENDING'),count(*) FROM serviceit_company_contact_cache GROUP BY 1").fetchall():print('EXT_COMPANIES_'+status+'='+str(count))
     for status,zero,count in conn.execute("SELECT coalesce(result->>'status','PENDING'),COALESCE((result->>'pages_checked')::int,0)=0,count(*) FROM serviceit_company_contact_cache GROUP BY 1,2").fetchall():
         print('EXT_CONTACT_'+status+('_NO_PAGES' if zero else '_HAS_PAGES')+'='+str(count))
-    print('EXT_CONTACT_RESEARCH_PENDING='+str(conn.execute("SELECT count(*) FROM serviceit_company_contact_cache WHERE result IS NULL OR (reader_version<3 AND result->>'status'!='VERIFIED')").fetchone()[0]))
+    print('EXT_CONTACT_RESEARCH_PENDING='+str(conn.execute("SELECT count(*) FROM serviceit_company_contact_cache WHERE result IS NULL OR (next_attempt_at<=now() AND result->>'status'!='VERIFIED')").fetchone()[0]))
     count=0;bad=0;contact_cards=0;contact_values=0
     for card,expected,status in conn.execute('SELECT card_id,expected,status FROM serviceit_extended_evidence_receipts').fetchall():
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])

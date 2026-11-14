@@ -1,8 +1,11 @@
 """Read-only field, form and stage metadata for requested manager workspace."""
-import os,json,re,httpx
+import os,json,re,httpx,hashlib
+from urllib.parse import urlsplit
 from leadpilot.serviceit_vps_pg_queue import secret_file
 from leadpilot.bitrix_metadata_audit import validate_webhook
 base=validate_webhook(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'))
+print('WORKSPACE_VPS_HOOK_USER='+urlsplit(base).path.strip('/').split('/')[1])
+print('WORKSPACE_VPS_HOOK_FINGERPRINT='+hashlib.sha256(base.rstrip('/').encode()).hexdigest()[:12])
 with httpx.Client(trust_env=False,timeout=25) as client:
  def call(method,args):
   r=client.post(base+'/'+method+'.json',json=args)

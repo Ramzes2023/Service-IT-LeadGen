@@ -40,13 +40,16 @@ jobs:
           STANDARD_HOOK: ${{ secrets.SERVICEIT_BITRIX_WEBHOOK }}
         run: |
           python - <<'PY'
-          import os,json,urllib.request,urllib.error
+          import os,json,urllib.request,urllib.error,hashlib
+          from urllib.parse import urlsplit
           for label in ('ADMIN_HOOK','STANDARD_HOOK'):
               base=os.environ.get(label,'').strip().rstrip('/')
               if not base:
                   print('WORKSPACE_'+label+'=MISSING');continue
               if not base.startswith('https://serviseit.bitrix24.ru/rest/'):
                   print('WORKSPACE_'+label+'=WRONG_PORTAL');continue
+              print('WORKSPACE_'+label+'_USER='+urlsplit(base).path.strip('/').split('/')[1])
+              print('WORKSPACE_'+label+'_FINGERPRINT='+hashlib.sha256(base.encode()).hexdigest()[:12])
               args={'moduleId':'crm','filter':{'entityId':'CRM_13','fieldName':'UF_CRM_13_SVCIT_AI_STATUS'}}
               req=urllib.request.Request(base+'/userfieldconfig.list.json',data=json.dumps(args).encode(),headers={'Content-Type':'application/json'})
               try:

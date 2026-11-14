@@ -1,4 +1,4 @@
-name: ServiceIT all-document queue and public company contacts v6
+name: ServiceIT all-document queue and public company contacts v7
 on:
   push:
     branches: [main]
@@ -64,12 +64,12 @@ jobs:
           cat > "$stage/Dockerfile" <<'DOCKER'
           FROM serviceit-evidence-base:reviewed
           USER root
-          RUN apt-get update && apt-get install -y --no-install-recommends antiword poppler-utils tesseract-ocr-rus tesseract-ocr-eng tesseract-ocr-chi-sim && rm -rf /var/lib/apt/lists/*
+          RUN apt-get update && apt-get install -y --no-install-recommends antiword poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng tesseract-ocr-chi-sim && rm -rf /var/lib/apt/lists/*
           RUN python -m pip install --no-cache-dir striprtf==0.0.29 xlrd==2.0.2
           USER 10001:10001
           DOCKER
           docker build -t "serviceit-evidence:$id" "$stage"
-          docker run --rm --network none --read-only --entrypoint sh "serviceit-evidence:$id" -c 'command -v antiword >/dev/null && python -c "import striprtf.striprtf, xlrd"'
+          docker run --rm --network none --read-only --entrypoint sh "serviceit-evidence:$id" -c 'command -v antiword >/dev/null && command -v tesseract >/dev/null && command -v pdftoppm >/dev/null && python -c "import striprtf.striprtf, xlrd"'
           for file in serviceit_bitrix_list_shape.py serviceit_b2b_tender_documents.py serviceit_extended_documents.py serviceit_company_contacts.py serviceit_extended_evidence_worker.py serviceit_extended_evidence_runner.py serviceit_extended_evidence_audit.py; do
             python3 -m py_compile "$stage/$file"
             install -m 0600 "$stage/$file" "$dir/$file"

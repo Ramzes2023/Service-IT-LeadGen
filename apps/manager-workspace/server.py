@@ -21,6 +21,6 @@ class Handler(BaseHTTPRequestHandler):
    name=names[path];payload=(ROOT/name).read_bytes();mime={'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8'}[name.split('.')[-1]]
   else:return self.send_error(404)
   self.send_response(200)
-  for k,v in {'Content-Type':mime,'Content-Length':str(len(payload)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self' https://api.bitrix24.com https://api.bitrix24.tech; style-src 'self'; connect-src 'self' https://serviseit.bitrix24.ru; frame-ancestors https://serviseit.bitrix24.ru; base-uri 'none'; form-action 'none'"}.items():self.send_header(k,v)
+  for k,v in {'Content-Type':mime,'Content-Length':str(len(payload)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self' https://api.bitrix24.com https://api.bitrix24.tech; style-src 'self'; connect-src 'self' https://serviseit.bitrix24.ru https://api.bitrix24.com https://api.bitrix24.tech; frame-src 'self' https://serviseit.bitrix24.ru https://api.bitrix24.com https://api.bitrix24.tech; frame-ancestors https://serviseit.bitrix24.ru; base-uri 'none'; form-action 'none'"}.items():self.send_header(k,v)
   self.end_headers();self.wfile.write(payload)
 if __name__=='__main__':ThreadingHTTPServer(('0.0.0.0',8000),Handler).serve_forever()

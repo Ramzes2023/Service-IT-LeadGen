@@ -22,12 +22,12 @@ def main():
  assert os.geteuid()==0,'ROOT_REQUIRED'
  with urllib.request.urlopen('http://127.0.0.1:18784/apps/serviceit-workspace/health',timeout=5) as r:assert json.load(r)['status']=='READY_FOR_BITRIX_INSTALLATION'
  assert FILE.is_file() and not FILE.is_symlink()
- old=FILE.read_text();new=render(old)
+ info=FILE.stat();old=FILE.read_text();new=render(old)
  if new==old:print('WORKSPACE_APP_ROUTE=ALREADY_CONFIGURED');return
  backup=FILE.with_name('Caddyfile.workspace-backup-'+str(time.time_ns()));shutil.copy2(FILE,backup);os.chmod(backup,0o600)
  try:
   FILE.write_text(new);run(['caddy','validate','--config',str(FILE),'--adapter','caddyfile']);run(['systemctl','reload','caddy'])
  except Exception:
-  shutil.copy2(backup,FILE);run(['systemctl','reload','caddy']);raise
+  shutil.copy2(backup,FILE);os.chmod(FILE,info.st_mode & 0o777);os.chown(FILE,info.st_uid,info.st_gid);run(['systemctl','reload','caddy']);raise
  print('WORKSPACE_APP_ROUTE=VERIFIED')
 if __name__=='__main__':main()

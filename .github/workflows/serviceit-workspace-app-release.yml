@@ -1,4 +1,4 @@
-name: ServiceIT manager application prepare and deploy
+name: ServiceIT manager application prepared HTTPS activation
 on:
   push:
     branches: [main]

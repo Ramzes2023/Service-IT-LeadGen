@@ -71,6 +71,13 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     if conn.execute("SELECT to_regclass('serviceit_extended_documents')").fetchone()[0]:
         for status,n in conn.execute('SELECT status,count(*) FROM serviceit_extended_documents GROUP BY status').fetchall():
             if re.fullmatch(r'[A-Z_]+',status):print('DOCUMENT_PROGRESS_'+status+'='+str(n),flush=True)
+        for card,error,attempts,remaining,due,version in conn.execute("SELECT card_id,COALESCE(error,'NONE'),model_attempts,GREATEST(length(text_content)-analyzed_chars,0),next_attempt_at<=now(),analysis_version FROM serviceit_extended_documents WHERE status='EXTRACTED' ORDER BY card_id,url").fetchall():
+            prefix='DOCUMENT_PENDING_CARD_'+str(card)+'_'
+            if re.fullmatch(r'[A-Z][A-Z0-9_]{0,100}',error):print(prefix+'ERROR='+error,flush=True)
+            print(prefix+'ATTEMPTS='+str(attempts),flush=True)
+            print(prefix+'REMAINING_CHARS='+str(remaining),flush=True)
+            print(prefix+'DUE='+('YES' if due else 'NO'),flush=True)
+            print(prefix+'ANALYSIS_VERSION='+str(version),flush=True)
     excluded=0
     for card,expected in conn.execute("SELECT card_id,expected FROM serviceit_bidzaar_inbox WHERE state='EXCLUDED' AND card_id IS NOT NULL").fetchall():
         item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])

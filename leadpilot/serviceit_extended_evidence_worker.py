@@ -133,7 +133,8 @@ def run():
         for card,notice in conn.execute("SELECT card_id,notice FROM serviceit_bidzaar_inbox WHERE state='VERIFIED'").fetchall():
             docs.register(conn,card,notice.get('files',[]))
         print('EXT_DOCUMENT_CHUNKS='+str(docs.process(conn,client,env,batch=8)),flush=True)
-        rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2').fetchall()
+        active_inns=sorted({str(item.get(INN) or '') for item in items if _is_valid_inn(str(item.get(INN) or ''))})
+        rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() AND inn=ANY(%s) ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2',(active_inns,)).fetchall()
         pending=[]
         for inn,name in rows:
             conn.execute("UPDATE serviceit_company_contact_cache SET next_attempt_at=now()+interval '1 day' WHERE inn=%s",(inn,))

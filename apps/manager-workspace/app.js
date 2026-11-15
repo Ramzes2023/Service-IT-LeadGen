@@ -16,14 +16,14 @@ function timelineLayout(item,kind){
  const finance=kind==='finance',v=k=>item[P+k];
  let revenue=null,cost=null,result=null;try{revenue=cents(v('FIN_REVENUE'));cost=cents(v('FIN_COSTS'));result=splitMoney(revenue,cost);}catch(e){}
  const blocks=finance?{revenue:cell('Цена / выручка',rub(revenue)),cost:cell('Расходы',rub(cost)),profit:cell('Прибыль',rub(result?.profit??null)),developer:cell('Разработчику · 15%',rub(result?.developer??null)),manager:cell('Менеджеру · 10%',rub(result?.manager??null)),company:cell('Компании · 75% / убыток',rub(result?.company??null))}:{status:cell('Результат',v('POST_BADGE')||'Ожидает разговора'),need:cell('Потребность',v('POST_NEED')),next:cell('Следующий шаг',v('POST_ACTION')),due:cell('Срок',v('POST_DUE'))};
- return {icon:{code:finance?'document':'call-completed'},header:{title:finance?'Сервис ИТ · Финансы и прибыль':'Сервис ИТ · Итог разговора'},body:{logo:{code:'call-incoming'},blocks},footer:{buttons:{edit:{title:finance?'Заполнить финансы':'Заполнить итог',type:'primary',action:{type:'openRestApp',actionParams:{cardId:String(item.id),section:kind}}}}}};
+ return {icon:{code:finance?'document':'call-completed'},header:{title:finance?'Сервис ИТ · Финансы и прибыль':'Сервис ИТ · Итог разговора'},body:{...(finance?{}:{logo:{code:'call-incoming'}}),blocks},footer:{buttons:{edit:{title:finance?'Заполнить финансы':'Заполнить итог',type:'primary',action:{type:'openRestApp',actionParams:{cardId:String(item.id),section:kind}}}}}};
 }
 if(typeof module!=='undefined')module.exports={cents,splitMoney,timelineLayout};
 if(typeof document!=='undefined'){
  let item=null,interest='',maps={},busy=false;
  const $=id=>document.getElementById(id),msg=(text,error=false)=>{$('status').textContent=text;$('status').classList.toggle('error',error);};
  const api=(method,args={})=>new Promise((resolve,reject)=>BX24.callMethod(method,args,r=>r.error()?reject(Error('Битрикс24: '+String(r.error()).replace(/[^A-Za-z0-9_ -]/g,'').slice(0,80))):resolve(r.data())));
- const run=async fn=>{if(busy)return;busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);try{await fn();}catch(e){msg(e.message,true);}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);}};
+ const run=async fn=>{if(busy)return;busy=true;document.querySelectorAll('button,input,textarea,select').forEach(b=>b.disabled=true);try{await fn();}catch(e){msg(e.message,true);}finally{busy=false;document.querySelectorAll('button,input,textarea,select').forEach(b=>b.disabled=false);}};
  async function get(id){const x=(await api('crm.item.get',{entityTypeId:TYPE,id,useOriginalUfNames:'Y'})).item;if(Number(x.categoryId)!==CATEGORY||Number(x.id)<8)throw Error('Карточка вне рабочей воронки.');return x;}
  async function enumMaps(){const f=(await api('crm.item.fields',{entityTypeId:TYPE,useOriginalUfNames:'Y'})).fields;for(const [field,values] of [['POST_INTEREST',INTEREST],['FIN_BASIS',BASIS]]){maps[field]={};for(const [key,label] of Object.entries(values)){const row=(f[P+field]?.items||[]).find(x=>(x.VALUE??x.value)===label);if(!row)throw Error('Не удалось сопоставить варианты поля '+field);maps[field][key]=String(row.ID??row.id);}}}
  function choose(value){interest=value;$('badge').dataset.interest=value;document.querySelectorAll('[data-interest]').forEach(b=>b.classList.toggle('selected',b.dataset.interest===value));}
@@ -37,14 +37,13 @@ if(typeof document!=='undefined'){
  $('summary').textContent=item[P+'POST_SUMMARY']||'Появится после сохранения и обработки.';$('totals').textContent=item[P+'ALL_TOTALS']||'Расчёт ещё не получен';preview();
  }
  function localDate(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
- async function syncTimeline(x){for(const kind of ['call','finance']){
- const origin='serviceit-workspace:'+x.id+':'+kind;
- const rows=await api('crm.activity.list',{filter:{OWNER_TYPE_ID:TYPE,OWNER_ID:x.id,ORIGINATOR_ID:'serviceit_workspace_app_v1',ORIGIN_ID:origin},select:['ID']});
- if(rows.length>1)throw Error('Обнаружены повторные блоки. Нужна проверка.');
- const layout=timelineLayout(x,kind);
- if(rows.length)await api('crm.activity.configurable.update',{id:Number(rows[0].ID),layout});
- else await api('crm.activity.configurable.add',{ownerTypeId:TYPE,ownerId:Number(x.id),fields:{typeId:'CONFIGURABLE',completed:false,responsibleId:Number(x.assignedById)||undefined,originatorId:'serviceit_workspace_app_v1',originId:origin},layout});
- }}
+ async function serverCall(path,data){const r=await fetch(URL_APP+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await r.json();if(!r.ok||result.error)throw Error(result.error||'Обновление временно недоступно');return result;}
+ async function syncTimeline(x){return serverCall('sync',{access_token:BX24.getAuth().access_token,card_id:Number(x.id)});}
+ let dirty=false;
+ document.addEventListener('input',()=>{dirty=true;});
+ document.addEventListener('change',()=>{dirty=true;});
+ async function refresh(){if(!item||busy||dirty||document.hidden)return;await run(async()=>{item=await get(item.id);fill();msg('Данные и расчёты обновлены.');});}
+ setInterval(refresh,30000);
  async function save(kind){
  const keys=kind==='call'?['POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_NOTES','POST_DUE','POST_INTEREST']:['FIN_REVENUE','FIN_COSTS','FIN_BASIS'];
  const fresh=await get(item.id);for(const k of keys)if(String(fresh[P+k]??'')!==String(item[P+k]??''))throw Error('Эти данные изменил другой сотрудник. Переоткройте форму перед сохранением.');
@@ -54,7 +53,7 @@ if(typeof document!=='undefined'){
  }else{for(const k of ['FIN_REVENUE','FIN_COSTS']){const v=cents($(k).value);fields[P+k]=v===null?'':(v/100).toFixed(2);}fields[P+'FIN_BASIS']=maps.FIN_BASIS[$('FIN_BASIS').value];}
  await api('crm.item.update',{entityTypeId:TYPE,id:item.id,useOriginalUfNames:'Y',fields});item=await get(item.id);
  for(const [k,v] of Object.entries(fields)){const actual=item[k]??'';const same=k.endsWith('POST_DUE')?(v?new Date(actual).getTime()===new Date(v).getTime():!actual):k.endsWith('FIN_REVENUE')||k.endsWith('FIN_COSTS')?cents(actual)===cents(v):String(actual)===String(v);if(!same)throw Error('Сохранение не подтверждено. Переоткройте карточку.');}
- fill();msg('Сохранено в CRM. ИИ, статус и общие итоги обновятся в течение 5 минут.');
+ dirty=false;fill();msg('Сохранено в CRM. ИИ, статус и общие итоги обновятся в течение 5 минут.');
  try{await syncTimeline(item);}catch(e){msg('Данные сохранены. Обновление блоков ленты пока не подтверждено: '+e.message,true);}
  }
  async function install(){
@@ -65,16 +64,17 @@ if(typeof document!=='undefined'){
  if(rows.length<50)break;
  }msg('Блоки созданы. Завершаем установку…');BX24.installFinish();
  }
- document.querySelectorAll('[data-interest]').forEach(b=>b.onclick=()=>choose(b.dataset.interest));
+ document.querySelectorAll('[data-interest]').forEach(b=>b.onclick=()=>{dirty=true;choose(b.dataset.interest);});
  $('FIN_REVENUE').oninput=preview;$('FIN_COSTS').oninput=preview;$('saveCall').onclick=()=>run(()=>save('call'));$('saveFinance').onclick=()=>run(()=>save('finance'));$('installButton').onclick=()=>run(install);
  if(typeof BX24==='undefined'||window.parent===window){msg('Форма готова. Откройте её через установленное приложение Битрикс24.');}
  else BX24.init(()=>run(async()=>{
  const auth=BX24.getAuth();if(auth.domain!=='serviseit.bitrix24.ru')throw Error('Приложение доступно только для портала Сервис ИТ.');
  if(location.pathname.endsWith('/install')){$('install').hidden=false;msg('Готово к установке.');return;}
- const p=BX24.placement.info(),o=p.options||{};let id=Number(o.cardId||o.ID||o.id||o.actionParams?.cardId);
+ try{const connected=await serverCall('connect',auth);if(connected.administratorRequired)msg('Форма доступна. Для фонового обновления администратору нужно один раз открыть приложение.');}catch(e){msg('Фоновое подключение пока не подтверждено: '+e.message,true);}
+ const p=BX24.placement.info();let o=p.options||{};if(typeof o==='string'){try{o=JSON.parse(o);}catch(e){o={};}}if(typeof o.actionParams==='string'){try{o.actionParams=JSON.parse(o.actionParams);}catch(e){o.actionParams={};}}let id=Number(o.cardId||o.ID||o.id||o.actionParams?.cardId);
  if(!Number.isSafeInteger(id)||id<8){msg('Откройте приложение из блока «Итог разговора», «Финансы» или вкладки карточки.');return;}
  await enumMaps();item=await get(id);fill();$('workspace').hidden=false;msg('Данные загружены из CRM.');
  try{await syncTimeline(item);}catch(e){msg('Форма доступна. Блоки ленты требуют проверки: '+e.message,true);}
- BX24.fitWindow();if(o.section==='finance')document.querySelector('.finance').scrollIntoView();
+ BX24.fitWindow();if((o.section||o.actionParams?.section)==='finance')document.querySelector('.finance').scrollIntoView();
  }));
 }

@@ -1,4 +1,4 @@
-name: ServiceIT manager application prepared HTTPS activation
+name: ServiceIT workspace background reconciliation and live refresh
 on:
   push:
     branches: [main]
@@ -26,6 +26,7 @@ jobs:
         run: |
           node --check apps/manager-workspace/app.js
           node apps/manager-workspace/test.cjs
+          python -m unittest discover -s apps/manager-workspace -p test_automation.py
           python -m py_compile apps/manager-workspace/server.py deploy/serviceit-workspace-caddy-enable.py
       - name: Stage and start isolated application
         shell: bash
@@ -42,7 +43,7 @@ jobs:
           target="$VPS_USER@$VPS_HOST"
           remote="serviceit/workspace-app/releases/$GITHUB_RUN_ID"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
-          scp -i "$stage/id" "${opts[@]}" apps/manager-workspace/{server.py,index.html,app.js,style.css,Dockerfile} deploy/serviceit-workspace-caddy-enable.py "$target:$remote/"
+          scp -i "$stage/id" "${opts[@]}" apps/manager-workspace/{automation.py,server.py,index.html,app.js,style.css,Dockerfile} deploy/serviceit-workspace-caddy-enable.py deploy/serviceit-workspace-client.enc.b64 "$target:$remote/"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "bash -s -- '$GITHUB_RUN_ID'" <<'REMOTE'
           set -euo pipefail
           id="$1"
@@ -52,8 +53,12 @@ jobs:
           image="serviceit-workspace-app:$id"
           docker build -q -t "$image" "$dir" >/dev/null
           old="$(docker inspect --format '{{.Config.Image}}' "$name" 2>/dev/null || true)"
+          docker volume create serviceit-workspace-private >/dev/null
+          # Decrypt only on the VPS; pipe directly to private Docker volume.
+          base64 -d "$dir/serviceit-workspace-client.enc.b64" | openssl pkeyutl -decrypt -inkey "$HOME/serviceit/bidzaar/recipient.pem" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 | docker run --rm -i --network none --user 0:0 -v serviceit-workspace-private:/data "$image" python -c 'import os,json,sys; from pathlib import Path; value=json.load(sys.stdin); assert value["client_id"]=="local.6af97755661a80.97347802"; assert 40<=len(value["client_secret"])<=100; os.chmod("/data",0o700); os.chown("/data",10001,10001); p=Path("/data/client.json"); p.write_text(json.dumps(value)); os.chmod(p,0o600); os.chown(p,10001,10001)'
+          rm -f "$dir/serviceit-workspace-client.enc.b64"
           start() {
-            docker run -d --name "$name" --restart unless-stopped --read-only --tmpfs /tmp:size=8m --cap-drop ALL --security-opt no-new-privileges --pids-limit 80 --memory 128m --cpus .5 -p 127.0.0.1:18784:8000 "$1" >/dev/null
+            docker run -d --name "$name" --restart unless-stopped --read-only --tmpfs /tmp:size=8m --cap-drop ALL --security-opt no-new-privileges --pids-limit 80 --memory 128m --cpus .5 -v serviceit-workspace-private:/data -p 127.0.0.1:18784:8000 "$1" >/dev/null
           }
           docker rm -f "$name" >/dev/null 2>&1 || true
           start "$image"
@@ -72,6 +77,7 @@ jobs:
           assert json.load(open(sys.argv[1]))['status']=='READY_FOR_BITRIX_INSTALLATION'
           print('WORKSPACE_APP_LOCAL_HEALTH=VERIFIED')
           PY
+          docker exec "$name" python -c 'import json; from pathlib import Path; p=Path("/data/status.json"); print("WORKSPACE_BACKGROUND="+(json.loads(p.read_text()).get("status","UNKNOWN") if p.exists() else "STARTING"))'
           ln -sfn "$dir" "$HOME/serviceit/workspace-app/current"
           if sudo -n true >/dev/null 2>&1; then
             sudo -n python3 "$dir/serviceit-workspace-caddy-enable.py"

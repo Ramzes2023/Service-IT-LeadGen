@@ -384,3 +384,25 @@ def test_ocr_is_opt_in_and_scan_is_excluded_from_confirmed_facts(monkeypatch):
     confirmed, provisional = report.split("РАСПОЗНАННЫЕ СКАНЫ", 1)
     assert quote.rstrip(".") in provisional
     assert quote.rstrip(".") not in confirmed
+
+
+def test_full_queue_discovers_more_than_eight_including_legacy(monkeypatch):
+    monkeypatch.setattr(research,'_public_dns',lambda _:True)
+    monkeypatch.setattr(docs,'_robots',lambda *args:None)
+    html='Тендер 4673595'+''.join(f'<a href="/files/{i}.doc">Приложение {i}</a>' for i in range(13))
+    findings={'status':'PUBLIC_PAGES_INSPECTED','pages':[{'url':URL,'excerpt':'4673595'}]}
+    with httpx.Client(transport=httpx.MockTransport(lambda _:httpx.Response(200,text=html,headers={'content-type':'text/html'}))) as client:
+        links=docs.candidate_links(client,findings,TENDER,max_links=1000,include_legacy=True)
+        assert len(links)==13
+        with pytest.raises(docs.TenderDocumentBlocked,match='DISCOVERY_LIMIT'):
+            docs.candidate_links(client,findings,TENDER,max_links=10,include_legacy=True)
+
+
+def test_legacy_public_download_is_explicit_and_rejects_html(monkeypatch):
+    monkeypatch.setattr(docs,'_public_dns',lambda _:True)
+    monkeypatch.setattr(docs,'_robots',lambda *args:None)
+    raw=b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'+b'0'*40
+    with httpx.Client(transport=httpx.MockTransport(lambda _:httpx.Response(200,content=raw,headers={'content-type':'application/msword'}))) as client:
+        assert docs.fetch_bytes(client,'https://www.b2b-center.ru/files/a.doc',allow_legacy=True)==(raw,'.doc')
+        with pytest.raises(docs.TenderDocumentBlocked,match='UNSUPPORTED_FORMAT'):
+            docs.fetch_bytes(client,'https://www.b2b-center.ru/files/a.doc')

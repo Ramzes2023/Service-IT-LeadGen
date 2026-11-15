@@ -144,8 +144,38 @@ def full_extract(data,kind):
         return '\n'.join(parts)
 
 
+def parsed_document(raw,kind,url):
+    from . import serviceit_b2b_tender_documents as parser
+    previous=parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES
+    try:
+        parser.MAX_TEXT=1000000
+        parser.MAX_PDF_PAGES=200
+        parser.MAX_FILES=120
+        if kind=='.zip':
+            parts=[]
+            with parser._safe_archive(raw) as archive:
+                for member in archive.infolist():
+                    if member.is_dir():continue
+                    suffix=PurePosixPath(member.filename).suffix.lower()
+                    if suffix not in ('.doc','.docx','.pdf','.xlsx','.xls','.rtf','.png','.jpg','.jpeg','.txt'):
+                        raise ValueError('ARCHIVE_CONTAINS_UNSUPPORTED_DOCUMENT')
+                    payload=archive.read(member)
+                    parts.append(member.filename+'\n'+(legacy_doc(payload) if suffix=='.doc' else full_extract(payload,suffix)))
+            text='\n'.join(parts)
+        else:text=legacy_doc(raw) if kind=='.doc' else full_extract(raw,kind)
+    finally:
+        parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES=previous
+    if len(text)>=1000000:raise ValueError('DOCUMENT_TEXT_TOO_LARGE')
+    if not text.strip():raise ValueError('DOCUMENT_EMPTY_TEXT')
+    return {'url':url,'text':text,'kind':kind,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'ocr':bool(re.search(r'(?:^|\n)OCR:',text))}
+
+
 def download(client,url,name):
     p=urlsplit(url)
+    if p.netloc!='bidzaar.com':
+        from .serviceit_b2b_tender_documents import fetch_bytes
+        raw,kind=fetch_bytes(client,url,allow_legacy=True)
+        return parsed_document(raw,kind,url)
     if p.scheme!='https' or p.netloc!='bidzaar.com' or p.query or p.fragment or not re.fullmatch(r'/api/filestorage/files/download/[0-9a-fA-F-]{36}',p.path):
         raise ValueError('DOCUMENT_URL_INVALID')
     kind=PurePosixPath(name).suffix.lower()
@@ -164,29 +194,7 @@ def download(client,url,name):
                 data.extend(chunk)
                 if len(data)>4000000:raise ValueError('DOCUMENT_TOO_LARGE')
             raw=bytes(data)
-            from . import serviceit_b2b_tender_documents as parser
-            previous=parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES
-            try:
-                parser.MAX_TEXT=1000000
-                parser.MAX_PDF_PAGES=200
-                parser.MAX_FILES=120
-                if kind=='.zip':
-                    parts=[]
-                    with parser._safe_archive(raw) as archive:
-                        for member in archive.infolist():
-                            if member.is_dir():continue
-                            suffix=PurePosixPath(member.filename).suffix.lower()
-                            if suffix not in ('.doc','.docx','.pdf','.xlsx','.xls','.rtf','.png','.jpg','.jpeg','.txt'):
-                                raise ValueError('ARCHIVE_CONTAINS_UNSUPPORTED_DOCUMENT')
-                            payload=archive.read(member)
-                            parts.append(member.filename+'\n'+(legacy_doc(payload) if suffix=='.doc' else full_extract(payload,suffix)))
-                    text='\n'.join(parts)
-                else:text=legacy_doc(raw) if kind=='.doc' else full_extract(raw,kind)
-            finally:
-                parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES=previous
-            if len(text)>=1000000:raise ValueError('DOCUMENT_TEXT_TOO_LARGE')
-            if not text.strip():raise ValueError('DOCUMENT_EMPTY_TEXT')
-            return {'url':url,'text':text,'kind':kind,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+            return parsed_document(raw,kind,url)
     raise ValueError('DOCUMENT_REDIRECT_REJECTED')
 
 
@@ -218,7 +226,7 @@ def process(conn,client,env,*,batch=6):
         conn.execute("UPDATE serviceit_extended_documents SET attempts=attempts+1,status='RETRY',next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s",(card,url))
         try:
             document=download(client,url,name)
-            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,reports=%s::jsonb,error=NULL,updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],json.dumps([{'provider':'OCR','facts':[]}] if document['text'].startswith('OCR:') else []),card,url))
+            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,reports=%s::jsonb,error=NULL,updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],json.dumps([{'provider':'OCR','facts':[]}] if document.get('ocr') or document['text'].startswith('OCR:') else []),card,url))
             done.append((card,document))
         except Exception as exc:
             reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()

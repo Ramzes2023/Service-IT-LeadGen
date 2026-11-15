@@ -110,7 +110,7 @@ def _document_priority(label):
     return 4
 
 
-def candidate_links(client, findings, tender_id, *, max_pages=6):
+def candidate_links(client, findings, tender_id, *, max_pages=6, max_links=MAX_LINKS, include_legacy=False):
     """Follow hrefs ONLY on already verified, exact-ID tender detail pages."""
     fail(type(tender_id) is str and SAFE_ID.fullmatch(tender_id),
          "DOCUMENT_TENDER_ID_INVALID")
@@ -153,6 +153,8 @@ def candidate_links(client, findings, tender_id, *, max_pages=6):
                     host = public_market_url(dest)
                     fail(host == base_host, "DOCUMENT_CROSS_HOST_LINK")
                 suffix = extension(urlsplit(dest).path)
+                if include_legacy and not suffix:
+                    suffix=next((x for x in ('.doc','.xls','.rtf') if unquote(urlsplit(dest).path).lower().endswith(x)), '')
                 # Dynamic download URLs are allowed only with explicit
                 # document/download labels AND a download-looking endpoint.
                 dynamic = (bool(re.search(r"(?i)(?:download|attachment|file)", dest))
@@ -166,10 +168,14 @@ def candidate_links(client, findings, tender_id, *, max_pages=6):
                                        "source_page": url, "official_eis": official})
             except (TenderDocumentBlocked, ResearchBlocked, ValueError):
                 continue
-    return sorted(candidates, key=lambda row: _document_priority(row["label"]))[:MAX_LINKS]
+    fail(type(max_links) is int and 1<=max_links<=1000,'DOCUMENT_LINK_LIMIT_INVALID')
+    ordered=sorted(candidates, key=lambda row: _document_priority(row["label"]))
+    if include_legacy and len(ordered)>max_links:
+        raise TenderDocumentBlocked('DOCUMENT_DISCOVERY_LIMIT_EXCEEDED')
+    return ordered[:max_links]
 
 
-def fetch_bytes(client, url):
+def fetch_bytes(client, url, *, allow_legacy=False):
     """Bound total downloaded bytes; never follow redirects or HTML logins."""
     if public_eis_attachment(url):
         host = _host(url, EIS_FILE_HOSTS)
@@ -216,6 +222,13 @@ def fetch_bytes(client, url):
                         ".xlsx" if "xl/workbook.xml" in names else ".zip")
         except (zipfile.BadZipFile, ValueError):
             raise TenderDocumentBlocked("DOCUMENT_ZIP_INVALID") from None
+    elif allow_legacy and data.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+        path=unquote(urlsplit(url).path).lower()
+        if path.endswith('.xls') or media=='application/vnd.ms-excel':kind='.xls'
+        elif path.endswith('.doc') or media=='application/msword':kind='.doc'
+        else:raise TenderDocumentBlocked('DOCUMENT_LEGACY_TYPE_UNKNOWN')
+    elif allow_legacy and data.lstrip().startswith(b'{\\rtf'):
+        kind='.rtf'
     elif (media == "text/plain" or extension(urlsplit(url).path)==".txt") and b"\x00" not in data[:3000]:
         fail(not data.lstrip().lower().startswith((b"<!doctype html",b"<html",b"<?xml")),
              "DOCUMENT_DOWNLOAD_LOGIN_OR_HTML")

@@ -134,7 +134,14 @@ def patch(conn,rest,client,card,before,fields):
             if all(str(actual.get(k,''))==str(v) for k,v in receipt[0].items()):
                 conn.execute("UPDATE serviceit_extended_evidence_receipts SET status='VERIFIED' WHERE card_id=%s",(card,))
             else:return False
-        if all(str(actual.get(k,''))==str(v) for k,v in fields.items()):return False
+        if all(str(actual.get(k,''))==str(v) for k,v in fields.items()):
+            # A successful live no-op is a fresh readback of the current desired
+            # projection, even when another writer changed surrounding text.
+            # UNCERTAIN intents have already been checked above.
+            if not receipt or receipt[0]!=fields:
+                conn.execute("INSERT INTO serviceit_extended_evidence_receipts(card_id,expected,status) VALUES(%s,%s::jsonb,'VERIFIED') ON CONFLICT(card_id) DO UPDATE SET expected=excluded.expected,status='VERIFIED',updated_at=now()",(card,json.dumps(fields,ensure_ascii=False)))
+                print('EXT_CARD_'+str(card)+'_RECEIPT_REFRESHED=YES',flush=True)
+            return False
         bid=conn.execute('SELECT expected,state FROM serviceit_bidzaar_inbox WHERE card_id=%s',(card,)).fetchone()
         if bid:
             expected,state=bid
@@ -212,7 +219,7 @@ def run():
             block='\n\n'.join(s for s in (policy,contact,document) if s)
             if not block:continue
             fields={REPORT:owned(item.get(REPORT),block)}
-            if contact or policy:fields[BRIEF]=owned(item.get(BRIEF),'\n\n'.join(s for s in (policy,contact) if s))
+            if contact or policy or BEGIN in str(item.get(BRIEF) or ''):fields[BRIEF]=owned(item.get(BRIEF),'\n\n'.join(s for s in (policy,contact) if s))
             if tender:
                 score=tender[1].get(SCORE_FIELD)
                 if type(score) is int and 0<=score<=100:fields[BADGE_FIELD]=('★ ' if score>=80 else '⚠ ')+f'Совпадение с услугами: {score}/100. Участие: не подтверждено.'

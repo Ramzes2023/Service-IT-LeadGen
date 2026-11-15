@@ -162,3 +162,17 @@ def test_no_quotes_does_not_claim_ai_verified_facts():
     assert fields[PREFIX+"AI_STATUS"] == "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES"
     assert "4673595" in fields[PREFIX+"AI_FULL_REPORT"]
     assert "сто миллионов" not in fields[PREFIX+"AI_FULL_REPORT"]
+
+
+@pytest.mark.parametrize("budget", [6200,12000])
+def test_retry_output_budget_keeps_citation_validation(monkeypatch,budget):
+    seen=[]
+    def respond(*args,**kwargs):
+        seen.append(kwargs['max_tokens'])
+        return example_model()
+    monkeypatch.setattr(deep,'_routerai_json',respond)
+    result=deep.investigate_routerai(None,None,PUBLIC,output_tokens=budget)
+    assert seen==[budget]
+    assert '99 миллионов' not in str(result['facts'])
+    with pytest.raises(deep.DeepEvidenceError,match='OUTPUT_BUDGET'):
+        deep.investigate_routerai(None,None,PUBLIC,output_tokens=999999)

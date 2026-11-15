@@ -1,4 +1,4 @@
-name: ServiceIT workspace automatic token recovery and live refresh
+name: ServiceIT keep manager panels active above timeline history
 on:
   push:
     branches: [main]

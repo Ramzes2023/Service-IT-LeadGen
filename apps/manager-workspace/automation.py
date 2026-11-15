@@ -134,12 +134,17 @@ def sync(token,item,cache):
   desired=layout(item,kind)
   digest=hashlib.sha256(json.dumps(desired,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
   previous=cache.get(key,{})
-  # Reconcile unchanged blocks at least once a day to recover deletions.
-  if previous.get('hash')==digest and time.time()-previous.get('checked',0)<86400:continue
+  # These are persistent manager panels: keep them in planned activities.
+  # Check completion even when their content has not changed.
   origin='serviceit-workspace:'+key
-  rows=api(token,'crm.activity.list',filter={'OWNER_TYPE_ID':1062,'OWNER_ID':item['id'],'ORIGINATOR_ID':'serviceit_workspace_app_v1','ORIGIN_ID':origin},select=['ID'])
+  rows=api(token,'crm.activity.list',filter={'OWNER_TYPE_ID':1062,'OWNER_ID':item['id'],'ORIGINATOR_ID':'serviceit_workspace_app_v1','ORIGIN_ID':origin},select=['ID','COMPLETED'])
   if len(rows)>1:raise Failure('DUPLICATE_BLOCKS')
-  if rows:api(token,'crm.activity.configurable.update',id=int(rows[0]['ID']),layout=desired)
+  if rows:
+   active=rows[0].get('COMPLETED') in ('N',False,0)
+   if active and previous.get('hash')==digest and time.time()-previous.get('checked',0)<86400:continue
+   api(token,'crm.activity.configurable.update',id=int(rows[0]['ID']),fields={'completed':False},layout=desired)
+   checked=api(token,'crm.activity.configurable.get',id=int(rows[0]['ID']))
+   if checked.get('activity',checked).get('fields',{}).get('completed') is not False:raise Failure('BLOCK_ACTIVE_READBACK_FAILED')
   else:
    # No automatic retry of a timed-out add. Next cycle lists first.
    api(token,'crm.activity.configurable.add',ownerTypeId=1062,ownerId=int(item['id']),fields={'typeId':'CONFIGURABLE','completed':False,'responsibleId':int(item['assignedById']),'originatorId':'serviceit_workspace_app_v1','originId':origin},layout=desired)

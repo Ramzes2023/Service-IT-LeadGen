@@ -35,7 +35,12 @@ class AutomationTests(unittest.TestCase):
    with self.assertRaises(a.Failure):a.money(value)
  def test_unchanged_does_not_write(self):
   calls=[]
-  def api(token,method,**kwargs):calls.append(method);return [] if method.endswith('.list') else 123
+  created=set()
+  def api(token,method,**kwargs):
+   calls.append(method)
+   if method.endswith('.list'):return [{'ID':123,'COMPLETED':'N'}] if kwargs['filter']['ORIGIN_ID'] in created else []
+   if method.endswith('.add'):created.add(kwargs['fields']['originId'])
+   return 123
   cache={}
   with patch.object(a,'api',api):a.sync('token',self.item(),cache);a.sync('token',self.item(),cache)
   self.assertEqual(calls.count('crm.activity.configurable.add'),2)
@@ -46,12 +51,23 @@ class AutomationTests(unittest.TestCase):
    if method.endswith('.list'):return rows
    if method.endswith('.add'):
     count+=1;rows.append({'ID':1});raise a.Failure('REMOTE_REQUEST_FAILED')
+   if method.endswith('.get'):return {'fields':{'completed':False}}
    return True
   cache={}
   with patch.object(a,'api',api):
    with self.assertRaises(a.Failure):a.sync('token',self.item(),cache)
    a.sync('token',self.item(),cache)
   self.assertEqual(count,1)
+ def test_completed_finance_reopened_even_with_cached_content(self):
+  item=self.item();cache={};updates=[]
+  def api(token,method,**kwargs):
+   if method.endswith('.list'):return [{'ID':7,'COMPLETED':'Y'}]
+   if method.endswith('.get'):return {'fields':{'completed':False}}
+   updates.append(kwargs);return True
+  with patch.object(a,'api',api):
+   a.sync('token',item,cache);a.sync('token',item,cache)
+  self.assertEqual(len(updates),4)
+  self.assertTrue(all(x['fields']=={'completed':False} for x in updates))
  def test_nonadmin_cannot_enable_worker(self):
   with patch.object(a,'identity'),patch.object(a,'api',return_value=False):
    result=a.connect({'access_token':'a'*32,'refresh_token':'b'*32})

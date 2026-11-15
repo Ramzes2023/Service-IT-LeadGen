@@ -377,3 +377,28 @@ def test_contact_refresh_keeps_old_evidence_but_does_not_claim_current_verificat
     assert 'Статус: ПОДТВЕРЖДЁН' not in text
     assert contacts.merge_refresh(result,previous)==previous
     assert contacts.merge_refresh(None,failed)==failed
+
+
+@pytest.mark.parametrize('status',['VERIFIED','UNCERTAIN'])
+def test_live_noop_reconciles_stale_receipt_without_crm_write(monkeypatch,status):
+    import json
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,row=None):self.row=row
+        def fetchone(self):return self.row
+    class Conn:
+        def __init__(self):self.calls=[]
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            if 'pg_try_advisory' in sql:return Result((True,))
+            if sql.startswith('SELECT expected,status'):return Result(({worker.REPORT:'old report',worker.BRIEF:'old brief'},status))
+            return Result()
+    actual={worker.REPORT:'current manager text and evidence',worker.INN:'7707083893'}
+    monkeypatch.setattr(worker,'get',lambda *args:actual)
+    conn=Conn()
+    assert not worker.patch(conn,None,None,19,actual,{worker.REPORT:actual[worker.REPORT]})
+    writes=[args for sql,args in conn.calls if sql.startswith('INSERT INTO serviceit_extended_evidence_receipts')]
+    if status=='VERIFIED':
+        assert len(writes)==1
+        assert json.loads(writes[0][1])=={worker.REPORT:actual[worker.REPORT]}
+    else:assert not writes

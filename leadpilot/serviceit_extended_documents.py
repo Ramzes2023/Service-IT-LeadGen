@@ -1,5 +1,5 @@
 """Durable all-file queue. Batch size is throughput, never a document cap."""
-import hashlib,json,os,re,time,shutil,subprocess,tempfile,ssl
+import hashlib,json,os,re,time,shutil,subprocess,tempfile,ssl,sys,base64
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit,urljoin,unquote
 import httpx
@@ -41,7 +41,9 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';
  UPDATE serviceit_extended_documents SET parser_version=5,status='PENDING',attempts=0,next_attempt_at=now()
  WHERE parser_version<5 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT'
- AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';'''
+ AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';
+ UPDATE serviceit_extended_documents SET parser_version=6,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<6 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT';'''
 
 
 def _limits():
@@ -160,7 +162,19 @@ def parsed_document(raw,kind,url):
         parser.MAX_TEXT=1000000
         parser.MAX_PDF_PAGES=200
         parser.MAX_FILES=120
-        if kind=='.zip':
+        if kind=='.7z':
+            result=subprocess.run([sys.executable,'-m','leadpilot.serviceit_archive_reader'],input=raw,
+                stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30,preexec_fn=_limits)
+            if result.returncode or len(result.stdout)>16_000_000:raise ValueError('SEVENZIP_READER_FAILED')
+            payload=json.loads(result.stdout)
+            if payload.get('error'):raise ValueError(payload['error'])
+            parts=[]
+            for member in payload['members']:
+                suffix=PurePosixPath(member['name']).suffix.lower()
+                content=base64.b64decode(member['data'],validate=True)
+                parts.append(member['name']+'\n'+(legacy_doc(content) if suffix=='.doc' else full_extract(content,suffix)))
+            text='\n'.join(parts)
+        elif kind=='.zip':
             parts=[]
             with parser._safe_archive(raw) as archive:
                 for member in archive.infolist():

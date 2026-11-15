@@ -1,4 +1,4 @@
-name: ServiceIT all-document queue and public company contacts v26
+name: ServiceIT all-document queue and public company contacts v27
 on:
   push:
     branches: [main]
@@ -41,7 +41,7 @@ jobs:
           target="$VPS_USER@$VPS_HOST"
           remote="serviceit/evidence/staging-$GITHUB_RUN_ID"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
-          for file in certificates/russian_trusted_root_ca.pem leadpilot/serviceit_gigachat_ca_setup.py leadpilot/serviceit_b2b_routerai_deep.py leadpilot/serviceit_tender_manager_timing.py leadpilot/serviceit_tender_manager_policy.py leadpilot/serviceit_ai_lead_engine.py leadpilot/serviceit_enrichment_worker.py leadpilot/serviceit_manager_readiness.py leadpilot/serviceit_evidence_stage_handoff.py leadpilot/serviceit_bitrix_list_shape.py leadpilot/serviceit_b2b_tender_documents.py leadpilot/serviceit_extended_documents.py leadpilot/serviceit_company_contacts.py leadpilot/serviceit_extended_evidence_worker.py ops/serviceit_extended_evidence_runner.py ops/serviceit_extended_evidence_audit.py; do
+          for file in leadpilot/serviceit_archive_reader.py certificates/russian_trusted_root_ca.pem leadpilot/serviceit_gigachat_ca_setup.py leadpilot/serviceit_b2b_routerai_deep.py leadpilot/serviceit_tender_manager_timing.py leadpilot/serviceit_tender_manager_policy.py leadpilot/serviceit_ai_lead_engine.py leadpilot/serviceit_enrichment_worker.py leadpilot/serviceit_manager_readiness.py leadpilot/serviceit_evidence_stage_handoff.py leadpilot/serviceit_bitrix_list_shape.py leadpilot/serviceit_b2b_tender_documents.py leadpilot/serviceit_extended_documents.py leadpilot/serviceit_company_contacts.py leadpilot/serviceit_extended_evidence_worker.py ops/serviceit_extended_evidence_runner.py ops/serviceit_extended_evidence_audit.py; do
             scp -i "$stage/id" "${opts[@]}" "$file" "$target:$remote/"
           done
       - name: Build isolated legacy converter, activate and verify live backlog
@@ -64,10 +64,10 @@ jobs:
           cat > "$stage/Dockerfile" <<'DOCKER'
           FROM serviceit-evidence-base:reviewed
           USER root
-          RUN apt-get update && apt-get install -y --no-install-recommends antiword poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng tesseract-ocr-chi-sim && rm -rf /var/lib/apt/lists/*
-          RUN python -m pip install --no-cache-dir striprtf==0.0.29 xlrd==2.0.2
+          RUN apt-get update && apt-get install -y --no-install-recommends libarchive13 antiword poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng tesseract-ocr-chi-sim && rm -rf /var/lib/apt/lists/*
+          RUN python -m pip install --no-cache-dir striprtf==0.0.29 xlrd==2.0.2 libarchive-c==5.3
           COPY --chmod=0444 serviceit_ai_lead_engine.py serviceit_enrichment_worker.py serviceit_manager_readiness.py /app/leadpilot/
-          COPY --chmod=0444 serviceit_gigachat_ca_setup.py /app/leadpilot/
+          COPY --chmod=0444 serviceit_archive_reader.py serviceit_gigachat_ca_setup.py /app/leadpilot/
           COPY --chmod=0444 russian_trusted_root_ca.pem /app/certificates/
           USER 10001:10001
           DOCKER

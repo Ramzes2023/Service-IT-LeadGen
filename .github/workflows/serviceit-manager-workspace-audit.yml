@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT verify administrator background activation
+name: ServiceIT repair completed finance block and diagnose API fields
 on:
   push:
     branches: [main]
@@ -39,6 +39,27 @@ jobs:
           import json,time
           from pathlib import Path
           import automation as a
+          original=a.request
+          def diagnostic(url,data):
+           try:return original(url,data)
+           except a.Failure as error:
+            print("TIMELINE_FAILED_METHOD="+url.rsplit("/",1)[-1])
+            # The response is inspected only for its error fields, never auth or CRM data.
+            req=a.urllib.request.Request(url,json.dumps(data).encode(),{"Content-Type":"application/json"})
+            try:
+             with a.urllib.request.urlopen(req,timeout=25) as response:payload=json.load(response)
+            except a.urllib.error.HTTPError as response:payload=json.load(response)
+            print("TIMELINE_API_ERROR="+str(payload.get("error","")))
+            print("TIMELINE_API_DETAIL="+str(payload.get("error_description",""))[:300])
+            raise error
+          a.request=diagnostic
+          auth=a.read("auth.json")
+          if auth:
+           try:
+            a.api(auth["access_token"],"crm.activity.configurable.update",id=205169,fields={"completed":False})
+            print("TIMELINE_FINANCE_REOPEN=SUCCESS")
+           except a.Failure:pass
+          
           state=a.read("status.json",{})
           print("TIMELINE_STATUS="+str(state.get("status","UNKNOWN")))
           print("TIMELINE_LAST_SUCCESS="+str(state.get("completed_at",0)))

@@ -342,7 +342,7 @@ def run(conn,rest,client,env):
    summary=build_summary(client,env,item,interest) if changed_call else state[2]
    patch=call_fields(item,interest,summary)
    patch.update(finance_fields(item,maps['FIN_BASIS'])[0])
-   if changed_call and (interest or state and state[1]):
+   if changed_call and (interest or state and state[1]) and item.get('stageId')!='DT1062_21:SVCIT_EXPIRED':
     patch['title']=title_with_interest(str(item.get('title','')),interest)
     if interest and (not state or state[1]!=interest) and item.get('stageId') not in terminal:
      patch['stageId']=targets[interest]

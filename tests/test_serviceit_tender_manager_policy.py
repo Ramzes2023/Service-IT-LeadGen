@@ -1,3 +1,4 @@
+import pytest
 from leadpilot.serviceit_tender_manager_policy import summary,SCORE_FIELD
 
 def test_service_fit_does_not_claim_participation_ready():
@@ -22,7 +23,8 @@ class Connection:
   if sql.startswith('UPDATE serviceit_tender_task'):self.receipt=(*self.receipt[:2],'VERIFIED')
   return Result([])
 
-def test_late_task_repaired_and_verified_without_duplicates(monkeypatch):
+@pytest.mark.parametrize('round_to_minute',[False,True])
+def test_late_task_repaired_and_verified_without_duplicates(monkeypatch,round_to_minute):
  import leadpilot.serviceit_tender_manager_policy as p
  conn=Connection();task={'id':'12','ufCrmTask':['T426_29'],'responsibleId':'605','status':'2','deadline':'2099-11-21T13:00:00+00:00'};writes=[]
  monkeypatch.setattr(p,'owner_type',lambda *a:'T426')
@@ -30,7 +32,9 @@ def test_late_task_repaired_and_verified_without_duplicates(monkeypatch):
   if method=='tasks.task.list':return {'tasks':[dict(task)]}
   if method=='tasks.task.get':return {'task':dict(task)}
   assert method=='tasks.task.update'
-  writes.append(args);task['deadline']=args['fields']['DEADLINE'];return {}
+  writes.append(args);task['deadline']=args['fields']['DEADLINE']
+  if round_to_minute:task['deadline']=p.submission_time(task['deadline']).replace(second=0,microsecond=0).isoformat()
+  return {}
  monkeypatch.setattr(p,'api',api)
  p.repair_deadlines(conn,None,'https://example.invalid')
  p.repair_deadlines(conn,None,'https://example.invalid')

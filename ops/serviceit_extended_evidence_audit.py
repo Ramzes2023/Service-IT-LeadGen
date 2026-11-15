@@ -10,7 +10,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     for card,total,read in conn.execute("SELECT card_id,count(*),count(*) FILTER (WHERE status='READ') FROM serviceit_extended_documents GROUP BY card_id ORDER BY card_id").fetchall():
         print('EXT_CARD_'+str(card)+'_FILES_TOTAL='+str(total));print('EXT_CARD_'+str(card)+'_FILES_READ='+str(read))
     print('EXT_ROUTERAI_FULL_PASS_COMPLETE='+str(conn.execute("SELECT count(*) FROM serviceit_extended_documents WHERE analysis_version=4 AND status='READ' AND analyzed_chars>=length(text_content)").fetchone()[0]))
-    print('EXT_ROUTERAI_RETRY_PENDING='+str(conn.execute("SELECT count(*) FROM serviceit_extended_documents WHERE error='ROUTERAI_ANALYSIS_RETRY'").fetchone()[0]))
+    print('EXT_ROUTERAI_RETRY_PENDING='+str(conn.execute("SELECT count(*) FROM serviceit_extended_documents WHERE error LIKE 'ROUTERAI_%'").fetchone()[0]))
     print('EXT_ROUTERAI_DOCUMENTS='+str(conn.execute("SELECT count(*) FROM serviceit_extended_documents WHERE reports @> '[{\"provider\":\"RouterAI\"}]'::jsonb").fetchone()[0]))
     print('EXT_LEGACY_DOC_READ='+str(conn.execute("SELECT count(*) FROM serviceit_extended_documents WHERE name ILIKE '%.doc' AND status='READ'").fetchone()[0]))
     print('EXT_CARDS_OVER_SIX_COMPLETE='+str(conn.execute("SELECT count(*) FROM (SELECT card_id FROM serviceit_extended_documents GROUP BY card_id HAVING count(*)>6 AND bool_and(status='READ')) a").fetchone()[0]))
@@ -19,7 +19,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('EXT_CONTACT_'+status+('_NO_PAGES' if zero else '_HAS_PAGES')+'='+str(count))
     print('EXT_CONTACT_RESEARCH_PENDING='+str(conn.execute("SELECT count(*) FROM serviceit_company_contact_cache WHERE result IS NULL OR (next_attempt_at<=now() AND result->>'status'!='VERIFIED')").fetchone()[0]))
     count=0;bad=0;contact_cards=0;contact_values=0;policy_cards=0
-    for card,expected,status in conn.execute('SELECT card_id,expected,status FROM serviceit_extended_evidence_receipts').fetchall():
+    for card,expected,status in conn.execute('SELECT card_id,expected,status FROM serviceit_extended_evidence_receipts WHERE card_id NOT IN (SELECT card_id FROM serviceit_bidzaar_inbox WHERE state=\'EXCLUDED\' AND card_id IS NOT NULL)').fetchall():
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
         if conn.execute("SELECT to_regclass('serviceit_stage_handoff')").fetchone()[0]:
             stage=conn.execute('SELECT target_stage,status FROM serviceit_stage_handoff WHERE card_id=%s',(card,)).fetchone()

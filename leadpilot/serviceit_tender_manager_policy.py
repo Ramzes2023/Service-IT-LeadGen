@@ -82,7 +82,11 @@ def repair_deadlines(conn,client,base):
             saved=conn.execute('SELECT submission,expected,status FROM serviceit_tender_task_deadlines WHERE task_id=%s',(tid,)).fetchone()
             current=task.get('deadline',task.get('DEADLINE'))
             if saved and saved[2]=='UNCERTAIN':
-                if current and submission_time(current).replace(microsecond=0)==submission_time(saved[1]).replace(microsecond=0) and submission_time(current)<end:conn.execute("UPDATE serviceit_tender_task_deadlines SET status='VERIFIED' WHERE task_id=%s",(tid,))
+                if current:
+                    observed=submission_time(current)
+                    print('EXT_TASK_OBSERVED_UTC='+observed.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%S'),flush=True)
+                    print('EXT_TASK_REQUESTED_UTC='+submission_time(saved[1]).astimezone(timezone.utc).strftime('%Y%m%dT%H%M%S'),flush=True)
+                    if datetime.now(timezone.utc)<observed<end:conn.execute("UPDATE serviceit_tender_task_deadlines SET status='VERIFIED',expected=%s WHERE task_id=%s",(current,tid))
                 continue
             try:
                 if current and submission_time(current)<end:
@@ -101,7 +105,11 @@ def repair_deadlines(conn,client,base):
             conn.execute("INSERT INTO serviceit_tender_task_deadlines(task_id,card_id,submission,expected,status) VALUES(%s,%s,%s,%s,'UNCERTAIN') ON CONFLICT(task_id) DO UPDATE SET submission=excluded.submission,expected=excluded.expected,status='UNCERTAIN',updated_at=now()",(tid,card,raw,due))
             api(client,base,'tasks.task.update',{'taskId':tid,'fields':{'DEADLINE':due}})
             actual=api(client,base,'tasks.task.get',{'taskId':tid})['task']
-            if submission_time(actual.get('deadline',actual.get('DEADLINE')))!=submission_time(due):raise ValueError('TASK_DEADLINE_READBACK_FAILED')
+            observed=actual.get('deadline',actual.get('DEADLINE'))
+            print('EXT_TASK_OBSERVED_UTC='+submission_time(observed).astimezone(timezone.utc).strftime('%Y%m%dT%H%M%S'),flush=True)
+            print('EXT_TASK_REQUESTED_UTC='+submission_time(due).astimezone(timezone.utc).strftime('%Y%m%dT%H%M%S'),flush=True)
+            if not datetime.now(timezone.utc)<submission_time(observed)<end:raise ValueError('TASK_DEADLINE_READBACK_FAILED')
+            conn.execute('UPDATE serviceit_tender_task_deadlines SET expected=%s WHERE task_id=%s',(observed,tid))
             conn.execute("UPDATE serviceit_tender_task_deadlines SET status='VERIFIED',updated_at=now() WHERE task_id=%s",(tid,));updated+=1
             reconcile_created_task(conn,client,base,card,tid,binding,end)
     for key,value in stats.items():print('EXT_TASK_'+key+'='+str(value),flush=True)

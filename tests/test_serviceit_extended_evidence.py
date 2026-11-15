@@ -64,7 +64,7 @@ def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch):
             if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://source', 'a'*48001,24000)])
             self.updates.append(args);return Result([])
     conn=Conn();seen=[]
-    monkeypatch.setattr(docs,'_model_research',lambda client,env,inputs:seen.extend(inputs) or [{'provider':'RouterAI','facts':[]}])
+    monkeypatch.setattr(docs,'full_window_research',lambda client,env,inputs:seen.extend(inputs) or [{'provider':'RouterAI','facts':[]}])
     docs.process(conn,None,{})
     assert len(seen[0]['text'])==24000
     assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==48000
@@ -281,9 +281,9 @@ def test_model_failure_does_not_advance_full_document_cursor(monkeypatch):
    if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://bidzaar.com/document','Условия оплаты: отсрочка платежа тридцать дней. '*100,0)])
    self.updates.append((sql,args));return Result([])
  conn=Conn()
- monkeypatch.setattr(docs,'_model_research',lambda *a:[{'provider':'SOURCE','facts':[]}])
+ monkeypatch.setattr(docs,'full_window_research',lambda *a:[{'provider':'SOURCE','facts':[]}])
  docs.process(conn,None,{})
- assert any('ROUTERAI_ANALYSIS_RETRY' in sql for sql,args in conn.updates)
+ assert any('ROUTERAI_ANALYSIS_RETRY' in args for sql,args in conn.updates)
  assert not any('analyzed_chars=%s' in sql for sql,args in conn.updates)
 
 def test_document_contact_hint_is_literal_and_never_confirmed():

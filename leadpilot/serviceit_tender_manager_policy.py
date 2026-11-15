@@ -21,10 +21,32 @@ def summary(notice,expected):
 
 def api(client,base,method,args):
     if method not in ('tasks.task.list','tasks.task.get','tasks.task.update'):raise ValueError('TASK_METHOD_INVALID')
+    if method=='tasks.task.get':args={**args,'select':['ID','TITLE','RESPONSIBLE_ID','UF_CRM_TASK','STATUS','DEADLINE','CREATED_DATE']}
     response=client.post(base+'/'+method+'.json',json=args,timeout=20,follow_redirects=False)
     response.raise_for_status();body=response.json()
     if 'error' in body or 'result' not in body:raise ValueError('TASK_RESPONSE_INVALID')
     return body['result']
+
+
+def reconcile_created_task(conn,client,base,card,task_id,binding,end):
+    """Reconcile a visible task after ambiguous creation; never create another."""
+    row=conn.execute("SELECT r.reserved_at,b.expected FROM serviceit_vps_native_receipts r JOIN serviceit_bidzaar_inbox b USING(card_id) WHERE r.namespace='TASK_V1' AND r.status='UNCERTAIN' AND r.card_id=%s",(card,)).fetchone()
+    if not row:return
+    from datetime import timedelta
+    from .serviceit_b2b_dossier_consistency_v37 import SUMMARY
+    reserved,expected=row
+    task=api(client,base,'tasks.task.get',{'taskId':task_id})['task']
+    title=('Проработать закупку: '+str(expected.get(SUMMARY) or expected.get('title') or 'Закупка'))[:230]
+    if task.get('title',task.get('TITLE'))!=title:return
+    if task.get('ufCrmTask',task.get('UF_CRM_TASK'))!=[binding+'_'+str(card)]:return
+    if str(task.get('responsibleId',task.get('RESPONSIBLE_ID')))!='605':return
+    try:
+        created=submission_time(task.get('createdDate',task.get('CREATED_DATE')))
+        due=submission_time(task.get('deadline',task.get('DEADLINE')))
+    except (ValueError,TypeError,AttributeError):return
+    if not reserved-timedelta(seconds=1)<=created<=reserved+timedelta(minutes=10) or due>=end:return
+    conn.execute("UPDATE serviceit_vps_native_receipts SET status='VERIFIED',updated_at=now() WHERE namespace='TASK_V1' AND status='UNCERTAIN' AND card_id=%s",(card,))
+    print('EXT_TASK_CREATION_RECONCILED=1',flush=True)
 
 
 def repair_deadlines(conn,client,base):
@@ -60,15 +82,18 @@ def repair_deadlines(conn,client,base):
             saved=conn.execute('SELECT submission,expected,status FROM serviceit_tender_task_deadlines WHERE task_id=%s',(tid,)).fetchone()
             current=task.get('deadline',task.get('DEADLINE'))
             if saved and saved[2]=='UNCERTAIN':
-                if current and submission_time(current)==submission_time(saved[1]):conn.execute("UPDATE serviceit_tender_task_deadlines SET status='VERIFIED' WHERE task_id=%s",(tid,))
+                if current and submission_time(current).replace(microsecond=0)==submission_time(saved[1]).replace(microsecond=0) and submission_time(current)<end:conn.execute("UPDATE serviceit_tender_task_deadlines SET status='VERIFIED' WHERE task_id=%s",(tid,))
                 continue
             try:
                 if current and submission_time(current)<end:
+                    reconcile_created_task(conn,client,base,card,tid,binding,end)
                     stats['ALREADY_BEFORE']+=1;continue
             except (ValueError,TypeError):
                 stats['INVALID_ZONE']+=1;continue
             latest=api(client,base,'tasks.task.get',{'taskId':tid})['task']
-            if latest.get('deadline',latest.get('DEADLINE'))!=current:continue
+            latest_due=latest.get('deadline',latest.get('DEADLINE'))
+            if bool(latest_due)!=bool(current):continue
+            if current and submission_time(latest_due)!=submission_time(current):continue
             if binding+'_'+str(card) not in latest.get('ufCrmTask',latest.get('UF_CRM_TASK',[])):continue
             if str(latest.get('responsibleId',latest.get('RESPONSIBLE_ID')))!='605':continue
             if str(latest.get('status',latest.get('STATUS'))) in ('4','5','6','7'):continue
@@ -78,5 +103,6 @@ def repair_deadlines(conn,client,base):
             actual=api(client,base,'tasks.task.get',{'taskId':tid})['task']
             if submission_time(actual.get('deadline',actual.get('DEADLINE')))!=submission_time(due):raise ValueError('TASK_DEADLINE_READBACK_FAILED')
             conn.execute("UPDATE serviceit_tender_task_deadlines SET status='VERIFIED',updated_at=now() WHERE task_id=%s",(tid,));updated+=1
+            reconcile_created_task(conn,client,base,card,tid,binding,end)
     for key,value in stats.items():print('EXT_TASK_'+key+'='+str(value),flush=True)
     print('EXT_TASK_DEADLINES_UPDATED='+str(updated),flush=True)

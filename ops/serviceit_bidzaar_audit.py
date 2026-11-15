@@ -15,7 +15,11 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('MANAGER_605_NAME='+str(u.get('NAME',''))+' '+str(u.get('LAST_NAME','')),flush=True)
         print('MANAGER_605_ACTIVE='+str(u.get('ACTIVE')),flush=True)
     binding=owner_type(client,rest.base)
+    from datetime import datetime,timezone
+    print('AUDIT_SERVER_UTC='+datetime.now(timezone.utc).isoformat(),flush=True)
     for card in (11,29,33,35):
+        notice=conn.execute('SELECT notice FROM serviceit_bidzaar_inbox WHERE card_id=%s',(card,)).fetchone()
+        if notice:print('MANAGER_CARD_'+str(card)+'_SUBMISSION='+str(notice[0].get('acceptanceEndDate')),flush=True)
         tasks=request(client,rest.base,'tasks.task.list',{'filter':{'UF_CRM_TASK':binding+'_'+str(card)},'select':['ID','RESPONSIBLE_ID','UF_CRM_TASK','DESCRIPTION','STATUS','DEADLINE'],'start':0})
         items=tasks['result']['tasks']
         exact=[t for t in items if binding+'_'+str(card) in t.get('ufCrmTask',t.get('UF_CRM_TASK',[]))]
@@ -64,5 +68,8 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     if present:
         for state,count in conn.execute('SELECT state,count(*) FROM serviceit_postcall_assistant GROUP BY state').fetchall():
             if state in ('RESERVED','VERIFIED','UNCERTAIN'):print('BIDZAAR_POSTCALL_'+state+'='+str(count),flush=True)
+    if conn.execute("SELECT to_regclass('serviceit_extended_documents')").fetchone()[0]:
+        for status,n in conn.execute('SELECT status,count(*) FROM serviceit_extended_documents GROUP BY status').fetchall():
+            if re.fullmatch(r'[A-Z_]+',status):print('DOCUMENT_PROGRESS_'+status+'='+str(n),flush=True)
     print('BIDZAAR_CRM_WRITES=0',flush=True)
     if not ok:raise SystemExit(2)

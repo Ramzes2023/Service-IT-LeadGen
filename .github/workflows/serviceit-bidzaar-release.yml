@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar purchase-position qualification and pre-submission tasks
+name: ServiceIT Bidzaar purchase-position qualification and pre-submission tasks v2
 on:
   push:
     branches: [main]

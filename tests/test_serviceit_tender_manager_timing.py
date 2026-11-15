@@ -17,3 +17,12 @@ def test_manager_deadline_is_strictly_before_submission(hours):
 
 def test_closed_submission_never_receives_future_deadline():
     assert manager_deadline('2026-11-14T13:00:00Z',datetime(2026,11,15,tzinfo=timezone.utc))['deadline'] is None
+
+def test_deadline_has_bitrix_second_precision():
+ now=datetime(2026,11,15,10,5,30,123456,tzinfo=timezone.utc)
+ value=manager_deadline('2026-11-25T13:00:00Z',now)['deadline']
+ assert submission_time(value).microsecond==0
+
+def test_less_than_one_second_remaining_does_not_create_late_task():
+ now=datetime(2026,11,15,10,5,30,800000,tzinfo=timezone.utc)
+ assert manager_deadline('2026-11-15T10:05:30.9Z',now)['deadline'] is None

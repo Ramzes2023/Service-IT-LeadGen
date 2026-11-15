@@ -10,6 +10,7 @@ from .serviceit_enrichment_worker import Rest,normalized
 from .serviceit_bitrix_list_shape import strict_bitrix_items
 from .serviceit_b2b_dossier_consistency_v37 import INN,COMPANY,REPORT,BRIEF,LIMITS
 from .bitrix_1062_mapping import _is_valid_inn
+from .serviceit_kanban_presentation import BADGE_FIELD,SCORE_FIELD
 
 DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  inn TEXT PRIMARY KEY,name TEXT NOT NULL,result JSONB,next_attempt_at TIMESTAMPTZ DEFAULT now());
@@ -69,13 +70,13 @@ def source_inventory(conn,rest):
 
 
 def save_snapshot(conn,card,item):
-    snapshot={key:item.get(key) for key in ('id','categoryId',INN,COMPANY,REPORT,BRIEF,LIMITS)}
+    snapshot={key:item.get(key) for key in ('id','categoryId',INN,COMPANY,REPORT,BRIEF,LIMITS,BADGE_FIELD)}
     conn.execute('INSERT INTO serviceit_extended_card_inventory(card_id,snapshot) VALUES(%s,%s::jsonb) ON CONFLICT(card_id) DO UPDATE SET snapshot=excluded.snapshot',(card,json.dumps(snapshot,ensure_ascii=False)))
 
 
 def patch(conn,rest,client,card,before,fields):
     if not fields:return False
-    if not set(fields)<= {REPORT,BRIEF,LIMITS}:raise ValueError('EXTENSION_FIELDS_INVALID')
+    if not set(fields)<= {REPORT,BRIEF,LIMITS,BADGE_FIELD}:raise ValueError('EXTENSION_FIELDS_INVALID')
     # Share the existing Bidzaar writer's lock only around CRM reconciliation.
     if not conn.execute('SELECT pg_try_advisory_lock(1062,604)').fetchone()[0]:return False
     if not conn.execute('SELECT pg_try_advisory_lock(6754819001)').fetchone()[0]:
@@ -83,13 +84,13 @@ def patch(conn,rest,client,card,before,fields):
     try:
         actual=get(rest,card)
         save_snapshot(conn,card,actual)
-        if any(actual.get(k)!=before.get(k) for k in (REPORT,BRIEF,LIMITS,INN)):return False
-        if all(str(actual.get(k,''))==str(v) for k,v in fields.items()):return False
+        if any(actual.get(k)!=before.get(k) for k in (REPORT,BRIEF,LIMITS,INN,BADGE_FIELD)):return False
         receipt=conn.execute('SELECT expected,status FROM serviceit_extended_evidence_receipts WHERE card_id=%s',(card,)).fetchone()
         if receipt and receipt[1]=='UNCERTAIN':
             if all(str(actual.get(k,''))==str(v) for k,v in receipt[0].items()):
                 conn.execute("UPDATE serviceit_extended_evidence_receipts SET status='VERIFIED' WHERE card_id=%s",(card,))
             else:return False
+        if all(str(actual.get(k,''))==str(v) for k,v in fields.items()):return False
         bid=conn.execute('SELECT expected,state FROM serviceit_bidzaar_inbox WHERE card_id=%s',(card,)).fetchone()
         if bid:
             expected,state=bid
@@ -159,6 +160,8 @@ def run():
             fields={REPORT:owned(item.get(REPORT),block)}
             if contact or policy:fields[BRIEF]=owned(item.get(BRIEF),'\n\n'.join(s for s in (policy,contact) if s))
             if tender:
+                score=tender[1].get(SCORE_FIELD)
+                if type(score) is int and 0<=score<=100:fields[BADGE_FIELD]=('★ ' if score>=80 else '⚠ ')+f'Совпадение с услугами: {score}/100. Участие: не подтверждено.'
                 from .serviceit_tender_manager_timing import moscow_time
                 try:
                     raw=tender[0]['acceptanceEndDate'];display=moscow_time(raw)

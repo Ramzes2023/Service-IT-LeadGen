@@ -288,3 +288,19 @@ def test_document_contact_hint_is_literal_and_never_confirmed():
  hints=docs.contact_hints('Контакт по закупке: +7 (495) 123-45-67, e-mail procurement@alpha.ru','https://bidzaar.com/file')
  assert len(hints)==2 and all(h['status']=='UNCONFIRMED' for h in hints)
  assert not docs.contact_hints('Участник должен заполнить телефон: +7 (495) 123-45-67','https://bidzaar.com/file')
+
+def test_cached_noop_still_refreshes_live_manager_edits(monkeypatch):
+ from leadpilot import serviceit_extended_evidence_worker as worker
+ class Result:
+  def __init__(self,row=None):self.row=row
+  def fetchone(self):return self.row
+ class Conn:
+  def __init__(self):self.saved=[]
+  def execute(self,sql,args=()):
+   if sql.startswith('INSERT INTO serviceit_extended_card_inventory'):self.saved.append(args)
+   return Result((True,)) if 'pg_try_advisory' in sql else Result()
+ before={worker.REPORT:'old',worker.BRIEF:'brief',worker.INN:'7707083893','categoryId':21}
+ monkeypatch.setattr(worker,'get',lambda rest,card:{**before,worker.BRIEF:'manager edit'})
+ conn=Conn()
+ assert not worker.patch(conn,None,None,35,before,{worker.REPORT:'old'})
+ assert conn.saved and 'manager edit' in conn.saved[0][1]

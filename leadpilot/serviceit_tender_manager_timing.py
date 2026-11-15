@@ -18,4 +18,7 @@ def manager_deadline(value,now):
     if remaining<=timedelta(0):return {'status':'SUBMISSION_CLOSED','deadline':None}
     desired=min(now+timedelta(days=1),end-timedelta(days=1))
     if desired<=now:desired=now+min(timedelta(hours=1),remaining/2)
+    desired=desired.replace(microsecond=0)
+    if desired<=now:desired=now.replace(microsecond=0)+timedelta(seconds=1)
+    if desired>=end:return {'status':'SUBMISSION_CLOSING','deadline':None}
     return {'status':'URGENT' if remaining<=timedelta(days=1) else 'READY','deadline':desired.isoformat()}

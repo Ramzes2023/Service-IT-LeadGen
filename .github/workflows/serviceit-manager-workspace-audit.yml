@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT manager scheduled reconciliation acceptance
+name: ServiceIT verify administrator background activation
 on:
   push:
     branches: [main]
@@ -35,6 +35,29 @@ jobs:
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'DIAGNOSTIC'
           set -euo pipefail
+          docker exec -i serviceit-manager-workspace-app python -B - <<'APP_AUDIT'
+          import json,time
+          from pathlib import Path
+          import automation as a
+          state=a.read("status.json",{})
+          print("TIMELINE_STATUS="+str(state.get("status","UNKNOWN")))
+          print("TIMELINE_LAST_SUCCESS="+str(state.get("completed_at",0)))
+          print("TIMELINE_CARDS="+str(state.get("cards",0)))
+          auth=a.read("auth.json")
+          print("TIMELINE_AUTH_PRESENT="+("YES" if auth else "NO"))
+          if auth:
+           try:
+            rows=[]
+            for start in range(0,10000,50):
+             batch=a.api(auth["access_token"],"crm.activity.list",filter={"OWNER_TYPE_ID":1062,"ORIGINATOR_ID":"serviceit_workspace_app_v1"},select=["ID","OWNER_ID","ORIGIN_ID","COMPLETED"],start=start)
+             rows.extend(batch)
+             if len(batch)<50:break
+            print("TIMELINE_BLOCKS="+str(len(rows)))
+            closed=[r for r in rows if r.get("COMPLETED")=="Y"]
+            print("TIMELINE_COMPLETED_BLOCKS="+str(len(closed)))
+            print("TIMELINE_COMPLETED_IDS="+",".join(str(r["ID"]) for r in closed))
+           except a.Failure as e:print("TIMELINE_CHECK_ERROR="+str(e))
+          APP_AUDIT
           dir="$HOME/serviceit/manager-workspace"
           crontab -l | grep 'SERVICEIT_MANAGER_WORKSPACE_V1' | sed 's@/home/[^/]*/@/home/USER/@g'
           tail -n 30 "$dir/status.log" | grep -E '^WORKSPACE_[A-Z_]+=[A-Z0-9_]+$' || true

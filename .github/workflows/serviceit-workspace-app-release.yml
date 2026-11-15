@@ -1,4 +1,4 @@
-name: ServiceIT diagnose OAuth renewal safely
+name: ServiceIT use documented OAuth token renewal request
 on:
   push:
     branches: [main]
@@ -100,10 +100,8 @@ jobs:
       - name: Read safe renewal status
         shell: bash
         run: |
-          stage="$RUNNER_TEMP/workspace-app"
-          # Locate the same temporary SSH material created above.
-          keyfile=$(find "$RUNNER_TEMP" -maxdepth 2 -name id -type f | head -n 1)
-          known="$(dirname "$keyfile")/hosts"
+          keyfile="$RUNNER_TEMP/app/id"
+          known="$RUNNER_TEMP/app/hosts"
           ssh -T -i "$keyfile" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$known" -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'PY'
           import json,time
           from pathlib import Path

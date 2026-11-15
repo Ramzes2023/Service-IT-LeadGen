@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT inspect pinned API transport
+name: ServiceIT isolate masked request exception
 on:
   push:
     branches: [main]
@@ -34,21 +34,17 @@ jobs:
           chmod 0600 "$stage/"*
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'APP_AUDIT'
-          import json,urllib.request,urllib.error,urllib.parse
+          import sys,inspect
           import automation as a
-          token=a.read("auth.json")["access_token"]
-          class InspectRedirect(a.NoRedirect):
-           def redirect_request(self,req,fp,code,msg,headers,newurl):
-            u=urllib.parse.urlsplit(newurl)
-            print("REDIRECT="+str(code)+":"+u.scheme+"://"+u.netloc+u.path,flush=True)
-            raise a.Failure("REDIRECT_REFUSED")
-          for small in [True,False]:
-           data={"entityTypeId":1062,"useOriginalUfNames":"Y","filter":{"categoryId":21,">id":7},"order":{"id":"ASC"},"select":["id","categoryId","assignedById"] if small else ["*"],"start":0,"auth":token}
-           req=urllib.request.Request(a.PORTAL+"crm.item.list",json.dumps(data).encode(),{"Content-Type":"application/json"})
-           try:
-            with urllib.request.build_opener(InspectRedirect).open(req,timeout=30) as r:result=json.load(r)
-            print("LIST_RESULT="+str(small)+":"+str(len(result.get("result",{}).get("items",[]))),flush=True)
-           except Exception as e:
-            print("LIST_EXCEPTION="+str(small)+":"+type(e).__name__,flush=True)
-            if isinstance(e,urllib.error.HTTPError):print("HTTP_STATUS="+str(e.code),flush=True)
+          print(inspect.getsource(a.request),flush=True)
+          def trace(frame,event,arg):
+           if event=="exception" and frame.f_code.co_filename.endswith("/automation.py"):
+            print("EXCEPTION_POINT="+frame.f_code.co_name+":"+str(frame.f_lineno)+":"+arg[0].__name__,flush=True)
+           return trace
+          sys.settrace(trace)
+          try:
+           result=a.api(a.read("auth.json")["access_token"],"crm.item.list",entityTypeId=1062,useOriginalUfNames="Y",filter={"categoryId":21,">id":7},order={"id":"ASC"},select=["*"],start=0)
+           print("PRODUCTION_LIST_OK="+str(len(result["items"])))
+          except a.Failure:pass
+          finally:sys.settrace(None)
           APP_AUDIT

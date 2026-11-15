@@ -478,7 +478,10 @@ def _routerai_json(client, config, system, prompt, *, max_tokens, timeout):
                   "messages": [{"role": "system", "content": system},
                                {"role": "user", "content": prompt}],
                   "response_format": {"type": "json_object"},
-                  "temperature": 0, "max_tokens": max_tokens},
+                  "temperature": 0, "max_tokens": max_tokens,
+                  # Verified model supports low/high/max. Bound reasoning only
+                  # for document retries after output truncation, not all calls.
+                  **({'reasoning':{'effort':'low'}} if max_tokens==12000 and config.model=='deepseek/deepseek-v4.1-flash' else {})},
             headers={"Authorization": "Bearer " + config.key,
                      "Accept": "application/json"},
             follow_redirects=False, timeout=timeout)

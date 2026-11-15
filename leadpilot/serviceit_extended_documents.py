@@ -32,7 +32,10 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS window_chars INTEGER NOT NULL DEFAULT 24000;
  UPDATE serviceit_extended_documents SET analysis_version=7,
  next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
- WHERE analysis_version<7;'''
+ WHERE analysis_version<7;
+ UPDATE serviceit_extended_documents SET analysis_version=8,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<8;'''
 
 
 def _limits():

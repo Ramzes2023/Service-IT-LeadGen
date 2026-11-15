@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: serviceit-manager-workspace-audit
+  group: serviceit-workspace-data-shape-readonly
   cancel-in-progress: false
 jobs:
   audit:

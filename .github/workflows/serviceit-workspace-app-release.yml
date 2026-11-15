@@ -1,4 +1,4 @@
-name: ServiceIT correct saved application key transcription
+name: ServiceIT preserve original credential pending exact current key
 on:
   push:
     branches: [main]

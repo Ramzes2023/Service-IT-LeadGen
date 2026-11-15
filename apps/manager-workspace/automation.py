@@ -80,9 +80,9 @@ def current_token():
  if float(auth.get('expires',0))>time.time()+120 and read('status.json',{}).get('status') not in ('expired_token','invalid_token'):return auth['access_token']
  config=read('client.json')
  if not config or config.get('client_id')!=CODE:raise Failure('CLIENT_CONFIGURATION_MISSING')
- # The documented OAuth renewal endpoint uses GET. Never log this URL or exceptions.
- data=urllib.parse.urlencode({'grant_type':'refresh_token','client_id':CODE,'client_secret':config['client_secret'],'refresh_token':auth['refresh_token']})
- req=urllib.request.Request('https://oauth.bitrix24.tech/oauth/token/?'+data)
+ # Use POST body: secrets never appear in URL, access logs or exceptions.
+ data=urllib.parse.urlencode({'grant_type':'refresh_token','client_id':CODE,'client_secret':config['client_secret'],'refresh_token':auth['refresh_token']}).encode()
+ req=urllib.request.Request('https://oauth.bitrix24.tech/oauth/token/',data,{'Content-Type':'application/x-www-form-urlencoded'})
  try:
   with urllib.request.build_opener(NoRedirect).open(req,timeout=25) as r:result=json.load(r)
  except urllib.error.HTTPError as error:

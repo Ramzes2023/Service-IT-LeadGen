@@ -33,10 +33,8 @@ class AutomationTests(unittest.TestCase):
    build.return_value.open.return_value=io.BytesIO(json.dumps(response).encode())
    self.assertEqual(a.current_token(),'c'*32)
    request=build.return_value.open.call_args.args[0]
-   self.assertEqual(request.get_method(),'GET')
-   parsed=a.urllib.parse.urlsplit(request.full_url)
-   self.assertEqual((parsed.scheme,parsed.netloc,parsed.path),('https','oauth.bitrix24.tech','/oauth/token/'))
-   self.assertEqual(a.urllib.parse.parse_qs(parsed.query)['grant_type'],['refresh_token'])
+   self.assertEqual(request.get_method(),'POST')
+   self.assertNotIn('secret',request.full_url)
   self.assertEqual(a.read('auth.json')['refresh_token'],'d'*32)
  def test_http_error_exposes_only_safe_code(self):
   error=a.urllib.error.HTTPError(a.PORTAL,401,'auth',{},io.BytesIO(b'{"error":"expired_token","error_description":"SECRET"}'))

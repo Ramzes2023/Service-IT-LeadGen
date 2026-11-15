@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT verify restored active panels on every card
+name: ServiceIT verify unique active panels with deterministic pagination
 on:
   push:
     branches: [main]
@@ -47,9 +47,12 @@ jobs:
           assert auth,"APP_AUTH_MISSING"
           rows=[]
           for start in range(0,10000,50):
-           batch=a.api(auth["access_token"],"crm.activity.list",filter={"OWNER_TYPE_ID":1062,"ORIGINATOR_ID":"serviceit_workspace_app_v1"},select=["ID","OWNER_ID","ORIGIN_ID","COMPLETED"],start=start)
+           batch=a.api(auth["access_token"],"crm.activity.list",filter={"OWNER_TYPE_ID":1062,"ORIGINATOR_ID":"serviceit_workspace_app_v1"},select=["ID","OWNER_ID","ORIGIN_ID","COMPLETED"],order={"ID":"ASC"},start=start)
            rows.extend(batch)
            if len(batch)<50:break
+          unique={str(r["ID"]):r for r in rows}
+          print("TIMELINE_PAGINATION_REPEATS="+str(len(rows)-len(unique)))
+          rows=list(unique.values())
           closed=[r for r in rows if r.get("COMPLETED")=="Y"]
           counts=collections.Counter(r.get("ORIGIN_ID") for r in rows)
           print("TIMELINE_BLOCKS="+str(len(rows)))

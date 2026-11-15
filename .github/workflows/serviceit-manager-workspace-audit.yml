@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT inspect background data shapes without writes
+name: ServiceIT verify restored active panels on every card
 on:
   push:
     branches: [main]
@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: serviceit-workspace-data-shape-readonly
+  group: serviceit-active-panels-final-readonly
   cancel-in-progress: false
 jobs:
   audit:
@@ -34,18 +34,30 @@ jobs:
           chmod 0600 "$stage/"*
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'APP_AUDIT'
-          import traceback
+          import time,collections
           import automation as a
-          a.current_token=lambda:a.read("auth.json")["access_token"]
-          def inspect(token,item,cache):
-           a.scope(item)
-           for kind in ["call","finance"]:a.layout(item,kind)
-           int(item["assignedById"])
-          a.sync=inspect
-          a.write=lambda name,value:print("DRY_RUN_STATUS="+str(value.get("status"))+":CARDS="+str(value.get("cards")),flush=True)
-          try:a.cycle()
-          except Exception as e:
-           for frame in traceback.extract_tb(e.__traceback__):print("FAILURE_FRAME="+frame.filename.split("/")[-1]+":"+str(frame.lineno)+":"+frame.name,flush=True)
-           print("FAILURE_TYPE="+type(e).__name__,flush=True)
-          print("LIVE_STATUS="+str(a.read("status.json",{}).get("status")),flush=True)
+          for attempt in range(48):
+           state=a.read("status.json",{})
+           if state.get("status")=="OK" and time.time()-state.get("completed_at",0)<600:break
+           time.sleep(5)
+          print("TIMELINE_STATUS="+str(state.get("status","UNKNOWN")))
+          print("TIMELINE_CARDS="+str(state.get("cards",0)))
+          print("TIMELINE_FAILED_CARDS="+str(state.get("failed_cards",{})))
+          auth=a.read("auth.json")
+          assert auth,"APP_AUTH_MISSING"
+          rows=[]
+          for start in range(0,10000,50):
+           batch=a.api(auth["access_token"],"crm.activity.list",filter={"OWNER_TYPE_ID":1062,"ORIGINATOR_ID":"serviceit_workspace_app_v1"},select=["ID","OWNER_ID","ORIGIN_ID","COMPLETED"],start=start)
+           rows.extend(batch)
+           if len(batch)<50:break
+          closed=[r for r in rows if r.get("COMPLETED")=="Y"]
+          counts=collections.Counter(r.get("ORIGIN_ID") for r in rows)
+          print("TIMELINE_BLOCKS="+str(len(rows)))
+          print("TIMELINE_COMPLETED_BLOCKS="+str(len(closed)))
+          print("TIMELINE_DUPLICATES="+str(sum(v>1 for v in counts.values())))
+          assert state.get("status")=="OK","BACKGROUND_CYCLE_FAILED"
+          assert not closed,"COMPLETED_BLOCKS_REMAIN"
+          assert all(v==1 for v in counts.values()),"DUPLICATE_BLOCKS"
+          assert len(rows)>=2*state["cards"],"MISSING_BLOCKS"
+          print("TIMELINE_ACCEPTANCE=VERIFIED")
           APP_AUDIT

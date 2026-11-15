@@ -116,11 +116,10 @@ def layout(item,kind):
   except Failure:r=c=x=None
   values=[r,c]+(x if x else [None]*4)
   titles=['Цена / выручка','Расходы','Прибыль','Разработчику · 15%','Менеджеру · 10%','Компании · 75% / убыток']
-  blocks={str(i):cell(t,rub(value)) for i,(t,value) in enumerate(zip(titles,values))}
+  blocks={'amount_'+str(i):cell(t,rub(value)) for i,(t,value) in enumerate(zip(titles,values))}
  else:
   blocks={k:cell(t,v(f)) for k,t,f in [('status','Результат','POST_BADGE'),('need','Потребность','POST_NEED'),('objections','Возражения','POST_OBJECTIONS'),('next','Следующий шаг','POST_ACTION'),('due','Срок','POST_DUE'),('analysis','Анализ ИИ','POST_SUMMARY')]}
- body={'blocks':blocks}
- if not finance:body['logo']={'code':'call-incoming'}
+ body={'blocks':blocks,'logo':{'code':'notification' if finance else 'call-incoming'}}
  return {'icon':{'code':'document' if finance else 'call-completed'},'header':{'title':'Сервис ИТ · Финансы и прибыль' if finance else 'Сервис ИТ · Итог разговора'},'body':body,'footer':{'buttons':{'edit':{'title':'Заполнить финансы' if finance else 'Заполнить итог','type':'primary','action':{'type':'openRestApp','actionParams':{'cardId':str(item['id']),'section':kind}}}}}}
 
 def scope(item):

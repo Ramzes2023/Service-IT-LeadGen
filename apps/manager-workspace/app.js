@@ -16,7 +16,7 @@ function timelineLayout(item,kind){
  const finance=kind==='finance',v=k=>item[P+k];
  let revenue=null,cost=null,result=null;try{revenue=cents(v('FIN_REVENUE'));cost=cents(v('FIN_COSTS'));result=splitMoney(revenue,cost);}catch(e){}
  const blocks=finance?{revenue:cell('Цена / выручка',rub(revenue)),cost:cell('Расходы',rub(cost)),profit:cell('Прибыль',rub(result?.profit??null)),developer:cell('Разработчику · 15%',rub(result?.developer??null)),manager:cell('Менеджеру · 10%',rub(result?.manager??null)),company:cell('Компании · 75% / убыток',rub(result?.company??null))}:{status:cell('Результат',v('POST_BADGE')||'Ожидает разговора'),need:cell('Потребность',v('POST_NEED')),next:cell('Следующий шаг',v('POST_ACTION')),due:cell('Срок',v('POST_DUE'))};
- return {icon:{code:finance?'document':'call-completed'},header:{title:finance?'Сервис ИТ · Финансы и прибыль':'Сервис ИТ · Итог разговора'},body:{...(finance?{}:{logo:{code:'call-incoming'}}),blocks},footer:{buttons:{edit:{title:finance?'Заполнить финансы':'Заполнить итог',type:'primary',action:{type:'openRestApp',actionParams:{cardId:String(item.id),section:kind}}}}}};
+ return {icon:{code:finance?'document':'call-completed'},header:{title:finance?'Сервис ИТ · Финансы и прибыль':'Сервис ИТ · Итог разговора'},body:{logo:{code:finance?'notification':'call-incoming'},blocks},footer:{buttons:{edit:{title:finance?'Заполнить финансы':'Заполнить итог',type:'primary',action:{type:'openRestApp',actionParams:{cardId:String(item.id),section:kind}}}}}};
 }
 if(typeof module!=='undefined')module.exports={cents,splitMoney,timelineLayout};
 if(typeof document!=='undefined'){

@@ -86,7 +86,10 @@ class AutomationTests(unittest.TestCase):
    self.assertEqual(api.call_count,1)
  def test_atomic_private_storage(self):
   a.write('auth.json',{'secret':'private'});self.assertEqual((a.DATA/'auth.json').stat().st_mode&0o777,0o600)
- def test_finance_no_phone_logo(self):self.assertNotIn('logo',a.layout(self.item(),'finance')['body'])
+ def test_required_logo_for_both_panels(self):
+  for kind in ['call','finance']:
+   body=a.layout(self.item(),kind)['body'];self.assertTrue(body['logo']['code']);self.assertTrue(body['blocks'])
+  self.assertEqual(a.layout(self.item(),'finance')['body']['logo']['code'],'notification')
  def test_ai_result_in_call_block(self):
   item=self.item();item[a.PREFIX+'POST_SUMMARY']='Проверено';self.assertIn('Проверено',str(a.layout(item,'call')))
 

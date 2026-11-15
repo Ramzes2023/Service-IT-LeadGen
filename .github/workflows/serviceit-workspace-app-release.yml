@@ -1,4 +1,4 @@
-name: ServiceIT keep manager panels active above timeline history
+name: ServiceIT restore required finance layout logo
 on:
   push:
     branches: [main]

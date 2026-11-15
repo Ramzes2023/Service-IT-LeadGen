@@ -34,10 +34,19 @@ def identity(row):
     return 'BIDZAAR-' + match[1]
 
 
+def subject_text(row):
+    """Procured positions are evidence; tags and publisher addresses are not."""
+    names=[row.get('name','')]
+    goods=row.get('goods')
+    if isinstance(goods,list):
+        names.extend(g['name'] for g in goods if isinstance(g,dict) and isinstance(g.get('name'),str))
+    return '\n'.join(n for n in names if isinstance(n,str))
+
+
 def decision(row, *, now=None):
     """Only current, explicit service demand and Moscow delivery may create CRM."""
     identity(row)
-    groups = classify_services(row.get('name', ''))
+    groups = classify_services(subject_text(row))
     if not groups:
         return 'OUT_OF_SCOPE', []
     if groups == ['KKT_EDO'] and re.search(r'акрил|витрин|стеллаж|мебел|манекен',row.get('name',''),re.I) and not re.search(r'ккт|тсд|касс|сканер|терминал',row.get('name',''),re.I):

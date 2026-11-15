@@ -74,7 +74,7 @@ def save_snapshot(conn,card,item):
 
 
 def patch(conn,rest,client,card,before,fields):
-    if not fields or all(str(before.get(k,''))==str(v) for k,v in fields.items()):return False
+    if not fields:return False
     if not set(fields)<= {REPORT,BRIEF,LIMITS}:raise ValueError('EXTENSION_FIELDS_INVALID')
     # Share the existing Bidzaar writer's lock only around CRM reconciliation.
     if not conn.execute('SELECT pg_try_advisory_lock(1062,604)').fetchone()[0]:return False
@@ -84,6 +84,7 @@ def patch(conn,rest,client,card,before,fields):
         actual=get(rest,card)
         save_snapshot(conn,card,actual)
         if any(actual.get(k)!=before.get(k) for k in (REPORT,BRIEF,LIMITS,INN)):return False
+        if all(str(actual.get(k,''))==str(v) for k,v in fields.items()):return False
         receipt=conn.execute('SELECT expected,status FROM serviceit_extended_evidence_receipts WHERE card_id=%s',(card,)).fetchone()
         if receipt and receipt[1]=='UNCERTAIN':
             if all(str(actual.get(k,''))==str(v) for k,v in receipt[0].items()):

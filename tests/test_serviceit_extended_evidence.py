@@ -64,7 +64,7 @@ def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch):
             if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://source', 'a'*48001,24000)])
             self.updates.append(args);return Result([])
     conn=Conn();seen=[]
-    monkeypatch.setattr(docs,'_model_research',lambda client,env,inputs:seen.extend(inputs) or [])
+    monkeypatch.setattr(docs,'_model_research',lambda client,env,inputs:seen.extend(inputs) or [{'provider':'RouterAI','facts':[]}])
     docs.process(conn,None,{})
     assert len(seen[0]['text'])==24000
     assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==48000
@@ -267,3 +267,24 @@ def test_reviewed_seed_is_fetched_and_still_requires_exact_identity(monkeypatch)
     monkeypatch.setattr(contacts,'read',read)
     result=contacts.search(None,{},'7729674716','Клиника К31')
     assert seen==['https://www.k31.ru/patient/'] and result['contacts']==[]
+
+def test_model_failure_does_not_advance_full_document_cursor(monkeypatch):
+ class Result:
+  def __init__(self,rows):self.rows=rows
+  def fetchall(self):return self.rows
+ class Conn:
+  def __init__(self):self.updates=[]
+  def execute(self,sql,args=()):
+   if sql.startswith('SELECT card_id,url,name'):return Result([])
+   if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://bidzaar.com/document','Условия оплаты: отсрочка платежа тридцать дней. '*100,0)])
+   self.updates.append((sql,args));return Result([])
+ conn=Conn()
+ monkeypatch.setattr(docs,'_model_research',lambda *a:[{'provider':'SOURCE','facts':[]}])
+ docs.process(conn,None,{})
+ assert any('ROUTERAI_ANALYSIS_RETRY' in sql for sql,args in conn.updates)
+ assert not any('analyzed_chars=%s' in sql for sql,args in conn.updates)
+
+def test_document_contact_hint_is_literal_and_never_confirmed():
+ hints=docs.contact_hints('Контакт по закупке: +7 (495) 123-45-67, e-mail procurement@alpha.ru','https://bidzaar.com/file')
+ assert len(hints)==2 and all(h['status']=='UNCONFIRMED' for h in hints)
+ assert not docs.contact_hints('Участник должен заполнить телефон: +7 (495) 123-45-67','https://bidzaar.com/file')

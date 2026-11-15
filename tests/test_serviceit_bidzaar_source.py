@@ -65,3 +65,10 @@ def test_true_backwards_page_remains_rejected(times):
     with httpx.Client(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={'items':[{**ROW,'lastModified':t} for t in times]}))) as client:
         with pytest.raises(ValueError,match='BIDZAAR_CURSOR_ORDER_INVALID'):
             s.fetch_page(client,endpoint,'2026-11-13T10:01:00.844331Z')
+
+def test_generic_title_uses_actual_procured_positions_not_tags():
+ row={**ROW,'name':'Оборудование','goods':[{'name':'Поставка серверов'}]}
+ assert s.decision(row,now=NOW)[0]=='ELIGIBLE'
+ assert 'SERVERS' in s.decision(row,now=NOW)[1]
+ assert s.decision({**row,'goods':[],'tags':['Поставка серверов']},now=NOW)[0]=='OUT_OF_SCOPE'
+ assert s.decision({**row,'deliveryAddresses':[],'location':['Москва']},now=NOW)[0]=='GEO_UNKNOWN'

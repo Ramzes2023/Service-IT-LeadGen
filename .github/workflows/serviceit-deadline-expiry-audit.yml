@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT final expiry and renewed background access acceptance
+name: ServiceIT verify confirmed credential renewal and background automation
 on:
   push:
     branches: [main]

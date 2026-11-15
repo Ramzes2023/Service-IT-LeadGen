@@ -12,6 +12,7 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_deadline_expiry_state (
 
 def parse_date(value):
  value=str(value or '').strip()
+ value=re.sub(r'\s*\(цитата источника\)\s*$','',value,flags=re.I).strip()
  try:
   result=datetime.fromisoformat(value.replace('Z','+00:00'))
   if result.tzinfo is not None:return result.astimezone(timezone.utc)
@@ -30,7 +31,7 @@ def deadline(item, notice=None):
  for key,value in item.items():
   if key.endswith(('AI_FULL_REPORT','AI_MANAGER_BRIEF')) and isinstance(value,str):
    for line in value.splitlines():
-    match=re.fullmatch(r'\s*Подача до:\s*(.*?)\s*',line)
+    match=re.fullmatch(r'\s*(?:Подача до|Срок подачи(?: заявок)?|Окончание(?: срока)? подачи заявок|Окончание при[её]ма заявок|При[её]м заявок до)\s*:\s*(.*?)\s*',line,re.I)
     if match:
      parsed=parse_date(match[1])
      if parsed is None:return None

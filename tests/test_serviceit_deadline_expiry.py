@@ -32,3 +32,11 @@ def test_extension_restores_owned_card_only():
  assert transition(item,later,NOW,None,VALID,{'won'})=={}
  assert transition({'stageId':'review','title':'manually moved'},later,NOW,('review','EXPIRED'),VALID,{'won'})=={}
  assert transition(item,later,NOW,('deleted','EXPIRED'),VALID,{'won'})=={}
+
+
+def test_supported_source_passport_labels_and_citation_annotation():
+ for label in ('Подача до','Срок подачи','Срок подачи заявок','Окончание подачи заявок','Окончание приема заявок'):
+  assert deadline({'UF_AI_FULL_REPORT':label+': 15.11.2026 15:00 МСК (цитата источника)'})==NOW
+ assert deadline({'UF_AI_FULL_REPORT':'Срок задачи: 01.11.2026 15:00 МСК'}) is None
+ assert deadline({'UF_AI_FULL_REPORT':'Срок подачи: 15.11.2026 15:00 МСК (возможно продление)'}) is None
+ assert deadline({'UF_AI_FULL_REPORT':'Срок подачи: 15.11.2026'}) is None

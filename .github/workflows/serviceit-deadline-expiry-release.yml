@@ -1,4 +1,4 @@
-name: ServiceIT precise submission expiry five-minute automation
+name: ServiceIT include all supported submission deadline labels
 on:
   push:
     branches: [main]

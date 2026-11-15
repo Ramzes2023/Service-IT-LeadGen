@@ -69,7 +69,7 @@ def connect(auth):
  refresh=valid_token(auth.get('refresh_token'))
  with LOCK:
   # Keep the existing refresh-token chain; SDK tokens belong to another session.
-  if not read('auth.json') or read('status.json',{}).get('status') in ('TOKEN_REFRESH_REJECTED','expired_token','invalid_token'):
+  if not read('auth.json') or read('status.json',{}).get('status','').startswith('TOKEN_REFRESH_REJECTED') or read('status.json',{}).get('status') in ('expired_token','invalid_token'):
    write('auth.json',{'access_token':token,'refresh_token':refresh,'expires':time.time()+1800})
   WAKE.set()
  return {'connected':True}
@@ -85,8 +85,15 @@ def current_token():
  req=urllib.request.Request('https://oauth.bitrix24.tech/oauth/token/',data,{'Content-Type':'application/x-www-form-urlencoded'})
  try:
   with urllib.request.build_opener(NoRedirect).open(req,timeout=25) as r:result=json.load(r)
+ except urllib.error.HTTPError as error:
+  try:result=json.loads(error.read(65536))
+  except Exception:raise Failure('TOKEN_REFRESH_HTTP_'+str(error.code)) from None
+ except Failure as error:raise Failure('TOKEN_REFRESH_'+str(error)) from None
+ except urllib.error.URLError as error:raise Failure('TOKEN_REFRESH_NETWORK_'+type(error.reason).__name__.upper()) from None
  except Exception:raise Failure('TOKEN_REFRESH_FAILED') from None
- if result.get('error'):raise Failure('TOKEN_REFRESH_REJECTED')
+ if result.get('error'):
+  code=re.sub('[^A-Za-z0-9_]','',str(result['error']))[:50]
+  raise Failure('TOKEN_REFRESH_REJECTED_'+code)
  if result.get('client_endpoint','').rstrip('/')!=PORTAL.rstrip('/'):raise Failure('WRONG_TOKEN_ENDPOINT')
  for k in ['access_token','refresh_token']:valid_token(result.get(k))
  # Persist rotated refresh token before any further network calls.

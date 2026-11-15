@@ -17,6 +17,14 @@ class AutomationTests(unittest.TestCase):
    self.assertEqual(a.layout(item,kind)['header']['tags']['expired']['type'],'failure')
   item['stageId']='review'
   self.assertNotIn('tags',a.layout(item,'finance')['header'])
+ def test_refresh_http_error_keeps_tokens_and_sanitizes_diagnostic(self):
+  auth={'access_token':'a'*32,'refresh_token':'b'*32,'expires':0}
+  a.write('auth.json',auth);a.write('client.json',{'client_id':a.CODE,'client_secret':'secret'})
+  error=a.urllib.error.HTTPError('https://example.test',400,'error',{},io.BytesIO(b'{"error":"invalid_client","error_description":"sensitive text"}'))
+  with patch.object(a.urllib.request,'build_opener') as build:
+   build.return_value.open.side_effect=error
+   with self.assertRaisesRegex(a.Failure,'^TOKEN_REFRESH_REJECTED_invalid_client$'):a.current_token()
+  self.assertEqual(a.read('auth.json'),auth)
  def test_refresh_rotates_and_persists_private_tokens(self):
   a.write('auth.json',{'access_token':'a'*32,'refresh_token':'b'*32,'expires':0})
   a.write('client.json',{'client_id':a.CODE,'client_secret':'secret'})

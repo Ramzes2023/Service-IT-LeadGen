@@ -1,4 +1,4 @@
-name: ServiceIT red expired labels and prominent deadline banner
+name: ServiceIT diagnose OAuth renewal safely
 on:
   push:
     branches: [main]
@@ -95,4 +95,20 @@ jobs:
               print('WORKSPACE_APP_HTTPS=VERIFIED')
           except Exception:
               print('WORKSPACE_APP_HTTPS=PENDING_ROOT_ROUTE')
+          PY
+
+      - name: Read safe renewal status
+        shell: bash
+        run: |
+          stage="$RUNNER_TEMP/workspace-app"
+          # Locate the same temporary SSH material created above.
+          keyfile=$(find "$RUNNER_TEMP" -maxdepth 2 -name id -type f | head -n 1)
+          known="$(dirname "$keyfile")/hosts"
+          ssh -T -i "$keyfile" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$known" -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'PY'
+          import json,time
+          from pathlib import Path
+          time.sleep(8)
+          state=json.loads(Path('/data/status.json').read_text())
+          print('APP_RENEWAL_STATUS='+str(state.get('status')))
+          print('APP_RENEWAL_METHOD='+str(state.get('method','')))
           PY

@@ -16,14 +16,19 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('MANAGER_605_ACTIVE='+str(u.get('ACTIVE')),flush=True)
     binding=owner_type(client,rest.base)
     for card in (11,29,33,35):
-        tasks=request(client,rest.base,'tasks.task.list',{'filter':{'UF_CRM_TASK':binding+'_'+str(card)},'select':['ID','RESPONSIBLE_ID','UF_CRM_TASK','DESCRIPTION'],'start':0})
+        tasks=request(client,rest.base,'tasks.task.list',{'filter':{'UF_CRM_TASK':binding+'_'+str(card)},'select':['ID','RESPONSIBLE_ID','UF_CRM_TASK','DESCRIPTION','STATUS','DEADLINE'],'start':0})
         items=tasks['result']['tasks']
         exact=[t for t in items if binding+'_'+str(card) in t.get('ufCrmTask',t.get('UF_CRM_TASK',[]))]
         print('MANAGER_CARD_'+str(card)+'_TASKS='+str(len(exact)),flush=True)
         print('MANAGER_CARD_'+str(card)+'_CONTEXTUAL='+('YES' if any('ГОТОВАЯ КАРТОЧКА ДЛЯ МЕНЕДЖЕРА' in str(t.get('description',t.get('DESCRIPTION',''))) for t in exact) else 'NO'),flush=True)
+        for t in exact:
+            print('MANAGER_CARD_'+str(card)+'_TASK_'+str(t.get('id'))+'_STATUS='+str(t.get('status',t.get('STATUS'))),flush=True)
+            print('MANAGER_CARD_'+str(card)+'_TASK_'+str(t.get('id'))+'_DEADLINE='+str(t.get('deadline',t.get('DEADLINE'))),flush=True)
         print('MANAGER_CARD_'+str(card)+'_ASSIGNEES='+','.join(str(t.get('responsibleId',t.get('RESPONSIBLE_ID'))) for t in exact),flush=True)
     for state,count in conn.execute('SELECT state,count(*) FROM serviceit_bidzaar_inbox GROUP BY state').fetchall():
         if state.isupper():print('BIDZAAR_COUNT_'+state+'='+str(count),flush=True)
+    for reason,n in conn.execute("SELECT reason,count(*) FROM serviceit_bidzaar_inbox WHERE state='FILTERED' GROUP BY reason").fetchall():
+        if re.fullmatch(r'[A-Z_]{1,80}',reason):print('BIDZAAR_FILTER_'+reason+'='+str(n),flush=True)
     rows=conn.execute("SELECT card_id,expected FROM serviceit_bidzaar_inbox WHERE state='VERIFIED' ORDER BY card_id DESC LIMIT 30").fetchall()
     ok=True
     for card,expected in rows:

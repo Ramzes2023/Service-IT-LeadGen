@@ -21,7 +21,11 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS model_attempts INTEGER NOT NULL DEFAULT 0;
  UPDATE serviceit_extended_documents SET analysis_version=4,analyzed_chars=0,model_attempts=0,
  status=CASE WHEN status='READ' THEN 'EXTRACTED' ELSE status END,next_attempt_at=now()
- WHERE analysis_version<4;'''
+ WHERE analysis_version<4;
+ UPDATE serviceit_extended_documents SET analysis_version=5,
+ model_attempts=CASE WHEN status='EXTRACTED' THEN 0 ELSE model_attempts END,
+ next_attempt_at=CASE WHEN status='EXTRACTED' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<5;'''
 
 
 def _limits():

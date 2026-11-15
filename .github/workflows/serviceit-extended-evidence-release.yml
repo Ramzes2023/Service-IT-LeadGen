@@ -1,4 +1,4 @@
-name: ServiceIT all-document queue and public company contacts v28
+name: ServiceIT all-document queue and public company contacts v29
 on:
   push:
     branches: [main]
@@ -91,9 +91,12 @@ jobs:
           assert rows[-1] in actual
           print('EXT_FIVE_MINUTE_SCHEDULE=VERIFIED')
           PY
-          for cycle in {1..16}; do
-            python3 "$dir/serviceit_extended_evidence_runner.py" | tee "$dir/release-cycle-status"
+          for cycle in {1..32}; do
+            python3 "$dir/serviceit_extended_evidence_runner.py" --drain | tee "$dir/release-cycle-status"
             if ! grep -qE "^EXT_DOCUMENTS_EXTRACTED=[1-9]" "$dir/release-cycle-status"; then break; fi
+            if grep -q '^EXT_DOCUMENT_CHUNKS=0$' "$dir/release-cycle-status"; then break; fi
           done
+          python3 "$dir/serviceit_extended_evidence_runner.py"
+          python3 "$dir/serviceit_extended_evidence_runner.py"
           python3 "$dir/serviceit_extended_evidence_runner.py" --audit
           REMOTE

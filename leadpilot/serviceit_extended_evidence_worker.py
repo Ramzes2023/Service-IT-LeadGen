@@ -166,28 +166,35 @@ def patch(conn,rest,client,card,before,fields):
         conn.execute('SELECT pg_advisory_unlock(1062,604)')
 
 
+def unfinished_items(conn,items):
+    active={row[0] for row in conn.execute("SELECT DISTINCT card_id FROM serviceit_extended_documents WHERE status IN ('PENDING','RETRY','EXTRACTED')").fetchall()}
+    return [item for item in items if int(item['id']) in active]
+
+
 def run():
     env=dict(os.environ)
+    drain=env.get('SERVICEIT_EVIDENCE_DRAIN_ONLY')=='YES'
     if not live_permitted(env):raise ValueError('VPS_LIVE_REQUIRED')
     with db(env) as conn,httpx.Client(trust_env=False,timeout=20,follow_redirects=False) as client:
         if not conn.execute('SELECT pg_try_advisory_lock(1062,706)').fetchone()[0]:return
         conn.execute(DDL);conn.execute(docs.DDL)
         rest=Rest(secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'),client)
         items=source_inventory(conn,rest)
+        if drain:items=unfinished_items(conn,items)
         print('EXT_CARDS_SCANNED='+str(len(items)),flush=True)
         for item in items:
             card=int(item['id']);inn=str(item.get(INN) or '')
             if _is_valid_inn(inn):
                 conn.execute('INSERT INTO serviceit_company_contact_cache(inn,name) VALUES(%s,%s) ON CONFLICT DO NOTHING',(inn,str(item.get(COMPANY) or '')[:250]))
-        for card,notice in conn.execute("SELECT card_id,notice FROM serviceit_bidzaar_inbox WHERE state='VERIFIED'").fetchall():
+        for card,notice in ([] if drain else conn.execute("SELECT card_id,notice FROM serviceit_bidzaar_inbox WHERE state='VERIFIED'").fetchall()):
             docs.register(conn,card,notice.get('files',[]))
         chunks=docs.process(conn,client,env,batch=8)
         print('EXT_DOCUMENT_CHUNKS='+str(chunks),flush=True)
         # Prioritize queued paid analysis; discovery uses otherwise idle cycles.
-        if not chunks:discover_b2b_documents(conn,rest,client,env)
+        if not chunks and not drain:discover_b2b_documents(conn,rest,client,env)
         active_inns=sorted({str(item.get(INN) or '') for item in items if _is_valid_inn(str(item.get(INN) or ''))})
         for inn in active_inns:refresh_document_contacts(conn,inn)
-        rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() AND inn=ANY(%s) ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2',(active_inns,)).fetchall()
+        rows=[] if drain else conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() AND inn=ANY(%s) ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2',(active_inns,)).fetchall()
         pending=[]
         for inn,name in rows:
             conn.execute("UPDATE serviceit_company_contact_cache SET next_attempt_at=now()+interval '1 day' WHERE inn=%s",(inn,))
@@ -241,9 +248,9 @@ def run():
                 # it before retrying. A single network error must not starve others.
                 print('EXT_CARD_'+str(card)+'_NETWORK_RETRY=YES',flush=True)
         from .serviceit_tender_manager_policy import repair_deadlines
-        repair_deadlines(conn,client,rest.base)
+        if not drain:repair_deadlines(conn,client,rest.base)
         from .serviceit_evidence_stage_handoff import advance
-        advance(conn,rest,client,items,get)
+        if not drain:advance(conn,rest,client,items,get)
         print('EXT_CARDS_UPDATED='+str(updated),flush=True)
         for status,count in conn.execute('SELECT status,count(*) FROM serviceit_extended_documents GROUP BY status').fetchall():print('EXT_DOCUMENTS_'+status+'='+str(count),flush=True)
         for status,count in conn.execute("SELECT coalesce(result->>'status','PENDING'),count(*) FROM serviceit_company_contact_cache GROUP BY 1").fetchall():print('EXT_COMPANIES_'+status+'='+str(count),flush=True)

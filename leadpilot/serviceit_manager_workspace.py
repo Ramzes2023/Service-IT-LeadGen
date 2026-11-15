@@ -29,6 +29,8 @@ SPECS={
  'FIN_REVENUE':('Цена / выручка без НДС, ₽','double'),
  'FIN_COSTS':('Все прямые расходы без НДС, ₽','double'),
  'FIN_BASIS':('Тип расчёта: план или факт','enumeration'),
+ 'FIN_PAID_MANAGER':('Выплачено менеджеру, ₽','double'),
+ 'FIN_PAID_DEVELOPER':('Выплачено разработчику, ₽','double'),
  'FIN_PROFIT':('Прибыль после расходов, ₽ (авто)','double'),
  'FIN_DEVELOPER':('Разработчику 15%, ₽ (авто)','double'),
  'FIN_MANAGER':('Менеджеру продаж 10%, ₽ (авто)','double'),
@@ -36,7 +38,7 @@ SPECS={
  'FIN_STATUS':('Пояснение расчёта (авто)','string'),
  'ALL_TOTALS':('Общий результат всех карточек, ₽ (авто)','string'),
 }
-INPUTS=tuple(P+x for x in ('POST_NEED','POST_INTEREST','POST_OBJECTIONS','POST_ACTION','POST_DUE','POST_NOTES','FIN_REVENUE','FIN_COSTS','FIN_BASIS'))
+INPUTS=tuple(P+x for x in ('POST_NEED','POST_INTEREST','POST_OBJECTIONS','POST_ACTION','POST_DUE','POST_NOTES','FIN_REVENUE','FIN_COSTS','FIN_BASIS','FIN_PAID_MANAGER','FIN_PAID_DEVELOPER'))
 CALL_INPUTS=INPUTS[:6]
 OUTPUTS={P+x for x in SPECS}-set(INPUTS)
 NUMBERS={P+x for x,(_,kind) in SPECS.items() if kind=='double'}

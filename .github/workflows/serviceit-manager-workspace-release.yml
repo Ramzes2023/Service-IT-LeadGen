@@ -1,4 +1,4 @@
-name: ServiceIT remove rejected left-side workspace presentation
+name: ServiceIT add actual payout inputs preserving manager data
 on:
   push:
     branches: [main]

@@ -57,7 +57,7 @@ def discover_b2b_documents(conn,rest,client,env):
         findings=supplement_eis_mirrors(findings,notice,client)
         links=candidate_links(client,findings,notice['tender_id'],max_links=1000,include_legacy=True)
         docs.register(conn,card,[{'url':r['url'],'name':r.get('label') or 'Документ закупки'} for r in links])
-        conn.execute("UPDATE serviceit_extended_b2b_discovery SET status=%s,documents=%s,error=NULL,next_attempt_at=now()+CASE WHEN %s THEN interval '7 days' ELSE interval '12 hours' END WHERE card_id=%s",('FOUND' if links else 'NO_PUBLIC_DOCUMENTS',len(links),bool(links),card))
+        conn.execute("UPDATE serviceit_extended_b2b_discovery SET status=%s,documents=%s,error=NULL,next_attempt_at=now()+CASE WHEN %s AND NOT EXISTS (SELECT 1 FROM serviceit_extended_documents f WHERE f.card_id=serviceit_extended_b2b_discovery.card_id AND f.status IN ('RETRY','FAILED')) THEN interval '7 days' ELSE interval '12 hours' END WHERE card_id=%s",('FOUND' if links else 'NO_PUBLIC_DOCUMENTS',len(links),bool(links),card))
         print('EXT_B2B_FILES_REGISTERED='+str(len(links)),flush=True)
     except Exception as exc:
         reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()

@@ -38,6 +38,9 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  WHERE analysis_version<8;
  UPDATE serviceit_extended_documents SET parser_version=4,status='PENDING',attempts=0,next_attempt_at=now()
  WHERE parser_version<4 AND status IN ('FAILED','RETRY') AND error='CONNECTERROR'
+ AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';
+ UPDATE serviceit_extended_documents SET parser_version=5,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<5 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT'
  AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';'''
 
 
@@ -253,6 +256,9 @@ def process(conn,client,env,*,batch=6):
         except Exception as exc:
             reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()
             conn.execute("UPDATE serviceit_extended_documents SET error=%s,status=CASE WHEN attempts>=3 THEN 'FAILED' ELSE 'RETRY' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason,card,url))
+            # New public links can replace an unavailable source file. Keep
+            # rediscovery alive even after the bounded download retries finish.
+            conn.execute("UPDATE serviceit_extended_b2b_discovery SET next_attempt_at=LEAST(next_attempt_at,now()+interval '12 hours') WHERE card_id=%s",(card,))
     # Long documents are analyzed in durable windows too, not cut at 24k.
     chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars,model_attempts,window_chars FROM serviceit_extended_documents WHERE status='EXTRACTED' AND next_attempt_at<=now() ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
     from .serviceit_b2b_routerai_deep import public_documents
@@ -334,6 +340,10 @@ def render(conn,card):
         lines.append(f'{name}: '+('текст прочитан' if status=='READ' else 'текст извлечён; полный анализ ИИ в очереди' if status=='EXTRACTED' else 'в очереди' if status in ('PENDING','RETRY') else 'не прочитан: '+str(error)))
         lines.append('Источник: '+url)
         lines.append('Выводы ИИ: '+('есть подтверждённые цитаты RouterAI' if any(r.get('provider')=='RouterAI' for r in reports or []) else 'подтверждённые цитаты RouterAI отсутствуют; доступен разбор текста'))
+        if error in ('DOCUMENT_HTTP_404','DOCUMENT_HTTP_410'):
+            lines.append('Источник сейчас не предоставляет файл (HTTP '+error.rsplit('_',1)[-1]+'). Документ не прочитан; поиск актуальной публичной ссылки будет повторён автоматически.')
+        elif error and status in ('FAILED','RETRY') and urlsplit(url).hostname!='bidzaar.com':
+            lines.append('Документ пока недоступен для чтения; причина: '+str(error)+'. Повторный поиск доступного публичного вложения запланирован.')
         if str(error or '').startswith('ROUTERAI_'):lines.append('Полный анализ ИИ не завершён: автоматическая повторная попытка запланирована.')
         if any(r.get('model')=='NO_SAFE_MODEL_INPUT' for r in reports or []):lines.append('Часть текста исключена из передачи модели; см. оригинал документа.')
         if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')

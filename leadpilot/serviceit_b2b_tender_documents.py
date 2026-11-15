@@ -193,7 +193,7 @@ def fetch_bytes(client, url, *, allow_legacy=False):
                                               "application/vnd.openxmlformats-officedocument.*"}
                            ) as response:
             fail(response.status_code == 200,
-                 "DOCUMENT_DOWNLOAD_NOT_PUBLIC")
+                 "DOCUMENT_HTTP_"+str(response.status_code))
             fail(not response.headers.get("content-type", "").lower().startswith(
                 ("text/html", "application/json", "text/xml")),
                  "DOCUMENT_DOWNLOAD_LOGIN_OR_HTML")

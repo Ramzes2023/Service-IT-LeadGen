@@ -1,4 +1,6 @@
 import tempfile
+import io
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +11,21 @@ class AutomationTests(unittest.TestCase):
   self.temp=tempfile.TemporaryDirectory();self.old=a.DATA;a.DATA=Path(self.temp.name)
  def tearDown(self):a.DATA=self.old;self.temp.cleanup()
  def item(self):return {'id':39,'categoryId':21,'assignedById':1607,a.PREFIX+'FIN_REVENUE':'100000',a.PREFIX+'FIN_COSTS':'40000'}
+ def test_refresh_rotates_and_persists_private_tokens(self):
+  a.write('auth.json',{'access_token':'a'*32,'refresh_token':'b'*32,'expires':0})
+  a.write('client.json',{'client_id':a.CODE,'client_secret':'secret'})
+  response={'access_token':'c'*32,'refresh_token':'d'*32,'client_endpoint':a.PORTAL,'expires_in':3600}
+  with patch.object(a.urllib.request,'build_opener') as build:
+   build.return_value.open.return_value=io.BytesIO(json.dumps(response).encode())
+   self.assertEqual(a.current_token(),'c'*32)
+   request=build.return_value.open.call_args.args[0]
+   self.assertNotIn('secret',request.full_url)
+  self.assertEqual(a.read('auth.json')['refresh_token'],'d'*32)
+ def test_http_error_exposes_only_safe_code(self):
+  error=a.urllib.error.HTTPError(a.PORTAL,401,'auth',{},io.BytesIO(b'{"error":"expired_token","error_description":"SECRET"}'))
+  with patch.object(a.urllib.request,'build_opener') as build:
+   build.return_value.open.side_effect=error
+   with self.assertRaisesRegex(a.Failure,'^expired_token$'):a.request(a.PORTAL,{})
  def test_money(self):
   self.assertEqual(a.split(a.money('100000'),a.money('40000')),[6000000,900000,600000,4500000])
   self.assertEqual(a.split(0,100),[-100,0,0,-100]);self.assertIsNone(a.split(None,0))

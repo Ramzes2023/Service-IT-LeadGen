@@ -20,7 +20,7 @@ function timelineLayout(item,kind){
 }
 if(typeof module!=='undefined')module.exports={cents,splitMoney,timelineLayout};
 if(typeof document!=='undefined'){
- let item=null,interest='',maps={},busy=false;
+ let item=null,interest='',maps={},busy=false,backgroundNotice='';
  const $=id=>document.getElementById(id),msg=(text,error=false)=>{$('status').textContent=text;$('status').classList.toggle('error',error);};
  const api=(method,args={})=>new Promise((resolve,reject)=>BX24.callMethod(method,args,r=>r.error()?reject(Error('Битрикс24: '+String(r.error()).replace(/[^A-Za-z0-9_ -]/g,'').slice(0,80))):resolve(r.data())));
  const run=async fn=>{if(busy)return;busy=true;document.querySelectorAll('button,input,textarea,select').forEach(b=>b.disabled=true);try{await fn();}catch(e){msg(e.message,true);}finally{busy=false;document.querySelectorAll('button,input,textarea,select').forEach(b=>b.disabled=false);}};
@@ -70,10 +70,10 @@ if(typeof document!=='undefined'){
  else BX24.init(()=>run(async()=>{
  const auth=BX24.getAuth();if(auth.domain!=='serviseit.bitrix24.ru')throw Error('Приложение доступно только для портала Сервис ИТ.');
  if(location.pathname.endsWith('/install')){$('install').hidden=false;msg('Готово к установке.');return;}
- try{const connected=await serverCall('connect',auth);if(connected.administratorRequired)msg('Форма доступна. Для фонового обновления администратору нужно один раз открыть приложение.');}catch(e){msg('Фоновое подключение пока не подтверждено: '+e.message,true);}
+ try{const connected=await serverCall('connect',auth);backgroundNotice=connected.administratorRequired?'Для фонового обновления администратору нужно один раз открыть приложение. ':'Фоновое подключение сохранено. ';}catch(e){msg('Фоновое подключение пока не подтверждено: '+e.message,true);}
  const p=BX24.placement.info();let o=p.options||{};if(typeof o==='string'){try{o=JSON.parse(o);}catch(e){o={};}}if(typeof o.actionParams==='string'){try{o.actionParams=JSON.parse(o.actionParams);}catch(e){o.actionParams={};}}let id=Number(o.cardId||o.ID||o.id||o.actionParams?.cardId);
- if(!Number.isSafeInteger(id)||id<8){msg('Откройте приложение из блока «Итог разговора», «Финансы» или вкладки карточки.');return;}
- await enumMaps();item=await get(id);fill();$('workspace').hidden=false;msg('Данные загружены из CRM.');
+ if(!Number.isSafeInteger(id)||id<8){msg(backgroundNotice+'Откройте приложение из блока «Итог разговора», «Финансы» или вкладки карточки.');return;}
+ await enumMaps();item=await get(id);fill();$('workspace').hidden=false;msg(backgroundNotice+'Данные загружены из CRM.');
  try{await syncTimeline(item);}catch(e){msg('Форма доступна. Блоки ленты требуют проверки: '+e.message,true);}
  BX24.fitWindow();if((o.section||o.actionParams?.section)==='finance')document.querySelector('.finance').scrollIntoView();
  }));

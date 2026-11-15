@@ -25,6 +25,9 @@ def request(url,data):
  req=urllib.request.Request(url,json.dumps(data).encode(),{'Content-Type':'application/json'})
  try:
   with urllib.request.build_opener(NoRedirect).open(req,timeout=25) as r:result=json.load(r)
+ except urllib.error.HTTPError as e:
+  try:result=json.loads(e.read(65536))
+  except Exception:raise Failure('REMOTE_REQUEST_FAILED') from None
  except Exception:raise Failure('REMOTE_REQUEST_FAILED') from None
  if not isinstance(result,dict):raise Failure('INVALID_RESPONSE')
  if result.get('error'):raise Failure(re.sub('[^A-Za-z0-9_]','',str(result['error']))[:60])
@@ -70,7 +73,7 @@ def connect(auth):
 def current_token():
  auth=read('auth.json')
  if not auth:raise Failure('WAITING_FOR_ADMIN_OPEN')
- if float(auth.get('expires',0))>time.time()+120:return auth['access_token']
+ if float(auth.get('expires',0))>time.time()+120 and read('status.json',{}).get('status') not in ('expired_token','invalid_token'):return auth['access_token']
  config=read('client.json')
  if not config or config.get('client_id')!=CODE:raise Failure('CLIENT_CONFIGURATION_MISSING')
  # Use POST body: secrets never appear in URL, access logs or exceptions.

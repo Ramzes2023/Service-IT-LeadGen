@@ -1,4 +1,4 @@
-name: ServiceIT workspace background reconciliation and live refresh
+name: ServiceIT workspace automatic token recovery and live refresh
 on:
   push:
     branches: [main]

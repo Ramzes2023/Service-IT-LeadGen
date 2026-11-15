@@ -8,6 +8,7 @@ env=dict(s.split('=',1) for s in settings[0]['Config']['Env'])
 other=dict(s.split('=',1) for s in settings[1]['Config']['Env'])
 for key in ('SERVICEIT_TINYFISH_API_KEY_FILE','SERVICEIT_TAVILY_SEARCH_API_KEY_FILE'):
     if key in other:env[key]=other[key]
+if '--drain' in sys.argv:env['SERVICEIT_EVIDENCE_DRAIN_ONLY']='YES'
 code='import os,sys,types\nos.environ.update('+repr(env)+')\n'
 # Current reviewed dependencies, independent of the coordinator image's age.
 for name in ('serviceit_b2b_routerai_deep','serviceit_tender_manager_timing','serviceit_tender_manager_policy','serviceit_evidence_stage_handoff','serviceit_bitrix_list_shape','serviceit_b2b_tender_documents','serviceit_company_contacts','serviceit_extended_documents'):

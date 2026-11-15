@@ -514,3 +514,13 @@ def test_sevenzip_expanded_size_is_bounded(tmp_path):
     from leadpilot.serviceit_archive_reader import read_members
     raw=make_sevenzip(tmp_path,[('large.txt','x'*10_000_001)])
     with pytest.raises(ValueError,match='ARCHIVE_EXPANDED_SIZE_EXCEEDED'):read_members(raw)
+
+
+def test_drain_only_selects_unfinished_owned_inventory():
+    from leadpilot.serviceit_extended_evidence_worker import unfinished_items
+    class Conn:
+        def execute(self,sql):
+            assert "'EXTRACTED'" in sql and "'RETRY'" in sql and "'PENDING'" in sql
+            return self
+        def fetchall(self):return [(27,),(999,)]
+    assert unfinished_items(Conn(),[{'id':27},{'id':35}])==[{'id':27}]

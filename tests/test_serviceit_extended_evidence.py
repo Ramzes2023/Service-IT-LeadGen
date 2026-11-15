@@ -81,7 +81,8 @@ def test_owned_block_replacement_preserves_manager_text():
     assert owned(result,'new')==result
 
 
-def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch):
+@pytest.mark.parametrize("attempts,size", [(0,24000),(1,12000),(3,6000)])
+def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch,attempts,size):
     class Result:
         def __init__(self,rows):self.rows=rows
         def fetchall(self):return self.rows
@@ -89,13 +90,13 @@ def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch):
         updates=[]
         def execute(self,sql,args=()):
             if sql.startswith('SELECT card_id,url,name'):return Result([])
-            if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://source', 'a'*48001,24000)])
+            if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://source', 'a'*48001,24000,attempts)])
             self.updates.append(args);return Result([])
     conn=Conn();seen=[]
     monkeypatch.setattr(docs,'full_window_research',lambda client,env,inputs:seen.extend(inputs) or [{'provider':'RouterAI','facts':[]}])
     docs.process(conn,None,{})
-    assert len(seen[0]['text'])==24000
-    assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==48000
+    assert len(seen[0]['text'])==size
+    assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==24000+size
 
 
 def test_crm_update_preserves_fields_and_requires_readback(monkeypatch):
@@ -306,7 +307,7 @@ def test_model_failure_does_not_advance_full_document_cursor(monkeypatch):
   def __init__(self):self.updates=[]
   def execute(self,sql,args=()):
    if sql.startswith('SELECT card_id,url,name'):return Result([])
-   if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://bidzaar.com/document','Условия оплаты: отсрочка платежа тридцать дней. '*100,0)])
+   if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://bidzaar.com/document','Условия оплаты: отсрочка платежа тридцать дней. '*100,0,0)])
    self.updates.append((sql,args));return Result([])
  conn=Conn()
  monkeypatch.setattr(docs,'full_window_research',lambda *a:[{'provider':'SOURCE','facts':[]}])

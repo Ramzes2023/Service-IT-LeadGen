@@ -5,7 +5,7 @@ from leadpilot.serviceit_enrichment_worker import Rest,normalized
 with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as client:
     rest=Rest(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'),client)
     for status,count in conn.execute('SELECT status,count(*) FROM serviceit_extended_documents GROUP BY status').fetchall():print('EXT_DOCUMENTS_'+status+'='+str(count))
-    for reason,count in conn.execute("SELECT coalesce(error,'NONE'),count(*) FROM serviceit_extended_documents WHERE status IN ('FAILED','RETRY') GROUP BY 1").fetchall():
+    for reason,count in conn.execute("SELECT coalesce(error,'NONE'),count(*) FROM serviceit_extended_documents WHERE status IN ('FAILED','RETRY','EXTRACTED') AND error IS NOT NULL GROUP BY 1").fetchall():
         if re.fullmatch(r'[A-Z][A-Z0-9_]{0,100}',reason):print('EXT_DOC_ERROR_'+reason+'='+str(count))
     for card,total,read in conn.execute("SELECT card_id,count(*),count(*) FILTER (WHERE status='READ') FROM serviceit_extended_documents GROUP BY card_id ORDER BY card_id").fetchall():
         print('EXT_CARD_'+str(card)+'_FILES_TOTAL='+str(total));print('EXT_CARD_'+str(card)+'_FILES_READ='+str(read))

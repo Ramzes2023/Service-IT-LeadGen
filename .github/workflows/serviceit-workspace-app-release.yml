@@ -1,4 +1,4 @@
-name: ServiceIT validate documented OAuth token renewal
+name: ServiceIT correct saved application key transcription
 on:
   push:
     branches: [main]

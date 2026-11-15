@@ -16,7 +16,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     for status,zero,count in conn.execute("SELECT coalesce(result->>'status','PENDING'),COALESCE((result->>'pages_checked')::int,0)=0,count(*) FROM serviceit_company_contact_cache GROUP BY 1,2").fetchall():
         print('EXT_CONTACT_'+status+('_NO_PAGES' if zero else '_HAS_PAGES')+'='+str(count))
     print('EXT_CONTACT_RESEARCH_PENDING='+str(conn.execute("SELECT count(*) FROM serviceit_company_contact_cache WHERE result IS NULL OR (next_attempt_at<=now() AND result->>'status'!='VERIFIED')").fetchone()[0]))
-    count=0;bad=0;contact_cards=0;contact_values=0
+    count=0;bad=0;contact_cards=0;contact_values=0;policy_cards=0
     for card,expected,status in conn.execute('SELECT card_id,expected,status FROM serviceit_extended_evidence_receipts').fetchall():
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
         if conn.execute("SELECT to_regclass('serviceit_stage_handoff')").fetchone()[0]:
@@ -32,16 +32,30 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
                     old=re.findall(pattern,str(value),re.S);new=re.findall(pattern,str(actual.get(key,'')),re.S)
                     print('EXT_CARD_'+str(card)+'_OWNED_BLOCK_MATCH_'+key+'='+('YES' if old and old==new else 'NO'))
         count+=ok;bad+=not ok
+        if 'Совпадение с нашими услугами:' in str(actual.get('UF_CRM_13_SVCIT_AI_MANAGER_BRIEF','')) and 'Готовность к участию: НЕ ПОДТВЕРЖДЕНА' in str(actual.get('UF_CRM_13_SVCIT_AI_MANAGER_BRIEF','')):policy_cards+=1
         inn=str(actual.get('UF_CRM_13_SVCIT_COMPANY_INN') or '')
         cached=conn.execute('SELECT result FROM serviceit_company_contact_cache WHERE inn=%s',(inn,)).fetchone()
         values=[c['value'] for c in (cached[0].get('contacts',[]) if cached and cached[0] else [])]
         visible=sum(value in str(actual.get('UF_CRM_13_SVCIT_AI_MANAGER_BRIEF','')) for value in values)
         if ok and visible:contact_cards+=1;contact_values+=visible
         print('EXT_CARD_'+str(card)+'_CONTACTS='+str(visible if ok else 0))
+    print('EXT_PARTICIPATION_POLICY_CARDS='+str(policy_cards))
     print('EXT_CARDS_READBACK='+str(count));print('EXT_CARDS_MISMATCH='+str(bad))
     print('EXT_CONTACT_CARDS='+str(contact_cards));print('EXT_VISIBLE_CONTACT_VALUES='+str(contact_values))
     if conn.execute("SELECT to_regclass('serviceit_stage_handoff')").fetchone()[0]:
         for stage,status,n in conn.execute('SELECT target_stage,status,count(*) FROM serviceit_stage_handoff GROUP BY 1,2').fetchall():
             print('EXT_STAGE_'+re.sub('[^A-Z0-9_]','_',stage.upper())+'_'+status+'='+str(n))
+    if conn.execute("SELECT to_regclass('serviceit_tender_task_deadlines')").fetchone()[0]:
+        from leadpilot.serviceit_tender_manager_policy import api,submission_time
+        for state,n in conn.execute('SELECT status,count(*) FROM serviceit_tender_task_deadlines GROUP BY status').fetchall():print('EXT_TASK_DEADLINE_'+state+'='+str(n))
+        verified=0;late=0
+        for tid,submission in conn.execute("SELECT task_id,submission FROM serviceit_tender_task_deadlines WHERE status='VERIFIED'").fetchall():
+            task=api(client,rest.base,'tasks.task.get',{'taskId':tid})['task']
+            try:ok=submission_time(task.get('deadline',task.get('DEADLINE')))<submission_time(submission)
+            except (ValueError,TypeError,AttributeError):ok=False
+            verified+=ok;late+=not ok
+        print('EXT_TASK_DEADLINES_LIVE_BEFORE_SUBMISSION='+str(verified))
+        print('EXT_TASK_DEADLINES_LIVE_INVALID='+str(late))
+        bad+=late
     print('EXT_CRM_WRITES=0')
     if bad:raise SystemExit(2)

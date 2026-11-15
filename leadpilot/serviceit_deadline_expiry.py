@@ -18,7 +18,7 @@ def parse_date(value):
  except ValueError:pass
  match=re.fullmatch(r'(\d{2}\.\d{2}\.\d{4}) (\d{2}:\d{2})(?::(\d{2}))? МСК',value)
  if match:
-  try:return datetime.strptime(match[1]+' '+match[2],'%d.%m.%Y %H:%M').replace(tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
+  try:return datetime.strptime(match[1]+' '+match[2]+':'+(match[3] or '00'),'%d.%m.%Y %H:%M:%S').replace(tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
   except ValueError:pass
  return None
 

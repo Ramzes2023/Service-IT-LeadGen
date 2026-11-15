@@ -4,6 +4,7 @@ NOW=datetime(2026,11,15,12,tzinfo=timezone.utc)
 VALID={STAGE,'review','won'}
 def test_timezone_and_invalid_dates():
  assert parse_date('15.11.2026 15:00 МСК')==NOW
+ assert parse_date('15.11.2026 15:00:59 МСК').second==59
  assert parse_date('2026-11-15T15:00:00+03:00')==NOW
  for x in ('2026-11-15','2026-11-15T12:00:00','31.02.2026 12:00 МСК','не указан'):assert parse_date(x) is None
 

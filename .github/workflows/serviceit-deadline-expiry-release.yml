@@ -1,4 +1,4 @@
-name: ServiceIT submission expiry five-minute automation
+name: ServiceIT precise submission expiry five-minute automation
 on:
   push:
     branches: [main]

@@ -111,5 +111,28 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
                     'CONNECT_TIMEOUT' if isinstance(exc,httpx.TimeoutException) else type(exc).__name__.upper())
             print(prefix+'ORIGIN_ERROR='+reason,flush=True)
             if re.fullmatch(r'[A-Z][A-Z0-9_]{0,100}',str(exc)):print(prefix+'ORIGIN_REASON='+str(exc),flush=True)
+    # Inspect format metadata of approved EIS failures without exposing content.
+    from leadpilot.serviceit_b2b_tender_documents import public_eis_attachment
+    from leadpilot.serviceit_gigachat_ca_setup import PUBLIC_CERT,verified_public_root
+    import ssl,certifi
+    for card,url in conn.execute("SELECT card_id,url FROM serviceit_extended_documents WHERE error='DOCUMENT_UNSUPPORTED_FORMAT' LIMIT 5").fetchall():
+        if not public_eis_attachment(url):continue
+        host=_host(url,DOCUMENT_HOSTS)
+        if not _public_dns(host):continue
+        context=ssl.create_default_context(cafile=certifi.where())
+        context.load_verify_locations(cadata=verified_public_root(PUBLIC_CERT.read_bytes()).decode('ascii'))
+        prefix='DOCUMENT_FORMAT_CARD_'+str(card)+'_'
+        with httpx.Client(verify=context,trust_env=False,timeout=10,follow_redirects=False) as probe:
+            with probe.stream('GET',url) as response:
+                print(prefix+'HTTP='+str(response.status_code),flush=True)
+                if response.status_code!=200:continue
+                first=next(response.iter_bytes(chunk_size=64),b'')
+                signatures=((b'Rar!','RAR'),(b'7z','SEVEN_ZIP'),(b'PK','ZIP'),(b'%PDF','PDF'),(bytes.fromhex('89504e47'),'PNG'),(bytes.fromhex('ffd8ff'),'JPEG'),(bytes.fromhex('d0cf11e0'),'OLE'),(b'{\\rtf','RTF'),(b'<?xml','XML'),(b'<html','HTML'))
+                kind=next((label for magic,label in signatures if first.lstrip().startswith(magic)),'OTHER')
+                print(prefix+'MAGIC='+kind,flush=True)
+                media=response.headers.get('content-type','').split(';')[0]
+                print(prefix+'MEDIA='+re.sub('[^A-Z0-9]','_',media.upper())[:80],flush=True)
+                suffix=re.search(r'[.](pdf|docx?|xlsx?|zip|rar|7z|sig|xml|txt|png|jpg)(?:[";\s]|$)',response.headers.get('content-disposition',''),re.I)
+                if suffix:print(prefix+'SUFFIX='+suffix[1].upper(),flush=True)
     print('BIDZAAR_CRM_WRITES=0',flush=True)
     if not ok:raise SystemExit(2)

@@ -26,6 +26,19 @@ class AutomationTests(unittest.TestCase):
   with patch.object(a.urllib.request,'build_opener') as build:
    build.return_value.open.side_effect=error
    with self.assertRaisesRegex(a.Failure,'^expired_token$'):a.request(a.PORTAL,{})
+ def test_transient_read_retries_but_add_never_retries(self):
+  with patch.object(a.time,'sleep'),patch.object(a,'request',side_effect=[a.Failure('REMOTE_REQUEST_FAILED'),{'result':[]}]) as request:
+   self.assertEqual(a.api('token','crm.item.list'),[]);self.assertEqual(request.call_count,2)
+  with patch.object(a.time,'sleep'),patch.object(a,'request',side_effect=a.Failure('REMOTE_REQUEST_FAILED')) as request:
+   with self.assertRaises(a.Failure):a.api('token','crm.activity.configurable.add')
+   self.assertEqual(request.call_count,1)
+ def test_failed_card_does_not_block_remaining_cards(self):
+  items=[self.item(),dict(self.item(),id=40)]
+  def sync(token,item,cache):
+   if item['id']==39:raise a.Failure('REMOTE_REQUEST_FAILED')
+  with patch.object(a,'current_token',return_value='token'),patch.object(a,'api',return_value={'items':items}),patch.object(a,'sync',side_effect=sync) as call:
+   a.cycle()
+  self.assertEqual(call.call_count,2);self.assertEqual(a.read('status.json')['failed_cards'],{'39':'REMOTE_REQUEST_FAILED'})
  def test_money(self):
   self.assertEqual(a.split(a.money('100000'),a.money('40000')),[6000000,900000,600000,4500000])
   self.assertEqual(a.split(0,100),[-100,0,0,-100]);self.assertIsNone(a.split(None,0))

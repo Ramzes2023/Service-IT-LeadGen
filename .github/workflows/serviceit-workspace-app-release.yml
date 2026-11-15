@@ -1,4 +1,4 @@
-name: ServiceIT restore required finance layout logo
+name: ServiceIT resilient five-minute timeline reconciliation
 on:
   push:
     branches: [main]

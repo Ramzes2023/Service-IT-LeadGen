@@ -34,8 +34,12 @@ def request(url,data):
  return result
 
 def api(token,method,**kwargs):
- time.sleep(.52)
- return request(PORTAL+method,dict(kwargs,auth=token)).get('result')
+ for attempt in range(3):
+  time.sleep(.52 if attempt==0 else attempt*2)
+  try:return request(PORTAL+method,dict(kwargs,auth=token)).get('result')
+  except Failure as error:
+   error.method=method
+   if attempt==2 or not method.endswith(('.list','.get')) or str(error) not in ('REMOTE_REQUEST_FAILED','QUERY_LIMIT_EXCEEDED','INTERNAL_SERVER_ERROR'):raise
 
 def read(name,default=None):
  try:return json.loads((DATA/name).read_text())
@@ -160,20 +164,25 @@ def sync_card(token,card_id):
 
 def cycle():
  with LOCK:
-  token=current_token();cache=read('blocks.json',{});last=7;count=0
+  token=current_token();cache=read('blocks.json',{});last=7;count=0;failed={}
   for page in range(1000):
-   rows=api(token,'crm.item.list',entityTypeId=1062,useOriginalUfNames='Y',filter={'categoryId':21,'>id':last},order={'id':'ASC'},select=['*'],start=0)['items']
+   rows=api(token,'crm.item.list',entityTypeId=1062,useOriginalUfNames='Y',filter={'categoryId':21,'>id':last},order={'id':'ASC'},select=['id','categoryId','assignedById','title']+[PREFIX+k for k in ['POST_BADGE','POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_DUE','POST_SUMMARY','FIN_REVENUE','FIN_COSTS']],start=0)['items']
    if not rows:break
    for item in rows:
     if int(item['id'])<=last:raise Failure('INVALID_PAGINATION')
-    sync(token,item,cache);last=int(item['id']);count+=1
+    try:sync(token,item,cache)
+    except Failure as error:
+     if str(error) in ('expired_token','invalid_token'):raise
+     failed[str(item['id'])]=str(error)
+    last=int(item['id']);count+=1
    if len(rows)<50:break
   else:raise Failure('SCAN_LIMIT')
-  write('status.json',{'status':'OK','cards':count,'completed_at':int(time.time())})
+  write('status.json',{'status':'PARTIAL' if failed else 'OK','cards':count,'failed_cards':failed,'completed_at':int(time.time())})
 
 def worker():
  while True:
+  started=time.monotonic()
   try:cycle()
-  except Failure as e:write('status.json',{'status':str(e),'checked_at':int(time.time())})
+  except Failure as e:write('status.json',{'status':str(e),'method':getattr(e,'method',''),'checked_at':int(time.time())})
   except Exception:write('status.json',{'status':'INTERNAL_ERROR','checked_at':int(time.time())})
-  WAKE.wait(300);WAKE.clear()
+  WAKE.wait(max(5,300-(time.monotonic()-started)));WAKE.clear()

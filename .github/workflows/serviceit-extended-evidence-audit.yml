@@ -1,5 +1,8 @@
 name: ServiceIT public evidence independent readback
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-extended-evidence-audit.yml]
   workflow_run:
     workflows: [ServiceIT all-document queue and public company contacts v22]
     types: [completed]
@@ -7,7 +10,7 @@ permissions:
   contents: read
 jobs:
   audit:
-    if: github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'push' || github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment: serviceit-vps-readonly
@@ -34,5 +37,9 @@ jobs:
           ssh -T -i "$stage/id" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           dir="$HOME/serviceit/evidence"
+          if [ -f "$dir/status.log" ]; then
+            stat -c 'CRON_LOG_MTIME=%Y' "$dir/status.log"
+            tail -n 120 "$dir/status.log" | sed -n '/^EXT_[A-Z0-9_]*=[A-Z0-9_]*$/s/^/CRON_/p'
+          fi
           flock -w 300 "$dir/cycle.lock" python3 "$dir/serviceit_extended_evidence_runner.py" --audit
           REMOTE

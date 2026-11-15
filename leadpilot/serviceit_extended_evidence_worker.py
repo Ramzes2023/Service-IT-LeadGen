@@ -1,5 +1,5 @@
 """All-card public contact enrichment and durable document backlog processor."""
-import json,os,re,traceback
+import hashlib,json,os,re,traceback
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 from . import serviceit_extended_documents as docs
@@ -18,9 +18,22 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  CREATE TABLE IF NOT EXISTS serviceit_extended_evidence_receipts (
  card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());
  ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS reader_version INTEGER NOT NULL DEFAULT 1;
+ ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS document_signature TEXT;
  UPDATE serviceit_company_contact_cache SET reader_version=3,next_attempt_at=now() WHERE reader_version<3 AND result->>'status' IN ('NOT_FOUND','SEARCH_UNAVAILABLE');
  UPDATE serviceit_company_contact_cache SET reader_version=4,next_attempt_at=now() WHERE reader_version<4 AND inn='7729674716' AND result->>'status'!='VERIFIED';'''
 BEGIN='[SERVICEIT_PUBLIC_EVIDENCE_V1]';END='[/SERVICEIT_PUBLIC_EVIDENCE_V1]'
+
+
+def document_signature(rows):
+    """Content identity only: advancing AI windows does not retrigger search."""
+    return hashlib.sha256(json.dumps(sorted(set(rows)),ensure_ascii=False).encode()).hexdigest()
+
+
+def refresh_document_contacts(conn,inn):
+    rows=conn.execute("SELECT DISTINCT d.url,d.sha256 FROM serviceit_extended_documents d JOIN serviceit_extended_card_inventory i USING(card_id) WHERE i.snapshot->>%s=%s AND d.status IN ('READ','EXTRACTED') AND d.sha256 IS NOT NULL AND NOT (COALESCE(d.reports,'[]'::jsonb) @> '[{\"provider\":\"OCR\"}]'::jsonb)",(INN,inn)).fetchall()
+    signature=document_signature(rows)
+    # Persist before research; a stable document set never resets retry backoff.
+    conn.execute("UPDATE serviceit_company_contact_cache SET document_signature=%s,next_attempt_at=now() WHERE inn=%s AND document_signature IS DISTINCT FROM %s",(signature,inn,signature))
 
 
 def owned(base,block):
@@ -134,11 +147,12 @@ def run():
             docs.register(conn,card,notice.get('files',[]))
         print('EXT_DOCUMENT_CHUNKS='+str(docs.process(conn,client,env,batch=8)),flush=True)
         active_inns=sorted({str(item.get(INN) or '') for item in items if _is_valid_inn(str(item.get(INN) or ''))})
+        for inn in active_inns:refresh_document_contacts(conn,inn)
         rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() AND inn=ANY(%s) ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2',(active_inns,)).fetchall()
         pending=[]
         for inn,name in rows:
             conn.execute("UPDATE serviceit_company_contact_cache SET next_attempt_at=now()+interval '1 day' WHERE inn=%s",(inn,))
-            evidence=conn.execute("SELECT d.url,d.text_content FROM serviceit_extended_documents d JOIN serviceit_extended_card_inventory i USING(card_id) WHERE i.snapshot->>%s=%s AND d.status='READ' AND NOT (d.reports @> '[{\"provider\":\"OCR\"}]'::jsonb) ORDER BY d.card_id,d.url",(INN,inn)).fetchall()
+            evidence=conn.execute("SELECT d.url,d.text_content FROM serviceit_extended_documents d JOIN serviceit_extended_card_inventory i USING(card_id) WHERE i.snapshot->>%s=%s AND d.status IN ('READ','EXTRACTED') AND NOT (COALESCE(d.reports,'[]'::jsonb) @> '[{\"provider\":\"OCR\"}]'::jsonb) ORDER BY d.card_id,d.url",(INN,inn)).fetchall()
             documents=[{'url':url,'text':text,'emails':[],'phones':[],'links':[],'scoped':True} for url,text in evidence if text]
             pending.append((inn,name,documents))
         # Network work only runs in threads; PostgreSQL and CRM remain serialized.

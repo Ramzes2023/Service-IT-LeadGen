@@ -166,7 +166,7 @@ def cycle():
  with LOCK:
   token=current_token();cache=read('blocks.json',{});last=7;count=0;failed={}
   for page in range(1000):
-   rows=api(token,'crm.item.list',entityTypeId=1062,useOriginalUfNames='Y',filter={'categoryId':21,'>id':last},order={'id':'ASC'},select=['id','categoryId','assignedById','title']+[PREFIX+k for k in ['POST_BADGE','POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_DUE','POST_SUMMARY','FIN_REVENUE','FIN_COSTS']],start=0)['items']
+   rows=api(token,'crm.item.list',entityTypeId=1062,useOriginalUfNames='Y',filter={'categoryId':21,'>id':last},order={'id':'ASC'},select=['*'],start=0)['items']
    if not rows:break
    for item in rows:
     if int(item['id'])<=last:raise Failure('INVALID_PAGINATION')

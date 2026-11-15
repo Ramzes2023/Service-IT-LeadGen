@@ -1,4 +1,4 @@
-name: ServiceIT resilient five-minute timeline reconciliation
+name: ServiceIT correct CRM item selection for background panels
 on:
   push:
     branches: [main]

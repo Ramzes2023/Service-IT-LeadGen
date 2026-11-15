@@ -1,4 +1,4 @@
-name: ServiceIT use documented OAuth token renewal request
+name: ServiceIT validate documented OAuth token renewal
 on:
   push:
     branches: [main]

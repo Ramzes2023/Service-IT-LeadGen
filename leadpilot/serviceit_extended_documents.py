@@ -16,7 +16,12 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  UPDATE serviceit_extended_documents SET parser_version=2,status='PENDING',attempts=0,next_attempt_at=now()
  WHERE parser_version<2 AND error IN ('DOCUMENT_FORMAT_UNSUPPORTED','DOCUMENT_EMPTY_TEXT');
  UPDATE serviceit_extended_documents SET parser_version=3,status='PENDING',attempts=0,next_attempt_at=now()
- WHERE parser_version<3 AND error='OCR_ENGINE_UNAVAILABLE';'''
+ WHERE parser_version<3 AND error='OCR_ENGINE_UNAVAILABLE';
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS analysis_version INTEGER NOT NULL DEFAULT 1;
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS model_attempts INTEGER NOT NULL DEFAULT 0;
+ UPDATE serviceit_extended_documents SET analysis_version=4,analyzed_chars=0,model_attempts=0,
+ status=CASE WHEN status='READ' THEN 'EXTRACTED' ELSE status END,next_attempt_at=now()
+ WHERE analysis_version<4;'''
 
 
 def _limits():
@@ -195,18 +200,44 @@ def process(conn,client,env,*,batch=6):
             reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()
             conn.execute("UPDATE serviceit_extended_documents SET error=%s,status=CASE WHEN attempts>=3 THEN 'FAILED' ELSE 'RETRY' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason,card,url))
     # Long documents are analyzed in durable windows too, not cut at 24k.
-    chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars FROM serviceit_extended_documents WHERE status='EXTRACTED' ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
-    for start in range(0,len(chunks),3):
-        group=chunks[start:start+3]
-        inputs=[{'url':url,'text':text[offset:offset+24000]} for card,url,text,offset in group]
+    chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars FROM serviceit_extended_documents WHERE status='EXTRACTED' AND next_attempt_at<=now() ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
+    from .serviceit_b2b_routerai_deep import public_documents
+    from .serviceit_vps_b2b_document_worker import _document_windows
+    for card,url,text,offset in chunks:
+        # One document per request: six adjacent windows, never a selected
+        # excerpt from each of three files. Save intent before a paid request.
+        window=text[offset:offset+24000]
+        inputs=[{'url':url,'text':window}]
+        safe=public_documents({'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))})
+        conn.execute("UPDATE serviceit_extended_documents SET model_attempts=model_attempts+1,next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s",(card,url))
         reports=_model_research(client,env,inputs)
-        for card,url,text,offset in group:
-            window=text[offset:offset+24000];own=[]
-            for report in reports:
-                facts=[f for f in report.get('facts',[]) if f.get('url')==url and isinstance(f.get('quote'),str) and ' '.join(f['quote'].split()) in ' '.join(window.split())]
-                if facts:own.append({'provider':report.get('provider','SOURCE'),'facts':facts})
-            conn.execute("UPDATE serviceit_extended_documents SET status=%s,analyzed_chars=%s,reports=COALESCE(reports,'[]'::jsonb)||%s::jsonb,updated_at=now() WHERE card_id=%s AND url=%s",('READ' if offset+len(window)>=len(text) else 'EXTRACTED',offset+len(window),json.dumps(own,ensure_ascii=False),card,url))
+        success=any(r.get('provider')=='RouterAI' for r in reports)
+        if safe and not success:
+            conn.execute("UPDATE serviceit_extended_documents SET error='ROUTERAI_ANALYSIS_RETRY',next_attempt_at=now()+CASE WHEN model_attempts>=3 THEN interval '1 day' ELSE interval '10 minutes' END,updated_at=now() WHERE card_id=%s AND url=%s",(card,url))
+            continue
+        own=[]
+        for report in reports:
+            facts=[f for f in report.get('facts',[]) if f.get('url')==url and isinstance(f.get('quote'),str) and ' '.join(f['quote'].split()) in ' '.join(window.split())]
+            if facts:own.append({'provider':report.get('provider','SOURCE'),'facts':facts})
+        # Successful empty model output is still different from no model call.
+        own.append({'provider':'COVERAGE','offset':offset,'end':offset+len(window),'model':'VERIFIED' if success else 'NO_SAFE_MODEL_INPUT'})
+        conn.execute("UPDATE serviceit_extended_documents SET status=%s,analyzed_chars=%s,reports=COALESCE(reports,'[]'::jsonb)||%s::jsonb,model_attempts=0,error=NULL,next_attempt_at=now(),updated_at=now() WHERE card_id=%s AND url=%s",('READ' if offset+len(window)>=len(text) else 'EXTRACTED',offset+len(window),json.dumps(own,ensure_ascii=False),card,url))
     return len(chunks)
+
+
+def contact_hints(text,url):
+    """Literal public document contacts, explicitly not identity confirmation."""
+    from .serviceit_company_contacts import EMAIL,PHONE
+    found=[];seen=set()
+    for pattern in (EMAIL,PHONE):
+        for match in pattern.finditer(text):
+            context=text[max(0,match.start()-140):match.end()+140]
+            if not re.search(r'контакт|связ|телефон|тел[.:]|почт|email|e-mail|ответствен|закуп',context,re.I):continue
+            if re.search(r'образец|пример|заполн|поставщик|участник|роспотребнадзор|росздравнадзор|bidzaar|b2b-center',context,re.I):continue
+            value=match.group()
+            if value.lower() in seen:continue
+            seen.add(value.lower());found.append({'value':value,'context':context.strip(),'url':url,'status':'UNCONFIRMED'})
+    return found
 
 
 def render(conn,card):
@@ -226,11 +257,21 @@ def render(conn,card):
         if not grouped[category]:lines.append('Не найдено в подтверждённых извлечённых фактах; не считать отсутствующим условием.')
         for quote,url in grouped[category][:4]:lines.extend([quote[:650],'Источник: '+url])
         if len(grouped[category])>4:lines.append('Дополнительные факты сохранены в результатах анализа документов.')
+    hints=[];seen=set()
+    for url,text in conn.execute('SELECT url,text_content FROM serviceit_extended_documents WHERE card_id=%s AND text_content IS NOT NULL ORDER BY url',(card,)).fetchall():
+        for hint in contact_hints(text,url):
+            if hint['value'].lower() not in seen:hints.append(hint);seen.add(hint['value'].lower())
+    if hints:
+        lines.append('\nКОНТАКТЫ ИЗ ДОКУМЕНТОВ — НЕ ПОДТВЕРЖДЕНЫ ДЛЯ ОБРАЩЕНИЯ')
+        for hint in hints[:12]:lines.extend([hint['value']+' — принадлежность и полномочия по закупке нужно подтвердить.',hint['context'],'Источник: '+hint['url']])
+        if len(hints)>12:lines.append('Дополнительные контакты есть в оригиналах документов.')
     lines.append('\nПОФАЙЛОВАЯ ПРОВЕРКА')
     for name,url,status,reports,error in rows:
-        lines.append(f'{name}: '+('текст прочитан' if status=='READ' else 'в очереди' if status in ('PENDING','RETRY','EXTRACTED') else 'не прочитан: '+str(error)))
+        lines.append(f'{name}: '+('текст прочитан' if status=='READ' else 'текст извлечён; полный анализ ИИ в очереди' if status=='EXTRACTED' else 'в очереди' if status in ('PENDING','RETRY') else 'не прочитан: '+str(error)))
         lines.append('Источник: '+url)
         lines.append('Выводы ИИ: '+('есть подтверждённые цитаты RouterAI' if any(r.get('provider')=='RouterAI' for r in reports or []) else 'подтверждённые цитаты RouterAI отсутствуют; доступен разбор текста'))
+        if error=='ROUTERAI_ANALYSIS_RETRY':lines.append('Полный анализ ИИ не завершён: автоматическая повторная попытка запланирована.')
+        if any(r.get('model')=='NO_SAFE_MODEL_INPUT' for r in reports or []):lines.append('Часть текста исключена из передачи модели; см. оригинал документа.')
         if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')
     text='\n'.join(lines)
     if len(text)>24000:text=text[:23500]+'\nПолный объём фактов превышает размер поля; остальные сведения сохранены в результатах анализа.'

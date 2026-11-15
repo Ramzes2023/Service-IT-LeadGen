@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit, urljoin, unquote
 import httpx
-from .serviceit_bidzaar_source import collect, decision, identity, UUID
+from .serviceit_bidzaar_source import collect, decision, identity, UUID, subject_text
 from .serviceit_vps_pg_queue import db, secret_file
 from .serviceit_vps_worker import exact_environment, live_permitted
 from .serviceit_enrichment_worker import Rest, normalized
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS serviceit_bidzaar_inbox (
  state TEXT NOT NULL DEFAULT 'PENDING', card_id BIGINT, expected JSONB,
  reason TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 ALTER TABLE serviceit_bidzaar_inbox ADD COLUMN IF NOT EXISTS document_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE serviceit_bidzaar_inbox ADD COLUMN IF NOT EXISTS qualification_version INTEGER NOT NULL DEFAULT 1;
 '''
 
 
@@ -44,6 +45,19 @@ def persist(conn, rows, cursor):
               updated_at=now() WHERE excluded.modified>serviceit_bidzaar_inbox.modified''',
               (identity(row),row['lastModified'],json.dumps(row,ensure_ascii=False),state,verdict))
         conn.execute('UPDATE serviceit_bidzaar_cursor SET cursor=%s WHERE singleton', (cursor,))
+
+
+def requalify_filtered(conn):
+    """Revisit saved notices once after adding actual purchase positions."""
+    rows=conn.execute("SELECT source_id,notice FROM serviceit_bidzaar_inbox WHERE state='FILTERED' AND qualification_version<2 ORDER BY modified DESC LIMIT 500").fetchall()
+    admitted=0
+    for source,row in rows:
+        verdict,_=decision(row)
+        state='PENDING' if verdict=='ELIGIBLE' else 'FILTERED'
+        conn.execute("UPDATE serviceit_bidzaar_inbox SET state=%s,reason=%s,qualification_version=2,updated_at=now() WHERE source_id=%s AND state='FILTERED'",(state,verdict,source))
+        admitted+=verdict=='ELIGIBLE'
+    print('BIDZAAR_REQUALIFIED='+str(len(rows)),flush=True)
+    print('BIDZAAR_RECOVERED_PENDING='+str(admitted),flush=True)
 
 
 def documents(client, row):
@@ -93,7 +107,7 @@ def documents(client, row):
 def service_priority(row, peers):
     """Business fit from procurement subject, independent of document availability."""
     from .serviceit_b2b_moscow_geo import classify_location_lines
-    title = row.get('name', '')
+    title = subject_text(row)
     groups = set(decision(row)[1])
     service = bool(re.search(r'сопровожд|поддержк|обслуживан|аутсорс|аутстафф|администрир|обновлен|исправлен', title, re.I))
     development = bool(re.search(r'внедрен|разработ|создани|создать|доработ|автоматизац|интеграц', title, re.I))
@@ -363,17 +377,17 @@ def manager_tasks(conn,client,env):
              'SERVICEIT_STAGE3_TASK_WRITE_ENABLED':'YES_1062_21_INTERNAL_REVIEW',
              'SERVICEIT_VPS_TASK_ASSIGNEE_ID':'605',
              'SERVICEIT_VPS_TASK_ASSIGNEE_APPROVED':'YES_1062_21_INTERNAL_MANAGER'}
-    rows=conn.execute("""SELECT b.card_id,b.expected FROM serviceit_bidzaar_inbox b
+    rows=conn.execute("""SELECT b.card_id,b.expected,b.notice FROM serviceit_bidzaar_inbox b
         LEFT JOIN serviceit_vps_native_receipts r ON r.card_id=b.card_id AND r.namespace='TASK_V1'
         WHERE b.state='VERIFIED' AND r.card_id IS NULL
           AND b.expected->>%s='svc-bidzaar-service-fit-v4' ORDER BY b.card_id LIMIT 8""",(VERSION_FIELD,)).fetchall()
     rest=Rest(runtime['SERVICEIT_BITRIX_WEBHOOK'],client)
     verified=0
-    for card,expected in rows:
+    for card,expected,notice in rows:
         actual=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
         if not saved_fields_match(actual,expected):continue
         try:
-            status=process_card(client,runtime,card,native_fence=PostgresNativeFence(conn,'TASK_V1'))
+            status=process_card(client,runtime,card,native_fence=PostgresNativeFence(conn,'TASK_V1'),verified_submission=notice.get('acceptanceEndDate'))
             verified+=int(status=='INTERNAL_REVIEW_TASK_READBACK_VERIFIED')
             print('BIDZAAR_MANAGER_TASK='+status,flush=True)
         except Exception as exc:
@@ -400,6 +414,7 @@ def main():
             print('BIDZAAR_FETCH='+fetched['status'])
             print('BIDZAAR_ROWS='+str(fetched['rows']))
             if env.get('SERVICEIT_BIDZAAR_WRITE_ENABLED')=='YES':
+                requalify_filtered(conn)
                 reconcile_uncertain(conn,client,env)
                 for _ in range(12):
                     upgraded=repair_documents(conn,client,exact_environment(env),presentation_only=True)

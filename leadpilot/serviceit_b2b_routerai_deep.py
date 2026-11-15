@@ -410,11 +410,13 @@ def source_only_investigation(findings: dict):
     }
 
 
-def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeout=100.0) -> dict:
+def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeout=100.0, output_tokens=6200) -> dict:
     """Single paid RouterAI attempt. Fixed reason codes, no payload logging.
 
     The caller commits a versioned PostgreSQL receipt BEFORE POST. No retries.
     """
+    if type(output_tokens) is not int or output_tokens not in (6200,12000):
+        raise DeepEvidenceError('ROUTERAI_OUTPUT_BUDGET_INVALID')
     docs = public_documents(findings)
     if not docs:
         raise DeepEvidenceError("NO_SAFE_PUBLIC_DOCUMENTS")
@@ -435,7 +437,7 @@ def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeou
         },
     }, ensure_ascii=False)
     report = validate_inference(_routerai_json(
-        client, config, _SYSTEM, prompt, max_tokens=6200, timeout=timeout,
+        client, config, _SYSTEM, prompt, max_tokens=output_tokens, timeout=timeout,
     ), docs)
     return complete_source_coverage(report, docs)
 

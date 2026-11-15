@@ -420,3 +420,28 @@ def test_successful_download_immediately_releases_analysis_backoff(monkeypatch):
     conn=Conn()
     docs.process(conn,None,{})
     assert conn.released
+
+
+def test_eis_context_retains_certificate_and_hostname_verification():
+    import ssl
+    context=docs.eis_tls_context()
+    assert context.verify_mode==ssl.CERT_REQUIRED
+    assert context.check_hostname
+
+
+def test_eis_download_uses_isolated_pinned_context(monkeypatch):
+    from leadpilot import serviceit_b2b_tender_documents as parser
+    seen=[]
+    sentinel=object()
+    class Client:
+        def __init__(self,**kw):seen.append(kw)
+        def __enter__(self):return sentinel
+        def __exit__(self,*args):pass
+    monkeypatch.setattr(docs.httpx,'Client',Client)
+    monkeypatch.setattr(parser,'fetch_bytes',lambda client,url,**kw: (seen.append(client) or b'full document bytes','.txt'))
+    monkeypatch.setattr(docs,'parsed_document',lambda raw,kind,url:{'text':raw.decode()})
+    url='https://zakupki.gov.ru/223/purchase/public/download/download.html?id=12345678'
+    monkeypatch.setattr(parser,'public_eis_attachment',lambda u:u==url)
+    assert docs.download(object(),url,'file.txt')['text']=='full document bytes'
+    assert seen[0]['verify'].check_hostname and seen[0]['trust_env'] is False
+    assert seen[0]['follow_redirects'] is False and seen[1] is sentinel

@@ -1,5 +1,5 @@
 """Durable all-file queue. Batch size is throughput, never a document cap."""
-import hashlib,json,os,re,time,shutil,subprocess,tempfile
+import hashlib,json,os,re,time,shutil,subprocess,tempfile,ssl
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit,urljoin,unquote
 import httpx
@@ -35,7 +35,10 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  WHERE analysis_version<7;
  UPDATE serviceit_extended_documents SET analysis_version=8,
  next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
- WHERE analysis_version<8;'''
+ WHERE analysis_version<8;
+ UPDATE serviceit_extended_documents SET parser_version=4,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<4 AND status IN ('FAILED','RETRY') AND error='CONNECTERROR'
+ AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';'''
 
 
 def _limits():
@@ -173,11 +176,27 @@ def parsed_document(raw,kind,url):
     return {'url':url,'text':text,'kind':kind,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'ocr':bool(re.search(r'(?:^|\n)OCR:',text))}
 
 
+def eis_tls_context():
+    # App-local trust for EIS only. Pin, identity, validity and self-signature
+    # are checked before loading the public root; hostname checks stay enabled.
+    import certifi
+    from .serviceit_gigachat_ca_setup import PUBLIC_CERT,verified_public_root
+    root=verified_public_root(PUBLIC_CERT.read_bytes())
+    context=ssl.create_default_context(cafile=certifi.where())
+    context.load_verify_locations(cadata=root.decode('ascii'))
+    return context
+
+
 def download(client,url,name):
     p=urlsplit(url)
     if p.netloc!='bidzaar.com':
-        from .serviceit_b2b_tender_documents import fetch_bytes
-        raw,kind=fetch_bytes(client,url,allow_legacy=True)
+        from .serviceit_b2b_tender_documents import fetch_bytes,public_eis_attachment
+        if public_eis_attachment(url):
+            # No CRM/model credentials or cookies are copied into this client.
+            with httpx.Client(verify=eis_tls_context(),trust_env=False,timeout=20,follow_redirects=False) as eis_client:
+                raw,kind=fetch_bytes(eis_client,url,allow_legacy=True)
+        else:
+            raw,kind=fetch_bytes(client,url,allow_legacy=True)
         return parsed_document(raw,kind,url)
     if p.scheme!='https' or p.netloc!='bidzaar.com' or p.query or p.fragment or not re.fullmatch(r'/api/filestorage/files/download/[0-9a-fA-F-]{36}',p.path):
         raise ValueError('DOCUMENT_URL_INVALID')

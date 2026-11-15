@@ -15,7 +15,7 @@ code='import os,sys,types\n'
 code+='os.environ["SERVICEIT_BIDZAAR_FEED_URL"]='+repr(url)+'\n'
 code+='os.environ["SERVICEIT_BIDZAAR_WRITE_ENABLED"]="YES"\n'
 code+='os.environ["SERVICEIT_BIDZAAR_EXTENDED_DOCUMENTS_OWNER"]="YES"\n'
-for name in ('serviceit_tender_manager_timing','b2b_email_opportunity_bridge','serviceit_b2b_moscow_geo','serviceit_bidzaar_source','serviceit_stage3_all_new_task_automation','serviceit_postcall_assistant'):
+for name in ('serviceit_tender_manager_timing','serviceit_tender_manager_policy','b2b_email_opportunity_bridge','serviceit_b2b_moscow_geo','serviceit_bidzaar_source','serviceit_bidzaar_scope_cleanup','serviceit_stage3_all_new_task_automation','serviceit_postcall_assistant'):
     source=(root/(name+'.py')).read_text()
     code+='m=types.ModuleType('+repr('leadpilot.'+name)+');m.__package__="leadpilot"\n'
     code+='sys.modules[m.__name__]=m\nexec('+repr(source)+',m.__dict__)\n'
@@ -26,7 +26,7 @@ try:
     # Only status flags. Never emit input, URLs, credentials or vendor content.
     import re
     for line in result.stdout.splitlines():
-        if re.fullmatch(r'BIDZAAR_[A-Z_]+=[A-Z0-9_]+',line):print(line,flush=True)
+        if re.fullmatch(r'(?:BIDZAAR|EXT_TASK)_[A-Z_]+=[A-Z0-9_]+',line):print(line,flush=True)
     if result.returncode:
         for line in result.stderr.splitlines():
             match=re.match(r'^([A-Za-z]+(?:Error|Exception)):',line)

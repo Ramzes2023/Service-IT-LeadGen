@@ -57,6 +57,8 @@ def source_inventory(conn,rest):
         if conn.execute('SELECT to_regclass(%s)',(table,)).fetchone()[0] is None:continue
         for (card,) in conn.execute('SELECT DISTINCT card_id FROM '+table+' WHERE card_id IS NOT NULL').fetchall():
             if type(card) is int and card>=8:ids.add(card)
+    excluded={r[0] for r in conn.execute("SELECT card_id FROM serviceit_bidzaar_inbox WHERE state='EXCLUDED'").fetchall()}
+    ids-=excluded
     items=[]
     for card in sorted(ids):
         cached=conn.execute('SELECT snapshot FROM serviceit_extended_card_inventory WHERE card_id=%s',(card,)).fetchone()

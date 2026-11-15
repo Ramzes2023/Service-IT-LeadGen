@@ -68,7 +68,15 @@ def test_true_backwards_page_remains_rejected(times):
 
 def test_generic_title_uses_actual_procured_positions_not_tags():
  row={**ROW,'name':'Оборудование','goods':[{'name':'Поставка серверов'}]}
- assert s.decision(row,now=NOW)[0]=='ELIGIBLE'
- assert 'SERVERS' in s.decision(row,now=NOW)[1]
+ assert s.decision(row,now=NOW)[0]=='OUT_OF_SCOPE'
+ assert s.decision({**row,'name':'Поставка серверов'},now=NOW)[0]=='ELIGIBLE'
  assert s.decision({**row,'goods':[],'tags':['Поставка серверов']},now=NOW)[0]=='OUT_OF_SCOPE'
- assert s.decision({**row,'deliveryAddresses':[],'location':['Москва']},now=NOW)[0]=='GEO_UNKNOWN'
+ assert s.decision({**row,'name':'Поставка серверов','deliveryAddresses':[],'location':['Москва']},now=NOW)[0]=='GEO_UNKNOWN'
+
+@pytest.mark.parametrize('title',['Закупка питания, канц.тов. и иных хоз. товаров, г. Подольск, г. Москва','Lamoda: закупка ТСБ','Поставка торгового оборудования','Поставка медицинских мониторов','Ремонт помещения серверной'])
+def test_non_it_subject_cannot_be_promoted_by_incidental_goods(title):
+ assert s.decision({**ROW,'name':title,'goods':[{'name':'Компьютерная мышь'},{'name':'Сервер'}]},now=NOW)[0]=='OUT_OF_SCOPE'
+
+@pytest.mark.parametrize('title',['Сопровождение 1С','Предоставление IT-специалистов','IT-поддержка инфраструктуры','Внедрение Битрикс24','Поставка серверов','Продление лицензий Microsoft Office 365'])
+def test_core_serviceit_directions_remain_eligible(title):
+ assert s.decision({**ROW,'name':title},now=NOW)[0]=='ELIGIBLE'

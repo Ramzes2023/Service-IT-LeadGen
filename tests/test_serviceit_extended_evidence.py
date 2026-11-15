@@ -138,6 +138,7 @@ def test_source_inventory_reads_all_three_receipts_and_verifies_ids(monkeypatch)
         def execute(self,sql,args=()):
             if sql.startswith('SELECT snapshot'):return Result([None])
             if sql.startswith('INSERT INTO serviceit_extended_card_inventory'):return Result([None])
+            if "WHERE state='EXCLUDED'" in sql:return Result([])
             if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
             if 'serviceit_bidzaar_inbox' in sql:return Result([(33,),(35,)])
             if 'serviceit_vps_b2b_inbox' in sql:return Result([(11,),(29,)])
@@ -179,6 +180,7 @@ def test_finished_cards_use_snapshot_without_repeated_crm_reads(monkeypatch):
         def fetchall(self):return self.rows
     class Conn:
         def execute(self,sql,args=()):
+            if "WHERE state='EXCLUDED'" in sql:return Result([])
             if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
             if sql.startswith('SELECT snapshot'):return Result([({'id':35,worker.INN:'7707083893'},)])
             return Result([(35,)])

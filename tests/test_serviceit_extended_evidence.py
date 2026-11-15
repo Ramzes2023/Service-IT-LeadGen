@@ -472,3 +472,44 @@ def test_missing_file_render_never_claims_read():
     text,read,pending,total=docs.render(Conn(),27)
     assert read==0 and pending==1 and total==1
     assert 'HTTP 404' in text and 'Документ не прочитан' in text
+
+
+def make_sevenzip(tmp_path,entries):
+    import libarchive
+    path=tmp_path/'documents.7z'
+    with libarchive.file_writer(str(path),'7zip') as archive:
+        for name,text in entries:
+            data=text.encode('utf-8')
+            archive.add_file_from_memory(name,len(data),data)
+    return path.read_bytes()
+
+
+def test_sevenzip_all_members_reach_full_text_analysis(tmp_path):
+    raw=make_sevenzip(tmp_path,[('Условия.txt','Бюджет 100000 рублей. '*2000),('Поставка.txt','Адрес поставки: Москва.')])
+    result=docs.parsed_document(raw,'.7z','https://zakupki.gov.ru/file')
+    assert 'Адрес поставки: Москва.' in result['text']
+    assert result['text'].count('Бюджет 100000 рублей.')==2000
+
+
+@pytest.mark.parametrize('name',['../escape.txt','/absolute.txt','folder\\escape.txt','payload.exe','nested.7z'])
+def test_sevenzip_rejects_unsafe_or_non_document_members(tmp_path,name):
+    from leadpilot.serviceit_archive_reader import read_members
+    raw=make_sevenzip(tmp_path,[(name,'not executable')])
+    with pytest.raises(ValueError,match='ARCHIVE_'):read_members(raw)
+
+
+def test_sevenzip_download_recognized_by_signature_only_when_enabled(monkeypatch,tmp_path):
+    from leadpilot import serviceit_b2b_tender_documents as parser
+    raw=make_sevenzip(tmp_path,[('ТЗ.txt','Техническое задание.')])
+    monkeypatch.setattr(parser,'_public_dns',lambda host:True)
+    monkeypatch.setattr(parser,'_robots',lambda *a:None)
+    with httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(200,content=raw,headers={'content-type':'application/download'}))) as client:
+        assert parser.fetch_bytes(client,'https://www.b2b-center.ru/files/data',allow_legacy=True)==(raw,'.7z')
+        with pytest.raises(ValueError,match='DOCUMENT_UNSUPPORTED_FORMAT'):
+            parser.fetch_bytes(client,'https://www.b2b-center.ru/files/data')
+
+
+def test_sevenzip_expanded_size_is_bounded(tmp_path):
+    from leadpilot.serviceit_archive_reader import read_members
+    raw=make_sevenzip(tmp_path,[('large.txt','x'*10_000_001)])
+    with pytest.raises(ValueError,match='ARCHIVE_EXPANDED_SIZE_EXCEEDED'):read_members(raw)

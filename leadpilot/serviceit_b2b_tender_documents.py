@@ -222,6 +222,8 @@ def fetch_bytes(client, url, *, allow_legacy=False):
                         ".xlsx" if "xl/workbook.xml" in names else ".zip")
         except (zipfile.BadZipFile, ValueError):
             raise TenderDocumentBlocked("DOCUMENT_ZIP_INVALID") from None
+    elif allow_legacy and data.startswith(bytes.fromhex('377abcaf271c')):
+        kind='.7z'
     elif allow_legacy and data.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
         path=unquote(urlsplit(url).path).lower()
         if path.endswith('.xls') or media=='application/vnd.ms-excel':kind='.xls'

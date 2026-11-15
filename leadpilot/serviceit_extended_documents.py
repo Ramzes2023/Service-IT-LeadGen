@@ -229,7 +229,7 @@ def process(conn,client,env,*,batch=6):
         conn.execute("UPDATE serviceit_extended_documents SET attempts=attempts+1,status='RETRY',next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s",(card,url))
         try:
             document=download(client,url,name)
-            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,reports=%s::jsonb,error=NULL,updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],json.dumps([{'provider':'OCR','facts':[]}] if document.get('ocr') or document['text'].startswith('OCR:') else []),card,url))
+            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,reports=%s::jsonb,error=NULL,next_attempt_at=now(),updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],json.dumps([{'provider':'OCR','facts':[]}] if document.get('ocr') or document['text'].startswith('OCR:') else []),card,url))
             done.append((card,document))
         except Exception as exc:
             reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()

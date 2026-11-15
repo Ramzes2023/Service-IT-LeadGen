@@ -4,6 +4,34 @@ from leadpilot import serviceit_company_contacts as contacts
 from leadpilot.serviceit_extended_evidence_worker import owned,BEGIN,END
 
 
+def test_new_document_content_reopens_contact_research_once():
+    from leadpilot.serviceit_extended_evidence_worker import refresh_document_contacts
+    class Conn:
+        rows=[('https://company.ru/a.pdf','hash-a')]
+        signature=None
+        rescheduled=0
+        def execute(self,sql,args):
+            if sql.startswith('SELECT DISTINCT'):
+                assert "('READ','EXTRACTED')" in sql
+                assert 'OCR' in sql
+                return self
+            signature,inn,expected=args
+            assert signature==expected and inn=='7707083893'
+            assert 'IS DISTINCT FROM' in sql
+            if signature!=self.signature:
+                self.signature=signature;self.rescheduled+=1
+        def fetchall(self):return self.rows
+    conn=Conn()
+    refresh_document_contacts(conn,'7707083893')
+    refresh_document_contacts(conn,'7707083893')
+    assert conn.rescheduled==1
+    conn.rows.append(('https://company.ru/b.pdf','hash-b'))
+    refresh_document_contacts(conn,'7707083893')
+    conn.rows.reverse()
+    refresh_document_contacts(conn,'7707083893')
+    assert conn.rescheduled==2
+
+
 def test_contacts_require_labelled_inn_not_name_or_number():
     page={'url':'https://acme.ru/contacts','text':'Acme 7707083893 +7 (495) 123-45-67 info@acme.ru'}
     assert contacts.extract([page],'7707083893')==[]

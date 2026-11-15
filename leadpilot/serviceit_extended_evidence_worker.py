@@ -17,6 +17,9 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_company_contact_cache (
  CREATE TABLE IF NOT EXISTS serviceit_extended_card_inventory (card_id BIGINT PRIMARY KEY,snapshot JSONB NOT NULL);
  CREATE TABLE IF NOT EXISTS serviceit_extended_evidence_receipts (
  card_id BIGINT PRIMARY KEY,expected JSONB NOT NULL,status TEXT NOT NULL,updated_at TIMESTAMPTZ DEFAULT now());
+ CREATE TABLE IF NOT EXISTS serviceit_extended_b2b_discovery (
+ card_id BIGINT PRIMARY KEY,status TEXT NOT NULL,documents INTEGER NOT NULL DEFAULT 0,
+ error TEXT,next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now());
  ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS reader_version INTEGER NOT NULL DEFAULT 1;
  ALTER TABLE serviceit_company_contact_cache ADD COLUMN IF NOT EXISTS document_signature TEXT;
  UPDATE serviceit_company_contact_cache SET reader_version=3,next_attempt_at=now() WHERE reader_version<3 AND result->>'status' IN ('NOT_FOUND','SEARCH_UNAVAILABLE');
@@ -34,6 +37,32 @@ def refresh_document_contacts(conn,inn):
     signature=document_signature(rows)
     # Persist before research; a stable document set never resets retry backoff.
     conn.execute("UPDATE serviceit_company_contact_cache SET document_signature=%s,next_attempt_at=now() WHERE inn=%s AND document_signature IS DISTINCT FROM %s",(signature,inn,signature))
+
+
+def discover_b2b_documents(conn,rest,client,env):
+    """One source-verified procurement per cycle; all discovered files persist."""
+    if conn.execute("SELECT to_regclass('serviceit_vps_b2b_inbox')").fetchone()[0] is None:return
+    row=conn.execute("SELECT b.card_id,b.source_id,b.notice_json FROM serviceit_vps_b2b_inbox b LEFT JOIN serviceit_extended_b2b_discovery d ON d.card_id=b.card_id WHERE b.state='VERIFIED' AND b.card_id IS NOT NULL AND (d.card_id IS NULL OR d.next_attempt_at<=now()) ORDER BY (d.card_id IS NOT NULL),d.next_attempt_at,b.card_id LIMIT 1").fetchone()
+    if not row:return
+    card,source,notice=row
+    conn.execute("INSERT INTO serviceit_extended_b2b_discovery(card_id,status,next_attempt_at) VALUES(%s,'RESEARCHING',now()+interval '12 hours') ON CONFLICT(card_id) DO UPDATE SET status='RESEARCHING',next_attempt_at=excluded.next_attempt_at",(card,))
+    try:
+        from .serviceit_vps_b2b_deep_research import safe_notice,source_findings
+        from .serviceit_vps_worker import exact_environment
+        from .serviceit_b2b_tender_documents import candidate_links
+        from .serviceit_b2b_eis_mirrors import supplement_eis_mirrors
+        before=get(rest,card)
+        safe_notice(notice,card,source,before)
+        findings=source_findings(before,notice,exact_environment(env),client)
+        findings=supplement_eis_mirrors(findings,notice,client)
+        links=candidate_links(client,findings,notice['tender_id'],max_links=1000,include_legacy=True)
+        docs.register(conn,card,[{'url':r['url'],'name':r.get('label') or 'Документ закупки'} for r in links])
+        conn.execute("UPDATE serviceit_extended_b2b_discovery SET status=%s,documents=%s,error=NULL,next_attempt_at=now()+CASE WHEN %s THEN interval '7 days' ELSE interval '12 hours' END WHERE card_id=%s",('FOUND' if links else 'NO_PUBLIC_DOCUMENTS',len(links),bool(links),card))
+        print('EXT_B2B_FILES_REGISTERED='+str(len(links)),flush=True)
+    except Exception as exc:
+        reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()
+        conn.execute("UPDATE serviceit_extended_b2b_discovery SET status='RETRY',error=%s WHERE card_id=%s",(reason,card))
+        print('EXT_B2B_DISCOVERY_ERROR='+reason,flush=True)
 
 
 def owned(base,block):
@@ -145,7 +174,10 @@ def run():
                 conn.execute('INSERT INTO serviceit_company_contact_cache(inn,name) VALUES(%s,%s) ON CONFLICT DO NOTHING',(inn,str(item.get(COMPANY) or '')[:250]))
         for card,notice in conn.execute("SELECT card_id,notice FROM serviceit_bidzaar_inbox WHERE state='VERIFIED'").fetchall():
             docs.register(conn,card,notice.get('files',[]))
-        print('EXT_DOCUMENT_CHUNKS='+str(docs.process(conn,client,env,batch=8)),flush=True)
+        chunks=docs.process(conn,client,env,batch=8)
+        print('EXT_DOCUMENT_CHUNKS='+str(chunks),flush=True)
+        # Prioritize queued paid analysis; discovery uses otherwise idle cycles.
+        if not chunks:discover_b2b_documents(conn,rest,client,env)
         active_inns=sorted({str(item.get(INN) or '') for item in items if _is_valid_inn(str(item.get(INN) or ''))})
         for inn in active_inns:refresh_document_contacts(conn,inn)
         rows=conn.execute('SELECT inn,name FROM serviceit_company_contact_cache WHERE next_attempt_at<=now() AND inn=ANY(%s) ORDER BY (result IS NOT NULL),next_attempt_at,inn LIMIT 2',(active_inns,)).fetchall()
@@ -169,6 +201,9 @@ def run():
             row=conn.execute('SELECT result FROM serviceit_company_contact_cache WHERE inn=%s',(inn,)).fetchone()
             contact=contacts.render(row[0],inn) if row and row[0] else ''
             document,read,pending,total=docs.render(conn,card)
+            discovery=conn.execute('SELECT status,documents FROM serviceit_extended_b2b_discovery WHERE card_id=%s',(card,)).fetchone()
+            if not document and discovery:
+                document='ДОКУМЕНТЫ B2B: публичные вложения пока не получены. Поиск на подтверждённой странице закупки и доступных источниках будет повторён автоматически; отсутствие доступных файлов не означает отсутствие требований.'
             from .serviceit_tender_manager_policy import summary
             tender=conn.execute("SELECT notice,expected FROM serviceit_bidzaar_inbox WHERE card_id=%s AND state='VERIFIED'",(card,)).fetchone()
             policy=summary(*tender) if tender else ''

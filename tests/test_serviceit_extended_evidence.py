@@ -335,3 +335,32 @@ def test_cached_noop_still_refreshes_live_manager_edits(monkeypatch):
  conn=Conn()
  assert not worker.patch(conn,None,None,35,before,{worker.REPORT:'old'})
  assert conn.saved and 'manager edit' in conn.saved[0][1]
+
+
+@pytest.mark.parametrize('valid',[True,False])
+def test_b2b_discovery_registers_all_only_after_source_identity(monkeypatch,valid):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    from leadpilot import serviceit_vps_b2b_deep_research as research
+    from leadpilot import serviceit_b2b_tender_documents as parser
+    from leadpilot import serviceit_b2b_eis_mirrors as mirrors
+    class Conn:
+        def __init__(self):self.calls=[];self.result=None
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            self.result=('table',) if sql.startswith('SELECT to_regclass') else (29,'B2B:4673595',{'tender_id':'4673595'}) if sql.startswith('SELECT b.card_id') else None
+            return self
+        def fetchone(self):return self.result
+    from leadpilot import serviceit_vps_worker as vps
+    monkeypatch.setattr(vps,'exact_environment',lambda env:env)
+    conn=Conn();network=[]
+    monkeypatch.setattr(worker,'get',lambda *a:{'id':29})
+    def identity(*a):
+        if not valid:raise ValueError('B2B_NOTICE_CARD_IDENTITY_MISMATCH')
+    monkeypatch.setattr(research,'safe_notice',identity)
+    monkeypatch.setattr(research,'source_findings',lambda *a,**kw:network.append(True) or {})
+    monkeypatch.setattr(mirrors,'supplement_eis_mirrors',lambda findings,*a:findings)
+    monkeypatch.setattr(parser,'candidate_links',lambda *a,**kw:[{'url':f'https://www.b2b-center.ru/files/{i}.doc','label':str(i)} for i in range(13)])
+    worker.discover_b2b_documents(conn,None,None,{})
+    registered=[args for sql,args in conn.calls if sql.startswith('INSERT INTO serviceit_extended_documents')]
+    assert len(registered)==(13 if valid else 0)
+    assert bool(network)==valid

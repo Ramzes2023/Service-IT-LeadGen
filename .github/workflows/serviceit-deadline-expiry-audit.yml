@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT expiry schedule and live stage acceptance
+name: ServiceIT final expiry and renewed background access acceptance
 on:
   push:
     branches: [main]
@@ -55,5 +55,8 @@ jobs:
           assert state.get('status')=='OK' and not state.get('failed_cards')
           assert time.time()-state.get('completed_at',0)<420
           print('PANELS_BACKGROUND=VERIFIED')
+          auth=json.loads(Path('/data/auth.json').read_text())
+          assert auth.get('expires',0)>time.time()+1800
+          print('PANELS_TOKEN_RENEWED=VERIFIED')
           PYAPP
           REMOTE

@@ -48,3 +48,20 @@ def test_changed_assignment_is_not_overwritten(monkeypatch):
  monkeypatch.setattr(p,'api',api)
  p.repair_deadlines(conn,None,'https://example.invalid')
  assert conn.receipt is None
+
+def test_uncertain_task_creation_reconciles_exact_existing_task(monkeypatch):
+ import leadpilot.serviceit_tender_manager_policy as p
+ from datetime import datetime,timezone
+ from leadpilot.serviceit_b2b_dossier_consistency_v37 import SUMMARY
+ writes=[];reserved=datetime(2026,11,15,10,tzinfo=timezone.utc)
+ class Conn:
+  def execute(self,sql,args=()):
+   if sql.startswith('SELECT r.reserved_at'):return Result([(reserved,{SUMMARY:'Поставка серверов'})])
+   writes.append((sql,args));return Result([])
+ task={'title':'Проработать закупку: Поставка серверов','ufCrmTask':['T426_35'],'responsibleId':'605','createdDate':'2026-11-15T13:00:01+03:00','deadline':'2026-11-16T10:00:00+00:00'}
+ monkeypatch.setattr(p,'api',lambda *args:{'task':task})
+ p.reconcile_created_task(Conn(),None,'',35,123,'T426',p.submission_time('2026-11-17T10:00:00Z'))
+ assert len(writes)==1 and "status='VERIFIED'" in writes[0][0]
+ writes.clear();task['ufCrmTask']=['T426_36']
+ p.reconcile_created_task(Conn(),None,'',35,123,'T426',p.submission_time('2026-11-17T10:00:00Z'))
+ assert writes==[]

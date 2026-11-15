@@ -132,7 +132,7 @@ def service_priority(row, peers):
         score = min(score, 39 if status in ('EXPIRED', 'NOT_OPEN', 'OUT_OF_SCOPE') else 59)
         exact = False
         explanation += ' Требует проверки: '+status+'.'
-    badge = ('★ ТОЧНОЕ ПОПАДАНИЕ | ' if exact else '⚠ ') + str(score)+'/100 — '+('высокий приоритет' if score >= 80 else 'средний приоритет' if score >= 60 else 'требует проверки')
+    badge = ('★ ТОЧНОЕ ПОПАДАНИЕ | ' if exact else '⚠ ') + 'Совпадение с услугами: '+str(score)+'/100 — '+('высокий приоритет' if score >= 80 else 'средний приоритет' if score >= 60 else 'требует проверки')+'; участие не подтверждено'
     return score, badge, explanation, exact
 
 

@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT background transport and layout diagnosis
+name: ServiceIT inspect first background card requests
 on:
   push:
     branches: [main]
@@ -34,26 +34,26 @@ jobs:
           chmod 0600 "$stage/"*
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'APP_AUDIT'
-          import json,urllib.request,urllib.error
+          import json
           import automation as a
-          auth=a.read("auth.json")
-          def checked(method,**kwargs):
+          token=a.read("auth.json")["access_token"]
+          old=a.api
+          def api(token,method,**kwargs):
            try:
-            req=urllib.request.Request(a.PORTAL+method,json.dumps(dict(kwargs,auth=auth["access_token"])).encode(),{"Content-Type":"application/json"})
-            try:
-             with urllib.request.urlopen(req,timeout=35) as r:data=json.load(r)
-            except urllib.error.HTTPError as r:data=json.load(r)
-            if data.get("error"):
-             print("CHECK_ERROR="+method+":"+str(data["error"])+":"+str(data.get("error_description",""))[:200],flush=True)
-             return None
-            print("CHECK_OK="+method,flush=True)
-            return data.get("result")
-           except Exception as e:print("CHECK_TRANSPORT="+method+":"+type(e).__name__,flush=True);return None
-          checked("app.info")
-          checked("crm.item.list",entityTypeId=1062,useOriginalUfNames="Y",filter={"categoryId":21,">id":7},order={"id":"ASC"},select=["*"],start=0)
-          activity=checked("crm.activity.configurable.get",id=205169)
-          if activity:
-           item=checked("crm.item.get",entityTypeId=1062,id=activity["activity"]["ownerId"],useOriginalUfNames="Y")
-           if item:checked("crm.activity.configurable.update",id=205169,fields={"completed":False},layout=a.layout(item["item"],"finance"))
-          print("WORKER_STATUS="+str(a.read("status.json",{}).get("status")))
+            r=old(token,method,**kwargs)
+            print("METHOD_OK="+method,flush=True)
+            return r
+           except Exception as e:
+            print("METHOD_FAILED="+method+":"+str(e),flush=True)
+            raise
+          a.api=api
+          rows=a.api(token,"crm.item.list",entityTypeId=1062,useOriginalUfNames="Y",filter={"categoryId":21,">id":7},order={"id":"ASC"},select=["*"],start=0)["items"]
+          item=rows[0]
+          print("FIRST_CARD="+str(item["id"]),flush=True)
+          for kind in ["call","finance"]:
+           found=a.api(token,"crm.activity.list",filter={"OWNER_TYPE_ID":1062,"OWNER_ID":item["id"],"ORIGINATOR_ID":"serviceit_workspace_app_v1","ORIGIN_ID":"serviceit-workspace:"+str(item["id"])+":"+kind},select=["ID","COMPLETED"])
+           if len(found)==1:
+            a.api(token,"crm.activity.configurable.update",id=int(found[0]["ID"]),fields={"completed":False},layout=a.layout(item,kind))
+            a.api(token,"crm.activity.configurable.get",id=int(found[0]["ID"]))
+          print("FIRST_CARD_VERIFIED=YES")
           APP_AUDIT

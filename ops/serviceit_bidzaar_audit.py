@@ -90,5 +90,25 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         print('BIDZAAR_EXCLUDED_CARD_'+str(card)+'_READBACK='+('YES' if valid else 'NO'),flush=True)
         ok &= valid;excluded+=valid
     print('BIDZAAR_EXCLUDED_READBACK='+str(excluded),flush=True)
+    # Bounded read-only connectivity diagnosis; never print signed URLs or bodies.
+    from urllib.parse import urlsplit
+    from leadpilot.serviceit_b2b_tender_documents import public_market_url, _public_dns
+    for card,url,error,attempts in conn.execute("SELECT card_id,url,error,attempts FROM serviceit_extended_documents WHERE status IN ('RETRY','FAILED') ORDER BY card_id,url LIMIT 5").fetchall():
+        prefix='DOCUMENT_DOWNLOAD_CARD_'+str(card)+'_'
+        print(prefix+'ATTEMPTS='+str(attempts),flush=True)
+        if re.fullmatch(r'[A-Z][A-Z0-9_]{0,100}',error or ''):print(prefix+'ERROR='+error,flush=True)
+        try:
+            host=public_market_url(url)
+            if not _public_dns(host):raise ValueError('PUBLIC_DNS_FAILED')
+            print(prefix+'HOST='+host,flush=True)
+            # Test public origin TLS with verification enabled, no credentials.
+            with client.stream('GET','https://'+host+'/robots.txt',timeout=8,follow_redirects=False) as response:
+                print(prefix+'ORIGIN_HTTP='+str(response.status_code),flush=True)
+        except Exception as exc:
+            detail=' '.join(str(e) for e in (exc,exc.__cause__) if e).lower()
+            reason=('TLS_VERIFY_FAILED' if 'certificate verify failed' in detail else
+                    'DNS_FAILED' if 'name or service not known' in detail or 'getaddrinfo' in detail else
+                    'CONNECT_TIMEOUT' if isinstance(exc,httpx.TimeoutException) else type(exc).__name__.upper())
+            print(prefix+'ORIGIN_ERROR='+reason,flush=True)
     print('BIDZAAR_CRM_WRITES=0',flush=True)
     if not ok:raise SystemExit(2)

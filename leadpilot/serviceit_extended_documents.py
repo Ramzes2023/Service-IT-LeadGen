@@ -43,7 +43,12 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  WHERE parser_version<5 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT'
  AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';
  UPDATE serviceit_extended_documents SET parser_version=6,status='PENDING',attempts=0,next_attempt_at=now()
- WHERE parser_version<6 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT';'''
+ WHERE parser_version<6 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT';
+ UPDATE serviceit_extended_documents SET analysis_version=9,
+ model_attempts=CASE WHEN status='EXTRACTED' AND error LIKE '%OUTPUT_TRUNCATED%' THEN 0 ELSE model_attempts END,
+ window_chars=CASE WHEN status='EXTRACTED' AND error LIKE '%OUTPUT_TRUNCATED%' THEN 24000 ELSE window_chars END,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE '%OUTPUT_TRUNCATED%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<9;'''
 
 
 def _limits():
@@ -285,7 +290,7 @@ def process(conn,client,env,*,batch=6):
             # Retry a smaller continuous slice, never skip the failed region.
             size=min(previous_size,24000 if attempts==0 else 12000 if attempts==1 else 6000)
             window=text[offset:offset+size]
-            inputs=[{'url':url,'text':window,'retry_profile':size<24000}]
+            inputs=[{'url':url,'text':window,'retry_profile':True}]
             safe=public_documents({'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))})
             conn.execute("UPDATE serviceit_extended_documents SET window_chars=%s,model_attempts=model_attempts+1,next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s AND status='EXTRACTED'",(size,card,url))
             pending.append((card,url,text,offset,window,safe,pool.submit(full_window_research,client,env,inputs)))
@@ -297,7 +302,7 @@ def process(conn,client,env,*,batch=6):
                 reason=('ROUTERAI_'+detail if re.fullmatch(r'[A-Z][A-Z0-9_]{3,70}',detail) else 'ROUTERAI_'+type(exc).__name__.upper())[:90]
             success=any(r.get('provider')=='RouterAI' for r in reports)
             if safe and not success:
-                conn.execute("UPDATE serviceit_extended_documents SET error=%s,next_attempt_at=now()+CASE WHEN model_attempts>=3 THEN interval '1 day' ELSE interval '10 minutes' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason or 'ROUTERAI_ANALYSIS_RETRY',card,url))
+                conn.execute("UPDATE serviceit_extended_documents SET error=%s,next_attempt_at=now()+CASE WHEN model_attempts>=3 THEN interval '1 day' WHEN %s LIKE '%%OUTPUT_TRUNCATED%%' THEN interval '0 seconds' ELSE interval '10 minutes' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason or 'ROUTERAI_ANALYSIS_RETRY',reason or '',card,url))
                 continue
             own=[]
             for report in reports:

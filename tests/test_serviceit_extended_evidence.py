@@ -96,6 +96,7 @@ def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch,attempts
     monkeypatch.setattr(docs,'full_window_research',lambda client,env,inputs:seen.extend(inputs) or [{'provider':'RouterAI','facts':[]}])
     docs.process(conn,None,{})
     assert len(seen[0]['text'])==size
+    assert seen[0]['retry_profile'] is True
     assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==24000+size
 
 

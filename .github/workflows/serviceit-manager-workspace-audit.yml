@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT repair completed finance block and diagnose API fields
+name: ServiceIT diagnose finance layout validation
 on:
   push:
     branches: [main]
@@ -56,7 +56,10 @@ jobs:
           auth=a.read("auth.json")
           if auth:
            try:
-            a.api(auth["access_token"],"crm.activity.configurable.update",id=205169,fields={"completed":False})
+            token=auth["access_token"]
+            activity=a.api(token,"crm.activity.configurable.get",id=205169)["activity"]
+            item=a.api(token,"crm.item.get",entityTypeId=1062,id=activity["ownerId"],useOriginalUfNames="Y")["item"]
+            a.api(token,"crm.activity.configurable.update",id=205169,fields={"completed":False},layout=a.layout(item,"finance"))
             print("TIMELINE_FINANCE_REOPEN=SUCCESS")
            except a.Failure:pass
           

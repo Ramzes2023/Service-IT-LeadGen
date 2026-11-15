@@ -204,18 +204,32 @@ def search(client,env,inn,name,documents=()):
             'checked_at':datetime.now(timezone.utc).isoformat()}
 
 
+def merge_refresh(previous,current):
+    """A failed lookup is not evidence that old public contacts disappeared."""
+    if (previous and previous.get('contacts') and not current.get('contacts')
+            and previous.get('status') in ('VERIFIED','RECHECK_REQUIRED')):
+        return {**current,'status':'RECHECK_REQUIRED','contacts':previous['contacts'],
+                'last_search_status':current.get('status'),
+                'previous_verified_at':previous.get('previous_verified_at') or previous.get('checked_at','')}
+    return current
+
+
 def render(result,inn):
     lines=['ПУБЛИЧНЫЕ КОНТАКТЫ КОМПАНИИ',f'Проверка по ИНН {inn}. Дата: '+result.get('checked_at','')]
     if not result.get('contacts'):
         lines.append('Подтверждённые публичные контакты не найдены. Это не означает, что у компании их нет.')
         return '\n'.join(lines)
-    lines.append('Статус: ПОДТВЕРЖДЁН КОМПАНИИ по ИНН. Полномочия по конкретной закупке НЕ ПОДТВЕРЖДЕНЫ, если это прямо не указано в источнике.')
+    stale=result.get('status')=='RECHECK_REQUIRED'
+    if stale:
+        lines.append('Статус: ТРЕБУЕТ ПОВТОРНОЙ ПРОВЕРКИ. Сохранены ранее найденные контакты; текущий поиск не подтвердил их актуальность. Предыдущее подтверждение: '+result.get('previous_verified_at',''))
+    else:
+        lines.append('Статус: ПОДТВЕРЖДЁН КОМПАНИИ по ИНН. Полномочия по конкретной закупке НЕ ПОДТВЕРЖДЕНЫ, если это прямо не указано в источнике.')
     lines.append('Кому обращаться: сначала контакт ИТ или закупок; если указан только общий номер — попросить соединить с ответственным.')
     shown=0
     for contact in result['contacts']:
         entry=[contact['kind']+': '+contact['value']+' — '+contact['role'],
                       'Контекст: '+contact['context'][:200], 'Источник: '+contact['url'],
-                      'Принадлежность компании подтверждена ИНН: '+contact['identity_url']]
+                      ('Источник предыдущего подтверждения по ИНН: ' if stale else 'Принадлежность компании подтверждена ИНН: ')+contact['identity_url']]
         if sum(len(line)+1 for line in lines+entry)>11200:break
         lines.extend(entry);shown+=1
     if shown<len(result['contacts']):lines.append(f'Показано {shown} из {len(result["contacts"])} контактов; остальные сохранены в результатах исследования.')

@@ -192,6 +192,8 @@ def run():
             futures=[(inn,executor.submit(contacts.search,client,env,inn,name,documents)) for inn,name,documents in pending]
             for inn,future in futures:
                 result=future.result()
+                previous=conn.execute('SELECT result FROM serviceit_company_contact_cache WHERE inn=%s',(inn,)).fetchone()
+                result=contacts.merge_refresh(previous[0] if previous else None,result)
                 conn.execute("UPDATE serviceit_company_contact_cache SET result=%s::jsonb,reader_version=4,next_attempt_at=now()+CASE WHEN %s THEN interval '1 day' ELSE interval '7 days' END WHERE inn=%s",(json.dumps(result,ensure_ascii=False),result['status']!='VERIFIED',inn))
                 print('EXT_CONTACT_SEARCH='+result['status'],flush=True)
                 print('EXT_CONTACT_PAGES='+str(result['pages_checked']),flush=True)
@@ -226,7 +228,11 @@ def run():
                 limit=re.sub(r'Прочитано документов: \d+',f'Прочитано документов: {read}',limit)
                 limit=re.sub(r'Не обработано: \d+',f'Не обработано: {total-read}',limit)
                 fields[LIMITS]=limit
-            updated+=patch(conn,rest,client,card,item,fields)
+            try:updated+=patch(conn,rest,client,card,item,fields)
+            except httpx.HTTPError:
+                # Any write intent remains durable; the next cycle reconciles
+                # it before retrying. A single network error must not starve others.
+                print('EXT_CARD_'+str(card)+'_NETWORK_RETRY=YES',flush=True)
         from .serviceit_tender_manager_policy import repair_deadlines
         repair_deadlines(conn,client,rest.base)
         from .serviceit_evidence_stage_handoff import advance

@@ -1,4 +1,4 @@
-name: ServiceIT preserve original credential pending exact current key
+name: ServiceIT install exact user-confirmed application credential
 on:
   push:
     branches: [main]

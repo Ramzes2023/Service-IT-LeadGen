@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT OAuth network diagnosis without credentials
+name: ServiceIT verify stored application credential fingerprint
 on:
   push:
     branches: [main]
@@ -33,24 +33,12 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
           chmod 0600 "$stage/"*
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'openssl pkey -in "$HOME/serviceit/bidzaar/recipient.pem" -pubout'
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'PY'
-          import urllib.request,urllib.error,json,socket
-          class NoRedirect(urllib.request.HTTPRedirectHandler):
-           def redirect_request(self,*args,**kwargs):return None
-          for host in ('oauth.bitrix24.tech','oauth.bitrix.info'):
-           for method in ('GET','POST'):
-            try:
-             req=urllib.request.Request('https://'+host+'/oauth/token/',data=b'grant_type=refresh_token' if method=='POST' else None,headers={'Content-Type':'application/x-www-form-urlencoded'})
-             try:r=urllib.request.build_opener(NoRedirect).open(req,timeout=15)
-             except urllib.error.HTTPError as e:r=e
-             print('OAUTH_PROBE='+host+'_'+method+'_HTTP_'+str(r.code))
-             print('OAUTH_REDIRECT='+str(r.headers.get('Location','')).split('?')[0])
-             try:
-              data=json.loads(r.read(65536));code=str(data.get('error',''))
-              print('OAUTH_ERROR='+code if code.replace('_','').isalnum() else 'OAUTH_ERROR=OTHER')
-             except Exception:print('OAUTH_BODY=NON_JSON')
-            except Exception as e:
-             print('OAUTH_TRANSPORT='+host+'_'+method+'_'+type(e).__name__)
-             reason=getattr(e,'reason',None)
-             if reason:print('OAUTH_REASON_TYPE='+type(reason).__name__)
+          import json,hashlib
+          from pathlib import Path
+          client=json.loads(Path('/data/client.json').read_text())
+          print('CLIENT_CODE_MATCH='+str(client['client_id']=='local.6af97755661a80.97347802'))
+          print('CLIENT_KEY_SHA256='+hashlib.sha256(client['client_secret'].encode()).hexdigest())
+          print('CLIENT_KEY_LENGTH='+str(len(client['client_secret'])))
           PY

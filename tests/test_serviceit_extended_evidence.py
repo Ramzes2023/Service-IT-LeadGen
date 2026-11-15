@@ -445,3 +445,30 @@ def test_eis_download_uses_isolated_pinned_context(monkeypatch):
     assert docs.download(object(),url,'file.txt')['text']=='full document bytes'
     assert seen[0]['verify'].check_hostname and seen[0]['trust_env'] is False
     assert seen[0]['follow_redirects'] is False and seen[1] is sentinel
+
+
+def test_missing_file_keeps_public_link_rediscovery_scheduled(monkeypatch):
+    class Result:
+        def __init__(self,rows=()):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        def __init__(self):self.calls=[]
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            return Result([(27,'https://zakupki.gov.ru/file','file')]) if sql.startswith('SELECT card_id,url,name') else Result()
+    def missing(*args):raise ValueError('DOCUMENT_HTTP_404')
+    monkeypatch.setattr(docs,'download',missing)
+    conn=Conn();docs.process(conn,None,{})
+    assert any('UPDATE serviceit_extended_b2b_discovery' in sql and "12 hours" in sql and args==(27,) for sql,args in conn.calls)
+
+
+def test_missing_file_render_never_claims_read():
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        def execute(self,sql,args=()):
+            return Result([('ТЗ','https://zakupki.gov.ru/file','RETRY',[],'DOCUMENT_HTTP_404')]) if 'SELECT name,url,status' in sql else Result([])
+    text,read,pending,total=docs.render(Conn(),27)
+    assert read==0 and pending==1 and total==1
+    assert 'HTTP 404' in text and 'Документ не прочитан' in text

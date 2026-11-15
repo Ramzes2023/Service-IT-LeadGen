@@ -1,4 +1,4 @@
-name: ServiceIT install exact user-confirmed application credential
+name: ServiceIT successful-card finance dashboard and toolbar
 on:
   push:
     branches: [main]
@@ -26,8 +26,12 @@ jobs:
         run: |
           node --check apps/manager-workspace/app.js
           node apps/manager-workspace/test.cjs
-          python -m unittest discover -s apps/manager-workspace -p test_automation.py
+          python -m unittest discover -s apps/manager-workspace -p 'test_*.py'
           python -m py_compile apps/manager-workspace/server.py deploy/serviceit-workspace-caddy-enable.py
+      - name: Verify dashboard desktop and mobile layout
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ui" playwright
+          NODE_PATH="$RUNNER_TEMP/ui/node_modules" node apps/manager-workspace/ui_check.cjs
       - name: Stage and start isolated application
         shell: bash
         run: |
@@ -43,7 +47,7 @@ jobs:
           target="$VPS_USER@$VPS_HOST"
           remote="serviceit/workspace-app/releases/$GITHUB_RUN_ID"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "umask 077; install -d -m 0700 '$remote'"
-          scp -i "$stage/id" "${opts[@]}" apps/manager-workspace/{automation.py,server.py,index.html,app.js,style.css,Dockerfile} deploy/serviceit-workspace-caddy-enable.py deploy/serviceit-workspace-client.enc.b64 "$target:$remote/"
+          scp -i "$stage/id" "${opts[@]}" apps/manager-workspace/{automation.py,finance_dashboard.py,server.py,index.html,app.js,style.css,dashboard.html,dashboard.js,dashboard.css,Dockerfile} deploy/serviceit-workspace-caddy-enable.py deploy/serviceit-workspace-client.enc.b64 "$target:$remote/"
           ssh -T -i "$stage/id" "${opts[@]}" "$target" "bash -s -- '$GITHUB_RUN_ID'" <<'REMOTE'
           set -euo pipefail
           id="$1"

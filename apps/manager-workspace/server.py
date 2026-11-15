@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import threading
 import automation
+import finance_dashboard
 ROOT=Path(__file__).parent
 PREFIX='/apps/serviceit-workspace/'
 class Handler(BaseHTTPRequestHandler):
@@ -14,12 +15,13 @@ class Handler(BaseHTTPRequestHandler):
   if not 0<=n<=65536:return self.send_error(413)
   raw=self.rfile.read(n)
   path=self.path.split('?',1)[0]
-  if path.endswith('/connect') or path.endswith('/sync'):
+  if path.endswith('/connect') or path.endswith('/sync') or path.endswith('/dashboard-data'):
    if self.headers.get('Origin')!='https://leadgen.serviseit.ru':return self.send_error(403)
    if self.headers.get('Content-Type','').split(';')[0]!='application/json':return self.send_error(415)
    try:
     data=json.loads(raw)
     if path.endswith('/connect'):result=automation.connect(data)
+    elif path.endswith('/dashboard-data'):result=finance_dashboard.snapshot(data.get('access_token'))
     else:result=automation.sync_card(data.get('access_token'),data.get('card_id'))
     return self.send_json(result)
    except automation.Failure as e:return self.send_json({'error':str(e)},400)
@@ -34,7 +36,7 @@ class Handler(BaseHTTPRequestHandler):
   self.end_headers();self.wfile.write(payload)
  def do_GET(self):
   path=self.path.split('?',1)[0]
-  names={PREFIX:'index.html',PREFIX+'install':'index.html',PREFIX+'app.js':'app.js',PREFIX+'style.css':'style.css'}
+  names={PREFIX:'index.html',PREFIX+'install':'index.html',PREFIX+'app.js':'app.js',PREFIX+'style.css':'style.css',PREFIX+'dashboard':'dashboard.html',PREFIX+'dashboard.js':'dashboard.js',PREFIX+'dashboard.css':'dashboard.css'}
   if path==PREFIX+'health':
    payload=json.dumps({'status':'READY_FOR_BITRIX_INSTALLATION','version':2,'background_worker':True}).encode();mime='application/json'
   elif path in names:

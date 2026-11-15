@@ -30,7 +30,7 @@ if(typeof document!=='undefined'){
  function preview(){try{const x=splitMoney(cents($('FIN_REVENUE').value),cents($('FIN_COSTS').value));for(const k of ['profit','developer','manager','company'])$(k).textContent=rub(x?.[k]??null);$('financeNote').textContent=x&&x.profit<0?'Убыток относится на компанию. Вознаграждения — 0 ₽.':'Предварительный расчёт. Сохранённые данные обработает сервер.';}catch(e){$('financeNote').textContent=e.message;for(const k of ['profit','developer','manager','company'])$(k).textContent='—';}}
  function fill(){
  $('expiredBanner').hidden=item.stageId!=='DT1062_21:SVCIT_EXPIRED';$('subtitle').textContent=item.title;$('badge').textContent=item[P+'POST_BADGE']||'Ожидает заполнения';
- for(const k of ['POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_NOTES','FIN_REVENUE','FIN_COSTS'])$(k).value=item[P+k]??'';
+ for(const k of ['POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_NOTES','FIN_REVENUE','FIN_COSTS','FIN_PAID_MANAGER','FIN_PAID_DEVELOPER'])$(k).value=item[P+k]??'';
  const date=item[P+'POST_DUE'];$('POST_DUE').value=date?localDate(new Date(date)):'';
  choose(Object.keys(INTEREST).find(k=>maps.POST_INTEREST[k]===String(item[P+'POST_INTEREST']))||'');
  $('FIN_BASIS').value=Object.keys(BASIS).find(k=>maps.FIN_BASIS[k]===String(item[P+'FIN_BASIS']))||'PLAN';
@@ -44,15 +44,20 @@ if(typeof document!=='undefined'){
  document.addEventListener('change',()=>{dirty=true;});
  async function refresh(){if(!item||busy||dirty||document.hidden)return;await run(async()=>{item=await get(item.id);fill();msg('Данные и расчёты обновлены.');});}
  setInterval(refresh,30000);
- async function save(kind){
- const keys=kind==='call'?['POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_NOTES','POST_DUE','POST_INTEREST']:['FIN_REVENUE','FIN_COSTS','FIN_BASIS'];
+ async function save(kind,finish=false){
+ const keys=kind==='call'?['POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_NOTES','POST_DUE','POST_INTEREST']:['FIN_REVENUE','FIN_COSTS','FIN_BASIS','FIN_PAID_MANAGER','FIN_PAID_DEVELOPER'];
  const fresh=await get(item.id);for(const k of keys)if(String(fresh[P+k]??'')!==String(item[P+k]??''))throw Error('Эти данные изменил другой сотрудник. Переоткройте форму перед сохранением.');
  const fields={};if(kind==='call'){
  for(const k of keys.filter(k=>!['POST_INTEREST','POST_DUE'].includes(k))){if($(k).value.length>16000)throw Error('Слишком длинная запись.');fields[P+k]=$(k).value;}
  fields[P+'POST_INTEREST']=interest?maps.POST_INTEREST[interest]:'';fields[P+'POST_DUE']=$('POST_DUE').value?new Date($('POST_DUE').value).toISOString():'';
- }else{for(const k of ['FIN_REVENUE','FIN_COSTS']){const v=cents($(k).value);fields[P+k]=v===null?'':(v/100).toFixed(2);}fields[P+'FIN_BASIS']=maps.FIN_BASIS[$('FIN_BASIS').value];}
+ }else{for(const k of ['FIN_REVENUE','FIN_COSTS','FIN_PAID_MANAGER','FIN_PAID_DEVELOPER']){const v=cents($(k).value);fields[P+k]=v===null?'':(v/100).toFixed(2);}fields[P+'FIN_BASIS']=maps.FIN_BASIS[$('FIN_BASIS').value];}
+ if(finish){
+ if($('FIN_BASIS').value!=='ACTUAL'||cents($('FIN_REVENUE').value)===null||cents($('FIN_COSTS').value)===null)throw Error('Для успешного завершения укажите фактические выручку и расходы и выберите «Факт».');
+ if(fresh.stageId!==item.stageId)throw Error('Стадия изменилась. Переоткройте карточку.');
+ const stages=await api('crm.status.list',{filter:{ENTITY_ID:'DYNAMIC_1062_STAGE_21'}});const success=stages.filter(x=>x.SEMANTICS==='S');if(success.length!==1)throw Error('Не найдена единственная успешная стадия.');fields.stageId=success[0].STATUS_ID;
+ }
  await api('crm.item.update',{entityTypeId:TYPE,id:item.id,useOriginalUfNames:'Y',fields});item=await get(item.id);
- for(const [k,v] of Object.entries(fields)){const actual=item[k]??'';const same=k.endsWith('POST_DUE')?(v?new Date(actual).getTime()===new Date(v).getTime():!actual):k.endsWith('FIN_REVENUE')||k.endsWith('FIN_COSTS')?cents(actual)===cents(v):String(actual)===String(v);if(!same)throw Error('Сохранение не подтверждено. Переоткройте карточку.');}
+ for(const [k,v] of Object.entries(fields)){const actual=item[k]??'';const same=k.endsWith('POST_DUE')?(v?new Date(actual).getTime()===new Date(v).getTime():!actual):k.endsWith('FIN_REVENUE')||k.endsWith('FIN_COSTS')||k.endsWith('FIN_PAID_MANAGER')||k.endsWith('FIN_PAID_DEVELOPER')?cents(actual)===cents(v):String(actual)===String(v);if(!same)throw Error('Сохранение не подтверждено. Переоткройте карточку.');}
  dirty=false;fill();msg('Сохранено в CRM. ИИ, статус и общие итоги обновятся в течение 5 минут.');
  try{await syncTimeline(item);}catch(e){msg('Данные сохранены. Обновление блоков ленты пока не подтверждено: '+e.message,true);}
  }
@@ -65,14 +70,14 @@ if(typeof document!=='undefined'){
  }msg('Блоки созданы. Завершаем установку…');BX24.installFinish();
  }
  document.querySelectorAll('[data-interest]').forEach(b=>b.onclick=()=>{dirty=true;choose(b.dataset.interest);});
- $('FIN_REVENUE').oninput=preview;$('FIN_COSTS').oninput=preview;$('saveCall').onclick=()=>run(()=>save('call'));$('saveFinance').onclick=()=>run(()=>save('finance'));$('installButton').onclick=()=>run(install);
+ $('FIN_REVENUE').oninput=preview;$('FIN_COSTS').oninput=preview;$('saveCall').onclick=()=>run(()=>save('call'));$('saveFinance').onclick=()=>run(()=>save('finance'));$('finishFinance').onclick=()=>run(()=>save('finance',true));$('openDashboard').onclick=()=>{location.href=URL_APP+'dashboard'+location.search;};$('installButton').onclick=()=>run(install);
  if(typeof BX24==='undefined'||window.parent===window){msg('Форма готова. Откройте её через установленное приложение Битрикс24.');}
  else BX24.init(()=>run(async()=>{
  const auth=BX24.getAuth();if(auth.domain!=='serviseit.bitrix24.ru')throw Error('Приложение доступно только для портала Сервис ИТ.');
  if(location.pathname.endsWith('/install')){$('install').hidden=false;msg('Готово к установке.');return;}
  try{const connected=await serverCall('connect',auth);backgroundNotice=connected.administratorRequired?'Для фонового обновления администратору нужно один раз открыть приложение. ':'Фоновое подключение сохранено. ';}catch(e){msg('Фоновое подключение пока не подтверждено: '+e.message,true);}
  const p=BX24.placement.info();let o=p.options||{};if(typeof o==='string'){try{o=JSON.parse(o);}catch(e){o={};}}if(typeof o.actionParams==='string'){try{o.actionParams=JSON.parse(o.actionParams);}catch(e){o.actionParams={};}}let id=Number(o.cardId||o.ID||o.id||o.actionParams?.cardId);
- if(!Number.isSafeInteger(id)||id<8){msg(backgroundNotice+'Откройте приложение из блока «Итог разговора», «Финансы» или вкладки карточки.');return;}
+ if(!Number.isSafeInteger(id)||id<8){location.replace(URL_APP+'dashboard'+location.search);return;}
  await enumMaps();item=await get(id);fill();$('workspace').hidden=false;msg(backgroundNotice+'Данные загружены из CRM.');
  try{await syncTimeline(item);}catch(e){msg('Форма доступна. Блоки ленты требуют проверки: '+e.message,true);}
  BX24.fitWindow();if((o.section||o.actionParams?.section)==='finance')document.querySelector('.finance').scrollIntoView();

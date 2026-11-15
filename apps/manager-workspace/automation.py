@@ -171,7 +171,10 @@ def sync_card(token,card_id):
 
 def cycle():
  with LOCK:
-  token=current_token();cache=read('blocks.json',{});last=7;count=0;failed={}
+  token=current_token();cache=read('blocks.json',{});last=7;count=0;failed={};finance_items=[];binding_error=None
+  import finance_dashboard
+  try:finance_dashboard.ensure_binding(token)
+  except Failure as error:binding_error=str(error)
   for page in range(1000):
    rows=api(token,'crm.item.list',entityTypeId=1062,useOriginalUfNames='Y',filter={'categoryId':21,'>id':last},order={'id':'ASC'},select=['*'],start=0)['items']
    if not rows:break
@@ -181,9 +184,14 @@ def cycle():
     except Failure as error:
      if str(error) in ('expired_token','invalid_token'):raise
      failed[str(item['id'])]=str(error)
-    last=int(item['id']);count+=1
+    last=int(item['id']);count+=1;finance_items.append(item)
    if len(rows)<50:break
   else:raise Failure('SCAN_LIMIT')
+  try:
+   success,actual=finance_dashboard.config(token)
+   write('finance-summary.json',finance_dashboard.aggregate(finance_items,success,actual))
+   write('finance-status.json',{'status':binding_error or 'OK','at':int(time.time())})
+  except Failure as error:write('finance-status.json',{'status':str(error),'at':int(time.time())})
   write('status.json',{'status':'PARTIAL' if failed else 'OK','cards':count,'failed_cards':failed,'completed_at':int(time.time())})
 
 def worker():

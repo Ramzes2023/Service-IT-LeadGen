@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 import automation as a
+import finance_dashboard as f
 
 class AutomationTests(unittest.TestCase):
  def setUp(self):
@@ -51,7 +52,7 @@ class AutomationTests(unittest.TestCase):
   items=[self.item(),dict(self.item(),id=40)]
   def sync(token,item,cache):
    if item['id']==39:raise a.Failure('REMOTE_REQUEST_FAILED')
-  with patch.object(a,'current_token',return_value='token'),patch.object(a,'api',return_value={'items':items}),patch.object(a,'sync',side_effect=sync) as call:
+  with patch.object(a,'current_token',return_value='token'),patch.object(a,'api',return_value={'items':items}),patch.object(a,'sync',side_effect=sync) as call,patch.object(f,'ensure_binding'),patch.object(f,'config',return_value=({'won'},'actual')):
    a.cycle()
   self.assertEqual(call.call_count,2);self.assertEqual(a.read('status.json')['failed_cards'],{'39':'REMOTE_REQUEST_FAILED'})
  def test_money(self):

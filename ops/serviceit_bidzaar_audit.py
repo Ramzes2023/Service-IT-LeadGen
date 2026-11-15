@@ -123,7 +123,7 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
         context.load_verify_locations(cadata=verified_public_root(PUBLIC_CERT.read_bytes()).decode('ascii'))
         prefix='DOCUMENT_FORMAT_CARD_'+str(card)+'_'
         with httpx.Client(verify=context,trust_env=False,timeout=10,follow_redirects=False) as probe:
-            with probe.stream('GET',url) as response:
+            with probe.stream('GET',url,headers={'User-Agent':'ServiceIT-PublicEvidenceResearch/1.0 (public pages; no outreach)','Accept':'application/pdf,application/zip,application/octet-stream,text/plain,application/vnd.openxmlformats-officedocument.*'}) as response:
                 print(prefix+'HTTP='+str(response.status_code),flush=True)
                 if response.status_code!=200:continue
                 first=next(response.iter_bytes(chunk_size=64),b'')

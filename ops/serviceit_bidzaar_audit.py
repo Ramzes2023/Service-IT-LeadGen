@@ -5,6 +5,11 @@ from leadpilot.serviceit_vps_pg_queue import db,secret_file
 from leadpilot.serviceit_enrichment_worker import Rest,normalized
 import httpx
 with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as client:
+    from leadpilot.ai import config_from_env
+    from leadpilot.serviceit_vps_worker import exact_environment
+    config=config_from_env(exact_environment(dict(os.environ)))
+    model=getattr(config,'model','')
+    if re.fullmatch(r'[A-Za-z0-9_./:-]{1,100}',model):print('DOCUMENT_RESEARCH_MODEL='+model,flush=True)
     conn.execute('SELECT pg_advisory_lock(1062,604)')
     rest=Rest(secret_file(dict(os.environ),'SERVICEIT_BITRIX_WEBHOOK'),client)
     from leadpilot.serviceit_stage34_signed_readonly_sidecar import request,owner_type

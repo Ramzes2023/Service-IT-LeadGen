@@ -11,6 +11,12 @@ class AutomationTests(unittest.TestCase):
   self.temp=tempfile.TemporaryDirectory();self.old=a.DATA;a.DATA=Path(self.temp.name)
  def tearDown(self):a.DATA=self.old;self.temp.cleanup()
  def item(self):return {'id':39,'categoryId':21,'assignedById':1607,a.PREFIX+'FIN_REVENUE':'100000',a.PREFIX+'FIN_COSTS':'40000'}
+ def test_expired_tag_removed_after_restoration(self):
+  item=self.item();item['stageId']='DT1062_21:SVCIT_EXPIRED'
+  for kind in ('call','finance'):
+   self.assertEqual(a.layout(item,kind)['header']['tags']['expired']['type'],'failure')
+  item['stageId']='review'
+  self.assertNotIn('tags',a.layout(item,'finance')['header'])
  def test_refresh_rotates_and_persists_private_tokens(self):
   a.write('auth.json',{'access_token':'a'*32,'refresh_token':'b'*32,'expires':0})
   a.write('client.json',{'client_id':a.CODE,'client_secret':'secret'})

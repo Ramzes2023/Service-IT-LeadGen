@@ -29,7 +29,7 @@ if(typeof document!=='undefined'){
  function choose(value){interest=value;$('badge').dataset.interest=value;document.querySelectorAll('[data-interest]').forEach(b=>b.classList.toggle('selected',b.dataset.interest===value));}
  function preview(){try{const x=splitMoney(cents($('FIN_REVENUE').value),cents($('FIN_COSTS').value));for(const k of ['profit','developer','manager','company'])$(k).textContent=rub(x?.[k]??null);$('financeNote').textContent=x&&x.profit<0?'Убыток относится на компанию. Вознаграждения — 0 ₽.':'Предварительный расчёт. Сохранённые данные обработает сервер.';}catch(e){$('financeNote').textContent=e.message;for(const k of ['profit','developer','manager','company'])$(k).textContent='—';}}
  function fill(){
- $('subtitle').textContent=item.title;$('badge').textContent=item[P+'POST_BADGE']||'Ожидает заполнения';
+ $('expiredBanner').hidden=item.stageId!=='DT1062_21:SVCIT_EXPIRED';$('subtitle').textContent=item.title;$('badge').textContent=item[P+'POST_BADGE']||'Ожидает заполнения';
  for(const k of ['POST_NEED','POST_OBJECTIONS','POST_ACTION','POST_NOTES','FIN_REVENUE','FIN_COSTS'])$(k).value=item[P+k]??'';
  const date=item[P+'POST_DUE'];$('POST_DUE').value=date?localDate(new Date(date)):'';
  choose(Object.keys(INTEREST).find(k=>maps.POST_INTEREST[k]===String(item[P+'POST_INTEREST']))||'');

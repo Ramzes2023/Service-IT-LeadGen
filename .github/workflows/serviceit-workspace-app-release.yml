@@ -1,4 +1,4 @@
-name: ServiceIT correct CRM item selection for background panels
+name: ServiceIT red expired labels and prominent deadline banner
 on:
   push:
     branches: [main]

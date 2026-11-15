@@ -124,7 +124,7 @@ def layout(item,kind):
  else:
   blocks={k:cell(t,v(f)) for k,t,f in [('status','Результат','POST_BADGE'),('need','Потребность','POST_NEED'),('objections','Возражения','POST_OBJECTIONS'),('next','Следующий шаг','POST_ACTION'),('due','Срок','POST_DUE'),('analysis','Анализ ИИ','POST_SUMMARY')]}
  body={'blocks':blocks,'logo':{'code':'notification' if finance else 'call-incoming'}}
- return {'icon':{'code':'document' if finance else 'call-completed'},'header':{'title':'Сервис ИТ · Финансы и прибыль' if finance else 'Сервис ИТ · Итог разговора'},'body':body,'footer':{'buttons':{'edit':{'title':'Заполнить финансы' if finance else 'Заполнить итог','type':'primary','action':{'type':'openRestApp','actionParams':{'cardId':str(item['id']),'section':kind}}}}}}
+ return {'icon':{'code':'document' if finance else 'call-completed'},'header':{'title':'Сервис ИТ · Финансы и прибыль' if finance else 'Сервис ИТ · Итог разговора',**({'tags':{'expired':{'title':'⛔ ПРОСРОЧЕНО','type':'failure'}}} if item.get('stageId')=='DT1062_21:SVCIT_EXPIRED' else {})},'body':body,'footer':{'buttons':{'edit':{'title':'Заполнить финансы' if finance else 'Заполнить итог','type':'primary','action':{'type':'openRestApp','actionParams':{'cardId':str(item['id']),'section':kind}}}}}}
 
 def scope(item):
  if not item or int(item.get('categoryId',-1))!=21 or int(item.get('id',0))<8:raise Failure('OUTSIDE_WORKSPACE')

@@ -402,3 +402,21 @@ def test_live_noop_reconciles_stale_receipt_without_crm_write(monkeypatch,status
         assert len(writes)==1
         assert json.loads(writes[0][1])=={worker.REPORT:actual[worker.REPORT]}
     else:assert not writes
+
+
+def test_successful_download_immediately_releases_analysis_backoff(monkeypatch):
+    class Result:
+        def __init__(self,rows=()):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        released=False
+        def execute(self,sql,args=()):
+            if sql.startswith('SELECT card_id,url,name'):return Result([(27,'https://example.org/file.doc','file.doc')])
+            if "SET status='EXTRACTED'" in sql:
+                self.released='next_attempt_at=now()' in sql
+            if sql.startswith('SELECT card_id,url,text_content'):assert self.released
+            return Result()
+    monkeypatch.setattr(docs,'download',lambda *a:{'text':'document text','sha256':'abc'})
+    conn=Conn()
+    docs.process(conn,None,{})
+    assert conn.released

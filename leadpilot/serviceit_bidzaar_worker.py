@@ -49,12 +49,12 @@ def persist(conn, rows, cursor):
 
 def requalify_filtered(conn):
     """Revisit saved notices once after adding actual purchase positions."""
-    rows=conn.execute("SELECT source_id,notice FROM serviceit_bidzaar_inbox WHERE state='FILTERED' AND qualification_version<2 ORDER BY modified DESC LIMIT 500").fetchall()
+    rows=conn.execute("SELECT source_id,notice FROM serviceit_bidzaar_inbox WHERE state='FILTERED' AND qualification_version<3 ORDER BY modified DESC LIMIT 500").fetchall()
     admitted=0
     for source,row in rows:
         verdict,_=decision(row)
         state='PENDING' if verdict=='ELIGIBLE' else 'FILTERED'
-        conn.execute("UPDATE serviceit_bidzaar_inbox SET state=%s,reason=%s,qualification_version=2,updated_at=now() WHERE source_id=%s AND state='FILTERED'",(state,verdict,source))
+        conn.execute("UPDATE serviceit_bidzaar_inbox SET state=%s,reason=%s,qualification_version=3,updated_at=now() WHERE source_id=%s AND state='FILTERED'",(state,verdict,source))
         admitted+=verdict=='ELIGIBLE'
     print('BIDZAAR_REQUALIFIED='+str(len(rows)),flush=True)
     print('BIDZAAR_RECOVERED_PENDING='+str(admitted),flush=True)
@@ -107,7 +107,7 @@ def documents(client, row):
 def service_priority(row, peers):
     """Business fit from procurement subject, independent of document availability."""
     from .serviceit_b2b_moscow_geo import classify_location_lines
-    title = subject_text(row)
+    title = row.get('name','')
     groups = set(decision(row)[1])
     service = bool(re.search(r'сопровожд|поддержк|обслуживан|аутсорс|аутстафф|администрир|обновлен|исправлен', title, re.I))
     development = bool(re.search(r'внедрен|разработ|создани|создать|доработ|автоматизац|интеграц', title, re.I))
@@ -414,7 +414,11 @@ def main():
             print('BIDZAAR_FETCH='+fetched['status'])
             print('BIDZAAR_ROWS='+str(fetched['rows']))
             if env.get('SERVICEIT_BIDZAAR_WRITE_ENABLED')=='YES':
+                from .serviceit_bidzaar_scope_cleanup import run as cleanup_scope
+                cleanup_scope(conn,client,secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
                 requalify_filtered(conn)
+                from .serviceit_tender_manager_policy import repair_deadlines
+                repair_deadlines(conn,client,secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
                 reconcile_uncertain(conn,client,env)
                 for _ in range(12):
                     upgraded=repair_documents(conn,client,exact_environment(env),presentation_only=True)

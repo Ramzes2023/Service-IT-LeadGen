@@ -43,10 +43,20 @@ def subject_text(row):
     return '\n'.join(n for n in names if isinstance(n,str))
 
 
+def qualified_groups(row):
+    """The principal subject must express an IT need; incidental goods do not."""
+    title=str(row.get('name') or '')
+    if re.search(r'канц[.\s-]*товар|канцеляр|хоз[.\s-]*товар|хозяйственн\w*\s+товар|продукт\w*\s+питани|закупк\w*\s+питани|уборк|клининг|спецодежд|мебел|строительн\w*\s+(?:материал|работ)|ремонт\w*\s+помещен',title,re.I):return []
+    groups=classify_services(title)
+    if 'KKT_EDO' in groups and not re.search(r'(?<!\w)(?:ккт|эдо|тсд)(?!\w)|онлайн[ -]*касс|контрольно[ -]*кассов|кассов|криптопро|диадок|электронн\w*\s+документооборот|маркировк\w*\s+(?:товар|продукц|остатк)',title,re.I):groups.remove('KKT_EDO')
+    if 'SERVERS' in groups and re.search(r'медицин|пациент|серверн\w*\s+(?:помещен|комнат)|строительств',title,re.I):groups.remove('SERVERS')
+    return groups
+
+
 def decision(row, *, now=None):
     """Only current, explicit service demand and Moscow delivery may create CRM."""
     identity(row)
-    groups = classify_services(subject_text(row))
+    groups = qualified_groups(row)
     if not groups:
         return 'OUT_OF_SCOPE', []
     if groups == ['KKT_EDO'] and re.search(r'акрил|витрин|стеллаж|мебел|манекен',row.get('name',''),re.I) and not re.search(r'ккт|тсд|касс|сканер|терминал',row.get('name',''),re.I):

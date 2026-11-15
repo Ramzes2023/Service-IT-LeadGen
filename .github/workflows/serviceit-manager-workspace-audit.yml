@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT isolate masked request exception
+name: ServiceIT resilient background final acceptance
 on:
   push:
     branches: [main]
@@ -34,17 +34,30 @@ jobs:
           chmod 0600 "$stage/"*
           opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'APP_AUDIT'
-          import sys,inspect
+          import time,collections
           import automation as a
-          print(inspect.getsource(a.request),flush=True)
-          def trace(frame,event,arg):
-           if event=="exception" and frame.f_code.co_filename.endswith("/automation.py"):
-            print("EXCEPTION_POINT="+frame.f_code.co_name+":"+str(frame.f_lineno)+":"+arg[0].__name__,flush=True)
-           return trace
-          sys.settrace(trace)
-          try:
-           result=a.api(a.read("auth.json")["access_token"],"crm.item.list",entityTypeId=1062,useOriginalUfNames="Y",filter={"categoryId":21,">id":7},order={"id":"ASC"},select=["*"],start=0)
-           print("PRODUCTION_LIST_OK="+str(len(result["items"])))
-          except a.Failure:pass
-          finally:sys.settrace(None)
+          for attempt in range(48):
+           state=a.read("status.json",{})
+           if state.get("status")=="OK" and time.time()-state.get("completed_at",0)<600:break
+           time.sleep(5)
+          print("TIMELINE_STATUS="+str(state.get("status","UNKNOWN")))
+          print("TIMELINE_CARDS="+str(state.get("cards",0)))
+          print("TIMELINE_FAILED_CARDS="+str(len(state.get("failed_cards",{}))))
+          auth=a.read("auth.json")
+          assert auth,"APP_AUTH_MISSING"
+          rows=[]
+          for start in range(0,10000,50):
+           batch=a.api(auth["access_token"],"crm.activity.list",filter={"OWNER_TYPE_ID":1062,"ORIGINATOR_ID":"serviceit_workspace_app_v1"},select=["ID","OWNER_ID","ORIGIN_ID","COMPLETED"],start=start)
+           rows.extend(batch)
+           if len(batch)<50:break
+          closed=[r for r in rows if r.get("COMPLETED")=="Y"]
+          counts=collections.Counter(r.get("ORIGIN_ID") for r in rows)
+          print("TIMELINE_BLOCKS="+str(len(rows)))
+          print("TIMELINE_COMPLETED_BLOCKS="+str(len(closed)))
+          print("TIMELINE_DUPLICATES="+str(sum(v>1 for v in counts.values())))
+          assert state.get("status")=="OK","BACKGROUND_CYCLE_FAILED"
+          assert not closed,"COMPLETED_BLOCKS_REMAIN"
+          assert all(v==1 for v in counts.values()),"DUPLICATE_BLOCKS"
+          assert len(rows)>=2*state["cards"],"MISSING_BLOCKS"
+          print("TIMELINE_ACCEPTANCE=VERIFIED")
           APP_AUDIT

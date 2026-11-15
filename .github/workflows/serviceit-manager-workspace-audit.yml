@@ -1,5 +1,5 @@
 # Verify removal of rejected left-side presentation, preserving stored inputs.
-name: ServiceIT installed workspace automation acceptance
+name: ServiceIT manager scheduled reconciliation acceptance
 on:
   push:
     branches: [main]
@@ -37,25 +37,13 @@ jobs:
           set -euo pipefail
           dir="$HOME/serviceit/manager-workspace"
           crontab -l | grep 'SERVICEIT_MANAGER_WORKSPACE_V1' | sed 's@/home/[^/]*/@/home/USER/@g'
-          tail -n 30 "$dir/status.log" | grep -E '^WORKSPACE_[A-Z_]+=[A-Z0-9_]+            'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' < ops/serviceit_manager_workspace_audit.py
-          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
-          set -euo pipefail
-          docker exec serviceit-manager-workspace-app python -c 'import json; from pathlib import Path; p=Path("/data/status.json"); s=json.loads(p.read_text()) if p.exists() else {}; print("WORKSPACE_TIMELINE_WORKER="+s.get("status","UNKNOWN")); print("WORKSPACE_TIMELINE_CARDS="+str(s.get("cards",0)))'
-          crontab -l | grep -q '^[*]/5 .*# SERVICEIT_MANAGER_WORKSPACE_V1$'
-          printf 'WORKSPACE_SCHEDULE_STILL_ENABLED=YES\n'
-          logfile="$HOME/serviceit/manager-workspace/status.log"
-          if [[ -f "$logfile" ]]; then
-            tail -n 20 "$logfile" | grep -E '^WORKSPACE_[A-Z_]+=[A-Z0-9_]+$' || true
-          fi
-          REMOTE
- || true
+          tail -n 30 "$dir/status.log" | grep -E '^WORKSPACE_[A-Z_]+=[A-Z0-9_]+$' || true
           /usr/bin/flock -w 300 "$dir/cycle.lock" /usr/bin/python3 "$dir/serviceit_manager_workspace_runner.py"
           DIAGNOSTIC
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" \
             'docker exec -i serviceit-leadgen-vps-coordinator-1 python -B -' < ops/serviceit_manager_workspace_audit.py
           ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-          docker exec serviceit-manager-workspace-app python -c 'import json; from pathlib import Path; p=Path("/data/status.json"); s=json.loads(p.read_text()) if p.exists() else {}; print("WORKSPACE_TIMELINE_WORKER="+s.get("status","UNKNOWN")); print("WORKSPACE_TIMELINE_CARDS="+str(s.get("cards",0)))'
           crontab -l | grep -q '^[*]/5 .*# SERVICEIT_MANAGER_WORKSPACE_V1$'
           printf 'WORKSPACE_SCHEDULE_STILL_ENABLED=YES\n'
           logfile="$HOME/serviceit/manager-workspace/status.log"

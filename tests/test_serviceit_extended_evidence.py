@@ -364,3 +364,16 @@ def test_b2b_discovery_registers_all_only_after_source_identity(monkeypatch,vali
     registered=[args for sql,args in conn.calls if sql.startswith('INSERT INTO serviceit_extended_documents')]
     assert len(registered)==(13 if valid else 0)
     assert bool(network)==valid
+
+
+def test_contact_refresh_keeps_old_evidence_but_does_not_claim_current_verification():
+    previous={'status':'VERIFIED','checked_at':'2026-11-14T12:00:00Z','contacts':[{'kind':'email','value':'info@company.ru','role':'общий контакт','context':'Контакты','url':'https://company.ru/contact','identity_url':'https://company.ru/legal'}]}
+    failed={'status':'NOT_FOUND','checked_at':'2026-11-15T12:00:00Z','contacts':[]}
+    result=contacts.merge_refresh(previous,failed)
+    assert result['status']=='RECHECK_REQUIRED' and result['contacts']==previous['contacts']
+    assert previous['status']=='VERIFIED' and failed['contacts']==[]
+    text=contacts.render(result,'7707083893')
+    assert 'ТРЕБУЕТ ПОВТОРНОЙ ПРОВЕРКИ' in text and 'info@company.ru' in text
+    assert 'Статус: ПОДТВЕРЖДЁН' not in text
+    assert contacts.merge_refresh(result,previous)==previous
+    assert contacts.merge_refresh(None,failed)==failed

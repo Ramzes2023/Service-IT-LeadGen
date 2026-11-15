@@ -214,18 +214,24 @@ def render(conn,card):
     if not rows:return '',0,0,0
     read=sum(row[2]=='READ' for row in rows);pending=sum(row[2] in ('PENDING','RETRY','EXTRACTED') for row in rows)
     lines=['ДОКУМЕНТЫ: ПОЛНАЯ ОЧЕРЕДЬ',f'Всего вложений: {len(rows)}. Прочитано: {read}. Ожидают обработки: {pending}. Ошибок: {len(rows)-read-pending}.']
-    titles={'SCOPE':'Предмет','TECHNOLOGY':'ТЗ','ELIGIBILITY':'Требования','PAYMENT':'Оплата','BUDGET':'Бюджет','DEADLINE':'Срок','EVALUATION':'Критерии','SUBMISSION':'Подача','GUARANTEE':'Гарантии','DOCUMENTS':'Документы заявки'}
+    titles={'BUYER':'Заказчик','LOCATION':'География','DELIVERY':'Поставка','SCOPE':'Предмет','TECHNOLOGY':'ТЗ','ELIGIBILITY':'Требования','PAYMENT':'Оплата','BUDGET':'Бюджет','DEADLINE':'Срок','EVALUATION':'Критерии','SUBMISSION':'Подача','GUARANTEE':'Гарантии','DOCUMENTS':'Документы заявки'}
+    grouped={k:[] for k in titles}
     for name,url,status,reports,error in rows:
-        lines.append(f'{name}: '+('прочитан' if status=='READ' else 'в очереди' if status in ('PENDING','RETRY','EXTRACTED') else 'не прочитан: '+str(error)))
-        lines.append('Источник: '+url)
-        if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')
-        seen=set()
         for report in reports or []:
             for fact in report.get('facts',[]):
-                quote=fact['quote']
-                if quote in seen:continue
-                seen.add(quote)
-                lines.append(titles.get(fact.get('category'),fact.get('category','Факт'))+': '+quote[:220])
-                if len(seen)>=2:break
-            if len(seen)>=2:break
-    return '\n'.join(lines)[:16000],read,pending,len(rows)
+                category=fact.get('category');quote=fact.get('quote')
+                if category in grouped and isinstance(quote,str) and (quote,url) not in grouped[category]:grouped[category].append((quote,url))
+    for category,label in titles.items():
+        lines.append('\n'+label.upper())
+        if not grouped[category]:lines.append('Не найдено в подтверждённых извлечённых фактах; не считать отсутствующим условием.')
+        for quote,url in grouped[category][:4]:lines.extend([quote[:650],'Источник: '+url])
+        if len(grouped[category])>4:lines.append('Дополнительные факты сохранены в результатах анализа документов.')
+    lines.append('\nПОФАЙЛОВАЯ ПРОВЕРКА')
+    for name,url,status,reports,error in rows:
+        lines.append(f'{name}: '+('текст прочитан' if status=='READ' else 'в очереди' if status in ('PENDING','RETRY','EXTRACTED') else 'не прочитан: '+str(error)))
+        lines.append('Источник: '+url)
+        lines.append('Выводы ИИ: '+('есть подтверждённые цитаты RouterAI' if any(r.get('provider')=='RouterAI' for r in reports or []) else 'подтверждённые цитаты RouterAI отсутствуют; доступен разбор текста'))
+        if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')
+    text='\n'.join(lines)
+    if len(text)>24000:text=text[:23500]+'\nПолный объём фактов превышает размер поля; остальные сведения сохранены в результатах анализа.'
+    return text,read,pending,len(rows)

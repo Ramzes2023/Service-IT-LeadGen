@@ -150,10 +150,20 @@ def run():
             row=conn.execute('SELECT result FROM serviceit_company_contact_cache WHERE inn=%s',(inn,)).fetchone()
             contact=contacts.render(row[0],inn) if row and row[0] else ''
             document,read,pending,total=docs.render(conn,card)
-            block='\n\n'.join(s for s in (contact,document) if s)
+            from .serviceit_tender_manager_policy import summary
+            tender=conn.execute("SELECT notice,expected FROM serviceit_bidzaar_inbox WHERE card_id=%s AND state='VERIFIED'",(card,)).fetchone()
+            policy=summary(*tender) if tender else ''
+            block='\n\n'.join(s for s in (policy,contact,document) if s)
             if not block:continue
             fields={REPORT:owned(item.get(REPORT),block)}
-            if contact:fields[BRIEF]=owned(item.get(BRIEF),contact)
+            if contact or policy:fields[BRIEF]=owned(item.get(BRIEF),'\n\n'.join(s for s in (policy,contact) if s))
+            if tender:
+                from .serviceit_tender_manager_timing import moscow_time
+                try:
+                    raw=tender[0]['acceptanceEndDate'];display=moscow_time(raw)
+                    for key in (REPORT,BRIEF):
+                        if key in fields:fields[key]=fields[key].replace(raw,display)
+                except (ValueError,KeyError,TypeError):pass
             if total:
                 limit=owned(item.get(LIMITS),f'Полная очередь вложений: {total}; прочитано: {read}; в очереди: {pending}; ошибок: {total-read-pending}.')
                 # Reconcile obsolete six-file counters without claiming failed files read.
@@ -161,6 +171,8 @@ def run():
                 limit=re.sub(r'Не обработано: \d+',f'Не обработано: {total-read}',limit)
                 fields[LIMITS]=limit
             updated+=patch(conn,rest,client,card,item,fields)
+        from .serviceit_tender_manager_policy import repair_deadlines
+        repair_deadlines(conn,client,rest.base)
         from .serviceit_evidence_stage_handoff import advance
         advance(conn,rest,client,items,get)
         print('EXT_CARDS_UPDATED='+str(updated),flush=True)

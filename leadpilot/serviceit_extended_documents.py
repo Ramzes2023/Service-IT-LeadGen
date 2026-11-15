@@ -25,7 +25,10 @@ DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
  UPDATE serviceit_extended_documents SET analysis_version=5,
  model_attempts=CASE WHEN status='EXTRACTED' THEN 0 ELSE model_attempts END,
  next_attempt_at=CASE WHEN status='EXTRACTED' THEN now() ELSE next_attempt_at END
- WHERE analysis_version<5;'''
+ WHERE analysis_version<5;
+ UPDATE serviceit_extended_documents SET analysis_version=6,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<6;'''
 
 
 def _limits():
@@ -216,15 +219,16 @@ def process(conn,client,env,*,batch=6):
             reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()
             conn.execute("UPDATE serviceit_extended_documents SET error=%s,status=CASE WHEN attempts>=3 THEN 'FAILED' ELSE 'RETRY' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason,card,url))
     # Long documents are analyzed in durable windows too, not cut at 24k.
-    chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars FROM serviceit_extended_documents WHERE status='EXTRACTED' AND next_attempt_at<=now() ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
+    chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars,model_attempts FROM serviceit_extended_documents WHERE status='EXTRACTED' AND next_attempt_at<=now() ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
     from .serviceit_b2b_routerai_deep import public_documents
     from .serviceit_vps_b2b_document_worker import _document_windows
     from concurrent.futures import ThreadPoolExecutor
     pending=[]
     # Only network/model work runs in threads. All database writes stay serial.
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for card,url,text,offset in chunks:
-            window=text[offset:offset+24000]
+        for card,url,text,offset,attempts in chunks:
+            # Retry a smaller continuous slice, never skip the failed region.
+            window=text[offset:offset+(24000 if attempts==0 else 12000 if attempts==1 else 6000)]
             inputs=[{'url':url,'text':window}]
             safe=public_documents({'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))})
             conn.execute("UPDATE serviceit_extended_documents SET model_attempts=model_attempts+1,next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s AND status='EXTRACTED'",(card,url))

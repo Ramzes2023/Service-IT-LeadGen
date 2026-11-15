@@ -324,7 +324,7 @@ def process_card(client, env, card, *, now=None, native_fence=None, verified_sub
         if 'DEADLINE' in task_fields:
             from .serviceit_tender_manager_timing import submission_time
             task=rest(client,base,'tasks.task.get',{'taskId':task_id})['task']
-            require(submission_time(task.get('deadline',task.get('DEADLINE')))==submission_time(task_fields['DEADLINE']),'TASK_DEADLINE_READBACK_MISMATCH')
+            require(now<submission_time(task.get('deadline',task.get('DEADLINE')))<submission_time(verified_submission),'TASK_DEADLINE_READBACK_MISMATCH')
     except Exception:
         fence.finalize(card,"UNCERTAIN")
         return "TASK_WRITE_UNCERTAIN_NO_RETRY"

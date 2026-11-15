@@ -186,6 +186,18 @@ def register(conn,card,files):
         conn.execute('INSERT INTO serviceit_extended_documents(card_id,url,name) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',(card,file['url'],file['name']))
 
 
+def full_window_research(client,env,inputs):
+    from .ai import config_from_env
+    from .serviceit_vps_worker import exact_environment
+    from .serviceit_vps_b2b_document_worker import _document_windows
+    from .serviceit_b2b_routerai_deep import investigate_routerai,public_documents
+    findings={'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))}
+    source=_model_research(client,env,inputs,use_model=False)
+    if not public_documents(findings):return source
+    config=config_from_env(exact_environment(env))
+    return [investigate_routerai(client,config,findings,timeout=45),*source]
+
+
 def process(conn,client,env,*,batch=6):
     conn.execute("UPDATE serviceit_extended_documents SET status='FAILED',error=COALESCE(error,'WORKER_INTERRUPTED') WHERE status='RETRY' AND attempts>=3 AND next_attempt_at<=now()")
     rows=conn.execute("SELECT card_id,url,name FROM serviceit_extended_documents WHERE status IN ('PENDING','RETRY') AND attempts<3 AND next_attempt_at<=now() ORDER BY attempts,card_id,url LIMIT %s",(batch,)).fetchall()
@@ -203,25 +215,33 @@ def process(conn,client,env,*,batch=6):
     chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars FROM serviceit_extended_documents WHERE status='EXTRACTED' AND next_attempt_at<=now() ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
     from .serviceit_b2b_routerai_deep import public_documents
     from .serviceit_vps_b2b_document_worker import _document_windows
-    for card,url,text,offset in chunks:
-        # One document per request: six adjacent windows, never a selected
-        # excerpt from each of three files. Save intent before a paid request.
-        window=text[offset:offset+24000]
-        inputs=[{'url':url,'text':window}]
-        safe=public_documents({'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))})
-        conn.execute("UPDATE serviceit_extended_documents SET model_attempts=model_attempts+1,next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s",(card,url))
-        reports=_model_research(client,env,inputs)
-        success=any(r.get('provider')=='RouterAI' for r in reports)
-        if safe and not success:
-            conn.execute("UPDATE serviceit_extended_documents SET error='ROUTERAI_ANALYSIS_RETRY',next_attempt_at=now()+CASE WHEN model_attempts>=3 THEN interval '1 day' ELSE interval '10 minutes' END,updated_at=now() WHERE card_id=%s AND url=%s",(card,url))
-            continue
-        own=[]
-        for report in reports:
-            facts=[f for f in report.get('facts',[]) if f.get('url')==url and isinstance(f.get('quote'),str) and ' '.join(f['quote'].split()) in ' '.join(window.split())]
-            if facts:own.append({'provider':report.get('provider','SOURCE'),'facts':facts})
-        # Successful empty model output is still different from no model call.
-        own.append({'provider':'COVERAGE','offset':offset,'end':offset+len(window),'model':'VERIFIED' if success else 'NO_SAFE_MODEL_INPUT'})
-        conn.execute("UPDATE serviceit_extended_documents SET status=%s,analyzed_chars=%s,reports=COALESCE(reports,'[]'::jsonb)||%s::jsonb,model_attempts=0,error=NULL,next_attempt_at=now(),updated_at=now() WHERE card_id=%s AND url=%s",('READ' if offset+len(window)>=len(text) else 'EXTRACTED',offset+len(window),json.dumps(own,ensure_ascii=False),card,url))
+    from concurrent.futures import ThreadPoolExecutor
+    pending=[]
+    # Only network/model work runs in threads. All database writes stay serial.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for card,url,text,offset in chunks:
+            window=text[offset:offset+24000]
+            inputs=[{'url':url,'text':window}]
+            safe=public_documents({'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))})
+            conn.execute("UPDATE serviceit_extended_documents SET model_attempts=model_attempts+1,next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s AND status='EXTRACTED'",(card,url))
+            pending.append((card,url,text,offset,window,safe,pool.submit(full_window_research,client,env,inputs)))
+        for card,url,text,offset,window,safe,future in pending:
+            reason=None
+            try:reports=future.result()
+            except Exception as exc:
+                reports=[];detail=str(exc)
+                reason=('ROUTERAI_'+detail if re.fullmatch(r'[A-Z][A-Z0-9_]{3,70}',detail) else 'ROUTERAI_'+type(exc).__name__.upper())[:90]
+            success=any(r.get('provider')=='RouterAI' for r in reports)
+            if safe and not success:
+                conn.execute("UPDATE serviceit_extended_documents SET error=%s,next_attempt_at=now()+CASE WHEN model_attempts>=3 THEN interval '1 day' ELSE interval '10 minutes' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason or 'ROUTERAI_ANALYSIS_RETRY',card,url))
+                continue
+            own=[]
+            for report in reports:
+                facts=[f for f in report.get('facts',[]) if f.get('url')==url and isinstance(f.get('quote'),str) and ' '.join(f['quote'].split()) in ' '.join(window.split())]
+                if facts:own.append({'provider':report.get('provider','SOURCE'),'facts':facts})
+            # Successful empty model output is still different from no model call.
+            own.append({'provider':'COVERAGE','offset':offset,'end':offset+len(window),'model':'VERIFIED' if success else 'NO_SAFE_MODEL_INPUT'})
+            conn.execute("UPDATE serviceit_extended_documents SET status=%s,analyzed_chars=%s,reports=COALESCE(reports,'[]'::jsonb)||%s::jsonb,model_attempts=0,error=NULL,next_attempt_at=now(),updated_at=now() WHERE card_id=%s AND url=%s AND status='EXTRACTED'",('READ' if offset+len(window)>=len(text) else 'EXTRACTED',offset+len(window),json.dumps(own,ensure_ascii=False),card,url))
     return len(chunks)
 
 
@@ -270,7 +290,7 @@ def render(conn,card):
         lines.append(f'{name}: '+('текст прочитан' if status=='READ' else 'текст извлечён; полный анализ ИИ в очереди' if status=='EXTRACTED' else 'в очереди' if status in ('PENDING','RETRY') else 'не прочитан: '+str(error)))
         lines.append('Источник: '+url)
         lines.append('Выводы ИИ: '+('есть подтверждённые цитаты RouterAI' if any(r.get('provider')=='RouterAI' for r in reports or []) else 'подтверждённые цитаты RouterAI отсутствуют; доступен разбор текста'))
-        if error=='ROUTERAI_ANALYSIS_RETRY':lines.append('Полный анализ ИИ не завершён: автоматическая повторная попытка запланирована.')
+        if str(error or '').startswith('ROUTERAI_'):lines.append('Полный анализ ИИ не завершён: автоматическая повторная попытка запланирована.')
         if any(r.get('model')=='NO_SAFE_MODEL_INPUT' for r in reports or []):lines.append('Часть текста исключена из передачи модели; см. оригинал документа.')
         if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')
     text='\n'.join(lines)

@@ -1,4 +1,4 @@
-name: ServiceIT Bidzaar purchase-position qualification and strict subject filter and non-IT cleanup v4
+name: ServiceIT Bidzaar purchase-position qualification and strict subject filter and non-IT cleanup v5
 on:
   push:
     branches: [main]

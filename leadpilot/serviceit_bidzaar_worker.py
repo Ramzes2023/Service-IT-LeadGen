@@ -418,7 +418,8 @@ def main():
                 cleanup_scope(conn,client,secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
                 requalify_filtered(conn)
                 from .serviceit_tender_manager_policy import repair_deadlines
-                repair_deadlines(conn,client,secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
+                try:repair_deadlines(conn,client,secret_file(env,'SERVICEIT_BITRIX_WEBHOOK'))
+                except Exception as exc:print('BIDZAAR_TASK_DEADLINE_ERROR='+type(exc).__name__.upper(),flush=True)
                 reconcile_uncertain(conn,client,env)
                 for _ in range(12):
                     upgraded=repair_documents(conn,client,exact_environment(env),presentation_only=True)

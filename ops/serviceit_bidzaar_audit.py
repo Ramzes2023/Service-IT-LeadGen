@@ -71,5 +71,12 @@ with db(dict(os.environ)) as conn,httpx.Client(trust_env=False,timeout=20) as cl
     if conn.execute("SELECT to_regclass('serviceit_extended_documents')").fetchone()[0]:
         for status,n in conn.execute('SELECT status,count(*) FROM serviceit_extended_documents GROUP BY status').fetchall():
             if re.fullmatch(r'[A-Z_]+',status):print('DOCUMENT_PROGRESS_'+status+'='+str(n),flush=True)
+    excluded=0
+    for card,expected in conn.execute("SELECT card_id,expected FROM serviceit_bidzaar_inbox WHERE state='EXCLUDED' AND card_id IS NOT NULL").fetchall():
+        item=normalized(rest('crm.item.get',{'entityTypeId':1062,'id':card,'useOriginalUfNames':'Y'})['item'])
+        valid=item.get('stageId')==expected.get('stageId') and str(item.get('UF_CRM_13_SVCIT_LEAD_SCORE'))=='0'
+        print('BIDZAAR_EXCLUDED_CARD_'+str(card)+'_READBACK='+('YES' if valid else 'NO'),flush=True)
+        ok &= valid;excluded+=valid
+    print('BIDZAAR_EXCLUDED_READBACK='+str(excluded),flush=True)
     print('BIDZAAR_CRM_WRITES=0',flush=True)
     if not ok:raise SystemExit(2)

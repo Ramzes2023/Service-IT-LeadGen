@@ -30,6 +30,19 @@ def say(key: str, value) -> None:
     print("FUTURE_B2B_" + key + "=" + raw, flush=True)
 
 
+def credential_policy(exact: dict) -> tuple[bool, bool]:
+    """Only Bitrix/RouterAI require credentials; Brave must remain disabled.
+
+    The live exact_environment() deliberately clears Brave to avoid paid usage.
+    No secret values are logged or returned by this helper.
+    """
+    required = bool(exact.get("SERVICEIT_BITRIX_WEBHOOK")) and bool(
+        exact.get("ROUTERAI_API_KEY"))
+    brave_disabled = (not exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY") and
+                      not exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY_FILE"))
+    return required, brave_disabled
+
+
 def checks(env, client):
     from leadpilot.serviceit_vps_worker import (
         live_permitted, exact_environment, readonly_preflight, poll_new,
@@ -69,16 +82,15 @@ def checks(env, client):
     ))
     say("FIVE_MINUTE_LIVE_GATES", "YES" if flags else "NO")
 
-    secrets_ok = False
+    credentials_ok = False
+    brave_disabled = False
     try:
         exact = exact_environment(env)
-        secrets_ok = (
-            bool(exact.get("SERVICEIT_BITRIX_WEBHOOK")) and
-            bool(exact.get("ROUTERAI_API_KEY")) and
-            bool(exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY")))
+        credentials_ok, brave_disabled = credential_policy(exact)
     except Exception:
         pass
-    say("BITRIX_ROUTERAI_BRAVE_KEYS", "YES" if secrets_ok else "NO")
+    say("BITRIX_ROUTERAI_KEYS", "YES" if credentials_ok else "NO")
+    say("BRAVE_DISABLED_BY_POLICY", "YES" if brave_disabled else "NO")
 
     try:
         from leadpilot.serviceit_vps_b2b_deep_research import source_findings
@@ -256,7 +268,7 @@ def checks(env, client):
         "NO" if actual_new else "NOT_OBSERVED")
 
     ready = bool(
-        sha_match and flags and secrets_ok and modules and api_ready and
+        sha_match and flags and credentials_ok and brave_disabled and modules and api_ready and
         poll_fresh and inbox_count >= 4 and verified_count >= 4 and
         overdue == 0 and v11_failures == 0 and queue_failures == 0 and
         rendered and crm_verified

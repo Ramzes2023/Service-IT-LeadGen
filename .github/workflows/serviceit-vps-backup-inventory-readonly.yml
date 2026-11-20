@@ -45,6 +45,9 @@ jobs:
       VPS_KNOWN_HOSTS: "${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}"
       GH_TOKEN: "${{ github.token }}"
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Validate owner pin
         shell: bash
         run: |
@@ -240,6 +243,46 @@ jobs:
           grep -E '^BACKUP_[A-Z0-9_]+=[A-Z0-9_.+-]{1,70}$' \
             "$RUNNER_TEMP/serviceit-backup/result.txt" | tee "$RUNNER_TEMP/serviceit-backup/safe.txt"
           grep -q '^BACKUP_BACKUP_AUDIT_COMPLETE=YES$' "$RUNNER_TEMP/serviceit-backup/safe.txt"
+
+      # Independent native backup path is $HOME/serviceit/backups, NOT the
+      # legacy /var/backups/serviceit archive checked above. Never combine
+      # these inventories when asserting recovery readiness.
+      - name: Read-only native private archive and exact cron audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile ops/serviceit_vps_pg_backup_private_audit.py
+          expected_sha="$(sha256sum ops/serviceit_vps_pg_backup.py | cut -d' ' -f1)"
+          [[ "$expected_sha" =~ ^[a-f0-9]{64}$ ]]
+          ssh -T -i "$RUNNER_TEMP/serviceit-backup/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/serviceit-backup/known_hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" "python3 - '$expected_sha'" \
+            < ops/serviceit_vps_pg_backup_private_audit.py \
+            > "$RUNNER_TEMP/serviceit-backup/private.txt"
+          grep -E '^BACKUP_PRIVATE_[A-Z0-9_]+=(YES|NO|ZERO|UNVERIFIED|NO_OR_UNVERIFIED|NOT_TESTED|[0-9]{1,12})
+        if: always()
+        shell: bash
+        env:
+          REPO: "${{ github.repository }}"
+          RUN_ID: "${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/serviceit-backup/safe.txt"
+          if [[ -f "$f" ]]; then
+            report="$(head -50 "$f")"
+          else
+            report="BACKUP_BACKUP_AUDIT_COMPLETE=UNVERIFIED"
+          fi
+          message="$(printf 'Независимая проверка резервных копий PostgreSQL (только чтение):\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nНет доступа к содержимому CRM или секретам, никакого изменения рабочего PostgreSQL. Результат FULL_RESTORE_ISOLATED=NOT_YET_TESTED не означает проверку восстановления.' "$report" "$REPO" "$RUN_ID")"
+          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$message" \
+            >/dev/null || true
+ \
+            "$RUNNER_TEMP/serviceit-backup/private.txt" \
+            | tee -a "$RUNNER_TEMP/serviceit-backup/safe.txt"
+          grep -qx 'BACKUP_PRIVATE_AUDIT_COMPLETE=YES' \
+            "$RUNNER_TEMP/serviceit-backup/private.txt"
 
       - name: Post sanitized backup summary to Issue 290
         if: always()

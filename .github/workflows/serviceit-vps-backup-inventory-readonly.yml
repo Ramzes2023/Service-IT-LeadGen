@@ -245,8 +245,7 @@ jobs:
           grep -q '^BACKUP_BACKUP_AUDIT_COMPLETE=YES$' "$RUNNER_TEMP/serviceit-backup/safe.txt"
 
       # Independent native backup path is $HOME/serviceit/backups, NOT the
-      # legacy /var/backups/serviceit archive checked above. Never combine
-      # these inventories when asserting recovery readiness.
+      # legacy /var/backups/serviceit archive checked above.
       - name: Read-only native private archive and exact cron audit
         shell: bash
         run: |
@@ -261,24 +260,7 @@ jobs:
             "$VPS_USER@$VPS_HOST" "python3 - '$expected_sha'" \
             < ops/serviceit_vps_pg_backup_private_audit.py \
             > "$RUNNER_TEMP/serviceit-backup/private.txt"
-          grep -E '^BACKUP_PRIVATE_[A-Z0-9_]+=(YES|NO|ZERO|UNVERIFIED|NO_OR_UNVERIFIED|NOT_TESTED|[0-9]{1,12})
-        if: always()
-        shell: bash
-        env:
-          REPO: "${{ github.repository }}"
-          RUN_ID: "${{ github.run_id }}"
-        run: |
-          set -euo pipefail
-          f="$RUNNER_TEMP/serviceit-backup/safe.txt"
-          if [[ -f "$f" ]]; then
-            report="$(head -50 "$f")"
-          else
-            report="BACKUP_BACKUP_AUDIT_COMPLETE=UNVERIFIED"
-          fi
-          message="$(printf 'Независимая проверка резервных копий PostgreSQL (только чтение):\n\n%s\n\nWorkflow: https://github.com/%s/actions/runs/%s\n\nНет доступа к содержимому CRM или секретам, никакого изменения рабочего PostgreSQL. Результат FULL_RESTORE_ISOLATED=NOT_YET_TESTED не означает проверку восстановления.' "$report" "$REPO" "$RUN_ID")"
-          gh api "repos/$REPO/issues/290/comments" -X POST --raw-field "body=$message" \
-            >/dev/null || true
- \
+          grep -E '^BACKUP_PRIVATE_[A-Z0-9_]+=(YES|NO|ZERO|UNVERIFIED|NO_OR_UNVERIFIED|NOT_TESTED|[0-9]{1,12})$' \
             "$RUNNER_TEMP/serviceit-backup/private.txt" \
             | tee -a "$RUNNER_TEMP/serviceit-backup/safe.txt"
           grep -qx 'BACKUP_PRIVATE_AUDIT_COMPLETE=YES' \

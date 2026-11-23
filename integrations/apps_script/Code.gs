@@ -408,7 +408,12 @@ function classifyServices_(title) {
   // B2B's 13 Nov 2026 digest 4681383 uses a product-only catalogue name.
   // Keep this exact branded database title; avoid generic articles/jobs.
   const consultantPlusCatalog = /^\s*консультант\s*плюс\s*\(\s*справочно[- ]правовые\s+базы\s+данных\s*\)\s*\.?\s*$/iu;
-  if ((consultantPlusLicense.test(title) || consultantPlusCatalog.test(title)) &&
+  // A real B2B 23 Nov 2026 digest contains a SKU-only service title:
+  // "-СПС КонсультантПлюс: Версия Проф 5шт.". Anchor the branded product
+  // prefix; ordinary articles and unrelated consultant advertisements stay out.
+  const consultantPlusSku = /^\s*[-–—]?\s*спс\s+консультант\s*плюс\s*:/iu;
+  if ((consultantPlusLicense.test(title) || consultantPlusCatalog.test(title) ||
+       consultantPlusSku.test(title)) &&
       result.indexOf("LICENSES") < 0) {
     result.push("LICENSES");
   }

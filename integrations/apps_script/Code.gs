@@ -429,6 +429,11 @@ function classifyServices_(title) {
   if (explicitVpsRental.test(title) || addressGeocodingService.test(title)) addCategory("CLOUD");
   if (siemLicense.test(title)) addCategory("LICENSES");
   if (websiteSupport.test(title)) addCategory("IT_SUPPORT");
+  // Actual B2B digest 24 Nov, 16:03 MSK: explicit S3 licences and storage support.
+  const s3Licenses = /лицензи[\p{L}]*\s+для\s+систем[\p{L}]*\s+объектн[\p{L}]*\s+хранени[\p{L}]*\s+данных\s+s3(?![\p{L}\p{N}_])/iu;
+  const storageSupport = /(?:экспертн[\p{L}]*|техническ[\p{L}]*)\s+поддержк[\p{L}]*\s+при\s+настройк[\p{L}]*\s+оборудован[\p{L}]*\s+схд(?![\p{L}\p{N}_])/iu;
+  if (s3Licenses.test(title)) addCategory("LICENSES");
+  if (storageSupport.test(title)) addCategory("IT_SUPPORT");
   const context = new RegExp(
     "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +

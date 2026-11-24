@@ -54,9 +54,26 @@ jobs:
             python -m py_compile "leadpilot/$name"
             sha256sum "leadpilot/$name" | cut -d' ' -f1 >> "$RUNNER_TEMP/v47-release/new-hashes"
           done
-          for n in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py serviceit_vps_b2b_dossier_v11_worker.py; do
+          # V46 installed an independently reviewed V11 source enhancement
+          # from concurrent owner work. Exact live read-only proof:
+          # https://github.com/Ramzes2023/Service-IT-LeadGen/actions/runs/43215760357
+          # This live file differs from V47 reviewed V11 ONLY in the one
+          # Research Pro vs Mini flag. Derive/attest OLD digest explicitly;
+          # never blindly overwrite another team's changes.
+          for n in serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py; do
             git show "$old:leadpilot/$n" | sha256sum | cut -d' ' -f1 >> "$RUNNER_TEMP/v47-release/old-hashes"
           done
+          python3 - <<'PY' >> "$RUNNER_TEMP/v47-release/old-hashes"
+          from pathlib import Path
+          import hashlib
+          src=Path("leadpilot/serviceit_vps_b2b_dossier_v11_worker.py").read_text("utf8")
+          new="SERVICEIT_VPS_B2B_TAVILY_RESEARCH_MINI_ENABLED"
+          old="SERVICEIT_VPS_B2B_TAVILY_RESEARCH_PRO_ENABLED"
+          assert src.count(new)==1 and old not in src
+          old_digest=hashlib.sha256(src.replace(new,old).encode("utf8")).hexdigest()
+          assert old_digest=="b9a643c7ff21d9b0a36807f9024b11d23c05f55055e39f3088756a4fa2ca9836"
+          print(old_digest)
+          PY
           ! git cat-file -e "$old:leadpilot/serviceit_b2b_tavily_research_mini_v47.py" 2>/dev/null
           printf '%s\n' 'MISSING' >> "$RUNNER_TEMP/v47-release/old-hashes"
           script=ops/serviceit_vps_b2b_v47_research_mini_guarded_release.py

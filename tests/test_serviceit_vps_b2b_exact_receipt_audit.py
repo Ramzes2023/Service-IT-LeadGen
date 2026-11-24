@@ -1,6 +1,6 @@
 import hashlib
 import pytest
-from ops.serviceit_vps_b2b_exact_receipt_audit import emit, proof, source_matches, TARGETS
+from ops.serviceit_vps_b2b_exact_receipt_audit import emit, proof, source_matches, revision_proof, TARGETS
 
 
 def test_proof_only_reports_status():
@@ -30,7 +30,7 @@ def test_output_is_sanitized(capsys):
         with pytest.raises(ValueError):
             emit("VALUE", value)
     assert capsys.readouterr().out == ""
-    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220} == set(TARGETS)
+    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314} == set(TARGETS)
 
 
 def test_workflow_output_filter_is_anchored_and_owner_gated():
@@ -53,3 +53,18 @@ def test_audit_roles_and_guarded_workflow_are_separate():
     assert "serviceit-leadgen-vps-coordinator-1 python -B -" in workflow
     assert "serviceit-b2b-vps-writer-1 python -B - --writer" in workflow
     assert "B2B_EXACT_WRITER_CRM_WRITES=0" in workflow
+
+
+def test_revision_requires_exact_source_and_current_signed_fields():
+    salt = b"a" * 16
+    source = "B2B-CENTER-4693314"
+    def digest(fields, s):
+        return hashlib.sha256(s + fields["x"].encode()).digest()
+    fields = {"x": "verified"}
+    sig = digest(fields, salt)
+    saved = hashlib.sha256(source.encode()).hexdigest()
+    revision = (saved, fields, salt, sig)
+    assert revision_proof(fields, source, revision, digest)
+    assert not revision_proof({"x": "different"}, source, revision, digest)
+    assert not revision_proof(fields, "B2B-CENTER-4677923", revision, digest)
+    assert not revision_proof(fields, source, (saved, fields, salt, b"x"*32), digest)

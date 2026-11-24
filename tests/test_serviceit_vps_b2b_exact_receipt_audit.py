@@ -40,3 +40,16 @@ def test_workflow_output_filter_is_anchored_and_owner_gated():
     assert "[0-9]{1,10})$'" in src
     assert "B2B_EXACT_CRM_WRITES=0" in src
     assert "B2B_EXACT_PG_WRITES=0" in src
+
+
+def test_audit_roles_and_guarded_workflow_are_separate():
+    from pathlib import Path
+    src = Path("ops/serviceit_vps_b2b_exact_receipt_audit.py").read_text("utf-8")
+    coordinator = src.split("def main():", 1)[1]
+    assert "from leadpilot.serviceit_vps_b2b_bridge" not in coordinator
+    assert "exact_duplicate(" not in coordinator
+    assert 'SET TRANSACTION READ ONLY' in coordinator
+    workflow = Path(".github/workflows/serviceit-vps-b2b-exact-receipt-readonly.yml").read_text("utf-8")
+    assert "serviceit-leadgen-vps-coordinator-1 python -B -" in workflow
+    assert "serviceit-b2b-vps-writer-1 python -B - --writer" in workflow
+    assert "B2B_EXACT_WRITER_CRM_WRITES=0" in workflow

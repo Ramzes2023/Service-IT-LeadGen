@@ -10,7 +10,43 @@ TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 469322
 STATES = frozenset(("ABSENT", "PENDING", "POST_UNCERTAIN", "VERIFIED", "EXISTING",
                     "REVIEW", "RESERVED", "WRITE_INTENT", "NO_CHANGE", "CONFLICT",
                     "UNCERTAIN", "NONE", "YES", "NO"))
-MODULES = ("serviceit_vps_b2b_dossier_v11_worker.py", "serviceit_vps_b2b_bridge.py")
+def exact_file(name, expected):
+    path = Path("/app/leadpilot") / name
+    return bool(re.fullmatch(r"[0-9a-f]{64}", expected or "") and path.is_file()
+                and hashlib.sha256(path.read_bytes()).hexdigest() == expected)
+
+
+def writer():
+    """Run only inside the separate B2B writer; its duplicate probe is proven live."""
+    emit("WRITER_START", "YES")
+    exact = len(sys.argv) == 3 and exact_file("serviceit_vps_b2b_bridge.py", sys.argv[2])
+    emit("WRITER_SHA_MATCH", "YES" if exact else "NO")
+    if not exact:
+        return 2
+    import httpx
+    from leadpilot.serviceit_vps_pg_queue import secret_file
+    from leadpilot.serviceit_vps_b2b_bridge import exact_duplicate, positive_duplicate_control, validate_webhook
+    emit("WRITER_IMPORTS", "YES")
+    base = validate_webhook(secret_file(dict(os.environ), "SERVICEIT_BITRIX_WEBHOOK"))
+    complete = True
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=12) as client:
+        if not positive_duplicate_control(client, base):
+            emit("DUPLICATE_CONTROL", "NO")
+            return 2
+        emit("DUPLICATE_CONTROL", "YES")
+        for tender in TARGETS:
+            label = f"TENDER_{tender}_"
+            try:
+                matches = exact_duplicate(client, base, f"B2B-CENTER-{tender}")
+                emit(label+"CRM_COUNT", len(matches))
+                if len(matches) == 1:
+                    emit(label+"CRM_CARD", int(matches[0]["id"]))
+            except Exception:
+                complete = False
+                emit(label+"CRM_DUPLICATE_READ_COMPLETE", "NO")
+    emit("WRITER_CRM_READ_COMPLETE", "YES" if complete else "NO")
+    emit("WRITER_CRM_WRITES", 0)
+    return 0 if complete else 2
 
 
 def emit(key, value):
@@ -42,21 +78,17 @@ def source_matches(source, saved):
 
 
 def main():
-    import httpx
-    from leadpilot.serviceit_vps_pg_queue import db, secret_file
-    from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest
-    from leadpilot.serviceit_vps_b2b_bridge import exact_duplicate, positive_duplicate_control, validate_webhook
-    from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
-    from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
-
-    hashes = sys.argv[1:]
-    exact = len(hashes) == len(MODULES) and all(
-        re.fullmatch(r"[0-9a-f]{64}", expected) and
-        hashlib.sha256((Path("/app/leadpilot") / name).read_bytes()).hexdigest() == expected
-        for name, expected in zip(MODULES, hashes))
+    emit("COORDINATOR_START", "YES")
+    exact = len(sys.argv) == 2 and exact_file("serviceit_vps_b2b_dossier_v11_worker.py", sys.argv[1])
     emit("LIVE_SHA_MATCH", "YES" if exact else "NO")
     if not exact:
         return 2
+    import httpx
+    from leadpilot.serviceit_vps_pg_queue import db, secret_file
+    from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest
+    from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
+    from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
+    emit("COORDINATOR_IMPORTS", "YES")
     env = dict(os.environ)
     with db(env) as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
@@ -94,13 +126,9 @@ def main():
                 emit(f"TENDER_{tender}_V11_PROOF", proof(row[4], row[5], row[6], compute_digest))
                 emit(f"TENDER_{tender}_V11_SOURCE_MATCH", "YES" if source_matches(source, row[3]) else "NO")
                 emit(f"TENDER_{tender}_V12_PRESENT", "YES" if row[7] else "NO")
+    emit("PG_READ_COMPLETE", "YES")
     secret = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
-    base = validate_webhook(secret)
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=12) as client:
-        if not positive_duplicate_control(client, base):
-            emit("DUPLICATE_CONTROL", "NO")
-            return 2
-        emit("DUPLICATE_CONTROL", "YES")
         rest = Rest(secret, client)
         complete = True
         def read_card(card):
@@ -126,12 +154,10 @@ def main():
             label = f"TENDER_{tender}_"
             source = f"B2B-CENTER-{tender}"
             try:
-                matches = exact_duplicate(client, base, source)
-                emit(label+"CRM_COUNT", len(matches))
-                if len(matches) != 1:
+                if not row or row[1] is None:
                     continue
-                card = int(matches[0]["id"])
-                emit(label+"CRM_CARD", card)
+                card = int(row[1])
+                emit(label+"CRM_READ_CARD", card)
                 item = read_card(card)
                 same = item.get(PREFIX+"SIGNAL_ID") == source and bool(row and row[1] == card)
                 emit(label+"CRM_IDENTITY", "YES" if same else "NO")
@@ -153,7 +179,10 @@ def main():
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
-    except Exception:
+        raise SystemExit(writer() if "--writer" in sys.argv else main())
+    except Exception as exc:
+        # Fixed categorical codes only. No exception text, SQL, tokens or data.
+        code = 1 if isinstance(exc, ImportError) else 2 if isinstance(exc, OSError) else 3 if isinstance(exc, ValueError) else 4
+        emit("AUDIT_ERROR_CLASS", code)
         emit("AUDIT_COMPLETE", "NO")
         raise SystemExit(2) from None

@@ -30,7 +30,7 @@ def test_output_is_sanitized(capsys):
         with pytest.raises(ValueError):
             emit("VALUE", value)
     assert capsys.readouterr().out == ""
-    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314} == set(TARGETS)
+    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314,4692011,4694125,4691253} == set(TARGETS)
 
 
 def test_workflow_output_filter_is_anchored_and_owner_gated():
@@ -68,3 +68,18 @@ def test_revision_requires_exact_source_and_current_signed_fields():
     assert not revision_proof({"x": "different"}, source, revision, digest)
     assert not revision_proof(fields, "B2B-CENTER-4677923", revision, digest)
     assert not revision_proof(fields, source, (saved, fields, salt, b"x"*32), digest)
+
+
+def test_v37_patch_witness_is_not_full_dossier_proof():
+    from ops.serviceit_vps_b2b_exact_receipt_audit import v37_patch_proof, v37_patch_digest
+    source = "B2B-CENTER-4694125"
+    saved = hashlib.sha256(source.encode()).hexdigest()
+    salt = b"a"*16
+    fields = {"report":"verified", "decision":""}
+    sig = v37_patch_digest(fields, salt)
+    revision = (saved, fields, salt, sig)
+    assert v37_patch_proof({"report":"verified","decision":None,"unrelated":"later"}, source, revision, "decision")
+    assert not v37_patch_proof({"report":"changed","decision":None}, source, revision, "decision")
+    assert not v37_patch_proof({"report":"verified"}, source, revision, "decision")
+    assert not v37_patch_proof({"report":"verified","decision":""}, "B2B-CENTER-4691253", revision, "decision")
+    assert not v37_patch_proof({"report":"verified","decision":""}, source, (saved,fields,salt,b"x"*32), "decision")

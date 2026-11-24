@@ -31,3 +31,12 @@ def test_output_is_sanitized(capsys):
             emit("VALUE", value)
     assert capsys.readouterr().out == ""
     assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220} == set(TARGETS)
+
+
+def test_workflow_output_filter_is_anchored_and_owner_gated():
+    from pathlib import Path
+    src = Path(".github/workflows/serviceit-vps-b2b-exact-receipt-readonly.yml").read_text("utf-8")
+    assert "github.event.comment.body == 'SERVICEIT_B2B_EXACT_V11_BLOCKER_READONLY_368'" in src
+    assert "[0-9]{1,10})$'" in src
+    assert "B2B_EXACT_CRM_WRITES=0" in src
+    assert "B2B_EXACT_PG_WRITES=0" in src

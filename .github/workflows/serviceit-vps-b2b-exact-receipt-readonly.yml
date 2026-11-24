@@ -64,7 +64,7 @@ jobs:
           rc=$?
           set -e
           # Only numeric IDs, statuses, counts and proof booleans; never raw data.
-          grep -E '^B2B_EXACT_[A-Z0-9_]{1,80}=(ABSENT|PENDING|POST_UNCERTAIN|VERIFIED|EXISTING|REVIEW|RESERVED|WRITE_INTENT|NO_CHANGE|CONFLICT|UNCERTAIN|NONE|YES|NO|[0-9]{1,10}) "$RUNNER_TEMP/b2b-exact-receipt/status" || true
+          grep -E '^B2B_EXACT_[A-Z0-9_]{1,80}=(ABSENT|PENDING|POST_UNCERTAIN|VERIFIED|EXISTING|REVIEW|RESERVED|WRITE_INTENT|NO_CHANGE|CONFLICT|UNCERTAIN|NONE|YES|NO|[0-9]{1,10})$' "$RUNNER_TEMP/b2b-exact-receipt/status" || true
           [[ "$rc" == 0 ]]
           grep -qx 'B2B_EXACT_CRM_WRITES=0' "$RUNNER_TEMP/b2b-exact-receipt/status"
           grep -qx 'B2B_EXACT_PG_WRITES=0' "$RUNNER_TEMP/b2b-exact-receipt/status"

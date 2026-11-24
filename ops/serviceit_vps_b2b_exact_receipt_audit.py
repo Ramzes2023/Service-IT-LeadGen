@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import sys
 
-TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 4693220)
+TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 4693220, 4693314)
 STATES = frozenset(("ABSENT", "PENDING", "POST_UNCERTAIN", "VERIFIED", "EXISTING",
                     "REVIEW", "RESERVED", "WRITE_INTENT", "NO_CHANGE", "CONFLICT",
                     "UNCERTAIN", "NONE", "YES", "NO"))
@@ -69,6 +69,15 @@ def proof(fields, salt, digest, compute):
         return "NO"
 
 
+def revision_proof(current, source, revision, compute):
+    """A later receipt is evidence only if source and both digests agree."""
+    saved, fields, salt, digest = revision
+    return (source_matches(source, saved) and
+            proof(fields, salt, digest, compute) == "YES" and
+            proof(current, salt, digest, compute) == "YES" and
+            fields == current)
+
+
 def source_matches(source, saved):
     if not isinstance(source, str) or not re.fullmatch(r"B2B-CENTER-[0-9]{5,12}", source):
         return False
@@ -93,7 +102,7 @@ def main():
     with db(env) as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
         rows = conn.execute("""
-            SELECT v.card_id,v.status,v.source_hash,v.after_fields,v.salt,v.digest,b.source_id
+            SELECT v.card_id,v.status,v.source_hash,v.after_fields,v.salt,v.digest,b.source_id,v.before_fields
             FROM serviceit_vps_b2b_dossier_v11_receipts v
             LEFT JOIN serviceit_vps_b2b_inbox b ON b.card_id=v.card_id AND b.state='VERIFIED'
             WHERE v.status IN ('CONFLICT','UNCERTAIN','WRITE_INTENT')
@@ -102,12 +111,13 @@ def main():
         """).fetchall()
         emit("BLOCKER_SCAN_COMPLETE", "YES" if len(rows) <= 30 else "NO")
         emit("BLOCKER_ROWS_SEEN", len(rows))
-        for i, (card, status, saved, fields, salt, digest, source) in enumerate(rows[:30], 1):
+        for i, (card, status, saved, fields, salt, digest, source, before) in enumerate(rows[:30], 1):
             emit(f"BLOCKER_{i}_CARD", card)
             emit(f"BLOCKER_{i}_STATUS", status)
             emit(f"BLOCKER_{i}_SOURCE_MATCH", "YES" if source_matches(source, saved) else "NO")
             emit(f"BLOCKER_{i}_STORED_PROOF", proof(fields, salt, digest, compute_digest))
         data = {}
+        revisions = {}
         for tender in TARGETS:
             source = f"B2B-CENTER-{tender}"
             row = conn.execute("""
@@ -119,6 +129,21 @@ def main():
                 WHERE b.source_id=%s
             """, (source,)).fetchone()
             data[tender] = row
+            if row and row[1] is not None:
+                revisions[tender] = {}
+                # Static table names only; SELECT in the existing read-only transaction.
+                for label, table in (
+                    ("V19", "serviceit_vps_b2b_v19_research_receipts"),
+                    ("V20", "serviceit_vps_b2b_v20_revision_receipts"),
+                ):
+                    if conn.execute("SELECT to_regclass(%s)", ("public."+table,)).fetchone()[0]:
+                        latest = conn.execute(
+                            f"SELECT source_hash,after_fields,salt,digest FROM {table} "
+                            "WHERE card_id=%s AND status='VERIFIED' "
+                            "ORDER BY updated_at DESC LIMIT 1", (row[1],)
+                        ).fetchone()
+                        if latest:
+                            revisions[tender][label] = latest
             emit(f"TENDER_{tender}_PG", row[0] if row else "ABSENT")
             if row and row[1] is not None:
                 emit(f"TENDER_{tender}_PG_CARD", row[1])
@@ -137,7 +162,7 @@ def main():
             })["item"])
             validate_identity(item, card)
             return item
-        for i, (card, status, saved, fields, salt, digest, source) in enumerate(rows[:30], 1):
+        for i, (card, status, saved, fields, salt, digest, source, before) in enumerate(rows[:30], 1):
             if not source_matches(source, saved):
                 continue
             try:
@@ -147,6 +172,7 @@ def main():
                 if same:
                     current = {key: item.get(key) for key in AI_FIELDS}
                     emit(f"BLOCKER_{i}_CRM_PROOF", proof(current, salt, digest, compute_digest))
+                    emit(f"BLOCKER_{i}_BEFORE_FIELDS_EQUAL", "YES" if current == before else "NO")
             except Exception:
                 complete = False
                 emit(f"BLOCKER_{i}_CRM_READ_COMPLETE", "NO")
@@ -168,6 +194,12 @@ def main():
                     emit(label+"V11_CURRENT_FIELDS_EQUAL", "YES" if current == row[4] else "NO")
                     # Later legitimate revisions may supersede raw V11 fields.
                     emit(label+"V11_CURRENT_PROOF", proof(current, row[5], row[6], compute_digest))
+                    for version in ("V19", "V20"):
+                        revision = revisions.get(tender, {}).get(version)
+                        emit(label+version+"_VERIFIED_PRESENT", "YES" if revision else "NO")
+                        if revision:
+                            emit(label+version+"_CURRENT_PROOF", "YES" if revision_proof(
+                                current, source, revision, compute_digest) else "NO")
             except Exception:
                 complete = False
                 emit(label+"CRM_READ_COMPLETE", "NO")

@@ -87,6 +87,29 @@ IT_CONTEXT = re.compile(
 IT_INTEGRATION = re.compile(r"внедрен\w*|интеграц\w*|доработк\w*|обмен\w*\s+данными|экстрактор\w*", re.I)
 
 
+# Keep source-backed Gmail V6 candidate categories in parity. These rules
+# do not approve execution geography, reserve a receipt, or authorize CRM writes.
+B2B_V6_KINDS = {
+    "CLOUD": re.compile(
+        r"(?:аренд[^\W\d_]*|предоставлени[^\W\d_]*)\s+"
+        r"(?:вычислительн[^\W\d_]*\s+мощност[^\W\d_]*\s*\(?\s*)?(?<!\w)vps(?!\w)"
+        r"|сервис[^\W\d_]*\s+подсказок\s+адресов\s+и\s+геокодировани[^\W\d_]*",
+        re.I),
+    "LICENSES": re.compile(
+        r"(?:поставк|сопровождени|адаптаци|продлени|предоставлени)\w*"
+        r".{0,180}консультант\s*плюс"
+        r"|консультант\s*плюс.{0,100}(?:сопровождени|адаптаци|поставк|продлени|лицензи)\w*"
+        r"|^\s*консультант\s*плюс\s*\(\s*справочно[- ]правовые\s+базы\s+данных\s*\)\s*\.?\s*$"
+        r"|^\s*[-–—]?\s*спс\s+консультант\s*плюс\s*:"
+        r"|(?:продлени[^\W\d_]*|приобретени[^\W\d_]*|поставк[^\W\d_]*|закупк[^\W\d_]*)"
+        r"\s+лицензи[^\W\d_]*\s+siem(?!\w)",
+        re.I),
+    "IT_SUPPORT": re.compile(
+        r"техническ[^\W\d_]*\s+(?:обслуживани[^\W\d_]*|поддержк[^\W\d_]*)"
+        r"\s+(?:веб[\s-]*)?сайт[^\W\d_]*", re.I),
+}
+
+
 def classify_services(title: str) -> list[str]:
     """Classify an individual tender SUBJECT, never the whole email.
 
@@ -95,6 +118,8 @@ def classify_services(title: str) -> list[str]:
     if not isinstance(title, str):
         return []
     groups = [group for group, pattern in KINDS.items() if pattern.search(title)]
+    groups.extend(group for group, pattern in B2B_V6_KINDS.items()
+                  if group not in groups and pattern.search(title))
     if IT_CONTEXT.search(title) and IT_INTEGRATION.search(title):
         groups.append("INTEGRATION")
     return sorted(groups)

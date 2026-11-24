@@ -417,6 +417,18 @@ function classifyServices_(title) {
       result.indexOf("LICENSES") < 0) {
     result.push("LICENSES");
   }
+  // Real B2B 24 Nov titles. These are candidate categories only:
+  // execution geography, deduplication and source receipts remain VPS gates.
+  const explicitVpsRental = /(?:аренд[\p{L}]*|предоставлени[\p{L}]*)\s+(?:вычислительн[\p{L}]*\s+мощност[\p{L}]*\s*\(?\s*)?(?<![\p{L}\p{N}_])vps(?![\p{L}\p{N}_])/iu;
+  const addressGeocodingService = /сервис[\p{L}]*\s+подсказок\s+адресов\s+и\s+геокодировани[\p{L}]*/iu;
+  const siemLicense = /(?:продлени[\p{L}]*|приобретени[\p{L}]*|поставк[\p{L}]*|закупк[\p{L}]*)\s+лицензи[\p{L}]*\s+siem(?![\p{L}\p{N}_])/iu;
+  const websiteSupport = /техническ[\p{L}]*\s+(?:обслуживани[\p{L}]*|поддержк[\p{L}]*)\s+(?:веб[\s-]*)?сайт[\p{L}]*/iu;
+  const addCategory = function (key) {
+    if (result.indexOf(key) < 0) result.push(key);
+  };
+  if (explicitVpsRental.test(title) || addressGeocodingService.test(title)) addCategory("CLOUD");
+  if (siemLicense.test(title)) addCategory("LICENSES");
+  if (websiteSupport.test(title)) addCategory("IT_SUPPORT");
   const context = new RegExp(
     "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +

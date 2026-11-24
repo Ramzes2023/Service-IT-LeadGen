@@ -1,0 +1,41 @@
+name: Service IT Krasoft anonymous source evidence
+
+on:
+  push:
+    branches:
+      - feat/krasoft-public-mcp-procurement-20261031
+    paths:
+      - leadpilot/krasoft_public_mcp.py
+      - scripts/run_krasoft_public_mcp_daily.py
+      - tests/test_krasoft_public_mcp.py
+      - .github/workflows/krasoft-public-mcp-live.yml
+  workflow_dispatch:
+  schedule:
+    - cron: '13 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install existing project requirements
+        run: python -m pip install -r requirements.txt
+      - name: Verify only read-only MCP transport contracts
+        run: python -m pytest -q tests/test_krasoft_public_mcp.py
+      - name: Bounded REAL remote searches, no credentials, max 6 per day
+        run: python -B -m scripts.run_krasoft_public_mcp_daily
+      - name: Retain source transport evidence (research only)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: krasoft-real-transport-evidence
+          path: exports/krasoft-rotation-*.json
+          retention-days: 7
+          if-no-files-found: error

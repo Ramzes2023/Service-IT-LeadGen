@@ -1,12 +1,13 @@
 """B2B-only diagnostic: no writes, replay, source fetch or model call."""
 import hashlib
 import hmac
+import json
 import os
 from pathlib import Path
 import re
 import sys
 
-TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 4693220, 4693314)
+TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 4693220, 4693314, 4692011, 4694125, 4691253)
 STATES = frozenset(("ABSENT", "PENDING", "POST_UNCERTAIN", "VERIFIED", "EXISTING",
                     "REVIEW", "RESERVED", "WRITE_INTENT", "NO_CHANGE", "CONFLICT",
                     "UNCERTAIN", "NONE", "YES", "NO"))
@@ -78,6 +79,29 @@ def revision_proof(current, source, revision, compute):
             fields == current)
 
 
+def v37_patch_digest(fields, salt):
+    # V37 worker canonical JSON checksum, not a full V11 dossier digest.
+    if type(fields) is not dict or not fields or type(salt) is not bytes or len(salt) != 16:
+        raise ValueError("INVALID_PATCH")
+    raw = json.dumps(fields, ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(salt + raw).digest()
+
+
+def v37_patch_proof(item, source, revision, decision_key):
+    """Verify only the latest signed patch's own keys, never imply full dossier proof."""
+    saved, fields, salt, digest = revision
+    if not source_matches(source, saved) or proof(fields, salt, digest, v37_patch_digest) != "YES":
+        return False
+    if any(key not in item for key in fields):
+        return False
+    projected = {key: item[key] for key in fields}
+    # The production V37 readback allows null for an explicitly emptied decision.
+    if fields.get(decision_key) == "" and projected.get(decision_key) is None:
+        projected[decision_key] = ""
+    return projected == fields and proof(projected, salt, digest, v37_patch_digest) == "YES"
+
+
 def source_matches(source, saved):
     if not isinstance(source, str) or not re.fullmatch(r"B2B-CENTER-[0-9]{5,12}", source):
         return False
@@ -144,6 +168,17 @@ def main():
                         ).fetchone()
                         if latest:
                             revisions[tender][label] = latest
+                if conn.execute("SELECT to_regclass(%s)", (
+                    "public.serviceit_vps_b2b_dossier_consistency_v37_receipts",
+                )).fetchone()[0]:
+                    latest = conn.execute("""
+                        SELECT source_hash,after_fields,salt,digest
+                        FROM serviceit_vps_b2b_dossier_consistency_v37_receipts
+                        WHERE card_id=%s AND status='VERIFIED'
+                        ORDER BY attempt_no DESC LIMIT 1
+                    """, (row[1],)).fetchone()
+                    if latest:
+                        revisions[tender]["V37"] = latest
             emit(f"TENDER_{tender}_PG", row[0] if row else "ABSENT")
             if row and row[1] is not None:
                 emit(f"TENDER_{tender}_PG_CARD", row[1])
@@ -200,6 +235,15 @@ def main():
                         if revision:
                             emit(label+version+"_CURRENT_PROOF", "YES" if revision_proof(
                                 current, source, revision, compute_digest) else "NO")
+                    v37 = revisions.get(tender, {}).get("V37")
+                    emit(label+"V37_VERIFIED_PRESENT", "YES" if v37 else "NO")
+                    if v37:
+                        emit(label+"V37_SOURCE_MATCH", "YES" if source_matches(source, v37[0]) else "NO")
+                        emit(label+"V37_STORED_PROOF", proof(v37[1], v37[2], v37[3], v37_patch_digest))
+                        emit(label+"V37_CURRENT_PATCH_PROOF", "YES" if v37_patch_proof(
+                            item, source, v37, PREFIX+"REVIEW_DECISION") else "NO")
+                        if isinstance(v37[1], dict):
+                            emit(label+"V37_AI_FIELDS_COVERED", len(set(v37[1]) & set(AI_FIELDS)))
             except Exception:
                 complete = False
                 emit(label+"CRM_READ_COMPLETE", "NO")

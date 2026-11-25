@@ -30,7 +30,7 @@ def test_output_is_sanitized(capsys):
         with pytest.raises(ValueError):
             emit("VALUE", value)
     assert capsys.readouterr().out == ""
-    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314,4692011,4694125,4691253,4692609} == set(TARGETS)
+    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314,4692011,4694125,4691253,4692609,4694316,4694239,4695984,4695818,4695788} == set(TARGETS)
 
 
 def test_workflow_output_filter_is_anchored_and_owner_gated():
@@ -83,3 +83,11 @@ def test_v37_patch_witness_is_not_full_dossier_proof():
     assert not v37_patch_proof({"report":"verified"}, source, revision, "decision")
     assert not v37_patch_proof({"report":"verified","decision":""}, "B2B-CENTER-4691253", revision, "decision")
     assert not v37_patch_proof({"report":"verified","decision":""}, source, (saved,fields,salt,b"x"*32), "decision")
+
+
+def test_review_trace_reports_only_retry_count_and_write_fence():
+    from pathlib import Path
+    src = Path("ops/serviceit_vps_b2b_exact_receipt_audit.py").read_text("utf-8")
+    assert "b.geo_attempts, b.write_started_at IS NOT NULL" in src
+    assert 'emit(f"TENDER_{tender}_GEO_ATTEMPTS", int(row[8]))' in src
+    assert 'emit(f"TENDER_{tender}_WRITE_STARTED", "YES" if row[9] else "NO")' in src

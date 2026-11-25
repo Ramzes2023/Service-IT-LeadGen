@@ -117,6 +117,13 @@ B2B_V6_KINDS = {
         r"|(?:обслуживани[^\W\d_]*|обновлени[^\W\d_]*)\s+сет[^\W\d_]*\s+vipnet(?!\w)", re.I),
 }
 
+# Authenticated B2B titles of 25 Nov 2026; candidate fit only.
+B2B_NOV25_KINDS = {
+    "IT_SUPPORT": re.compile(r"(?:закупк|поставк|оказани|предоставлени)\w*.{0,80}техническ\w*\s+поддержк\w*.{0,100}(?:vmware|airwatch)(?!\w)", re.I),
+    "LICENSES": re.compile(r"(?:закупк|продлени|приобретени|поставк)\w*.{0,60}лицензи\w*\s+(?:dr[.\s-]*web|codescoring)(?!\w)|оказани\w*\s+информационн\w*\s+услуг\w*\s+с\s+использовани\w*\s+систем\w*\s+консультант\s*плюс(?!\w)", re.I),
+    "SERVERS": re.compile(r"^\s*запасн\w*\s+част\w*\s+и\s+принадлежност\w*\s+для\s+пк\s*\.?\s*$|выбор\s+поставщик\w*\s+схд\s+ibm\s+(?:storage\s+)?flashsystem(?!\w)", re.I),
+}
+
 
 def classify_services(title: str) -> list[str]:
     """Classify an individual tender SUBJECT, never the whole email.
@@ -127,6 +134,8 @@ def classify_services(title: str) -> list[str]:
         return []
     groups = [group for group, pattern in KINDS.items() if pattern.search(title)]
     groups.extend(group for group, pattern in B2B_V6_KINDS.items()
+                  if group not in groups and pattern.search(title))
+    groups.extend(group for group, pattern in B2B_NOV25_KINDS.items()
                   if group not in groups and pattern.search(title))
     if IT_CONTEXT.search(title) and IT_INTEGRATION.search(title):
         groups.append("INTEGRATION")

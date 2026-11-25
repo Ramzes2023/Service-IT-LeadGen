@@ -151,7 +151,9 @@ def inspect_paths():
     label=inspect(AUX,
         '{{index .Config.Labels "com.docker.compose.project.config_files"}}')
     paths=[Path(x.strip()) for x in label.split(",") if x.strip()]
-    must(1<=len(paths)<=5 and len(paths)==len(set(paths)),
+    # Prior guarded patches each retain an explicit immutable image overlay.
+    # Preserve that chain; still validate every unique path under approved roots.
+    must(1<=len(paths)<=32 and len(paths)==len(set(paths)),
          "AUX_COMPOSE_LABELS_INVALID")
     must(all(p.is_file() and not p.is_symlink() for p in paths),
          "AUX_COMPOSE_PATHS_UNTRUSTED")

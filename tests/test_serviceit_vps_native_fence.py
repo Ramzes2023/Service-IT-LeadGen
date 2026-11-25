@@ -25,7 +25,6 @@ def test_exact_environment_no_cloud_credential_dependency(monkeypatch):
     env = worker.exact_environment({"SERVICEIT_AI_PROVIDER": "routerai"})
     assert {name for name, _ in observed} == {
         "SERVICEIT_BITRIX_WEBHOOK", "SERVICEIT_ROUTERAI_API_KEY",
-        "SERVICEIT_BRAVE_SEARCH_API_KEY",
     }
     for forbidden in ("GITHUB_TOKEN", "SERVICEIT_GH_LEDGER_KEY",
                       "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY"):

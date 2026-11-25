@@ -35,7 +35,7 @@ REGION = PREFIX + "REGION"
 AI_STATUS = PREFIX + "AI_STATUS"
 
 REQUIRED_GATES = (
-    "company_registry", "source", "existing_customer", "crm_dedup",
+    "source", "existing_customer", "crm_dedup",
     "stop_list", "legal_basis", "contact", "private_small_moscow",
     "manager_criteria",
 )
@@ -71,7 +71,7 @@ def preliminary_manager_action(notice, services):
                    for x in services),
            "HOLD_SOURCE_UNVERIFIED")
     return ("Проверить первоисточник B2B-Center, дату и актуальность; "
-            "установить фактического заказчика, ИНН/ФНС и регион; "
+            "установить фактического заказчика, ИНН и регион; "
             "проверить клиентов CRM, дубли, стоп-лист и право связи. "
             "До подтверждения менеджером не контактировать.")
 
@@ -113,7 +113,7 @@ def _exact_card(card, item_id):
 def manager_readiness(card, item_id, assessment, approval):
     """Readiness to manager REVIEW only, never authorization to call.
 
-    All nine corporate checks must have independently supplied evidence_ref.
+    All required corporate checks must have independently supplied evidence_ref.
     Score comes solely from the deterministic assessment and has a version;
     AI confidence never supplies or overrides Lead Score.
     """

@@ -61,10 +61,10 @@ def prepare(monkeypatch,*,visible=0,uid=42,model=None,task_add_fail=False,
             assert args["fields"]["RESPONSIBLE_ID"]==(uid if expected_task_uid is None else expected_task_uid)
             assert args["fields"]["UF_CRM_TASK"]==["T426_120"]
             assert "НЕ звонить" in args["fields"]["DESCRIPTION"]
-            assert "egrul.nalog.ru" in args["fields"]["DESCRIPTION"]
-            assert "платная промышленная подписка" in args["fields"]["DESCRIPTION"]
-            assert "RouterAI/DeepSeek" in args["fields"]["DESCRIPTION"]
-            assert "резервного GigaChat" in args["fields"]["DESCRIPTION"]
+            assert "egrul.nalog.ru" not in args["fields"]["DESCRIPTION"]
+            assert "ФНС" not in args["fields"]["DESCRIPTION"]
+            assert "RouterAI" in args["fields"]["DESCRIPTION"]
+            assert "Совпадение с услугами не подтверждает" in args["fields"]["DESCRIPTION"]
             return {"task":{"id":"26234"}}
         pytest.fail("Unexpected REST write")
     monkeypatch.setattr(auto,"rest",request)
@@ -311,3 +311,15 @@ def test_b2b_provisional_hold_exemption_never_bypasses_other_stop(monkeypatch):
         with httpx.Client() as client:
             assert auto.process_card(client,ENV,120,now=NOW)=="CARD_STOP_REASON_HOLD_NO_TASK"
     assert not any(isinstance(x,tuple) and x[0]=="tasks.task.add" for x in calls)
+
+def test_verified_source_deadline_is_applied_on_task_creation(monkeypatch):
+ calls=prepare(monkeypatch);original=auto.rest;due=[]
+ def request(client,base,method,args):
+  if method=='tasks.task.add':due.append(args['fields']['DEADLINE'])
+  if method=='tasks.task.get':return {'task':{'deadline':due[0]}}
+  return original(client,base,method,args)
+ monkeypatch.setattr(auto,'rest',request)
+ with httpx.Client() as client:
+  status=auto.process_card(client,ENV,120,now=NOW,verified_submission='2026-11-05T13:00:00Z')
+ assert status=='INTERNAL_REVIEW_TASK_READBACK_VERIFIED'
+ assert datetime.fromisoformat(due[0])<datetime(2026,11,5,13,tzinfo=timezone.utc)

@@ -71,3 +71,9 @@ def test_registry_inn_requires_buyer_label_and_agreement_between_mirrors(monkeyp
     rows = result["pages"][1:]
     wrong = {**rows[1], "excerpt": rows[1]["excerpt"].replace("Заказчик", "Организатор")}
     assert mirrors._registry_buyer([rows[0], wrong]) is None
+
+
+def test_canonical_primary_redirect_preserves_eis_number(monkeypatch):
+    monkeypatch.setattr(mirrors, '_page', lambda *args: pytest.fail('primary refetch'))
+    canonical = {**PRIMARY, 'url': PRIMARY['url'].replace('/market/', '/app/market-next/')}
+    assert mirrors._source_eis_number({'pages': [canonical]}, NOTICE, None) == '32616566539'

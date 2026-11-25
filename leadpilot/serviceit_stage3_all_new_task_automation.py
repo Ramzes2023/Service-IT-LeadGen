@@ -137,6 +137,12 @@ def manager_task_fields(item, card, uid, binding, *, now):
     require(type(item) is dict and type(card) is int and 8 <= card
             and type(uid) is int and uid > 0
             and type(binding) is str, "TASK_DRAFT_INPUT_INVALID")
+    brief=item.get(PREFIX+'AI_MANAGER_BRIEF')
+    if isinstance(brief,str) and len(brief)>100:
+        summary=str(item.get(PREFIX+'AI_SUMMARY') or item.get('title') or 'Закупка')
+        return {'TITLE':('Проработать закупку: '+summary)[:230],
+                'DESCRIPTION':(brief[:6500]+'\n\nРезультат работы: решение по закупке; после фактического разговора — резюме, интерес клиента, возражения и следующий шаг с датой. Неподтверждённый интерес не считать согласием клиента.'),
+                'RESPONSIBLE_ID':uid,'UF_CRM_TASK':[binding]}
     classification = classify_signal({
         "title": item.get("title") or "",
         "description": "",
@@ -159,16 +165,10 @@ def manager_task_fields(item, card, uid, binding, *, now):
         "Что проверить: " + plan["description"] + "\n"
         "Исходный URL, дата, срок и контакт: открыть CRM-карточку, "
         "перепроверить по первоисточнику; достоверность НЕ подтверждена.\n"
-        "Проверить первоисточник, актуальность, ИНН и бесплатный "
-        "реестр ФНС-МСП; отсутствие в МСП не означает ликвидацию. "
-        "Для перспективной компании проверить юридический статус по "
-        "бесплатной официальной выписке ЕГРЮЛ/ЕГРИП (egrul.nalog.ru); "
-        "платная промышленная подписка для MVP НЕ требуется. "
-        "Проверить клиентскую базу и дубли CRM, корпоративный STOP-лист "
-        "и правовое основание. "
-        "Уточнить потребность; выводы RouterAI/DeepSeek и резервного "
-        "GigaChat считать только гипотезами, Lead Score не считать "
-        "подтверждённым без девяти независимых проверок. "
+        "Проверить первоисточник, актуальность, ИНН, клиентскую базу, "
+        "дубли CRM и корпоративный STOP-лист. "
+        "Уточнить потребность; выводы RouterAI считать гипотезами. "
+        "Совпадение с услугами не подтверждает готовность к участию; Lead Score — приоритет проверки. "
         "НЕ звонить, НЕ писать и НЕ рассылать КП "
         "без решения уполномоченного менеджера."
     )
@@ -242,7 +242,7 @@ def b2b_preliminary_hold_allows_internal_review(item):
             parsed.port in (None,443))
 
 
-def process_card(client, env, card, *, now=None, native_fence=None):
+def process_card(client, env, card, *, now=None, native_fence=None, verified_submission=None):
     """One card. Every refusal before reserve is non-destructive.
 
     Distinct GitHub ledger path and workflow concurrency serialize this
@@ -301,6 +301,11 @@ def process_card(client, env, card, *, now=None, native_fence=None):
             and second.get("stageId")==item.get("stageId"),
             "MANAGER_OR_STAGE_CHANGED_DURING_CHECK")
     task_fields = manager_task_fields(item, card, uid, binding, now=now)
+    if verified_submission is not None:
+        from .serviceit_tender_manager_timing import manager_deadline
+        deadline=manager_deadline(verified_submission,now)
+        if deadline['deadline'] is None:return 'SUBMISSION_CLOSED_NO_TASK'
+        task_fields['DEADLINE']=deadline['deadline']
     title = task_fields["TITLE"]
     fence=(native_fence if native_fence is not None else
            TaskFence(client,env.get("GITHUB_TOKEN",""),
@@ -316,6 +321,10 @@ def process_card(client, env, card, *, now=None, native_fence=None):
                 "TASK_ADD_RESPONSE_UNVERIFIED")
         task_id=positive(result["task"].get("id"))
         task_get_confirmed(client,base,task_id,binding,uid,title)
+        if 'DEADLINE' in task_fields:
+            from .serviceit_tender_manager_timing import submission_time
+            task=rest(client,base,'tasks.task.get',{'taskId':task_id})['task']
+            require(now<submission_time(task.get('deadline',task.get('DEADLINE')))<submission_time(verified_submission),'TASK_DEADLINE_READBACK_MISMATCH')
     except Exception:
         fence.finalize(card,"UNCERTAIN")
         return "TASK_WRITE_UNCERTAIN_NO_RETRY"

@@ -1,0 +1,371 @@
+"""Durable all-file queue. Batch size is throughput, never a document cap."""
+import hashlib,json,os,re,time,shutil,subprocess,tempfile,ssl,sys,base64
+from pathlib import PurePosixPath
+from urllib.parse import urlsplit,urljoin,unquote
+import httpx
+from .serviceit_b2b_tender_documents import extract_text
+from .serviceit_vps_b2b_document_worker import _model_research
+
+DDL='''CREATE TABLE IF NOT EXISTS serviceit_extended_documents (
+ card_id BIGINT NOT NULL,url TEXT NOT NULL,name TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,
+ text_content TEXT,sha256 TEXT,reports JSONB,error TEXT,analyzed_chars INTEGER NOT NULL DEFAULT 0,
+ next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(card_id,url));
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS parser_version INTEGER NOT NULL DEFAULT 1;
+ UPDATE serviceit_extended_documents SET parser_version=2,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<2 AND error IN ('DOCUMENT_FORMAT_UNSUPPORTED','DOCUMENT_EMPTY_TEXT');
+ UPDATE serviceit_extended_documents SET parser_version=3,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<3 AND error='OCR_ENGINE_UNAVAILABLE';
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS analysis_version INTEGER NOT NULL DEFAULT 1;
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS model_attempts INTEGER NOT NULL DEFAULT 0;
+ UPDATE serviceit_extended_documents SET analysis_version=4,analyzed_chars=0,model_attempts=0,
+ status=CASE WHEN status='READ' THEN 'EXTRACTED' ELSE status END,next_attempt_at=now()
+ WHERE analysis_version<4;
+ UPDATE serviceit_extended_documents SET analysis_version=5,
+ model_attempts=CASE WHEN status='EXTRACTED' THEN 0 ELSE model_attempts END,
+ next_attempt_at=CASE WHEN status='EXTRACTED' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<5;
+ UPDATE serviceit_extended_documents SET analysis_version=6,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<6;
+ ALTER TABLE serviceit_extended_documents ADD COLUMN IF NOT EXISTS window_chars INTEGER NOT NULL DEFAULT 24000;
+ UPDATE serviceit_extended_documents SET analysis_version=7,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<7;
+ UPDATE serviceit_extended_documents SET analysis_version=8,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE 'ROUTERAI_%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<8;
+ UPDATE serviceit_extended_documents SET parser_version=4,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<4 AND status IN ('FAILED','RETRY') AND error='CONNECTERROR'
+ AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';
+ UPDATE serviceit_extended_documents SET parser_version=5,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<5 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT'
+ AND url ~ '^https://(www[.])?zakupki[.]gov[.]ru/';
+ UPDATE serviceit_extended_documents SET parser_version=6,status='PENDING',attempts=0,next_attempt_at=now()
+ WHERE parser_version<6 AND status IN ('FAILED','RETRY') AND error='DOCUMENT_UNSUPPORTED_FORMAT';
+ UPDATE serviceit_extended_documents SET analysis_version=9,
+ model_attempts=CASE WHEN status='EXTRACTED' AND error LIKE '%OUTPUT_TRUNCATED%' THEN 0 ELSE model_attempts END,
+ window_chars=CASE WHEN status='EXTRACTED' AND error LIKE '%OUTPUT_TRUNCATED%' THEN 24000 ELSE window_chars END,
+ next_attempt_at=CASE WHEN status='EXTRACTED' AND error LIKE '%OUTPUT_TRUNCATED%' THEN now() ELSE next_attempt_at END
+ WHERE analysis_version<9;'''
+
+
+def _limits():
+    import resource
+    resource.setrlimit(resource.RLIMIT_CPU,(10,10))
+    resource.setrlimit(resource.RLIMIT_AS,(256*1024*1024,256*1024*1024))
+    resource.setrlimit(resource.RLIMIT_FSIZE,(16*1024*1024,16*1024*1024))
+
+
+def legacy_doc(data):
+    if data.startswith(b'PK\x03\x04'):return extract_text(data,'.docx')
+    if data.lstrip().startswith(b'{\\rtf'):
+        from striprtf.striprtf import rtf_to_text
+        return rtf_to_text(data.decode('cp1251'),encoding='cp1251')
+    if not data.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+        raise ValueError('DOC_BINARY_SIGNATURE_INVALID')
+    binary=shutil.which('antiword')
+    if not binary:raise ValueError('DOC_CONVERTER_UNAVAILABLE')
+    # No shell, macros, network, or privileged office application.
+    with tempfile.TemporaryDirectory(prefix='serviceit-doc-') as folder:
+        path=os.path.join(folder,'source.doc')
+        with open(path,'wb') as output:output.write(data)
+        result=subprocess.run([binary,'-m','UTF-8.txt','-w','0',path],
+            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=15,preexec_fn=_limits)
+    if result.returncode or len(result.stdout)>16000000:raise ValueError('DOC_CONVERSION_FAILED')
+    text=result.stdout.decode('utf-8','replace').strip()
+    if not text:raise ValueError('DOC_EMPTY_TEXT')
+    return text
+
+
+def recognize(data,kind):
+    """Bounded full-file OCR; never silently accept only the first pages."""
+    from io import BytesIO
+    if kind=='.pdf':
+        from pypdf import PdfReader
+        count=len(PdfReader(BytesIO(data),strict=True).pages)
+        if not 1<=count<=20:raise ValueError('OCR_PAGE_LIMIT_EXCEEDED')
+    else:count=1
+    if not shutil.which('tesseract') or (kind=='.pdf' and not shutil.which('pdftoppm')):
+        raise ValueError('OCR_ENGINE_UNAVAILABLE')
+    def command(args):
+        result=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+            timeout=30,preexec_fn=_limits,env={**os.environ,'OMP_THREAD_LIMIT':'1'})
+        if result.returncode or len(result.stdout)>1000000:raise ValueError('OCR_CONVERSION_FAILED')
+        return result.stdout.decode('utf-8','replace').strip()
+    started=time.monotonic()
+    with tempfile.TemporaryDirectory(prefix='serviceit-ocr-') as folder:
+        source=os.path.join(folder,'source'+kind)
+        with open(source,'wb') as output:output.write(data)
+        parts=[]
+        for page in range(1,count+1):
+            if time.monotonic()-started>120:raise ValueError('OCR_TIME_LIMIT_EXCEEDED')
+            image=source
+            if kind=='.pdf':
+                prefix=os.path.join(folder,'page')
+                command(['pdftoppm','-f',str(page),'-l',str(page),'-singlefile','-scale-to','2200','-png',source,prefix])
+                image=prefix+'.png'
+            text=command(['tesseract',image,'stdout','-l','rus+eng+chi_sim','--psm','3'])
+            if not text:raise ValueError('OCR_PAGE_EMPTY')
+            parts.append('Страница '+str(page)+'\n'+text)
+        return 'OCR: распознанный текст; цифры и реквизиты требуют сверки с оригиналом.\n'+'\n'.join(parts)
+
+
+def full_extract(data,kind):
+    if kind=='.rtf':return legacy_doc(data)
+    if kind in ('.png','.jpg','.jpeg'):return recognize(data,kind)
+    if kind=='.pdf':
+        text=extract_text(data,kind)
+        return text if text.strip() else recognize(data,kind)
+    if kind=='.xls':
+        import xlrd
+        book=xlrd.open_workbook(file_contents=data,on_demand=True)
+        try:
+            parts=[];size=0
+            for sheet in book.sheets():
+                parts.append(sheet.name)
+                for row in range(sheet.nrows):
+                    text=' | '.join(str(value) for value in sheet.row_values(row) if value!='')
+                    size+=len(text)
+                    if size>1000000:raise ValueError('DOCUMENT_TEXT_TOO_LARGE')
+                    if text:parts.append(text)
+            return '\n'.join(parts)
+        finally:book.release_resources()
+    if kind!='.xlsx':return extract_text(data,kind)
+    from . import serviceit_b2b_tender_documents as parser
+    ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    with parser._safe_archive(data) as archive:
+        if 'xl/workbook.xml' not in archive.namelist():raise ValueError('DOCUMENT_XLSX_NOT_VALID')
+        shared=[];parts=[]
+        if 'xl/sharedStrings.xml' in archive.namelist():
+            root=parser.XML.fromstring(archive.read('xl/sharedStrings.xml'))
+            shared=[' '.join(t.text for t in si.iter(ns+'t') if t.text) for si in root.iter(ns+'si')]
+        for name in archive.namelist():
+            if not re.fullmatch(r'xl/worksheets/sheet[0-9]+\.xml',name):continue
+            root=parser.XML.fromstring(archive.read(name));parts.append(name)
+            for row in root.iter(ns+'row'):
+                cells=[]
+                for cell in row.iter(ns+'c'):
+                    value=cell.find(ns+'v')
+                    if cell.get('t')=='inlineStr':text=' '.join(t.text for t in cell.iter(ns+'t') if t.text)
+                    elif value is None or value.text is None:text=''
+                    elif cell.get('t')=='s':
+                        index=int(value.text)
+                        if not 0<=index<len(shared):raise ValueError('DOCUMENT_XLSX_STRING_INVALID')
+                        text=shared[index]
+                    else:text=value.text
+                    if text:cells.append(text)
+                if cells:parts.append(' | '.join(cells))
+        return '\n'.join(parts)
+
+
+def parsed_document(raw,kind,url):
+    from . import serviceit_b2b_tender_documents as parser
+    previous=parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES
+    try:
+        parser.MAX_TEXT=1000000
+        parser.MAX_PDF_PAGES=200
+        parser.MAX_FILES=120
+        if kind=='.7z':
+            result=subprocess.run([sys.executable,'-m','leadpilot.serviceit_archive_reader'],input=raw,
+                stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=30,preexec_fn=_limits)
+            if result.returncode or len(result.stdout)>16_000_000:raise ValueError('SEVENZIP_READER_FAILED')
+            payload=json.loads(result.stdout)
+            if payload.get('error'):raise ValueError(payload['error'])
+            parts=[]
+            for member in payload['members']:
+                suffix=PurePosixPath(member['name']).suffix.lower()
+                content=base64.b64decode(member['data'],validate=True)
+                parts.append(member['name']+'\n'+(legacy_doc(content) if suffix=='.doc' else full_extract(content,suffix)))
+            text='\n'.join(parts)
+        elif kind=='.zip':
+            parts=[]
+            with parser._safe_archive(raw) as archive:
+                for member in archive.infolist():
+                    if member.is_dir():continue
+                    suffix=PurePosixPath(member.filename).suffix.lower()
+                    if suffix not in ('.doc','.docx','.pdf','.xlsx','.xls','.rtf','.png','.jpg','.jpeg','.txt'):
+                        raise ValueError('ARCHIVE_CONTAINS_UNSUPPORTED_DOCUMENT')
+                    payload=archive.read(member)
+                    parts.append(member.filename+'\n'+(legacy_doc(payload) if suffix=='.doc' else full_extract(payload,suffix)))
+            text='\n'.join(parts)
+        else:text=legacy_doc(raw) if kind=='.doc' else full_extract(raw,kind)
+    finally:
+        parser.MAX_TEXT,parser.MAX_PDF_PAGES,parser.MAX_FILES=previous
+    if len(text)>=1000000:raise ValueError('DOCUMENT_TEXT_TOO_LARGE')
+    if not text.strip():raise ValueError('DOCUMENT_EMPTY_TEXT')
+    return {'url':url,'text':text,'kind':kind,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),'ocr':bool(re.search(r'(?:^|\n)OCR:',text))}
+
+
+def eis_tls_context():
+    # App-local trust for EIS only. Pin, identity, validity and self-signature
+    # are checked before loading the public root; hostname checks stay enabled.
+    import certifi
+    from .serviceit_gigachat_ca_setup import PUBLIC_CERT,verified_public_root
+    root=verified_public_root(PUBLIC_CERT.read_bytes())
+    context=ssl.create_default_context(cafile=certifi.where())
+    context.load_verify_locations(cadata=root.decode('ascii'))
+    return context
+
+
+def download(client,url,name):
+    p=urlsplit(url)
+    if p.netloc!='bidzaar.com':
+        from .serviceit_b2b_tender_documents import fetch_bytes,public_eis_attachment
+        if public_eis_attachment(url):
+            # No CRM/model credentials or cookies are copied into this client.
+            with httpx.Client(verify=eis_tls_context(),trust_env=False,timeout=20,follow_redirects=False) as eis_client:
+                raw,kind=fetch_bytes(eis_client,url,allow_legacy=True)
+        else:
+            raw,kind=fetch_bytes(client,url,allow_legacy=True)
+        return parsed_document(raw,kind,url)
+    if p.scheme!='https' or p.netloc!='bidzaar.com' or p.query or p.fragment or not re.fullmatch(r'/api/filestorage/files/download/[0-9a-fA-F-]{36}',p.path):
+        raise ValueError('DOCUMENT_URL_INVALID')
+    kind=PurePosixPath(name).suffix.lower()
+    if kind not in ('.doc','.docx','.pdf','.xlsx','.xls','.rtf','.png','.jpg','.jpeg','.txt','.zip'):raise ValueError('DOCUMENT_FORMAT_UNSUPPORTED')
+    current=url
+    for redirect in range(3):
+        with client.stream('GET',current,timeout=20,follow_redirects=False) as response:
+            if response.status_code in (301,302,303,307,308):
+                target=urljoin(current,response.headers.get('location',''));dest=urlsplit(target)
+                suffix=dest.path.removeprefix(p.path+'/')
+                if redirect==2 or dest.scheme!='https' or dest.netloc!=p.netloc or dest.query or dest.fragment or not dest.path.startswith(p.path+'/') or '/' in unquote(suffix) or '\\' in unquote(suffix) or unquote(suffix) in ('','.','..'):
+                    raise ValueError('DOCUMENT_REDIRECT_REJECTED')
+                current=target;continue
+            response.raise_for_status();data=bytearray()
+            for chunk in response.iter_bytes():
+                data.extend(chunk)
+                if len(data)>4000000:raise ValueError('DOCUMENT_TOO_LARGE')
+            raw=bytes(data)
+            return parsed_document(raw,kind,url)
+    raise ValueError('DOCUMENT_REDIRECT_REJECTED')
+
+
+def register(conn,card,files):
+    if not isinstance(files,list):return
+    for file in files:
+        if not isinstance(file,dict) or not isinstance(file.get('url'),str) or not isinstance(file.get('name'),str):continue
+        conn.execute('INSERT INTO serviceit_extended_documents(card_id,url,name) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',(card,file['url'],file['name']))
+
+
+def full_window_research(client,env,inputs):
+    from .ai import config_from_env
+    from .serviceit_vps_worker import exact_environment
+    from .serviceit_vps_b2b_document_worker import _document_windows
+    from .serviceit_b2b_routerai_deep import investigate_routerai,public_documents
+    findings={'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))}
+    source=_model_research(client,env,inputs,use_model=False)
+    if not public_documents(findings):return source
+    config=config_from_env(exact_environment(env))
+    retry=inputs[0].get('retry_profile',False)
+    return [investigate_routerai(client,config,findings,timeout=90 if retry else 45,output_tokens=12000 if retry else 6200),*source]
+
+
+def process(conn,client,env,*,batch=6):
+    conn.execute("UPDATE serviceit_extended_documents SET status='FAILED',error=COALESCE(error,'WORKER_INTERRUPTED') WHERE status='RETRY' AND attempts>=3 AND next_attempt_at<=now()")
+    rows=conn.execute("SELECT card_id,url,name FROM serviceit_extended_documents WHERE status IN ('PENDING','RETRY') AND attempts<3 AND next_attempt_at<=now() ORDER BY attempts,card_id,url LIMIT %s",(batch,)).fetchall()
+    done=[]
+    for card,url,name in rows:
+        conn.execute("UPDATE serviceit_extended_documents SET attempts=attempts+1,status='RETRY',next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s",(card,url))
+        try:
+            document=download(client,url,name)
+            conn.execute("UPDATE serviceit_extended_documents SET status='EXTRACTED',text_content=%s,sha256=%s,reports=%s::jsonb,error=NULL,next_attempt_at=now(),updated_at=now() WHERE card_id=%s AND url=%s",(document['text'],document['sha256'],json.dumps([{'provider':'OCR','facts':[]}] if document.get('ocr') or document['text'].startswith('OCR:') else []),card,url))
+            done.append((card,document))
+        except Exception as exc:
+            reason=str(exc) if re.fullmatch(r'[A-Z][A-Z0-9_]{3,100}',str(exc)) else type(exc).__name__.upper()
+            conn.execute("UPDATE serviceit_extended_documents SET error=%s,status=CASE WHEN attempts>=3 THEN 'FAILED' ELSE 'RETRY' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason,card,url))
+            # New public links can replace an unavailable source file. Keep
+            # rediscovery alive even after the bounded download retries finish.
+            conn.execute("UPDATE serviceit_extended_b2b_discovery SET next_attempt_at=LEAST(next_attempt_at,now()+interval '12 hours') WHERE card_id=%s",(card,))
+    # Long documents are analyzed in durable windows too, not cut at 24k.
+    chunks=conn.execute("SELECT card_id,url,text_content,analyzed_chars,model_attempts,window_chars FROM serviceit_extended_documents WHERE status='EXTRACTED' AND next_attempt_at<=now() ORDER BY updated_at,card_id,url LIMIT %s",(batch,)).fetchall()
+    from .serviceit_b2b_routerai_deep import public_documents
+    from .serviceit_vps_b2b_document_worker import _document_windows
+    from concurrent.futures import ThreadPoolExecutor
+    pending=[]
+    # Only network/model work runs in threads. All database writes stay serial.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for card,url,text,offset,attempts,previous_size in chunks:
+            # Retry a smaller continuous slice, never skip the failed region.
+            size=min(previous_size,24000 if attempts==0 else 12000 if attempts==1 else 6000)
+            window=text[offset:offset+size]
+            inputs=[{'url':url,'text':window,'retry_profile':True}]
+            safe=public_documents({'status':'PUBLIC_PAGES_INSPECTED','pages':list(_document_windows(inputs[0]))})
+            conn.execute("UPDATE serviceit_extended_documents SET window_chars=%s,model_attempts=model_attempts+1,next_attempt_at=now()+interval '10 minutes' WHERE card_id=%s AND url=%s AND status='EXTRACTED'",(size,card,url))
+            pending.append((card,url,text,offset,window,safe,pool.submit(full_window_research,client,env,inputs)))
+        for card,url,text,offset,window,safe,future in pending:
+            reason=None
+            try:reports=future.result()
+            except Exception as exc:
+                reports=[];detail=str(exc)
+                reason=('ROUTERAI_'+detail if re.fullmatch(r'[A-Z][A-Z0-9_]{3,70}',detail) else 'ROUTERAI_'+type(exc).__name__.upper())[:90]
+            success=any(r.get('provider')=='RouterAI' for r in reports)
+            if safe and not success:
+                conn.execute("UPDATE serviceit_extended_documents SET error=%s,next_attempt_at=now()+CASE WHEN model_attempts>=3 THEN interval '1 day' WHEN %s LIKE '%%OUTPUT_TRUNCATED%%' THEN interval '0 seconds' ELSE interval '10 minutes' END,updated_at=now() WHERE card_id=%s AND url=%s",(reason or 'ROUTERAI_ANALYSIS_RETRY',reason or '',card,url))
+                continue
+            own=[]
+            for report in reports:
+                facts=[f for f in report.get('facts',[]) if f.get('url')==url and isinstance(f.get('quote'),str) and ' '.join(f['quote'].split()) in ' '.join(window.split())]
+                if facts:own.append({'provider':report.get('provider','SOURCE'),'facts':facts})
+            # Successful empty model output is still different from no model call.
+            own.append({'provider':'COVERAGE','offset':offset,'end':offset+len(window),'model':'VERIFIED' if success else 'NO_SAFE_MODEL_INPUT'})
+            conn.execute("UPDATE serviceit_extended_documents SET status=%s,analyzed_chars=%s,reports=COALESCE(reports,'[]'::jsonb)||%s::jsonb,model_attempts=0,error=NULL,next_attempt_at=now(),updated_at=now() WHERE card_id=%s AND url=%s AND status='EXTRACTED'",('READ' if offset+len(window)>=len(text) else 'EXTRACTED',offset+len(window),json.dumps(own,ensure_ascii=False),card,url))
+    return len(chunks)
+
+
+def contact_hints(text,url):
+    """Literal public document contacts, explicitly not identity confirmation."""
+    from .serviceit_company_contacts import EMAIL,PHONE
+    found=[];seen=set()
+    for pattern in (EMAIL,PHONE):
+        for match in pattern.finditer(text):
+            context=text[max(0,match.start()-140):match.end()+140]
+            if not re.search(r'контакт|связ|телефон|тел[.:]|почт|email|e-mail|ответствен|закуп',context,re.I):continue
+            if re.search(r'образец|пример|заполн|поставщик|участник|роспотребнадзор|росздравнадзор|bidzaar|b2b-center',context,re.I):continue
+            value=match.group()
+            if value.lower() in seen:continue
+            seen.add(value.lower());found.append({'value':value,'context':context.strip(),'url':url,'status':'UNCONFIRMED'})
+    return found
+
+
+def render(conn,card):
+    rows=conn.execute('SELECT name,url,status,reports,error FROM serviceit_extended_documents WHERE card_id=%s ORDER BY url',(card,)).fetchall()
+    if not rows:return '',0,0,0
+    read=sum(row[2]=='READ' for row in rows);pending=sum(row[2] in ('PENDING','RETRY','EXTRACTED') for row in rows)
+    lines=['ДОКУМЕНТЫ: ПОЛНАЯ ОЧЕРЕДЬ',f'Всего вложений: {len(rows)}. Прочитано: {read}. Ожидают обработки: {pending}. Ошибок: {len(rows)-read-pending}.']
+    titles={'BUYER':'Заказчик','LOCATION':'География','DELIVERY':'Поставка','SCOPE':'Предмет','TECHNOLOGY':'ТЗ','ELIGIBILITY':'Требования','PAYMENT':'Оплата','BUDGET':'Бюджет','DEADLINE':'Срок','EVALUATION':'Критерии','SUBMISSION':'Подача','GUARANTEE':'Гарантии','DOCUMENTS':'Документы заявки'}
+    grouped={k:[] for k in titles}
+    for name,url,status,reports,error in rows:
+        for report in reports or []:
+            for fact in report.get('facts',[]):
+                category=fact.get('category');quote=fact.get('quote')
+                if category in grouped and isinstance(quote,str) and (quote,url) not in grouped[category]:grouped[category].append((quote,url))
+    for category,label in titles.items():
+        lines.append('\n'+label.upper())
+        if not grouped[category]:lines.append('Не найдено в подтверждённых извлечённых фактах; не считать отсутствующим условием.')
+        for quote,url in grouped[category][:4]:lines.extend([quote[:650],'Источник: '+url])
+        if len(grouped[category])>4:lines.append('Дополнительные факты сохранены в результатах анализа документов.')
+    hints=[];seen=set()
+    for url,text in conn.execute('SELECT url,text_content FROM serviceit_extended_documents WHERE card_id=%s AND text_content IS NOT NULL ORDER BY url',(card,)).fetchall():
+        for hint in contact_hints(text,url):
+            if hint['value'].lower() not in seen:hints.append(hint);seen.add(hint['value'].lower())
+    if hints:
+        lines.append('\nКОНТАКТЫ ИЗ ДОКУМЕНТОВ — НЕ ПОДТВЕРЖДЕНЫ ДЛЯ ОБРАЩЕНИЯ')
+        for hint in hints[:12]:lines.extend([hint['value']+' — принадлежность и полномочия по закупке нужно подтвердить.',hint['context'],'Источник: '+hint['url']])
+        if len(hints)>12:lines.append('Дополнительные контакты есть в оригиналах документов.')
+    lines.append('\nПОФАЙЛОВАЯ ПРОВЕРКА')
+    for name,url,status,reports,error in rows:
+        lines.append(f'{name}: '+('текст прочитан' if status=='READ' else 'текст извлечён; полный анализ ИИ в очереди' if status=='EXTRACTED' else 'в очереди' if status in ('PENDING','RETRY') else 'не прочитан: '+str(error)))
+        lines.append('Источник: '+url)
+        lines.append('Выводы ИИ: '+('есть подтверждённые цитаты RouterAI' if any(r.get('provider')=='RouterAI' for r in reports or []) else 'подтверждённые цитаты RouterAI отсутствуют; доступен разбор текста'))
+        if error in ('DOCUMENT_HTTP_404','DOCUMENT_HTTP_410'):
+            lines.append('Источник сейчас не предоставляет файл (HTTP '+error.rsplit('_',1)[-1]+'). Документ не прочитан; поиск актуальной публичной ссылки будет повторён автоматически.')
+        elif error and status in ('FAILED','RETRY') and urlsplit(url).hostname!='bidzaar.com':
+            lines.append('Документ пока недоступен для чтения; причина: '+str(error)+'. Повторный поиск доступного публичного вложения запланирован.')
+        if str(error or '').startswith('ROUTERAI_'):lines.append('Полный анализ ИИ не завершён: автоматическая повторная попытка запланирована.')
+        if any(r.get('model')=='NO_SAFE_MODEL_INPUT' for r in reports or []):lines.append('Часть текста исключена из передачи модели; см. оригинал документа.')
+        if any(r.get('provider')=='OCR' for r in reports or []):lines.append('Текст распознан OCR: цифры и реквизиты сверить с оригиналом.')
+    text='\n'.join(lines)
+    if len(text)>24000:text=text[:23500]+'\nПолный объём фактов превышает размер поля; остальные сведения сохранены в результатах анализа.'
+    return text,read,pending,len(rows)

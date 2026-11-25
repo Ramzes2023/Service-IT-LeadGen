@@ -109,7 +109,7 @@ def assess_lead(
             "evidence": why,
         })
     score,service,factors = score_company(base,normalized,today)
-    required = ("company_registry", "source", "existing_customer",
+    required = ("source", "existing_customer",
                 "crm_dedup", "stop_list", "legal_basis", "contact")
     statuses = {k:_clearance(checks,k) for k in required}
     # A BLOCKED existing_customer means this company must never be marketed

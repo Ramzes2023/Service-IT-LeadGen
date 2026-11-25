@@ -250,6 +250,16 @@ def eligible(conn, target_ids=None, *, refresh=False):
                          AND peer.updated_at>last.updated_at))
                OR (last.status='VERIFIED'
                    AND last.updated_at < now() - interval '72 hours')
+               OR (last.status IN ('VERIFIED','NO_ATTESTED_NEW_FACTS')
+                   AND EXISTS (
+                       SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts peer_v11
+                       WHERE peer_v11.card_id<>b.card_id AND peer_v11.status='VERIFIED'
+                         AND peer_v11.updated_at>last.updated_at
+                         AND peer_v11.after_fields->>'{INN}' IS NOT NULL
+                         AND (peer_v11.after_fields->>'{INN}'=v.after_fields->>'{INN}'
+                              OR EXISTS (SELECT 1 FROM {TABLE} known
+                                  WHERE known.card_id=b.card_id AND known.status='VERIFIED'
+                                    AND known.after_fields->>'{INN}'=peer_v11.after_fields->>'{INN}'))))
                OR (last.status IN (
                     'NO_ATTESTED_NEW_FACTS','INSUFFICIENT_CAPACITY',
                     'NONSTANDARD_REPORT')
@@ -317,6 +327,32 @@ def _v11_identity(report):
     )
     if registry and _is_valid_inn(registry[2]):
         return {"buyer":registry[1], "inn":registry[2], "legal_url":registry[3]}
+    return None
+
+
+def _prior_verified_public_identity(conn, card, source_hash, item):
+    """Keep previously source-proven identity through a search-provider outage.
+
+    Only a checksum-verified completed receipt that wrote this exact INN and
+    cites its legal source can supply it. Never trust editable CRM prose.
+    """
+    if not _is_valid_inn(item.get(INN)):
+        return None
+    from .serviceit_b2b_dossier_consistency_v37 import _safe_url
+    rows = conn.execute(f'''SELECT after_fields,salt,digest FROM {TABLE}
+        WHERE card_id=%s AND source_hash=%s AND status='VERIFIED'
+          AND after_fields ? %s AND after_fields ? %s
+        ORDER BY attempt_no DESC LIMIT 3''', (card,source_hash,INN,REPORT)).fetchall()
+    for fields, salt, digest in rows:
+        if (not isinstance(fields,dict) or fields.get(INN) != item.get(INN)
+                or not secrets.compare_digest(_digest(fields,bytes(salt)),bytes(digest))):
+            continue
+        report = fields.get(REPORT, '')
+        buyer = re.search(r'(?m)^Заказчик: ((?:АО|ООО|ПАО|ОАО) [^\n]{3,145})$', report)
+        inn = re.search(r'(?m)^ИНН заказчика: (\d{10}|\d{12}) \(публичные реквизиты;', report)
+        source = re.search(r'(?m)^Независимые публичные реквизиты: (https://[^\s]+)$', report)
+        if buyer and inn and source and inn[1] == item[INN] and _safe_url(source[1]):
+            return {'buyer':buyer[1], 'inn':inn[1], 'legal_url':source[1]}
     return None
 
 
@@ -479,17 +515,23 @@ def _related_signals(rest, conn, card, notice, inn):
     # read still have to establish the same buyer and immutable source.
     peers = set()
     try:
-        result = rest("crm.item.list", {
-            "entityTypeId": 1062, "useOriginalUfNames": "Y",
-            "filter": {"categoryId": 21, INN: inn},
-            "select": ["id", "categoryId", INN], "start": 0,
-        })
-        for row in strict_bitrix_items(result):
-            raw_id = str(row.get("id"))
-            if (raw_id.isascii() and raw_id.isdecimal() and 8 <= int(raw_id) <= 2_000_000_000
-                    and int(raw_id) != card and row.get(INN) == inn
-                    and str(row.get("categoryId")) == "21"):
-                peers.add(int(raw_id))
+        offset=0
+        for _ in range(10):
+            result = rest("crm.item.list", {
+                "entityTypeId": 1062, "useOriginalUfNames": "Y",
+                "filter": {"categoryId": 21, INN: inn},
+                "select": ["id", "categoryId", INN], "start": offset,
+            })
+            for row in strict_bitrix_items(result):
+                raw_id = str(row.get("id"))
+                if (raw_id.isascii() and raw_id.isdecimal() and 8 <= int(raw_id) <= 2_000_000_000
+                        and int(raw_id) != card and row.get(INN) == inn
+                        and str(row.get("categoryId")) == "21"):
+                    peers.add(int(raw_id))
+            next_page=result.get('next')
+            if not isinstance(next_page,int) or isinstance(next_page,bool) or next_page<=offset:
+                break
+            offset=next_page
     except (ValueError, TypeError, KeyError, httpx.HTTPError):
         pass
     rows = conn.execute(f"""
@@ -523,7 +565,48 @@ def _related_signals(rest, conn, card, notice, inn):
     return list(signals.values())[:5]
 
 
-def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
+def fresh_primary_evidence(notice, item, client, env):
+    """Fill missing passport data from the newly read exact primary source.
+
+    No model or CRM writes. The caller's V37 intent/readback receipt records
+    all resulting fields; manager decisions remain out of scope.
+    """
+    from .serviceit_vps_b2b_deep_research import (
+        verified_original_b2b_details, public_buyer_candidate,
+        followup_public_buyer_research, published_buyer_inn_evidence, _self_buyer,
+    )
+    from .serviceit_b2b_routerai_deep import source_only_investigation
+    from .serviceit_b2b_dossier_consistency_v37 import _record_from_verified
+
+    found = verified_original_b2b_details(
+        {"status": "PUBLIC_SOURCE_NOT_READABLE", "pages": []}, notice, client)
+    if not found.get("original_b2b_detail_independently_read"):
+        return {}, []
+    key = secret_file(env, "SERVICEIT_BRAVE_SEARCH_API_KEY", optional=True) or ""
+    try:
+        found = followup_public_buyer_research(found, env, client, key)
+    except (ValueError, httpx.HTTPError):
+        pass
+    buyer = public_buyer_candidate(found)
+    identity = {"buyer": buyer, "tender_url": notice["source_url"]} if buyer else {}
+    if any(_self_buyer(row) == buyer for row in found.get("pages", []) if buyer):
+        identity["organizer"] = buyer + " (закупка для собственных нужд)"
+    inn = published_buyer_inn_evidence(found)
+    if inn:
+        identity.update(inn=inn["inn"], legal_url=inn["public_source"])
+    facts = source_only_investigation(found)["facts"]
+    lines = [f'ПРОЧИТАННЫЙ ИСТОЧНИК / {f["category"]}: {f["quote"]} [{f["url"]}]'
+             for f in facts]
+    record = _record_from_verified(notice, item, lines, identity) or {}
+    record = {k: v for k, v in record.items() if v and k != "reviewed"}
+    if found.get("document_access") == "AUTH_REQUIRED":
+        record["document_access"] = "AUTH_REQUIRED"
+        record["documents"] = "Оригиналы на B2B доступны после входа; полное ТЗ не прочитано"
+    record["_fresh_source_lines"] = lines[:12]
+    return record, lines
+
+
+def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False,search_scope=None):
     """Never mutate on preview; one card per normal cycle; versioned receipts."""
     if env.get(ENABLED)!="YES":
         return {"status":"V37_DISABLED","crm_writes":0}
@@ -579,11 +662,34 @@ def run_once(env,client,conn,*,target_ids=None,preview=False,refresh=False):
             if badge_repair:
                 patch,meta=badge_repair,{"status":"DRAFT"}
             else:
-                identity = _v11_identity(original_v11)
+                identity = (_v11_identity(original_v11)
+                            or _prior_verified_public_identity(conn,card,source_hash,first))
+                prior = reviewed_or_verified(notice,first,lines,identity) or {}
+                if (exact.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES"
+                        and not all(prior.get(k) for k in ("buyer","inn","deadline","delivery","region"))):
+                    from contextlib import nullcontext
+                    # The coordinator's client otherwise rejects every
+                    # search API call outside V11. Only the first new-card
+                    # pass may open a bounded scope; later refreshes use
+                    # direct public sources without recurring search costs.
+                    scope = (search_scope(card,source) if callable(search_scope)
+                             and last_status is None and not preview
+                             else nullcontext())
+                    with scope:
+                        fresh_identity, fresh_lines = fresh_primary_evidence(notice,first,client,exact)
+                    if fresh_identity:
+                        name = lambda value: re.findall(r'(?iu)[а-яёa-z0-9]+',str(value).casefold())
+                        if (identity and identity.get('buyer') and fresh_identity.get('buyer')
+                                and name(identity['buyer']) != name(fresh_identity['buyer'])):
+                            raise ReconcileBlocked('FRESH_BUYER_CONFLICT_WITH_VERIFIED_IDENTITY')
+                        identity = {**(identity or {}), **fresh_identity}
+                        lines = fresh_lines + lines
                 patch,meta=prepare(notice,first,lines,identity)
                 record=reviewed_or_verified(notice,first,lines,identity)
                 inn=(record or {}).get("inn") or first.get(INN)
                 checks=_manager_checks(conn,client,exact,webhook,rest.base,card,source,inn)
+                if (record or {}).get("document_access") == "AUTH_REQUIRED":
+                    checks["documents"] = "B2B требует входа для оригиналов; " + checks.get("documents", "")
                 related=_related_signals(rest,conn,card,notice,inn)
                 base_patch=patch or {}
                 revised=manager_fields(notice,{**first,**base_patch},record,checks,related)

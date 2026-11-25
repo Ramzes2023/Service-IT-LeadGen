@@ -229,7 +229,7 @@ PUBLIC_BUYER_LABEL = re.compile(
 )
 PUBLIC_SELF_BUYER = re.compile(
     r'(?iu)\bорганизатор\s*[:—–-]?\s*' + BUYER_NAME
-    + r'\s+процедура\s+проводится\s*[:—–-]?\s*для\s+собственных\s+нужд\b'
+    + r'[\s.;]+процедура\s+проводится\s*[:—–-]?\s*для\s+собственных\s+нужд\b'
 )
 FULL_BUYER_FORMS = {
     "общество с ограниченной ответственностью": "ООО",
@@ -260,7 +260,7 @@ def _self_buyer(row):
         if _host(url, frozenset({"b2b-center.ru"})) not in {
                 "b2b-center.ru", "www.b2b-center.ru"}:
             return ""
-        tender = re.fullmatch(r"/app/market-next/[a-z0-9-]+/tender-([0-9]{5,12})/?",
+        tender = re.fullmatch(r"/(?:app/market-next|market)/[a-z0-9-]+/tender-([0-9]{5,12})/?",
                              urlsplit(url).path)
         body = " ".join(row["excerpt"].split())
         if not tender or not re.search(r"(?<!\d)№\s*" + tender[1] + r"(?!\d)", body):
@@ -318,6 +318,78 @@ def _linked_b2b_buyer_inn(findings, buyer, client):
     return None
 
 
+def _free_requisites_candidates(client, buyer, env):
+    """One existing free Search request; URLs only, never indexed INN facts."""
+    if (env.get("SERVICEIT_VPS_B2B_FREE_PUBLIC_FETCH_ENABLED") != "YES"
+            or env.get("SERVICEIT_DEEP_COMPANY_SEARCH_ENABLED") != "YES"):
+        return []
+    from .serviceit_b2b_remote_public_fetch import SEARCH_API
+    try:
+        token = secret_file(env, "SERVICEIT_TINYFISH_API_KEY", optional=True)
+        if not token or not token.isascii() or not 16 <= len(token) <= 256:
+            return []
+        response = client.get(SEARCH_API,
+            params={"query": buyer + " ИНН официальный сайт реквизиты",
+                    "location": "RU", "language": "ru", "page": 0},
+            headers={"X-API-Key": token, "Accept": "application/json"},
+            follow_redirects=False, timeout=14)
+        if (response.status_code != 200 or len(response.content) > 200000
+                or "application/json" not in response.headers.get("content-type", "")):
+            return []
+        rows = response.json().get("results", [])
+        if not isinstance(rows, list):
+            return []
+    except (httpx.HTTPError, ValueError, OSError):
+        return []
+    urls = []
+    for row in rows[:12]:
+        if not isinstance(row, dict) or not isinstance(row.get("url"), str):
+            continue
+        url = row["url"]
+        try:
+            _host(url, frozenset({urlsplit(url).hostname or ""}))
+        except (ResearchBlocked, ValueError):
+            continue
+        if len(url) <= 1000 and url not in urls:
+            urls.append(url)
+    # A separately fetched page must still pass exact legal name, INN label,
+    # checksum and conflicting-entity rejection. No snippet is returned.
+    return [{"url": url} for url in urls[:8]]
+
+
+def _company_requisites_page(client, url, hosts):
+    """Bounded 1 MiB legal-page reader after the common 160k HTML reader.
+
+    Larger corporate menus must not look like missing requisites. Robots,
+    public DNS, HTTPS and no redirects/auth-wall rules remain mandatory.
+    """
+    from .serviceit_public_evidence_research import _page, _public_dns, VisibleText, AGENT
+    try:
+        return _page(client, url, hosts)
+    except ResearchBlocked as exc:
+        if str(exc) != "RESEARCH_PAGE_UNAVAILABLE":
+            raise
+    # _page already passed robots before fetching the unavailable/large HTML.
+    host = _host(url, hosts)
+    if not _public_dns(host):
+        raise ResearchBlocked("RESEARCH_DNS_UNVERIFIED")
+    with client.stream("GET", url, follow_redirects=False, timeout=10,
+                       headers={"User-Agent":AGENT, "Accept":"text/html"}) as response:
+        if response.status_code != 200 or "text/html" not in response.headers.get("content-type", ""):
+            raise ResearchBlocked("RESEARCH_PAGE_UNAVAILABLE")
+        chunks, size = [], 0
+        for chunk in response.iter_bytes():
+            size += len(chunk)
+            if size > 1_048_576:
+                raise ResearchBlocked("RESEARCH_PAGE_OVERSIZED")
+            chunks.append(chunk)
+        raw = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+    parser = VisibleText(); parser.feed(raw)
+    return {"url":url, "text":" ".join(parser.parts)[:64000],
+            "links":parser.links[:1000], "emails":parser.mail[:30],
+            "phones":parser.tel[:30], "complete_visible":True}
+
+
 def _public_company_self_declaration(client, buyer, known_pages, token, *, allow_extra_discovery=False):
     """Bounded public-only company/site discovery; not legal FNS verification.
 
@@ -346,7 +418,7 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
         r'(?iu)(?:' + re.escape(form) + '|' +
         r'\s+'.join(map(re.escape, form_long.split())) +
         r')\s*[«"]' + re.escape(name) + r'[»"]')
-    urls = [x.get("url") for x in known_pages[:3]
+    urls = [x.get("url") for x in known_pages[:8]
             if isinstance(x, dict) and isinstance(x.get("url"), str)]
     # Extra source-backed discovery is also needed when Brave found OTHER
     # company pages but none with the same legal buyer and printed INN.
@@ -370,7 +442,8 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
             pass
     results = []
     attempted = set()
-    for raw in urls:
+    followed_legal_links = 0
+    for position, raw in enumerate(urls):
         if len(attempted) >= 8 or len(results) >= 3:
             break
         if not isinstance(raw, str) or raw in attempted:
@@ -384,22 +457,47 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
             if any(host == p or host.endswith("." + p)
                    for p in (MARKETPLACES | MIRRORS)):
                 continue
-            page = _page(client, raw, frozenset({host}))
+            page = _company_requisites_page(client, raw, frozenset({host}))
+            if len(page["text"]) >= 6990 and not page.get("complete_visible"):
+                # Legal details often follow large navigation menus. Keep
+                # the full bounded visible page locally, never in a prompt.
+                from .serviceit_public_evidence_research import _get, VisibleText
+                parser = VisibleText()
+                parser.feed(_get(client, raw, frozenset({host})))
+                page["text"] = " ".join(parser.parts)[:64000]
+                page["links"] = parser.links[:1000]
             body = " ".join(page["text"].split())
         except (ResearchBlocked, httpx.HTTPError, ValueError, TypeError, KeyError):
             continue
         valid = []
-        for label in list(legal.finditer(body))[:8]:
+        for label in list(legal.finditer(body))[:64]:
             context = body[label.end():label.end()+480]
             # Never read the subsidiary's or another organization’s INN.
             context = re.split(
                 r'(?iu)(?:ООО|ПАО|АО|ОАО|ЗАО|Общество\s+с\s+'
                 r'ограниченной\s+ответственностью)\s*[«"]',
                 context, maxsplit=1)[0]
-            for inn in re.findall(r'(?iu)\bИНН\s*(?:[/№:]|\s){0,6}(\d{10}|\d{12})(?!\d)',
+            for inn in re.findall(r'(?iu)\bИНН\s*(?:[/–-]\s*КПП\s*)?(?:[/№:]|\s){0,6}(\d{10}|\d{12})(?!\d)',
                                   context):
                 if _is_valid_inn(inn):
                     valid.append(inn)
+        if not valid and legal.search(body) and followed_legal_links < 2:
+            # Official pages often put INN in a linked legal agreement,
+            # not next to the company name on the home/about page.
+            linked = []
+            for href, label in page.get("links", [])[:1000]:
+                if not re.search(r'(?iu)реквизит|юридическ|пользовательск\w*\s+соглаш|rekvizit|polzovatelskoe-soglashenie', label+' '+href):
+                    continue
+                target = urljoin(raw,href)
+                p = urlsplit(target)
+                if (p.scheme != 'https' or p.hostname != host or p.query or p.fragment
+                        or target in attempted or target in linked):
+                    continue
+                linked.append(target)
+                followed_legal_links += 1
+                if followed_legal_links == 2:
+                    break
+            urls[position+1:position+1] = linked
         if len(set(valid)) != 1:
             continue
         inn = valid[0]
@@ -435,7 +533,11 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
                     "origin": "LEGAL_NAME_AND_INN_ON_PUBLIC_PAGE_NOT_FNS",
                     "role": "публичный телефон компании; тендерный ответственный не подтверждён",
                 })
-        results.append({"inn": inn, "url": raw, "contacts": company_contacts[:6]})
+        registry = host in {"cbr.ru", "www.cbr.ru", "e-disclosure.ru", "www.e-disclosure.ru", "bo.nalog.ru"}
+        # The registry's switchboard never belongs to the named issuer.
+        results.append({"inn": inn, "url": raw,
+                        "contacts": [] if registry else company_contacts[:6],
+                        "registry": registry})
     if not results or len({x["inn"] for x in results}) != 1:
         return None
     contacts = {}
@@ -445,7 +547,9 @@ def _public_company_self_declaration(client, buyer, known_pages, token, *, allow
     return {"inn": results[0]["inn"], "buyer_name": buyer,
             "public_source": results[0]["url"],
             "contacts": list(contacts.values())[:8],
-            "fns_verified": False, "provenance": "PUBLIC_CORPORATE_SELF_DECLARATION"}
+            "fns_verified": False,
+            "provenance": ("PUBLIC_REGISTRY_REQUISITES" if results[0]["registry"]
+                           else "PUBLIC_CORPORATE_SELF_DECLARATION")}
 
 
 def followup_public_buyer_research(findings, env, client, key):
@@ -468,15 +572,22 @@ def followup_public_buyer_research(findings, env, client, key):
         return {**findings, "independent_company_research": {
             **(previous if isinstance(previous, dict) else {}), "public_inn": linked,
         }}
-    if isinstance(previous, dict) and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY":
-        return findings
+    # A successful company search may contain only candidate pages, not INN.
+    # Reuse those candidates; do not let its status suppress requisites lookup.
+    reusable = (isinstance(previous, dict)
+                and previous.get("company_name_provenance") ==
+                    "PUBLIC_BUYER_LABEL_LEGAL_IDENTITY_UNVERIFIED")
+    if (isinstance(previous, dict) and not reusable
+            and previous.get("status") != "NO_PUBLIC_COMPANY_IDENTITY"):
+        return findings  # Unattributed prior search must not trigger a second query.
     from .serviceit_independent_company_research import independent_company_research
     try:
-        independent = independent_company_research(
+        independent = (dict(previous) if reusable else {"status":"FREE_REQUISITES_DISCOVERY", "pages":[]}
+                       if not key else independent_company_research(
             client, company_name=buyer, signal_kind="tender",
             source_host="b2b-center.ru", search_token=key,
             llm_context_enabled=env.get("SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED") == "YES",
-        )
+        ))
     except (ValueError, httpx.HTTPError):
         return findings
     if not isinstance(independent, dict):
@@ -485,6 +596,11 @@ def followup_public_buyer_research(findings, env, client, key):
     website = _public_company_self_declaration(
         client, buyer, independent.get("pages") or [], key,
         allow_extra_discovery=(env.get("SERVICEIT_PUBLIC_COMPANY_REQUISITES_EXTRA_SEARCH_ENABLED") == "YES"))
+    if not website:
+        candidates = _free_requisites_candidates(client, buyer, env)
+        independent["requisites_fallback_candidates"] = len(candidates)
+        if candidates:
+            website = _public_company_self_declaration(client, buyer, candidates, "")
     if website:
         independent["public_inn"] = {
             key: website[key] for key in
@@ -628,6 +744,35 @@ def _merge_independent_tinyfish(candidate, fetched, tender_id):
     return result
 
 
+def _primary_html_with_canonical_redirect(client, url, allowed, tender_id):
+    """Permit one same-host canonical redirect to the SAME tender only."""
+    from .serviceit_public_evidence_research import _get, _robots
+    observed = []
+    def capture(response):
+        if str(response.request.url) == url:
+            observed.append((response.status_code, response.headers.get('location','')))
+    hooked = isinstance(client,httpx.Client)
+    if hooked:
+        client.event_hooks['response'].append(capture)
+    try:
+        try:
+            return _get(client,url,allowed), url
+        except ResearchBlocked:
+            if not observed or observed[-1][0] not in {301,302,307,308}:
+                raise
+    finally:
+        if hooked:
+            client.event_hooks['response'].remove(capture)
+    target = urljoin(url,observed[-1][1])
+    origin,p = urlsplit(url),urlsplit(target)
+    if (p.scheme != 'https' or p.hostname != origin.hostname or p.query or p.fragment
+            or p.username or p.password or p.port not in (None,443)
+            or not re.fullmatch(r'/(?:app/market-next|market)/[a-z0-9-]+/tender-'+re.escape(tender_id)+r'/?',p.path)):
+        raise ResearchBlocked('PRIMARY_REDIRECT_NOT_SAME_TENDER')
+    _robots(client,target,allowed)
+    return _get(client,target,allowed), target
+
+
 def verified_original_b2b_details(candidate, notice, client):
     """Prefer the full, safely reduced ORIGINAL public B2B details over a 4k head.
 
@@ -656,7 +801,7 @@ def verified_original_b2b_details(candidate, notice, client):
                 or _host(url, allowed) not in ("www.b2b-center.ru", "b2b-center.ru")):
             return candidate
         _robots(client, url, allowed)
-        raw = _get(client, url, allowed)
+        raw, read_url = _primary_html_with_canonical_redirect(client,url,allowed,tid)
         parser = VisibleText()
         parser.feed(raw)
         excerpt = detailed_public_excerpt(parser.parts, tid, subject)
@@ -669,10 +814,29 @@ def verified_original_b2b_details(candidate, notice, client):
     if any(type(p) is not dict for p in pages):
         return candidate
     original = next((p for p in pages if p.get("url") == url), {})
-    primary = {**original, "url": url, "excerpt": excerpt}
-    result["pages"] = ([primary] + [p for p in pages if p.get("url") != url])[:MAX_PAGES]
+    # Carry exact first-party profile links to the buyer resolver. Previously
+    # only the text survived, so the linked-profile path was never reachable.
+    profile_links = []
+    for href, label in parser.links[:2000]:
+        target = urlsplit(urljoin(url, href))
+        if (target.hostname == parsed.hostname and not target.query
+                and not target.fragment
+                and re.fullmatch(r"/firms/[a-z0-9-]+/[0-9]+/?", target.path)):
+            profile_links.append((href, label))
+    primary = {**original, "url": read_url, "excerpt": excerpt,
+               "profile_links": profile_links[:12]}
+    # An email subject becomes scope evidence only after an exact occurrence
+    # on the independently fetched, number-matched primary page.
+    title = re.search(re.escape(" ".join(subject.split())), excerpt, re.I)
+    if title and len(title[0]) <= 220:
+        primary["verified_subject"] = title[0]
+    result["pages"] = ([primary] + [p for p in pages if p.get("url") not in {url,read_url}])[:MAX_PAGES]
     result["status"] = "PUBLIC_PAGES_INSPECTED"
     result["original_b2b_detail_independently_read"] = True
+    visible = " ".join(parser.parts)
+    if re.search(r"(?iu)документация\s+от\s+организатора\s*[:.]?\s*"
+                 r"доступно\s+зарегистрированным\s+пользователям", visible):
+        result["document_access"] = "AUTH_REQUIRED"
     return result
 
 
@@ -752,6 +916,8 @@ def source_findings(item, notice, env, client, *, enable_v18=False,
         # The coordinator enables the verified public-detail path explicitly.
         if env.get("SERVICEIT_VPS_B2B_PRIMARY_DETAIL_ENABLED") == "YES":
             result = verified_original_b2b_details(result, notice, client)
+            from .serviceit_b2b_eis_mirrors import supplement_eis_mirrors
+            result = optional(supplement_eis_mirrors,result,notice,client) or result
         result = dict(result)
         result["tinyfish_independent_stage"] = (
             "DISABLED_BY_SOURCE_POLICY" if not tinyfish_authorized else

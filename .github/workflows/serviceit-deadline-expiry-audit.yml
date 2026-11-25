@@ -1,0 +1,62 @@
+# Verify removal of rejected left-side presentation, preserving stored inputs.
+name: ServiceIT verify confirmed credential renewal and background automation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-deadline-expiry-audit.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-deadline-expiry-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: ${{ vars.SERVICEIT_VPS_HOST }}
+      VPS_USER: ${{ vars.SERVICEIT_VPS_DEPLOY_USER }}
+      VPS_SSH_KEY: ${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read live card fields and document counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/bidzaar-audit"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/"*
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'python3 -B -' < ops/serviceit_deadline_expiry_audit.py
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          crontab -l | grep -q '# SERVICEIT_MANAGER_WORKSPACE_V1$'
+          crontab -l | grep -q '^2-59/5 .*# SERVICEIT_DEADLINE_EXPIRY_V1$'
+          printf 'EXPIRY_SCHEDULE=VERIFIED\n'
+          logfile="$HOME/serviceit/manager-workspace/expiry-status.log"
+          test -f "$logfile"
+          tail -n 20 "$logfile" | grep -E '^EXPIRY_[A-Z_]+=[A-Z0-9_]+$'
+          tail -n 10 "$logfile" | grep -q '^EXPIRY_STATUS=VERIFIED$'
+          docker exec -i serviceit-manager-workspace-app python -B - <<'PYAPP'
+          import json,time
+          from pathlib import Path
+          for _ in range(36):
+           state=json.loads(Path('/data/status.json').read_text())
+           if state.get('status')=='OK' and time.time()-state.get('completed_at',0)<420:break
+           time.sleep(5)
+          print('PANELS_STATUS='+str(state.get('status')))
+          print('PANELS_CARDS='+str(state.get('cards')))
+          assert state.get('status')=='OK' and not state.get('failed_cards')
+          assert time.time()-state.get('completed_at',0)<420
+          print('PANELS_BACKGROUND=VERIFIED')
+          auth=json.loads(Path('/data/auth.json').read_text())
+          assert auth.get('expires',0)>time.time()+1800
+          print('PANELS_TOKEN_RENEWED=VERIFIED')
+          PYAPP
+          REMOTE

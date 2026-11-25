@@ -137,6 +137,10 @@ def public_documents(findings: dict) -> list[dict]:
         if len(text) >= 30:
             docs.append({"source_id": len(docs) + 1,
                          "url": url, "text": text[:MAX_DOCUMENT_CHARS]})
+            subject = entry.get("verified_subject")
+            if (isinstance(subject, str) and 10 <= len(subject) <= 220
+                    and subject in text and _clean_public_segment(subject)):
+                docs[-1]["verified_subject"] = subject
     return docs
 
 
@@ -248,7 +252,7 @@ def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
         ("OTHER", r"(?iu)\bорганизатор\s*[:：—-]?\s*"
                   r"(?:ПАО|ООО|АО|ОАО|ЗАО)\s*[«\"][^»\"]{3,100}[»\"]"),
         ("PAYMENT", r"(?iu)\bусловия\s+оплаты\s*(?:[:：—-]\s*)?"
-                    r"(?:предпочтительно\s+)?(?:отсрочка|оплата|предоплата|аванс)"
+                    r"(?:предпочтительно\s+)?(?:отсрочка|оплата|предоплата|постоплата|аванс)"
                     r"[^.;]{5,125}"),
         # New B2B layouts render the label and value in separate HTML nodes:
         # "Условия поставки / оказания услуг" then "электронная поставка".
@@ -258,7 +262,7 @@ def b2b_primary_detail_facts(docs: list[dict]) -> list[dict]:
                      r"\s*(?:[:：—-]\s*)?[^\n]{8,100}"),
         ("LOCATION", r"(?iu)\bадрес\s+поставки(?:\s*/\s*оказания\s+услуг)?"
                      r"\s*(?:[:：—-]\s*)?(?:Россия[,]?\s*)?"
-                     r"(?:г[.]?\s*Москва|Московская\s+область)[^\n]{8,130}"),
+                     r"(?:(?:г[.]?\s*)?Москва|Московская\s+область)[^\n]{8,130}"),
         ("EVALUATION", r"(?iu)\bпри\s+выборе\s+победителя\s+учитывается"
                        r"\s*[:：—-]\s*[^.;]{8,110}"),
         ("DOCUMENTS", r"(?iu)\bподгрузка\s+документации\s+к\s+заявке\s+"
@@ -337,6 +341,14 @@ def extract_source_facts(docs: list[dict]) -> list[dict]:
     # Explicit B2B fields are more useful than generic site-menu phrases.
     # Prioritize these verified primary-page labels within the 16-fact cap.
     facts = b2b_primary_detail_facts(docs)
+    for doc in docs[:MAX_PAGES]:
+        subject = doc.get("verified_subject")
+        if (isinstance(subject, str) and subject in doc.get("text", "")
+                and 10 <= len(subject) <= 220):
+            facts.insert(0, {"source_id": doc["source_id"], "url": doc["url"],
+                            "quote": subject, "category": "SCOPE",
+                            "finding": "Предмет подтверждён первичной страницей закупки"})
+    facts = facts[:16]
     seen = {(row["source_id"],row["quote"]) for row in facts}
     for doc in docs[:MAX_PAGES]:
         text = doc.get("text", "")
@@ -398,11 +410,13 @@ def source_only_investigation(findings: dict):
     }
 
 
-def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeout=100.0) -> dict:
+def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeout=100.0, output_tokens=6200) -> dict:
     """Single paid RouterAI attempt. Fixed reason codes, no payload logging.
 
     The caller commits a versioned PostgreSQL receipt BEFORE POST. No retries.
     """
+    if type(output_tokens) is not int or output_tokens not in (6200,12000):
+        raise DeepEvidenceError('ROUTERAI_OUTPUT_BUDGET_INVALID')
     docs = public_documents(findings)
     if not docs:
         raise DeepEvidenceError("NO_SAFE_PUBLIC_DOCUMENTS")
@@ -422,9 +436,33 @@ def investigate_routerai(client: httpx.Client, config, findings: dict, *, timeou
             "manager_questions": ["Что нужно подтвердить?"],
         },
     }, ensure_ascii=False)
-    return validate_inference(_routerai_json(
-        client, config, _SYSTEM, prompt, max_tokens=6200, timeout=timeout,
+    report = validate_inference(_routerai_json(
+        client, config, _SYSTEM, prompt, max_tokens=output_tokens, timeout=timeout,
     ), docs)
+    return complete_source_coverage(report, docs)
+
+
+def complete_source_coverage(report, docs):
+    """Retain literal primary fields even when a valid model omits them.
+
+    No extra network/model calls. Use the same sanitized independently read
+    documents as validation. Cover categories first, then extra details, so
+    16 technical phrases cannot crowd out a published deadline or payment.
+    """
+    source = extract_source_facts(docs)
+    candidates = list(report.get("facts", [])) + source
+    facts, seen, categories = [], set(), set()
+    for distinct_category in (True, False):
+        for fact in candidates:
+            identity = (fact["url"], fact["quote"], fact["category"])
+            if identity in seen or (distinct_category and fact["category"] in categories):
+                continue
+            facts.append(fact)
+            seen.add(identity)
+            categories.add(fact["category"])
+            if len(facts) == 16:
+                return {**report, "facts": facts}
+    return {**report, "facts": facts}
 
 
 def _routerai_json(client, config, system, prompt, *, max_tokens, timeout):
@@ -440,7 +478,10 @@ def _routerai_json(client, config, system, prompt, *, max_tokens, timeout):
                   "messages": [{"role": "system", "content": system},
                                {"role": "user", "content": prompt}],
                   "response_format": {"type": "json_object"},
-                  "temperature": 0, "max_tokens": max_tokens},
+                  "temperature": 0, "max_tokens": max_tokens,
+                  # Verified model supports low/high/max. Bound reasoning only
+                  # for document retries after output truncation, not all calls.
+                  **({'reasoning':{'effort':'low'}} if max_tokens==12000 and config.model=='deepseek/deepseek-v4.1-flash' else {})},
             headers={"Authorization": "Bearer " + config.key,
                      "Accept": "application/json"},
             follow_redirects=False, timeout=timeout)

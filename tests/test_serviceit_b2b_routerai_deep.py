@@ -162,3 +162,32 @@ def test_no_quotes_does_not_claim_ai_verified_facts():
     assert fields[PREFIX+"AI_STATUS"] == "PUBLIC_RESEARCH_ROUTERAI_NO_VERIFIED_QUOTES"
     assert "4673595" in fields[PREFIX+"AI_FULL_REPORT"]
     assert "сто миллионов" not in fields[PREFIX+"AI_FULL_REPORT"]
+
+
+@pytest.mark.parametrize("budget", [6200,12000])
+def test_retry_output_budget_keeps_citation_validation(monkeypatch,budget):
+    seen=[]
+    def respond(*args,**kwargs):
+        seen.append(kwargs['max_tokens'])
+        return example_model()
+    monkeypatch.setattr(deep,'_routerai_json',respond)
+    result=deep.investigate_routerai(None,None,PUBLIC,output_tokens=budget)
+    assert seen==[budget]
+    assert '99 миллионов' not in str(result['facts'])
+    with pytest.raises(deep.DeepEvidenceError,match='OUTPUT_BUDGET'):
+        deep.investigate_routerai(None,None,PUBLIC,output_tokens=999999)
+
+
+@pytest.mark.parametrize('model,budget,expected',[
+ ('deepseek/deepseek-v4.1-flash',12000,{'effort':'low'}),
+ ('deepseek/deepseek-v4.1-flash',6200,None),
+ ('other/model',12000,None)])
+def test_low_reasoning_only_for_verified_retry_model(model,budget,expected):
+    seen=[]
+    def response(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200,json={'choices':[{'finish_reason':'stop','message':{'content':'{"ok":true}'}}]})
+    config=SimpleNamespace(provider='routerai',url='https://routerai.ru/api/v1/chat/completions',key='offline-test',model=model)
+    with httpx.Client(transport=httpx.MockTransport(response)) as client:
+        assert deep._routerai_json(client,config,'system','prompt',max_tokens=budget,timeout=90)=={'ok':True}
+    assert seen[0].get('reasoning')==expected

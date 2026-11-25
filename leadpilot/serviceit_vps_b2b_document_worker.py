@@ -449,7 +449,7 @@ def build_report(notice, docs, reports, *, attachments_planned=0):
     need(100 <= len(result) <= MAX_REPORT, "TDI_REPORT_OVERSIZED")
     return "".join("•" if ord(char) > 0xffff else char for char in result)
 
-def run_once(env, client, connection, *, preview=False, target_card=None):
+def run_once(env, client, connection, *, preview=False, target_card=None, search_scope=None):
     if env.get(ENABLED, "NO") != "YES":
         return {"status": "TDI_DISABLED", "crm_writes": 0}
     need(live_permitted(env)
@@ -485,7 +485,14 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
                  for k in AI_FIELDS), "TDI_NINE_EXISTING_AI_REQUIRED")
         try:
             if target_card is None:
-                findings = source_findings(before, notice, exact_environment(env), client)
+                from contextlib import nullcontext
+                prior_scan = connection.execute(
+                    'SELECT 1 FROM serviceit_vps_b2b_tender_doc_receipts WHERE card_id=%s',
+                    (card,)).fetchone() if callable(search_scope) else True
+                scope = (search_scope(card,source) if callable(search_scope)
+                         and not prior_scan and not preview else nullcontext())
+                with scope:
+                    findings = source_findings(before, notice, exact_environment(env), client)
             else:
                 from .serviceit_public_evidence_research import _page, ResearchBlocked
                 findings = {"status":"PUBLIC_RESEARCH_INCOMPLETE","pages":[]}
@@ -506,12 +513,15 @@ def run_once(env, client, connection, *, preview=False, target_card=None):
         docs = evidence["documents"]
         if preview:
             return {"status": "TDI_PREVIEW", "crm_writes": 0,
+                    "access_status": evidence.get("access_status", "UNKNOWN"),
                     "documents_readable": len(docs),
                     "links_found": evidence["discovered"],
                     "eis_links": evidence.get("eis_links",0)}
         if not docs:
             save_no_documents(connection, card, source)
-            return {"status": "TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H",
+            return {"status": ("TDI_PUBLIC_DOCUMENTS_REQUIRE_LOGIN_RETRY_12H"
+                               if evidence.get("access_status") == "AUTH_REQUIRED"
+                               else "TDI_NO_PUBLIC_DOCUMENTS_RETRY_12H"),
                     "crm_writes": 0, "documents_readable": 0,
                     "links_found": evidence["discovered"],
                     "eis_links": evidence.get("eis_links",0),

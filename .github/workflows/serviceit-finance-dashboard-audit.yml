@@ -1,0 +1,65 @@
+# Independent finance acceptance; no financial amounts in public logs.
+name: ServiceIT finance dashboard live acceptance
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/serviceit-finance-dashboard-audit.yml]
+permissions:
+  contents: read
+concurrency:
+  group: serviceit-finance-dashboard-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: serviceit-vps-readonly
+    env:
+      VPS_HOST: ${{ vars.SERVICEIT_VPS_HOST }}
+      VPS_USER: ${{ vars.SERVICEIT_VPS_DEPLOY_USER }}
+      VPS_SSH_KEY: ${{ secrets.SERVICEIT_VPS_DEPLOY_SSH_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.SERVICEIT_VPS_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read live card fields and document counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/bidzaar-audit"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$VPS_SSH_KEY" > "$stage/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$stage/hosts"
+          chmod 0600 "$stage/"*
+          opts=(-o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$stage/hosts" -o BatchMode=yes)
+          ssh -T -i "$stage/id" "${opts[@]}" "$VPS_USER@$VPS_HOST" 'docker exec -i serviceit-manager-workspace-app python -B -' <<'PY'
+          import json,time
+          from pathlib import Path
+          import automation as a
+          import finance_dashboard as f
+          for _ in range(60):
+           status=a.read('finance-status.json',{})
+           summary=a.read('finance-summary.json',{})
+           if status.get('status')=='OK' and time.time()-summary.get('updated_at',0)<420:break
+           time.sleep(5)
+          print('FINANCE_BACKGROUND_STATUS='+str(status.get('status')))
+          assert status.get('status')=='OK'
+          assert time.time()-summary.get('updated_at',0)<420
+          token=a.read('auth.json')['access_token']
+          bindings=a.api(token,'placement.get')
+          matches=[r for r in bindings if r.get('placement')==f.PLACEMENT and r.get('handler')==f.HANDLER]
+          assert len(matches)==1
+          print('FINANCE_TOOLBAR=VERIFIED')
+          fields=a.api(token,'crm.item.fields',entityTypeId=1062,useOriginalUfNames='Y')['fields']
+          assert all(f.P+k in fields for k in ('FIN_PAID_MANAGER','FIN_PAID_DEVELOPER'))
+          print('FINANCE_PAYOUT_INPUTS=VERIFIED')
+          live=f.snapshot(token)
+          t=live['totals']
+          assert t['profit']==t['company']+t['manager']+t['developer']
+          print('FINANCE_VISIBLE_CARDS='+str(live['scanned']))
+          print('FINANCE_SUCCESSFUL_ACTUAL_CARDS='+str(live['count']))
+          print('FINANCE_RECONCILIATION=VERIFIED')
+          assert not live['excluded']['invalid']
+          print('FINANCE_ACCEPTANCE=VERIFIED')
+          PY

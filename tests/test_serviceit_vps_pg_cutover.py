@@ -159,7 +159,9 @@ def test_native_vps_exact_env_does_not_read_any_legacy_github_key(monkeypatch):
     assert "SERVICEIT_GH_LEDGER_KEY" not in result
     assert "SERVICEIT_BITRIX_EVENT_BRIDGE_KEY" not in result
     assert "GITHUB_TOKEN" not in result
-    assert result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] == "YES"
+    assert result["SERVICEIT_BRAVE_LLM_CONTEXT_ENABLED"] == "NO"
+    assert result["SERVICEIT_BRAVE_SEARCH_API_KEY"] == ""
+    assert result["SERVICEIT_BRAVE_SEARCH_API_KEY_FILE"] == ""
     assert result["SERVICEIT_PUBLIC_RESEARCH_ENABLED"] == "YES"
     assert result["SERVICEIT_CORPORATE_APPROVALS_JSON"] == "{}"
     assert "GITHUB_EVENT_NAME" not in result

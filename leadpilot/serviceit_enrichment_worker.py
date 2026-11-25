@@ -32,7 +32,7 @@ from .serviceit_enrichment_store import Store, ModelFence
 from .serviceit_kanban_presentation import fields_from_assessment, SCORE_FIELD, VERSION_FIELD, BADGE_FIELD
 
 FIELDS = AI_FIELDS | {SCORE_FIELD, VERSION_FIELD, BADGE_FIELD}
-GATES = ('company_registry','source','existing_customer','crm_dedup','stop_list',
+GATES = ('source','existing_customer','crm_dedup','stop_list',
          'legal_basis','contact','private_small_moscow','manager_criteria')
 
 

@@ -1,0 +1,526 @@
+import httpx,pytest
+from leadpilot import serviceit_extended_documents as docs
+from leadpilot import serviceit_company_contacts as contacts
+from leadpilot.serviceit_extended_evidence_worker import owned,BEGIN,END
+
+
+def test_new_document_content_reopens_contact_research_once():
+    from leadpilot.serviceit_extended_evidence_worker import refresh_document_contacts
+    class Conn:
+        rows=[('https://company.ru/a.pdf','hash-a')]
+        signature=None
+        rescheduled=0
+        def execute(self,sql,args):
+            if sql.startswith('SELECT DISTINCT'):
+                assert "('READ','EXTRACTED')" in sql
+                assert 'OCR' in sql
+                return self
+            signature,inn,expected=args
+            assert signature==expected and inn=='7707083893'
+            assert 'IS DISTINCT FROM' in sql
+            if signature!=self.signature:
+                self.signature=signature;self.rescheduled+=1
+        def fetchall(self):return self.rows
+    conn=Conn()
+    refresh_document_contacts(conn,'7707083893')
+    refresh_document_contacts(conn,'7707083893')
+    assert conn.rescheduled==1
+    conn.rows.append(('https://company.ru/b.pdf','hash-b'))
+    refresh_document_contacts(conn,'7707083893')
+    conn.rows.reverse()
+    refresh_document_contacts(conn,'7707083893')
+    assert conn.rescheduled==2
+
+
+def test_contacts_require_labelled_inn_not_name_or_number():
+    page={'url':'https://acme.ru/contacts','text':'Acme 7707083893 +7 (495) 123-45-67 info@acme.ru'}
+    assert contacts.extract([page],'7707083893')==[]
+    page['text']='ИНН: 7707083893\n'+page['text']
+    assert {c['value'] for c in contacts.extract([page],'7707083893')}=={'+7 (495) 123-45-67','info@acme.ru'}
+    assert not contacts.extract([page],'7707083894')
+
+
+def test_no_cross_domain_or_multi_company_contacts():
+    proof={'url':'https://acme.ru/legal','text':'ИНН 7707083893'}
+    other={'url':'https://other.ru/contact','text':'info@other.ru'}
+    group={'url':'https://acme.ru/group','text':'ИНН 7707083893 ИНН 7707083894 info@other.ru'}
+    assert contacts.extract([proof,other,group],'7707083893')==[]
+
+
+def test_bank_numbers_not_phones():
+    page={'url':'https://acme.ru/legal','text':'ИНН 7707083893 Счёт 40702810900000012345'}
+    assert contacts.extract([page],'7707083893')==[]
+
+
+def test_register_all_files_not_first_six():
+    class Conn:
+        calls=[]
+        def execute(self,*args):self.calls.append(args)
+    conn=Conn();docs.register(conn,35,[{'url':str(i),'name':str(i)+'.doc'} for i in range(13)])
+    assert len(conn.calls)==13
+
+
+def test_download_legacy_converter_and_safe_redirect(monkeypatch):
+    url='https://bidzaar.com/api/filestorage/files/download/d0160ece-9258-4201-8a96-135e560e04d5'
+    monkeypatch.setattr(docs,'legacy_doc',lambda raw:'текст '*10000)
+    with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(200,content=b'doc'))) as client:
+        assert len(docs.download(client,url,'old.doc')['text'])>24000
+    with httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(302,headers={'location':'http://127.0.0.1/secret'}))) as client:
+        with pytest.raises(ValueError,match='REDIRECT'):docs.download(client,url,'old.doc')
+
+
+def test_converter_rejects_fake_doc():
+    with pytest.raises(ValueError,match='SIGNATURE'):docs.legacy_doc(b'<html>login</html>')
+
+
+def test_owned_block_replacement_preserves_manager_text():
+    before='Условия клиента\n'+BEGIN+'\nold\n'+END+'\nРешение менеджера'
+    result=owned(before,'new')
+    assert 'Условия клиента' in result and 'Решение менеджера' in result
+    assert result.count(BEGIN)==1 and 'old' not in result
+    assert owned(result,'new')==result
+
+
+@pytest.mark.parametrize("attempts,size,previous_size", [(0,24000,24000),(1,12000,24000),(3,6000,24000),(0,6000,6000)])
+def test_chunk_queue_resumes_after_24000_without_redownload(monkeypatch,attempts,size,previous_size):
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        updates=[]
+        def execute(self,sql,args=()):
+            if sql.startswith('SELECT card_id,url,name'):return Result([])
+            if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://source', 'a'*48001,24000,attempts,previous_size)])
+            self.updates.append(args);return Result([])
+    conn=Conn();seen=[]
+    monkeypatch.setattr(docs,'full_window_research',lambda client,env,inputs:seen.extend(inputs) or [{'provider':'RouterAI','facts':[]}])
+    docs.process(conn,None,{})
+    assert len(seen[0]['text'])==size
+    assert seen[0]['retry_profile'] is True
+    assert conn.updates[-1][0]=='EXTRACTED' and conn.updates[-1][1]==24000+size
+
+
+def test_crm_update_preserves_fields_and_requires_readback(monkeypatch):
+    from contextlib import nullcontext
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,row=None):self.row=row
+        def fetchone(self):return self.row
+    class Conn:
+        calls=[]
+        def transaction(self):return nullcontext()
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            return Result((True,)) if 'pg_try_advisory' in sql else Result()
+    before={worker.REPORT:'old',worker.BRIEF:'brief',worker.INN:'7707083893','categoryId':21}
+    snapshots=iter([before,{**before,worker.REPORT:'new'}]);sent=[]
+    monkeypatch.setattr(worker,'get',lambda rest,card:next(snapshots))
+    class Rest:base='https://crm.invalid/rest/test'
+    def handler(request):
+        import json
+        payload=json.loads(request.content);sent.append(payload)
+        assert payload['fields']=={worker.REPORT:'new'}
+        return httpx.Response(200,json={'result':{'item':{}}})
+    conn=Conn()
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert worker.patch(conn,Rest(),client,35,before,{worker.REPORT:'new'})
+    assert len(sent)==1 and any("status='VERIFIED'" in sql for sql,args in conn.calls)
+
+
+def test_excel_reads_fourth_sheet_and_full_long_cell():
+    from io import BytesIO
+    import zipfile
+    stream=BytesIO()
+    with zipfile.ZipFile(stream,'w') as archive:
+        archive.writestr('xl/workbook.xml','<workbook/>')
+        for n in range(1,6):
+            archive.writestr(f'xl/worksheets/sheet{n}.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c t="inlineStr"><is><t>'+str(n)+'x'*220+'</t></is></c></row></sheetData></worksheet>')
+    text=docs.full_extract(stream.getvalue(),'.xlsx')
+    assert '5'+'x'*220 in text and 'sheet4.xml' in text
+
+
+def test_inventory_handles_nested_records_and_empty_last_page(monkeypatch):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    calls=[]
+    def rest(method,args):
+        calls.append(args)
+        return {'items':[[{'id':11,'categoryId':21},{'id':29,'categoryId':21}]]} if args['filter']['>id']==0 else {'items':[[]]}
+    monkeypatch.setattr(worker,'get',lambda rest,card:{'id':card})
+    assert worker.inventory(rest)==[{'id':11},{'id':29}]
+    assert calls[0]['select']==['id','categoryId'] and calls[1]['filter']['>id']==29
+
+
+def test_identity_requires_own_legal_page_name_and_unique_inn():
+    page={'url':'https://acme.ru/contacts','text':'ООО Альфа ИНН 7707083893'}
+    assert contacts.identity(page,'7707083893','ООО Альфа')
+    assert not contacts.identity(page,'7707083893','ООО Бета')
+    assert not contacts.identity({**page,'url':'https://news.ru/blog/client-story'},'7707083893','ООО Альфа')
+    assert not contacts.identity({**page,'text':page['text']+' ИНН 7707083894'},'7707083893','ООО Альфа')
+
+
+def test_source_inventory_reads_all_three_receipts_and_verifies_ids(monkeypatch):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchone(self):return self.rows[0]
+        def fetchall(self):return self.rows
+    class Conn:
+        def execute(self,sql,args=()):
+            if sql.startswith('SELECT snapshot'):return Result([None])
+            if sql.startswith('INSERT INTO serviceit_extended_card_inventory'):return Result([None])
+            if "WHERE state='EXCLUDED'" in sql:return Result([])
+            if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
+            if 'serviceit_bidzaar_inbox' in sql:return Result([(33,),(35,)])
+            if 'serviceit_vps_b2b_inbox' in sql:return Result([(11,),(29,)])
+            return Result([(3,),(7,),(11,),(37,)])
+    seen=[]
+    monkeypatch.setattr(worker,'get',lambda rest,card:seen.append(card) or {'id':card})
+    assert [i['id'] for i in worker.source_inventory(Conn(),None)]==[11,29,33,35,37]
+    assert seen==[11,29,33,35,37]
+
+
+def test_contact_reader_follows_public_canonical_redirect_and_checks_robots(monkeypatch):
+    monkeypatch.setattr(contacts,'safe',lambda url:url.startswith('https://acme.ru/'))
+    def handler(request):
+        if request.url.path=='/robots.txt':return httpx.Response(200,text='User-agent: *\nDisallow: /private')
+        if request.url.path=='/contacts':return httpx.Response(301,headers={'Location':'/contacts/'})
+        if request.url.path=='/contacts/':return httpx.Response(200,headers={'Content-Type':'text/html'},text='<p>ИНН 7707083893</p><p>info@acme.ru</p>')
+        raise AssertionError('Must not read prohibited page')
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        cache={};page=contacts.read(client,'https://acme.ru/contacts',cache)
+        assert page['url']=='https://acme.ru/contacts/' and 'info@acme.ru' in page['text']
+        assert contacts.read(client,'https://acme.ru/private',cache) is None
+
+
+def test_contact_redirect_does_not_enter_private_network(monkeypatch):
+    monkeypatch.setattr(contacts,'safe',lambda url:url.startswith('https://acme.ru/'))
+    def handler(request):
+        assert request.url.host=='acme.ru'
+        if request.url.path=='/robots.txt':return httpx.Response(404)
+        return httpx.Response(302,headers={'Location':'http://127.0.0.1/secret'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert contacts.read(client,'https://acme.ru/contacts',{}) is None
+
+
+def test_finished_cards_use_snapshot_without_repeated_crm_reads(monkeypatch):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchone(self):return self.rows[0]
+        def fetchall(self):return self.rows
+    class Conn:
+        def execute(self,sql,args=()):
+            if "WHERE state='EXCLUDED'" in sql:return Result([])
+            if sql.startswith('SELECT to_regclass'):return Result([(args[0],)])
+            if sql.startswith('SELECT snapshot'):return Result([({'id':35,worker.INN:'7707083893'},)])
+            return Result([(35,)])
+    monkeypatch.setattr(worker,'get',lambda *args:pytest.fail('Completed cards must not be reread every five minutes'))
+    assert worker.source_inventory(Conn(),None)==[{'id':35,worker.INN:'7707083893'}]
+
+
+def test_rtf_extension_uses_existing_converter(monkeypatch):
+    monkeypatch.setattr(docs,'legacy_doc',lambda data:'Договор поставки')
+    assert docs.full_extract(b'{\\rtf1}', '.rtf')=='Договор поставки'
+
+
+def test_empty_pdf_requests_ocr_but_text_pdf_does_not(monkeypatch):
+    monkeypatch.setattr(docs,'extract_text',lambda data,kind:'')
+    monkeypatch.setattr(docs,'recognize',lambda data,kind:'OCR: полный текст')
+    assert docs.full_extract(b'pdf','.pdf').startswith('OCR:')
+    monkeypatch.setattr(docs,'extract_text',lambda data,kind:'Исходный текст')
+    assert docs.full_extract(b'pdf','.pdf')=='Исходный текст'
+
+
+def test_ocr_command_has_no_shell_and_marks_uncertainty(monkeypatch):
+    from types import SimpleNamespace
+    calls=[]
+    monkeypatch.setattr(docs.shutil,'which',lambda name:'/usr/bin/'+name)
+    def run(args,**kwargs):
+        calls.append((args,kwargs))
+        return SimpleNamespace(returncode=0,stdout=b'Battery BRP-38-6000-1')
+    monkeypatch.setattr(docs.subprocess,'run',run)
+    text=docs.recognize(b'png','.png')
+    assert text.startswith('OCR:') and 'Battery' in text
+    assert calls[0][0][0]=='tesseract' and not calls[0][1].get('shell')
+    assert calls[0][1]['timeout']==30
+
+
+def test_ocr_empty_page_is_not_marked_read(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(docs.shutil,'which',lambda name:'/usr/bin/'+name)
+    monkeypatch.setattr(docs.subprocess,'run',lambda *args,**kw:SimpleNamespace(returncode=0,stdout=b''))
+    with pytest.raises(ValueError,match='OCR_PAGE_EMPTY'):docs.recognize(b'png','.png')
+
+
+def test_group_legal_sections_do_not_mix_company_contacts():
+    page={'url':'https://clinic.ru/patient/','text':'Полное наименование: ООО Альфа ИНН 7707083893 info@alpha.ru +7 (495) 123-45-67\nПолное наименование: ООО Бета ИНН 7707083894 info@beta.ru +7 (495) 111-22-33','emails':['footer@beta.ru'],'phones':[]}
+    result=contacts.extract([page],'7707083893','ООО Альфа')
+    assert {c['value'] for c in result}=={'info@alpha.ru','+7 (495) 123-45-67'}
+    unrelated={'url':'https://clinic.ru/contact','text':'other@clinic.ru'}
+    assert contacts.extract([page,unrelated],'7707083893','ООО Альфа')==result
+
+
+def test_source_document_proof_is_local_not_marketplace_wide():
+    doc={'url':'https://bidzaar.com/api/filestorage/files/download/abc','text':'ООО Альфа ИНН 7707083893 mail@alpha.ru','scoped':True}
+    unrelated={'url':'https://bidzaar.com/contacts','text':'support@bidzaar.com'}
+    result=contacts.extract([doc,unrelated],'7707083893','ООО Альфа')
+    assert [c['value'] for c in result]==['mail@alpha.ru']
+
+
+def test_www_contact_page_matches_legal_page_only_on_same_domain():
+    pages=[{'url':'https://www.alpha.ru/legal','text':'ООО Альфа ИНН 7707083893'}, {'url':'https://alpha.ru/contact','text':'mail@alpha.ru'}, {'url':'https://fakealpha.ru/contact','text':'mail@fakealpha.ru'}]
+    assert [c['value'] for c in contacts.extract(pages,'7707083893','ООО Альфа')]==['mail@alpha.ru']
+
+
+def test_search_tries_second_provider_after_unusable_results(monkeypatch):
+    calls=[]
+    def search_urls(client,env,query,prefer_tavily=False):
+        calls.append(prefer_tavily)
+        return (['https://alpha.ru/contacts'],'TAVILY') if prefer_tavily else (['https://dead.ru/'],'TINYFISH')
+    monkeypatch.setattr(contacts,'search_urls',search_urls)
+    monkeypatch.setattr(contacts,'safe',lambda url:True)
+    monkeypatch.setattr(contacts,'read',lambda client,url,robots: {'url':url,'text':'ООО Альфа ИНН 7707083893 mail@alpha.ru','links':[]} if 'alpha' in url else None)
+    result=contacts.search(None,{},'7707083893','ООО Альфа')
+    assert True in calls and result['status']=='VERIFIED'
+
+
+def test_legal_section_does_not_extract_regulator_contacts():
+    page={'url':'https://clinic.ru/patient/','text':'Полное наименование: ООО Альфа ИНН 7707083893 mail@alpha.ru\nРоспотребнадзор hotline@regulator.ru'}
+    assert [c['value'] for c in contacts.extract([page],'7707083893','ООО Альфа')]==['mail@alpha.ru']
+
+
+def test_reviewed_seed_is_fetched_and_still_requires_exact_identity(monkeypatch):
+    seen=[]
+    monkeypatch.setattr(contacts,'safe',lambda url:True)
+    monkeypatch.setattr(contacts,'search_urls',lambda *args,**kwargs:([],'NONE'))
+    def read(client,url,robots):
+        seen.append(url)
+        return {'url':url,'text':'Полное наименование: ООО Альфа ИНН 7707083893 wrong@alpha.ru','links':[]}
+    monkeypatch.setattr(contacts,'read',read)
+    result=contacts.search(None,{},'7729674716','Клиника К31')
+    assert seen==['https://www.k31.ru/patient/'] and result['contacts']==[]
+
+def test_model_failure_does_not_advance_full_document_cursor(monkeypatch):
+ class Result:
+  def __init__(self,rows):self.rows=rows
+  def fetchall(self):return self.rows
+ class Conn:
+  def __init__(self):self.updates=[]
+  def execute(self,sql,args=()):
+   if sql.startswith('SELECT card_id,url,name'):return Result([])
+   if sql.startswith('SELECT card_id,url,text_content'):return Result([(35,'https://bidzaar.com/document','Условия оплаты: отсрочка платежа тридцать дней. '*100,0,0,24000)])
+   self.updates.append((sql,args));return Result([])
+ conn=Conn()
+ monkeypatch.setattr(docs,'full_window_research',lambda *a:[{'provider':'SOURCE','facts':[]}])
+ docs.process(conn,None,{})
+ assert any('ROUTERAI_ANALYSIS_RETRY' in args for sql,args in conn.updates)
+ assert not any('analyzed_chars=%s' in sql for sql,args in conn.updates)
+
+def test_document_contact_hint_is_literal_and_never_confirmed():
+ hints=docs.contact_hints('Контакт по закупке: +7 (495) 123-45-67, e-mail procurement@alpha.ru','https://bidzaar.com/file')
+ assert len(hints)==2 and all(h['status']=='UNCONFIRMED' for h in hints)
+ assert not docs.contact_hints('Участник должен заполнить телефон: +7 (495) 123-45-67','https://bidzaar.com/file')
+
+def test_cached_noop_still_refreshes_live_manager_edits(monkeypatch):
+ from leadpilot import serviceit_extended_evidence_worker as worker
+ class Result:
+  def __init__(self,row=None):self.row=row
+  def fetchone(self):return self.row
+ class Conn:
+  def __init__(self):self.saved=[]
+  def execute(self,sql,args=()):
+   if sql.startswith('INSERT INTO serviceit_extended_card_inventory'):self.saved.append(args)
+   return Result((True,)) if 'pg_try_advisory' in sql else Result()
+ before={worker.REPORT:'old',worker.BRIEF:'brief',worker.INN:'7707083893','categoryId':21}
+ monkeypatch.setattr(worker,'get',lambda rest,card:{**before,worker.BRIEF:'manager edit'})
+ conn=Conn()
+ assert not worker.patch(conn,None,None,35,before,{worker.REPORT:'old'})
+ assert conn.saved and 'manager edit' in conn.saved[0][1]
+
+
+@pytest.mark.parametrize('valid',[True,False])
+def test_b2b_discovery_registers_all_only_after_source_identity(monkeypatch,valid):
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    from leadpilot import serviceit_vps_b2b_deep_research as research
+    from leadpilot import serviceit_b2b_tender_documents as parser
+    from leadpilot import serviceit_b2b_eis_mirrors as mirrors
+    class Conn:
+        def __init__(self):self.calls=[];self.result=None
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            self.result=('table',) if sql.startswith('SELECT to_regclass') else (29,'B2B:4673595',{'tender_id':'4673595'}) if sql.startswith('SELECT b.card_id') else None
+            return self
+        def fetchone(self):return self.result
+    from leadpilot import serviceit_vps_worker as vps
+    monkeypatch.setattr(vps,'exact_environment',lambda env:env)
+    conn=Conn();network=[]
+    monkeypatch.setattr(worker,'get',lambda *a:{'id':29})
+    def identity(*a):
+        if not valid:raise ValueError('B2B_NOTICE_CARD_IDENTITY_MISMATCH')
+    monkeypatch.setattr(research,'safe_notice',identity)
+    monkeypatch.setattr(research,'source_findings',lambda *a,**kw:network.append(True) or {})
+    monkeypatch.setattr(mirrors,'supplement_eis_mirrors',lambda findings,*a:findings)
+    monkeypatch.setattr(parser,'candidate_links',lambda *a,**kw:[{'url':f'https://www.b2b-center.ru/files/{i}.doc','label':str(i)} for i in range(13)])
+    worker.discover_b2b_documents(conn,None,None,{})
+    registered=[args for sql,args in conn.calls if sql.startswith('INSERT INTO serviceit_extended_documents')]
+    assert len(registered)==(13 if valid else 0)
+    assert bool(network)==valid
+
+
+def test_contact_refresh_keeps_old_evidence_but_does_not_claim_current_verification():
+    previous={'status':'VERIFIED','checked_at':'2026-11-14T12:00:00Z','contacts':[{'kind':'email','value':'info@company.ru','role':'общий контакт','context':'Контакты','url':'https://company.ru/contact','identity_url':'https://company.ru/legal'}]}
+    failed={'status':'NOT_FOUND','checked_at':'2026-11-15T12:00:00Z','contacts':[]}
+    result=contacts.merge_refresh(previous,failed)
+    assert result['status']=='RECHECK_REQUIRED' and result['contacts']==previous['contacts']
+    assert previous['status']=='VERIFIED' and failed['contacts']==[]
+    text=contacts.render(result,'7707083893')
+    assert 'ТРЕБУЕТ ПОВТОРНОЙ ПРОВЕРКИ' in text and 'info@company.ru' in text
+    assert 'Статус: ПОДТВЕРЖДЁН' not in text
+    assert contacts.merge_refresh(result,previous)==previous
+    assert contacts.merge_refresh(None,failed)==failed
+
+
+@pytest.mark.parametrize('status',['VERIFIED','UNCERTAIN'])
+def test_live_noop_reconciles_stale_receipt_without_crm_write(monkeypatch,status):
+    import json
+    from leadpilot import serviceit_extended_evidence_worker as worker
+    class Result:
+        def __init__(self,row=None):self.row=row
+        def fetchone(self):return self.row
+    class Conn:
+        def __init__(self):self.calls=[]
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            if 'pg_try_advisory' in sql:return Result((True,))
+            if sql.startswith('SELECT expected,status'):return Result(({worker.REPORT:'old report',worker.BRIEF:'old brief'},status))
+            return Result()
+    actual={worker.REPORT:'current manager text and evidence',worker.INN:'7707083893'}
+    monkeypatch.setattr(worker,'get',lambda *args:actual)
+    conn=Conn()
+    assert not worker.patch(conn,None,None,19,actual,{worker.REPORT:actual[worker.REPORT]})
+    writes=[args for sql,args in conn.calls if sql.startswith('INSERT INTO serviceit_extended_evidence_receipts')]
+    if status=='VERIFIED':
+        assert len(writes)==1
+        assert json.loads(writes[0][1])=={worker.REPORT:actual[worker.REPORT]}
+    else:assert not writes
+
+
+def test_successful_download_immediately_releases_analysis_backoff(monkeypatch):
+    class Result:
+        def __init__(self,rows=()):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        released=False
+        def execute(self,sql,args=()):
+            if sql.startswith('SELECT card_id,url,name'):return Result([(27,'https://example.org/file.doc','file.doc')])
+            if "SET status='EXTRACTED'" in sql:
+                self.released='next_attempt_at=now()' in sql
+            if sql.startswith('SELECT card_id,url,text_content'):assert self.released
+            return Result()
+    monkeypatch.setattr(docs,'download',lambda *a:{'text':'document text','sha256':'abc'})
+    conn=Conn()
+    docs.process(conn,None,{})
+    assert conn.released
+
+
+def test_eis_context_retains_certificate_and_hostname_verification():
+    import ssl
+    context=docs.eis_tls_context()
+    assert context.verify_mode==ssl.CERT_REQUIRED
+    assert context.check_hostname
+
+
+def test_eis_download_uses_isolated_pinned_context(monkeypatch):
+    from leadpilot import serviceit_b2b_tender_documents as parser
+    seen=[]
+    sentinel=object()
+    class Client:
+        def __init__(self,**kw):seen.append(kw)
+        def __enter__(self):return sentinel
+        def __exit__(self,*args):pass
+    monkeypatch.setattr(docs.httpx,'Client',Client)
+    monkeypatch.setattr(parser,'fetch_bytes',lambda client,url,**kw: (seen.append(client) or b'full document bytes','.txt'))
+    monkeypatch.setattr(docs,'parsed_document',lambda raw,kind,url:{'text':raw.decode()})
+    url='https://zakupki.gov.ru/223/purchase/public/download/download.html?id=12345678'
+    monkeypatch.setattr(parser,'public_eis_attachment',lambda u:u==url)
+    assert docs.download(object(),url,'file.txt')['text']=='full document bytes'
+    assert seen[0]['verify'].check_hostname and seen[0]['trust_env'] is False
+    assert seen[0]['follow_redirects'] is False and seen[1] is sentinel
+
+
+def test_missing_file_keeps_public_link_rediscovery_scheduled(monkeypatch):
+    class Result:
+        def __init__(self,rows=()):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        def __init__(self):self.calls=[]
+        def execute(self,sql,args=()):
+            self.calls.append((sql,args))
+            return Result([(27,'https://zakupki.gov.ru/file','file')]) if sql.startswith('SELECT card_id,url,name') else Result()
+    def missing(*args):raise ValueError('DOCUMENT_HTTP_404')
+    monkeypatch.setattr(docs,'download',missing)
+    conn=Conn();docs.process(conn,None,{})
+    assert any('UPDATE serviceit_extended_b2b_discovery' in sql and "12 hours" in sql and args==(27,) for sql,args in conn.calls)
+
+
+def test_missing_file_render_never_claims_read():
+    class Result:
+        def __init__(self,rows):self.rows=rows
+        def fetchall(self):return self.rows
+    class Conn:
+        def execute(self,sql,args=()):
+            return Result([('ТЗ','https://zakupki.gov.ru/file','RETRY',[],'DOCUMENT_HTTP_404')]) if 'SELECT name,url,status' in sql else Result([])
+    text,read,pending,total=docs.render(Conn(),27)
+    assert read==0 and pending==1 and total==1
+    assert 'HTTP 404' in text and 'Документ не прочитан' in text
+
+
+def make_sevenzip(tmp_path,entries):
+    import libarchive
+    path=tmp_path/'documents.7z'
+    with libarchive.file_writer(str(path),'7zip') as archive:
+        for name,text in entries:
+            data=text.encode('utf-8')
+            archive.add_file_from_memory(name,len(data),data)
+    return path.read_bytes()
+
+
+def test_sevenzip_all_members_reach_full_text_analysis(tmp_path):
+    raw=make_sevenzip(tmp_path,[('Условия.txt','Бюджет 100000 рублей. '*2000),('Поставка.txt','Адрес поставки: Москва.')])
+    result=docs.parsed_document(raw,'.7z','https://zakupki.gov.ru/file')
+    assert 'Адрес поставки: Москва.' in result['text']
+    assert result['text'].count('Бюджет 100000 рублей.')==2000
+
+
+@pytest.mark.parametrize('name',['../escape.txt','/absolute.txt','folder\\escape.txt','payload.exe','nested.7z'])
+def test_sevenzip_rejects_unsafe_or_non_document_members(tmp_path,name):
+    from leadpilot.serviceit_archive_reader import read_members
+    raw=make_sevenzip(tmp_path,[(name,'not executable')])
+    with pytest.raises(ValueError,match='ARCHIVE_'):read_members(raw)
+
+
+def test_sevenzip_download_recognized_by_signature_only_when_enabled(monkeypatch,tmp_path):
+    from leadpilot import serviceit_b2b_tender_documents as parser
+    raw=make_sevenzip(tmp_path,[('ТЗ.txt','Техническое задание.')])
+    monkeypatch.setattr(parser,'_public_dns',lambda host:True)
+    monkeypatch.setattr(parser,'_robots',lambda *a:None)
+    with httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(200,content=raw,headers={'content-type':'application/download'}))) as client:
+        assert parser.fetch_bytes(client,'https://www.b2b-center.ru/files/data',allow_legacy=True)==(raw,'.7z')
+        with pytest.raises(ValueError,match='DOCUMENT_UNSUPPORTED_FORMAT'):
+            parser.fetch_bytes(client,'https://www.b2b-center.ru/files/data')
+
+
+def test_sevenzip_expanded_size_is_bounded(tmp_path):
+    from leadpilot.serviceit_archive_reader import read_members
+    raw=make_sevenzip(tmp_path,[('large.txt','x'*10_000_001)])
+    with pytest.raises(ValueError,match='ARCHIVE_EXPANDED_SIZE_EXCEEDED'):read_members(raw)
+
+
+def test_drain_only_selects_unfinished_owned_inventory():
+    from leadpilot.serviceit_extended_evidence_worker import unfinished_items
+    class Conn:
+        def execute(self,sql):
+            assert "'EXTRACTED'" in sql and "'RETRY'" in sql and "'PENDING'" in sql
+            return self
+        def fetchall(self):return [(27,),(999,)]
+    assert unfinished_items(Conn(),[{'id':27},{'id':35}])==[{'id':27}]

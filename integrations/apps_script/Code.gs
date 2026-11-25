@@ -441,6 +441,8 @@ function classifyServices_(title) {
   if (dboFraudLicense.test(title)) addCategory("LICENSES");
   if (vipnetSupport.test(title)) addCategory("IT_SUPPORT");
   // Authenticated B2B titles of 25 Nov 2026; candidate fit only.
+  // 4697123: cloud data-centre search, not geography approval.
+  if (/^\s*поиск\s+резервного\s+облачного\s+цода?\s*\.?\s*$/iu.test(title)) addCategory("CLOUD");
   if (/(?:закупк|поставк|оказани|предоставлени)[\p{L}\p{N}_]*.{0,80}техническ[\p{L}\p{N}_]*\s+поддержк[\p{L}\p{N}_]*.{0,100}(?:vmware|airwatch)(?![\p{L}\p{N}_])/iu.test(title)) addCategory("IT_SUPPORT");
   if (/(?:закупк|продлени|приобретени|поставк)[\p{L}\p{N}_]*.{0,60}лицензи[\p{L}\p{N}_]*\s+(?:dr[.\s-]*web|codescoring)(?![\p{L}\p{N}_])|оказани[\p{L}\p{N}_]*\s+информационн[\p{L}\p{N}_]*\s+услуг[\p{L}\p{N}_]*\s+с\s+использовани[\p{L}\p{N}_]*\s+систем[\p{L}\p{N}_]*\s+консультант\s*плюс(?![\p{L}\p{N}_])/iu.test(title)) addCategory("LICENSES");
   if (/^\s*запасн[\p{L}\p{N}_]*\s+част[\p{L}\p{N}_]*\s+и\s+принадлежност[\p{L}\p{N}_]*\s+для\s+пк\s*\.?\s*$|выбор\s+поставщик[\p{L}\p{N}_]*\s+схд\s+ibm\s+(?:storage\s+)?flashsystem(?![\p{L}\p{N}_])/iu.test(title)) addCategory("SERVERS");

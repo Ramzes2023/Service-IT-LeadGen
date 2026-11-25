@@ -30,7 +30,7 @@ def test_output_is_sanitized(capsys):
         with pytest.raises(ValueError):
             emit("VALUE", value)
     assert capsys.readouterr().out == ""
-    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314,4692011,4694125,4691253} == set(TARGETS)
+    assert {4677923,4679263,4677837,4674919,4693159,4692643,4692350,4693220,4693314,4692011,4694125,4691253,4692609} == set(TARGETS)
 
 
 def test_workflow_output_filter_is_anchored_and_owner_gated():

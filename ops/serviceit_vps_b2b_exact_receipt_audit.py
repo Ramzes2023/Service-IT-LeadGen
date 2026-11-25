@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 
-TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 4693220, 4693314, 4692011, 4694125, 4691253, 4692609)
+TARGETS = (4677923, 4679263, 4677837, 4674919, 4693159, 4692643, 4692350, 4693220, 4693314, 4692011, 4694125, 4691253, 4692609, 4694316, 4694239, 4695984, 4695818, 4695788)
 STATES = frozenset(("ABSENT", "PENDING", "POST_UNCERTAIN", "VERIFIED", "EXISTING",
                     "REVIEW", "RESERVED", "WRITE_INTENT", "NO_CHANGE", "CONFLICT",
                     "UNCERTAIN", "NONE", "YES", "NO"))
@@ -147,7 +147,8 @@ def main():
             row = conn.execute("""
                 SELECT b.state,b.card_id,v.status,v.source_hash,v.after_fields,v.salt,v.digest,
                        EXISTS (SELECT 1 FROM serviceit_vps_b2b_dossier_v12_continuity_receipts a
-                               WHERE a.card_id=b.card_id)
+                               WHERE a.card_id=b.card_id),
+                       b.geo_attempts, b.write_started_at IS NOT NULL
                 FROM serviceit_vps_b2b_inbox b
                 LEFT JOIN serviceit_vps_b2b_dossier_v11_receipts v ON v.card_id=b.card_id
                 WHERE b.source_id=%s
@@ -180,6 +181,9 @@ def main():
                     if latest:
                         revisions[tender]["V37"] = latest
             emit(f"TENDER_{tender}_PG", row[0] if row else "ABSENT")
+            if row:
+                emit(f"TENDER_{tender}_GEO_ATTEMPTS", int(row[8]))
+                emit(f"TENDER_{tender}_WRITE_STARTED", "YES" if row[9] else "NO")
             if row and row[1] is not None:
                 emit(f"TENDER_{tender}_PG_CARD", row[1])
                 emit(f"TENDER_{tender}_V11", row[2] or "NONE")

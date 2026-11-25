@@ -119,6 +119,7 @@ B2B_V6_KINDS = {
 
 # Authenticated B2B titles of 25 Nov 2026; candidate fit only.
 B2B_NOV25_KINDS = {
+    "CLOUD": re.compile(r"^\s*поиск\s+резервного\s+облачного\s+цода?\s*\.?\s*$", re.I),
     "IT_SUPPORT": re.compile(r"(?:закупк|поставк|оказани|предоставлени)\w*.{0,80}техническ\w*\s+поддержк\w*.{0,100}(?:vmware|airwatch)(?!\w)", re.I),
     "LICENSES": re.compile(r"(?:закупк|продлени|приобретени|поставк)\w*.{0,60}лицензи\w*\s+(?:dr[.\s-]*web|codescoring)(?!\w)|оказани\w*\s+информационн\w*\s+услуг\w*\s+с\s+использовани\w*\s+систем\w*\s+консультант\s*плюс(?!\w)", re.I),
     "SERVERS": re.compile(r"^\s*запасн\w*\s+част\w*\s+и\s+принадлежност\w*\s+для\s+пк\s*\.?\s*$|выбор\s+поставщик\w*\s+схд\s+ibm\s+(?:storage\s+)?flashsystem(?!\w)", re.I),

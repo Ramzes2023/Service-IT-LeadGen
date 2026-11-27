@@ -138,6 +138,16 @@ def classify_services(title: str) -> list[str]:
                   if group not in groups and pattern.search(title))
     groups.extend(group for group, pattern in B2B_NOV25_KINDS.items()
                   if group not in groups and pattern.search(title))
+    # Real B2B 26 Nov 2026: explicit licence / usage-rights tenders only.
+    # This is candidate service fit, not geography or CRM authorization.
+    if "LICENSES" not in groups and re.search(
+        r"^\s*(?:закупк|приобретени|продлени|поставк)[^\W\d_]*\s+"
+        r"лицензи[^\W\d_]*\s+security\s+vision\s+soar(?!\w)"
+        r"|^\s*предоставлени[^\W\d_]*\s+права\s+использовани[^\W\d_]*\s+"
+        r"программ[^\W\d_]*\s+для\s+эвм\s*:\s*(?:цифровая\s+экосистема\s+)?eva\s+team(?!\w)",
+        title, re.I,
+    ):
+        groups.append("LICENSES")
     if IT_CONTEXT.search(title) and IT_INTEGRATION.search(title):
         groups.append("INTEGRATION")
     return sorted(groups)

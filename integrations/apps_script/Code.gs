@@ -446,6 +446,11 @@ function classifyServices_(title) {
   if (/(?:закупк|поставк|оказани|предоставлени)[\p{L}\p{N}_]*.{0,80}техническ[\p{L}\p{N}_]*\s+поддержк[\p{L}\p{N}_]*.{0,100}(?:vmware|airwatch)(?![\p{L}\p{N}_])/iu.test(title)) addCategory("IT_SUPPORT");
   if (/(?:закупк|продлени|приобретени|поставк)[\p{L}\p{N}_]*.{0,60}лицензи[\p{L}\p{N}_]*\s+(?:dr[.\s-]*web|codescoring)(?![\p{L}\p{N}_])|оказани[\p{L}\p{N}_]*\s+информационн[\p{L}\p{N}_]*\s+услуг[\p{L}\p{N}_]*\s+с\s+использовани[\p{L}\p{N}_]*\s+систем[\p{L}\p{N}_]*\s+консультант\s*плюс(?![\p{L}\p{N}_])/iu.test(title)) addCategory("LICENSES");
   if (/^\s*запасн[\p{L}\p{N}_]*\s+част[\p{L}\p{N}_]*\s+и\s+принадлежност[\p{L}\p{N}_]*\s+для\s+пк\s*\.?\s*$|выбор\s+поставщик[\p{L}\p{N}_]*\s+схд\s+ibm\s+(?:storage\s+)?flashsystem(?![\p{L}\p{N}_])/iu.test(title)) addCategory("SERVERS");
+  // Actual B2B digest titles 26 Nov: candidate service fit only, never geography approval.
+  // 4699164 and 4694223: explicit software licences / usage rights, not generic brand mentions.
+  const securityVisionSoarLicense = /^\s*(?:закупк|приобретени|продлени|поставк)[\p{L}]*\s+лицензи[\p{L}]*\s+security\s+vision\s+soar(?![\p{L}\p{N}_])/iu;
+  const evaTeamUsageRights = /^\s*предоставлени[\p{L}]*\s+права\s+использовани[\p{L}]*\s+программ[\p{L}]*\s+для\s+эвм\s*:\s*(?:цифровая\s+экосистема\s+)?eva\s+team(?![\p{L}\p{N}_])/iu;
+  if (securityVisionSoarLicense.test(title) || evaTeamUsageRights.test(title)) addCategory("LICENSES");
   const context = new RegExp(
     "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +

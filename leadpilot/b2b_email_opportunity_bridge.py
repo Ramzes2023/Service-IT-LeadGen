@@ -148,6 +148,13 @@ def classify_services(title: str) -> list[str]:
         title, re.I,
     ):
         groups.append("LICENSES")
+    # Real B2B 27 Nov: exact branded procurement titles, candidate fit only.
+    if "LICENSES" not in groups and re.search(
+        r"^\s*лицензи[^\W\d_]*\s+workspad\s+и\s+xello\s*\.?\s*$"
+        r"|^\s*приобретени[^\W\d_]*\s+и\s+продлени[^\W\d_]*\s+по\s+visiology\s*\.?\s*$",
+        title, re.I,
+    ):
+        groups.append("LICENSES")
     if IT_CONTEXT.search(title) and IT_INTEGRATION.search(title):
         groups.append("INTEGRATION")
     return sorted(groups)

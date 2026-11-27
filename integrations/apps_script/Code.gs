@@ -451,6 +451,8 @@ function classifyServices_(title) {
   const securityVisionSoarLicense = /^\s*(?:закупк|приобретени|продлени|поставк)[\p{L}]*\s+лицензи[\p{L}]*\s+security\s+vision\s+soar(?![\p{L}\p{N}_])/iu;
   const evaTeamUsageRights = /^\s*предоставлени[\p{L}]*\s+права\s+использовани[\p{L}]*\s+программ[\p{L}]*\s+для\s+эвм\s*:\s*(?:цифровая\s+экосистема\s+)?eva\s+team(?![\p{L}\p{N}_])/iu;
   if (securityVisionSoarLicense.test(title) || evaTeamUsageRights.test(title)) addCategory("LICENSES");
+  // Real B2B 27 Nov: exact branded procurement titles, candidate fit only.
+  if (/^\s*лицензи[\p{L}]*\s+workspad\s+и\s+xello\s*\.?\s*$|^\s*приобретени[\p{L}]*\s+и\s+продлени[\p{L}]*\s+по\s+visiology\s*\.?\s*$/iu.test(title)) addCategory("LICENSES");
   const context = new RegExp(
     "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +

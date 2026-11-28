@@ -171,6 +171,57 @@ def native_init_trace(conn, card):
     return result
 
 
+def bootstrap_pg_preflight(conn, card, source):
+    """Exact candidate's no-write gate, in caller's read-only transaction."""
+    row = conn.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM serviceit_vps_b2b_inbox b
+            JOIN serviceit_vps_new_cards q ON q.card_id=b.card_id
+            WHERE b.card_id=%s AND b.source_id=%s AND b.state='VERIFIED'
+              AND q.status='REVIEW' AND q.attempts=1
+              AND q.last_result='EXACT_WORKER_REVIEW'
+              AND (SELECT count(*) FROM serviceit_vps_native_receipts n
+                   WHERE n.card_id=b.card_id
+                     AND n.namespace IN ('AI_NINE_V1','B2B_RESEARCH_V4')
+                     AND n.status='HOLD' AND n.field_names IS NULL
+                     AND n.digest_salt IS NULL AND n.expected_digest IS NULL)=2
+              AND NOT EXISTS (
+                  SELECT 1 FROM serviceit_vps_native_receipts n
+                  WHERE n.card_id=b.card_id AND n.status IN
+                    ('RESERVED','WRITE_INTENT','UNCERTAIN','LEASE_LOST'))
+              AND NOT EXISTS (
+                  SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts v
+                  WHERE v.card_id=b.card_id)
+        )
+    """, (card, source)).fetchone()
+    return bool(row and row[0] is True)
+
+
+def bootstrap_crm_preflight(item, fields, all_fields, status_key, preliminary):
+    """Fixed booleans only; equality is compatibility, not authorship proof."""
+    readable = all(k in item for k in all_fields)
+    commercial_empty = all(k in item and item[k] in (None, "")
+                           for k in all_fields - fields)
+    missing_status = status_key in item and item[status_key] in (None, "")
+    existing = {k: item[k] for k in fields if k in item and item[k] not in (None, "")}
+    minimal = len(existing) <= 1
+    compatible = False
+    if readable and minimal and missing_status:
+        try:
+            expected = preliminary(item)
+            compatible = all(type(v) is str and bool(v.strip()) and expected.get(k) == v
+                             for k, v in existing.items())
+        except Exception:
+            compatible = False
+    return {
+        "BOOTSTRAP_FIELDS_READABLE": readable,
+        "BOOTSTRAP_COMMERCIAL_EMPTY": commercial_empty,
+        "BOOTSTRAP_STATUS_EMPTY": missing_status,
+        "BOOTSTRAP_MINIMAL": minimal,
+        "BOOTSTRAP_PRELIMINARY_EQUAL": compatible,
+    }
+
+
 def sparse_preflight(item, notice, card, source, safe_notice, status_key, fields, report_key, limit_text, limit_report):
     """Evaluate proposed sparse snapshot and signed source without calls or writes."""
     values = {key: item.get(key) for key in fields}
@@ -199,7 +250,8 @@ def main():
     from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest, eligible_one
     from leadpilot.serviceit_b2b_dossier_v11 import STATUS, REPORT, LIMIT_TEXT, LIMIT_REPORT
     from leadpilot.serviceit_vps_b2b_deep_research import safe_notice
-    from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
+    from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity, FIELDS
+    from leadpilot.serviceit_windows_autofill import preliminary_fields
     from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
     emit("COORDINATOR_IMPORTS", "YES")
     env = dict(os.environ)
@@ -282,6 +334,9 @@ def main():
                     for key, value in native_init_trace(conn, row[1]).items():
                         emit(f"TENDER_{tender}_"+key,
                              ("YES" if value else "NO") if type(value) is bool else value)
+                    if tender == 4700472 and row[1] == 259:
+                        emit(f"TENDER_{tender}_BOOTSTRAP_PG_GATE", "YES" if
+                             bootstrap_pg_preflight(conn, row[1], source) else "NO")
                     v10, research = v11_prerequisites(conn, row[1])
                     emit(f"TENDER_{tender}_V10_GATE", v10)
                     emit(f"TENDER_{tender}_RESEARCH_V4_GATE", research)
@@ -334,6 +389,11 @@ def main():
                     emit(label+"AI_STATUS_PRESENT", "YES" if status_ok else "NO")
                     emit(label+"SPARSE_SNAPSHOT_VALID", "YES" if sparse_ok else "NO")
                     emit(label+"SIGNED_NOTICE_CARD_MATCH", "YES" if source_ok else "NO")
+                    if tender == 4700472 and card == 259 and source_ok:
+                        for key, value in bootstrap_crm_preflight(
+                            item, AI_FIELDS, FIELDS, STATUS, preliminary_fields
+                        ).items():
+                            emit(label+key, "YES" if value else "NO")
                 if row and row[2] == "VERIFIED" and same:
                     emit(label+"V11_CURRENT_FIELDS_EQUAL", "YES" if current == row[4] else "NO")
                     # Later legitimate revisions may supersede raw V11 fields.

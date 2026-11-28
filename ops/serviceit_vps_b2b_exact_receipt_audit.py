@@ -140,6 +140,37 @@ def v11_prerequisites(conn, card):
     return tuple(results)
 
 
+def native_init_trace(conn, card):
+    """Read only fixed metadata; never expose actual field names or digests."""
+    result = {}
+    if conn.execute("SELECT to_regclass(%s)", ("public.serviceit_vps_new_cards",)).fetchone()[0]:
+        row = conn.execute(
+            "SELECT status,attempts FROM serviceit_vps_new_cards WHERE card_id=%s",
+            (card,),
+        ).fetchone()
+        result["INIT_QUEUE_PRESENT"] = bool(row)
+        if row:
+            for state in ("PENDING", "RUNNING", "DONE", "REVIEW", "UNCERTAIN"):
+                result["INIT_QUEUE_"+state] = row[0] == state
+            result["INIT_QUEUE_ATTEMPTS"] = int(row[1])
+    if conn.execute("SELECT to_regclass(%s)", ("public.serviceit_vps_native_receipts",)).fetchone()[0]:
+        for namespace, label in (("AI_NINE_V1", "INIT_NATIVE"), ("B2B_RESEARCH_V4", "RESEARCH_V4")):
+            row = conn.execute(
+                """SELECT status, field_names IS NOT NULL AND digest_salt IS NOT NULL
+                          AND expected_digest IS NOT NULL
+                   FROM serviceit_vps_native_receipts WHERE card_id=%s AND namespace=%s""",
+                (card, namespace),
+            ).fetchone()
+            result[label+"_PRESENT"] = bool(row)
+            if row:
+                for state in ("HOLD", "HOLD_9_WRITTEN", "HOLD_9_PRESENT", "VERIFIED",
+                              "NEEDS_REVIEW", "RESERVED", "WRITE_INTENT", "UNCERTAIN",
+                              "LEASE_LOST", "IDLE"):
+                    result[label+"_"+state] = row[0] == state
+                result[label+"_CHECKPOINT_PRESENT"] = bool(row[1])
+    return result
+
+
 def sparse_preflight(item, notice, card, source, safe_notice, status_key, fields, report_key, limit_text, limit_report):
     """Evaluate proposed sparse snapshot and signed source without calls or writes."""
     values = {key: item.get(key) for key in fields}
@@ -248,6 +279,9 @@ def main():
                         "WHERE source_id=%s AND card_id=%s AND state='VERIFIED'",
                         (source, row[1]),
                     ).fetchone()[0]
+                    for key, value in native_init_trace(conn, row[1]).items():
+                        emit(f"TENDER_{tender}_"+key,
+                             ("YES" if value else "NO") if type(value) is bool else value)
                     v10, research = v11_prerequisites(conn, row[1])
                     emit(f"TENDER_{tender}_V10_GATE", v10)
                     emit(f"TENDER_{tender}_RESEARCH_V4_GATE", research)

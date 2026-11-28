@@ -87,6 +87,45 @@ IT_CONTEXT = re.compile(
 IT_INTEGRATION = re.compile(r"внедрен\w*|интеграц\w*|доработк\w*|обмен\w*\s+данными|экстрактор\w*", re.I)
 
 
+# Keep source-backed Gmail V6 candidate categories in parity. These rules
+# do not approve execution geography, reserve a receipt, or authorize CRM writes.
+B2B_V6_KINDS = {
+    "CLOUD": re.compile(
+        r"(?:аренд[^\W\d_]*|предоставлени[^\W\d_]*)\s+"
+        r"(?:вычислительн[^\W\d_]*\s+мощност[^\W\d_]*\s*\(?\s*)?(?<!\w)vps(?!\w)"
+        r"|сервис[^\W\d_]*\s+подсказок\s+адресов\s+и\s+геокодировани[^\W\d_]*",
+        re.I),
+    "LICENSES": re.compile(
+        r"(?:поставк|сопровождени|адаптаци|продлени|предоставлени)\w*"
+        r".{0,180}консультант\s*плюс"
+        r"|консультант\s*плюс.{0,100}(?:сопровождени|адаптаци|поставк|продлени|лицензи)\w*"
+        r"|^\s*консультант\s*плюс\s*\(\s*справочно[- ]правовые\s+базы\s+данных\s*\)\s*\.?\s*$"
+        r"|^\s*[-–—]?\s*спс\s+консультант\s*плюс\s*:"
+        r"|(?:продлени[^\W\d_]*|приобретени[^\W\d_]*|поставк[^\W\d_]*|закупк[^\W\d_]*)"
+        r"\s+лицензи[^\W\d_]*\s+siem(?!\w)"
+        r"|лицензи[^\W\d_]*\s+для\s+систем[^\W\d_]*\s+объектн[^\W\d_]*"
+        r"\s+хранени[^\W\d_]*\s+данных\s+s3(?!\w)"
+        r"|лицензи[^\W\d_]*\s+для\s+систем[^\W\d_]*\s+сбор[^\W\d_]*"
+        r"\s+и\s+анализ[^\W\d_]*.{0,100}сесси[^\W\d_]*\s+дбо(?!\w)",
+        re.I),
+    "IT_SUPPORT": re.compile(
+        r"техническ[^\W\d_]*\s+(?:обслуживани[^\W\d_]*|поддержк[^\W\d_]*)"
+        r"\s+(?:веб[\s-]*)?сайт[^\W\d_]*"
+        r"|(?:экспертн[^\W\d_]*|техническ[^\W\d_]*)\s+поддержк[^\W\d_]*"
+        r"\s+при\s+настройк[^\W\d_]*\s+оборудован[^\W\d_]*\s+схд(?!\w)"
+        r"|техническ[^\W\d_]*\s+поддержк[^\W\d_]*\s+vipnet\s+coordinator(?!\w)"
+        r"|(?:обслуживани[^\W\d_]*|обновлени[^\W\d_]*)\s+сет[^\W\d_]*\s+vipnet(?!\w)", re.I),
+}
+
+# Authenticated B2B titles of 25 Nov 2026; candidate fit only.
+B2B_NOV25_KINDS = {
+    "CLOUD": re.compile(r"^\s*поиск\s+резервного\s+облачного\s+цода?\s*\.?\s*$", re.I),
+    "IT_SUPPORT": re.compile(r"(?:закупк|поставк|оказани|предоставлени)\w*.{0,80}техническ\w*\s+поддержк\w*.{0,100}(?:vmware|airwatch)(?!\w)", re.I),
+    "LICENSES": re.compile(r"(?:закупк|продлени|приобретени|поставк)\w*.{0,60}лицензи\w*\s+(?:dr[.\s-]*web|codescoring)(?!\w)|оказани\w*\s+информационн\w*\s+услуг\w*\s+с\s+использовани\w*\s+систем\w*\s+консультант\s*плюс(?!\w)", re.I),
+    "SERVERS": re.compile(r"^\s*запасн\w*\s+част\w*\s+и\s+принадлежност\w*\s+для\s+пк\s*\.?\s*$|выбор\s+поставщик\w*\s+схд\s+ibm\s+(?:storage\s+)?flashsystem(?!\w)", re.I),
+}
+
+
 def classify_services(title: str) -> list[str]:
     """Classify an individual tender SUBJECT, never the whole email.
 
@@ -95,6 +134,27 @@ def classify_services(title: str) -> list[str]:
     if not isinstance(title, str):
         return []
     groups = [group for group, pattern in KINDS.items() if pattern.search(title)]
+    groups.extend(group for group, pattern in B2B_V6_KINDS.items()
+                  if group not in groups and pattern.search(title))
+    groups.extend(group for group, pattern in B2B_NOV25_KINDS.items()
+                  if group not in groups and pattern.search(title))
+    # Real B2B 26 Nov 2026: explicit licence / usage-rights tenders only.
+    # This is candidate service fit, not geography or CRM authorization.
+    if "LICENSES" not in groups and re.search(
+        r"^\s*(?:закупк|приобретени|продлени|поставк)[^\W\d_]*\s+"
+        r"лицензи[^\W\d_]*\s+security\s+vision\s+soar(?!\w)"
+        r"|^\s*предоставлени[^\W\d_]*\s+права\s+использовани[^\W\d_]*\s+"
+        r"программ[^\W\d_]*\s+для\s+эвм\s*:\s*(?:цифровая\s+экосистема\s+)?eva\s+team(?!\w)",
+        title, re.I,
+    ):
+        groups.append("LICENSES")
+    # Real B2B 27 Nov: exact branded procurement titles, candidate fit only.
+    if "LICENSES" not in groups and re.search(
+        r"^\s*лицензи[^\W\d_]*\s+workspad\s+и\s+xello\s*\.?\s*$"
+        r"|^\s*приобретени[^\W\d_]*\s+и\s+продлени[^\W\d_]*\s+по\s+visiology\s*\.?\s*$",
+        title, re.I,
+    ):
+        groups.append("LICENSES")
     if IT_CONTEXT.search(title) and IT_INTEGRATION.search(title):
         groups.append("INTEGRATION")
     return sorted(groups)

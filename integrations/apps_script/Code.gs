@@ -396,6 +396,63 @@ function classifyServices_(title) {
   Object.keys(patterns).forEach(function (key) {
     if (patterns[key].test(title)) result.push(key);
   });
+  // Source-backed software-service procurements, not generic consultant jobs.
+  // Covers both "КонсультантПлюс" and "Консультант Плюс" with a procurement
+  // action; keep the existing LICENSES contract for the VPS coordinator.
+  const consultantPlusLicense = new RegExp(
+    "(?:поставк|сопровождени|адаптаци|продлени|предоставлени)" + suffix +
+    ".{0,180}консультант\\s*плюс" +
+    "|консультант\\s*плюс.{0,100}(?:сопровождени|адаптаци|поставк|продлени|лицензи)" + suffix,
+    "iu"
+  );
+  // B2B's 13 Nov 2026 digest 4681383 uses a product-only catalogue name.
+  // Keep this exact branded database title; avoid generic articles/jobs.
+  const consultantPlusCatalog = /^\s*консультант\s*плюс\s*\(\s*справочно[- ]правовые\s+базы\s+данных\s*\)\s*\.?\s*$/iu;
+  // A real B2B 23 Nov 2026 digest contains a SKU-only service title:
+  // "-СПС КонсультантПлюс: Версия Проф 5шт.". Anchor the branded product
+  // prefix; ordinary articles and unrelated consultant advertisements stay out.
+  const consultantPlusSku = /^\s*[-–—]?\s*спс\s+консультант\s*плюс\s*:/iu;
+  if ((consultantPlusLicense.test(title) || consultantPlusCatalog.test(title) ||
+       consultantPlusSku.test(title)) &&
+      result.indexOf("LICENSES") < 0) {
+    result.push("LICENSES");
+  }
+  // Real B2B 24 Nov titles. These are candidate categories only:
+  // execution geography, deduplication and source receipts remain VPS gates.
+  const explicitVpsRental = /(?:аренд[\p{L}]*|предоставлени[\p{L}]*)\s+(?:вычислительн[\p{L}]*\s+мощност[\p{L}]*\s*\(?\s*)?(?<![\p{L}\p{N}_])vps(?![\p{L}\p{N}_])/iu;
+  const addressGeocodingService = /сервис[\p{L}]*\s+подсказок\s+адресов\s+и\s+геокодировани[\p{L}]*/iu;
+  const siemLicense = /(?:продлени[\p{L}]*|приобретени[\p{L}]*|поставк[\p{L}]*|закупк[\p{L}]*)\s+лицензи[\p{L}]*\s+siem(?![\p{L}\p{N}_])/iu;
+  const websiteSupport = /техническ[\p{L}]*\s+(?:обслуживани[\p{L}]*|поддержк[\p{L}]*)\s+(?:веб[\s-]*)?сайт[\p{L}]*/iu;
+  const addCategory = function (key) {
+    if (result.indexOf(key) < 0) result.push(key);
+  };
+  if (explicitVpsRental.test(title) || addressGeocodingService.test(title)) addCategory("CLOUD");
+  if (siemLicense.test(title)) addCategory("LICENSES");
+  if (websiteSupport.test(title)) addCategory("IT_SUPPORT");
+  // Actual B2B digest 24 Nov, 16:03 MSK: explicit S3 licences and storage support.
+  const s3Licenses = /лицензи[\p{L}]*\s+для\s+систем[\p{L}]*\s+объектн[\p{L}]*\s+хранени[\p{L}]*\s+данных\s+s3(?![\p{L}\p{N}_])/iu;
+  const storageSupport = /(?:экспертн[\p{L}]*|техническ[\p{L}]*)\s+поддержк[\p{L}]*\s+при\s+настройк[\p{L}]*\s+оборудован[\p{L}]*\s+схд(?![\p{L}\p{N}_])/iu;
+  if (s3Licenses.test(title)) addCategory("LICENSES");
+  if (storageSupport.test(title)) addCategory("IT_SUPPORT");
+  // Actual 24 Nov 19:01 MSK digest: fraud detection in remote banking and
+  // explicit VipNET support; not a general payment service or a vacancy.
+  const dboFraudLicense = /лицензи[\p{L}]*\s+для\s+систем[\p{L}]*\s+сбор[\p{L}]*\s+и\s+анализ[\p{L}]*.{0,100}сесси[\p{L}]*\s+дбо(?![\p{L}\p{N}_])/iu;
+  const vipnetSupport = /(?:техническ[\p{L}]*\s+поддержк[\p{L}]*\s+vipnet\s+coordinator(?![\p{L}\p{N}_])|(?:обслуживани[\p{L}]*|обновлени[\p{L}]*)\s+сет[\p{L}]*\s+vipnet(?![\p{L}\p{N}_]))/iu;
+  if (dboFraudLicense.test(title)) addCategory("LICENSES");
+  if (vipnetSupport.test(title)) addCategory("IT_SUPPORT");
+  // Authenticated B2B titles of 25 Nov 2026; candidate fit only.
+  // 4697123: cloud data-centre search, not geography approval.
+  if (/^\s*поиск\s+резервного\s+облачного\s+цода?\s*\.?\s*$/iu.test(title)) addCategory("CLOUD");
+  if (/(?:закупк|поставк|оказани|предоставлени)[\p{L}\p{N}_]*.{0,80}техническ[\p{L}\p{N}_]*\s+поддержк[\p{L}\p{N}_]*.{0,100}(?:vmware|airwatch)(?![\p{L}\p{N}_])/iu.test(title)) addCategory("IT_SUPPORT");
+  if (/(?:закупк|продлени|приобретени|поставк)[\p{L}\p{N}_]*.{0,60}лицензи[\p{L}\p{N}_]*\s+(?:dr[.\s-]*web|codescoring)(?![\p{L}\p{N}_])|оказани[\p{L}\p{N}_]*\s+информационн[\p{L}\p{N}_]*\s+услуг[\p{L}\p{N}_]*\s+с\s+использовани[\p{L}\p{N}_]*\s+систем[\p{L}\p{N}_]*\s+консультант\s*плюс(?![\p{L}\p{N}_])/iu.test(title)) addCategory("LICENSES");
+  if (/^\s*запасн[\p{L}\p{N}_]*\s+част[\p{L}\p{N}_]*\s+и\s+принадлежност[\p{L}\p{N}_]*\s+для\s+пк\s*\.?\s*$|выбор\s+поставщик[\p{L}\p{N}_]*\s+схд\s+ibm\s+(?:storage\s+)?flashsystem(?![\p{L}\p{N}_])/iu.test(title)) addCategory("SERVERS");
+  // Actual B2B digest titles 26 Nov: candidate service fit only, never geography approval.
+  // 4699164 and 4694223: explicit software licences / usage rights, not generic brand mentions.
+  const securityVisionSoarLicense = /^\s*(?:закупк|приобретени|продлени|поставк)[\p{L}]*\s+лицензи[\p{L}]*\s+security\s+vision\s+soar(?![\p{L}\p{N}_])/iu;
+  const evaTeamUsageRights = /^\s*предоставлени[\p{L}]*\s+права\s+использовани[\p{L}]*\s+программ[\p{L}]*\s+для\s+эвм\s*:\s*(?:цифровая\s+экосистема\s+)?eva\s+team(?![\p{L}\p{N}_])/iu;
+  if (securityVisionSoarLicense.test(title) || evaTeamUsageRights.test(title)) addCategory("LICENSES");
+  // Real B2B 27 Nov: exact branded procurement titles, candidate fit only.
+  if (/^\s*лицензи[\p{L}]*\s+workspad\s+и\s+xello\s*\.?\s*$|^\s*приобретени[\p{L}]*\s+и\s+продлени[\p{L}]*\s+по\s+visiology\s*\.?\s*$/iu.test(title)) addCategory("LICENSES");
   const context = new RegExp(
     "(?<!" + WORD + ")1[сc](?!" + WORD + ")|1[сc]:|битрикс[\\s-]*24|" +
     "(?<!" + WORD + ")(?:crm|срм|api|erp|wms|эдо|ккт|ит|it|субд)(?!" + WORD + ")|" +
@@ -612,11 +669,11 @@ function processMessage_(messageId, remainingDispatchBudget) {
  * Only post-activation authenticated notices with NO source receipt may be
  * marked PENDING. Nothing can undo a source reservation or security review.
  */
-function recoverPostCutoverMissedV5_(ids) {
+function recoverPostCutoverMissedV6_(ids) {
   const props = scriptProperties_();
   const activation = Math.max(Number(privateConfig_().cutoverMs),
     Number(props.getProperty("SERVICEIT_VPS_B2B_ACTIVATION_MS") || 0));
-  const revision = "B2B_CLASSIFIER_V5";
+  const revision = "B2B_CLASSIFIER_V6";
   let checked = 0, queued = 0;
   for (const id of ids) {
     if (checked >= 4) break;
@@ -664,7 +721,7 @@ function pollAndDispatchB2B() {
   try {
     assertMailbox_();
     const ids = listVendorMessageIds_().reverse();
-    const recovered = recoverPostCutoverMissedV5_(ids);
+    const recovered = recoverPostCutoverMissedV6_(ids);
     const pending = [];
     for (const id of ids) {
       const state = props.getProperty("SERVICEIT_EMAIL_" + id) || "";

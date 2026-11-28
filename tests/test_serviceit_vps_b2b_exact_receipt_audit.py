@@ -176,3 +176,13 @@ def test_sparse_preflight_reports_only_booleans_and_preserves_input():
     assert sparse_preflight({"status": "prior", "f0": "x"*4097}, notice, 259,
                             "B2B-CENTER-4700472", safe, "status", keys, "report",
                             4096, 12000)[:2] == (True, False)
+
+
+def test_preflight_baseline_read_only_and_sanitized():
+    from pathlib import Path
+    src = Path(".github/workflows/serviceit-vps-b2b-exact-receipt-readonly.yml").read_text("utf-8")
+    step = src.split("Read current coordinator image and five immutable source fingerprints", 1)[1].split("Read exact V11 blockers", 1)[0]
+    assert "docker inspect" in step and "docker image inspect" in step
+    assert "sha256sum" in step and "wc -l" in step
+    assert "docker build" not in step and "docker tag" not in step and "docker compose" not in step
+    assert "B2B_BASELINE_IMAGE=sha256:[a-f0-9]{64}" in step

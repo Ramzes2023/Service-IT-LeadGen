@@ -22,7 +22,7 @@ import httpx
 from .ai import config_from_env
 from .bitrix_metadata_audit import validate_webhook
 from .serviceit_b2b_eis_mirrors import registry_buyer_note, supplement_eis_mirrors
-from .serviceit_b2b_dossier_v11 import REPORT, compose, evidence_rows, original_nine, DossierV11Blocked
+from .serviceit_b2b_dossier_v11 import REPORT, STATUS, compose, evidence_rows, original_nine, DossierV11Blocked
 from .serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
 from .serviceit_b2b_routerai_deep import (
     MAX_PAGES, investigate_routerai, plan_research_step, public_documents,
@@ -237,6 +237,54 @@ def eligible_one(connection):
         return cur.fetchone()
 
 
+def bootstrap_eligible(connection, card, source, item):
+    """Read-only no-write HOLD gate, after independent signed-source validation.
+    A single existing value must match the deterministic preliminary report.
+    Unknown or manager-written content remains blocked.
+    """
+    from .serviceit_enrichment_worker import FIELDS
+    from .serviceit_windows_autofill import preliminary_fields
+    if item.get(STATUS) not in (None, ""):
+        return False
+    if not all(k in item and item[k] in (None, "") for k in FIELDS - AI_FIELDS):
+        return False
+    if not all(k in item for k in AI_FIELDS):
+        return False
+    existing = {k: item[k] for k in AI_FIELDS if item[k] not in (None, "")}
+    if len(existing) > 1:
+        return False
+    try:
+        expected = preliminary_fields(item)
+    except Exception:
+        return False
+    if any(type(v) is not str or not v.strip() or expected.get(k) != v
+           for k, v in existing.items()):
+        return False
+    with connection.cursor() as cur:
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM serviceit_vps_b2b_inbox b
+                JOIN serviceit_vps_new_cards q ON q.card_id=b.card_id
+                WHERE b.card_id=%s AND b.source_id=%s AND b.state='VERIFIED'
+                  AND q.status='REVIEW' AND q.attempts=1
+                  AND q.last_result='EXACT_WORKER_REVIEW'
+                  AND (SELECT count(*) FROM serviceit_vps_native_receipts n
+                       WHERE n.card_id=b.card_id
+                         AND n.namespace IN ('AI_NINE_V1','B2B_RESEARCH_V4')
+                         AND n.status='HOLD' AND n.field_names IS NULL
+                         AND n.digest_salt IS NULL AND n.expected_digest IS NULL)=2
+                  AND NOT EXISTS (
+                      SELECT 1 FROM serviceit_vps_native_receipts n
+                      WHERE n.card_id=b.card_id AND n.status IN
+                        ('RESERVED','WRITE_INTENT','UNCERTAIN','LEASE_LOST'))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM serviceit_vps_b2b_dossier_v11_receipts v
+                      WHERE v.card_id=b.card_id)
+            )
+        """, (card, source))
+        return cur.fetchone()[0] is True
+
+
 def reserve(connection, card, source, old):
     need(type(source) is str and
          re.fullmatch(r"B2B-CENTER-\d{5,12}", source),
@@ -331,10 +379,14 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
             "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
         })["item"])
         validate_identity(first, card)
-        old = original_nine(first)
         source_url, title = safe_notice(notice, card, source, first)
         need(bool(title) and source_url == notice["source_url"],
              "ORIGINAL_TENDER_IDENTITY_UNVERIFIED")
+        bootstrap = first.get(STATUS) in (None, "")
+        if bootstrap:
+            need(bootstrap_eligible(connection, card, source, first),
+                 "V11_BOOTSTRAP_PROVEN_NO_WRITE_REQUIRED")
+        old = original_nine(first, allow_sparse=True, bootstrap=bootstrap)
         if preview:
             return {"status": "V11_ELIGIBLE_READONLY", "crm_writes": 0,
                     "prior_ai_field_count": len(old)}
@@ -393,7 +445,8 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                 ]}
             report, deadline_conflicts = withhold_conflicting_deadlines(report)
             fields, coverage = compose(
-                notice, first, {**findings, "indexed_candidates": []}, report)
+                notice, first, {**findings, "indexed_candidates": []}, report,
+                allow_sparse=True, bootstrap=bootstrap)
             registry_note = registry_buyer_note(findings)
             if registry_note and len(fields[REPORT]) + len(registry_note) <= 12000:
                 fields[REPORT] += registry_note

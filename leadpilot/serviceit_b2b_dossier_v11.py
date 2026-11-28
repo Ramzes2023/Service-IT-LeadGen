@@ -60,11 +60,26 @@ def tidy(value, limit=240):
     return value[:limit]
 
 
-def original_nine(item):
+def original_nine(item, *, allow_sparse=False, bootstrap=False):
+    """Archive exact CRM values; missing status requires a separate native gate."""
     value = {key: item.get(key) for key in AI_FIELDS}
-    need(len(value) == 9 and all(type(v) is str and v.strip()
-         and len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT)
-         for k, v in value.items()), "NINE_AI_FIELDS_MISSING")
+    need(len(value) == 9, "NINE_AI_FIELDS_MISSING")
+    if allow_sparse:
+        need(all(k in item for k in AI_FIELDS), "UNREADABLE_ANALYSIS")
+        need(all(v is None or (type(v) is str and
+                 len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT)
+                 for k, v in value.items()), "ORIGINAL_AI_FIELDS_INVALID")
+        if bootstrap:
+            need(value[STATUS] in (None, ""), "BOOTSTRAP_STATUS_ALREADY_PRESENT")
+            need(sum(bool(v and v.strip()) for v in value.values()) <= 1,
+                 "BOOTSTRAP_NOT_MINIMAL")
+        else:
+            need(type(value[STATUS]) is str and bool(value[STATUS].strip()),
+                 "ORIGINAL_AI_STATUS_MISSING")
+    else:
+        need(not bootstrap and all(type(v) is str and v.strip()
+             and len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT)
+             for k, v in value.items()), "NINE_AI_FIELDS_MISSING")
     return value
 
 
@@ -246,13 +261,13 @@ def confirmed_passport_values(findings, investigation):
     return values
 
 
-def compose(notice, old_item, findings, investigation):
+def compose(notice, old_item, findings, investigation, *, allow_sparse=False, bootstrap=False):
     """Nine legible fields with sourced deadlines/participation and routing.
 
     Never label a supplier-email deadline as independently verified.
     Never claim missing public evidence means that the tender doesn't exist.
     """
-    old = original_nine(old_item)
+    old = original_nine(old_item, allow_sparse=allow_sparse, bootstrap=bootstrap)
     need(type(notice) is dict and notice.get("source") == "B2B-Center",
          "SIGNED_NOTICE_REQUIRED")
     tid = notice.get("tender_id")
@@ -323,6 +338,7 @@ def compose(notice, old_item, findings, investigation):
         "Исследовано: " + datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
         f"Доказательств: {len(facts)} цитат / {len(unique_urls)} самостоятельных URL",
         "Статус: исследование открыто; коммерческий контакт — отдельное разрешение",
+        *(["Первоначальный AI_STATUS отсутствовал; V11 начинает собственный разбор. HOLD — только ограничение коммерческого контакта, не подтверждение прежнего анализа."] if bootstrap else []),
         "",
         "01  ПАСПОРТ ЗАКУПКИ",
         "Предмет: " + title,
@@ -486,7 +502,7 @@ def compose(notice, old_item, findings, investigation):
     result[REPORT] = full
     # Preserve original research status; it is evidence/processing provenance,
     # not a commercial approval. Never overwrite source or user manager fields.
-    result[STATUS] = old[STATUS]
+    result[STATUS] = "HOLD" if bootstrap else old[STATUS]
     # Preserve real visual hierarchy in Bitrix multiline text fields.
     # V10's tidy() collapsed multiple spaces and leading proof indentation,
     # making "01  ..." headers and quoted evidence difficult to scan.

@@ -75,3 +75,68 @@ def test_v11_digest_is_stable_and_versioned_receipt_not_old():
         {**PREVIOUS,PREFIX+"AI_SUMMARY":"Новая проверка"},
         b"0123456789abcdef")
     assert old!=changed
+
+
+def test_sparse_bootstrap_archives_missing_status_without_fabricating_prior_research():
+    import pytest
+    from leadpilot.serviceit_b2b_dossier_v11 import original_nine, STATUS, DossierV11Blocked
+    item = dict.fromkeys(AI_FIELDS)
+    item[PREFIX+"AI_QUOTE"] = "Предварительное поле"
+    archived = original_nine(item, allow_sparse=True, bootstrap=True)
+    assert archived == item and archived[STATUS] is None
+    with pytest.raises(DossierV11Blocked):
+        original_nine(item, allow_sparse=True)
+    with pytest.raises(DossierV11Blocked):
+        original_nine(item)
+    result, coverage = compose(NOTICE, item, PAGES, FACTS, allow_sparse=True, bootstrap=True)
+    assert result[STATUS] == "HOLD"
+    assert "Первоначальный AI_STATUS отсутствовал" in result[PREFIX+"AI_FULL_REPORT"]
+    assert set(result) == AI_FIELDS and all(v.strip() for v in result.values())
+    assert coverage["pages"] == 1
+    assert archived == item and item[STATUS] is None
+    with pytest.raises(DossierV11Blocked):
+        original_nine({**item, PREFIX+"AI_SUMMARY":"другое"}, allow_sparse=True, bootstrap=True)
+    with pytest.raises(DossierV11Blocked):
+        original_nine({**item, STATUS:"HOLD"}, allow_sparse=True, bootstrap=True)
+
+
+def test_native_bootstrap_gate_checks_exact_prior_no_write():
+    from leadpilot.serviceit_vps_b2b_dossier_v11_worker import bootstrap_eligible
+    from leadpilot.serviceit_enrichment_worker import FIELDS
+    from leadpilot.serviceit_windows_autofill import preliminary_fields
+    from leadpilot.serviceit_b2b_dossier_v11 import STATUS
+    class Cursor:
+        def __init__(self, allowed):
+            self.allowed = allowed
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def execute(self, query, params):
+            assert query.strip().startswith("SELECT EXISTS")
+            assert params == (259, "B2B-CENTER-4700472")
+            for proof in ("q.status='REVIEW'", "q.attempts=1", "n.status='HOLD'",
+                          "n.field_names IS NULL", "n.digest_salt IS NULL",
+                          "n.expected_digest IS NULL", "'WRITE_INTENT'", "'UNCERTAIN'",
+                          "b.state='VERIFIED'", "serviceit_vps_b2b_dossier_v11_receipts"):
+                assert proof in query
+        def fetchone(self):
+            return (self.allowed,)
+    class Conn:
+        def __init__(self, allowed):
+            self.allowed = allowed
+        def cursor(self):
+            return Cursor(self.allowed)
+    item = dict.fromkeys(FIELDS)
+    item["title"] = "Тестовое исходное значение"
+    key = PREFIX+"AI_QUOTE"
+    item[key] = preliminary_fields(item)[key]
+    def gate(obj, allowed=True):
+        return bootstrap_eligible(Conn(allowed), 259, "B2B-CENTER-4700472", obj)
+    assert gate(item)
+    assert not gate(item, False)
+    assert not gate({**item, key:"Ручное неизвестное значение"})
+    assert not gate({**item, STATUS:"HOLD"})
+    assert not gate({**item, PREFIX+"AI_SUMMARY":"ещё одно поле"})
+    commercial = next(iter(FIELDS-AI_FIELDS))
+    assert not gate({**item, commercial:"непусто"})

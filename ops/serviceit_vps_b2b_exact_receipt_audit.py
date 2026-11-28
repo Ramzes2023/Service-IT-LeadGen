@@ -118,6 +118,28 @@ def source_matches(source, saved):
     return hmac.compare_digest(hashlib.sha256(source.encode("ascii")).hexdigest(), saved)
 
 
+def v11_prerequisites(conn, card):
+    """Mirror the V11 selector's two predecessor gates; no writes or secrets."""
+    checks = (
+        ("serviceit_vps_b2b_dossier_v10_receipts",
+         """SELECT EXISTS (
+               SELECT 1 FROM serviceit_vps_b2b_dossier_v10_receipts
+               WHERE card_id=%s AND status='VERIFIED')"""),
+        ("serviceit_vps_native_receipts",
+         """SELECT EXISTS (
+               SELECT 1 FROM serviceit_vps_native_receipts
+               WHERE card_id=%s AND namespace='B2B_RESEARCH_V4'
+                 AND status IN ('VERIFIED','HOLD'))"""),
+    )
+    results = []
+    for table, sql in checks:
+        if not conn.execute("SELECT to_regclass(%s)", ("public."+table,)).fetchone()[0]:
+            results.append("NONE")
+        else:
+            results.append("YES" if conn.execute(sql, (card,)).fetchone()[0] else "NO")
+    return tuple(results)
+
+
 def main():
     emit("COORDINATOR_START", "YES")
     exact = len(sys.argv) == 2 and exact_file("serviceit_vps_b2b_dossier_v11_worker.py", sys.argv[1])
@@ -198,6 +220,13 @@ def main():
                 emit(f"TENDER_{tender}_V11_PROOF", proof(row[4], row[5], row[6], compute_digest))
                 emit(f"TENDER_{tender}_V11_SOURCE_MATCH", "YES" if source_matches(source, row[3]) else "NO")
                 emit(f"TENDER_{tender}_V12_PRESENT", "YES" if row[7] else "NO")
+                if row[0] == "VERIFIED" and row[2] is None:
+                    v10, research = v11_prerequisites(conn, row[1])
+                    emit(f"TENDER_{tender}_V10_GATE", v10)
+                    emit(f"TENDER_{tender}_RESEARCH_V4_GATE", research)
+                    emit(f"TENDER_{tender}_V11_PREDECESSOR_GATE",
+                         "YES" if "YES" in (v10, research) else
+                         "NONE" if "NONE" in (v10, research) else "NO")
     emit("PG_READ_COMPLETE", "YES")
     secret = secret_file(env, "SERVICEIT_BITRIX_WEBHOOK")
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=12) as client:

@@ -100,3 +100,50 @@ def test_review_trace_reports_only_retry_count_and_write_fence():
     assert "b.geo_attempts, b.write_started_at IS NOT NULL" in src
     assert 'emit(f"TENDER_{tender}_GEO_ATTEMPTS", int(row[8]))' in src
     assert 'emit(f"TENDER_{tender}_WRITE_STARTED", "YES" if row[9] else "NO")' in src
+
+
+@pytest.mark.parametrize("exists, present, expected", [
+    ((True, True), (False, False), ("NO", "NO")),
+    ((True, True), (True, False), ("YES", "NO")),
+    ((True, True), (False, True), ("NO", "YES")),
+    ((False, True), (False, True), ("NONE", "YES")),
+    ((True, False), (False, False), ("NO", "NONE")),
+    ((False, False), (False, False), ("NONE", "NONE")),
+])
+def test_v11_prerequisites_are_read_only_and_match_selector(exists, present, expected):
+    from ops.serviceit_vps_b2b_exact_receipt_audit import v11_prerequisites
+
+    class Result:
+        def __init__(self, value):
+            self.value = value
+
+        def fetchone(self):
+            return (self.value,)
+
+    class Connection:
+        def execute(self, sql, params):
+            assert sql.strip().startswith("SELECT ")
+            if sql.startswith("SELECT to_regclass"):
+                assert params in (
+                    ("public.serviceit_vps_b2b_dossier_v10_receipts",),
+                    ("public.serviceit_vps_native_receipts",),
+                )
+                return Result(exists[0 if "v10" in params[0] else 1])
+            assert params == (259,)
+            if "serviceit_vps_b2b_dossier_v10_receipts" in sql:
+                assert exists[0]
+                assert "status='VERIFIED'" in sql
+                return Result(present[0])
+            assert exists[1]
+            assert "namespace='B2B_RESEARCH_V4'" in sql
+            assert "status IN ('VERIFIED','HOLD')" in sql
+            return Result(present[1])
+
+    assert v11_prerequisites(Connection(), 259) == expected
+
+
+def test_predecessor_diagnostics_only_for_verified_cards_without_v11():
+    from pathlib import Path
+    src = Path("ops/serviceit_vps_b2b_exact_receipt_audit.py").read_text("utf-8")
+    assert 'if row[0] == "VERIFIED" and row[2] is None:' in src
+    assert "V11_PREDECESSOR_GATE" in src

@@ -140,13 +140,13 @@ def v11_prerequisites(conn, card):
     return tuple(results)
 
 
-def sparse_preflight(item, notice, card, source, safe_notice, status_key, fields, report_key):
+def sparse_preflight(item, notice, card, source, safe_notice, status_key, fields, report_key, limit_text, limit_report):
     """Evaluate proposed sparse snapshot and signed source without calls or writes."""
     values = {key: item.get(key) for key in fields}
     status = values.get(status_key)
-    status_present = isinstance(status, str) and bool(status.strip())
+    status_present = type(status) is str and bool(status.strip())
     valid = len(values) == 9 and status_present and all(
-        v is None or (type(v) is str and len(v) <= (12000 if k == report_key else 4000))
+        v is None or (type(v) is str and len(v) <= (limit_report if k == report_key else limit_text))
         for k, v in values.items()
     )
     try:
@@ -166,7 +166,7 @@ def main():
     import httpx
     from leadpilot.serviceit_vps_pg_queue import db, secret_file
     from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest, eligible_one
-    from leadpilot.serviceit_b2b_dossier_v11 import STATUS, REPORT
+    from leadpilot.serviceit_b2b_dossier_v11 import STATUS, REPORT, LIMIT_TEXT, LIMIT_REPORT
     from leadpilot.serviceit_vps_b2b_deep_research import safe_notice
     from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
     from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
@@ -296,7 +296,7 @@ def main():
                 if same and tender in notices:
                     status_ok, sparse_ok, source_ok = sparse_preflight(
                         item, notices[tender], card, source, safe_notice,
-                        STATUS, AI_FIELDS, REPORT)
+                        STATUS, AI_FIELDS, REPORT, LIMIT_TEXT, LIMIT_REPORT)
                     emit(label+"AI_STATUS_PRESENT", "YES" if status_ok else "NO")
                     emit(label+"SPARSE_SNAPSHOT_VALID", "YES" if sparse_ok else "NO")
                     emit(label+"SIGNED_NOTICE_CARD_MATCH", "YES" if source_ok else "NO")

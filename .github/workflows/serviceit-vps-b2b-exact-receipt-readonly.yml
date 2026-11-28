@@ -45,6 +45,37 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/b2b-exact-receipt/hosts"
           chmod 0600 "$RUNNER_TEMP/b2b-exact-receipt/"*
           ssh-keygen -F "$VPS_HOST" -f "$RUNNER_TEMP/b2b-exact-receipt/hosts" >/dev/null
+      - name: Read current coordinator image and five immutable source fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -T -i "$RUNNER_TEMP/b2b-exact-receipt/id" \
+            -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/b2b-exact-receipt/hosts" \
+            -o BatchMode=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'bash -s' \
+            > "$RUNNER_TEMP/b2b-exact-receipt/baseline" 2>/dev/null <<'REMOTE'
+          set -euo pipefail
+          core=serviceit-leadgen-vps-coordinator-1
+          id="$(docker inspect --format '{{.Image}}' "$core")"
+          [[ "$id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$(docker image inspect --format '{{.Id}}' "$id")" == "$id" ]]
+          [[ "$(docker inspect --format '{{.State.Running}}' "$core")" == true ]]
+          printf 'B2B_BASELINE_IMAGE=%s\n' "$id"
+          files=(serviceit_vps_worker.py serviceit_vps_b2b_deep_research.py
+            serviceit_b2b_public_mirrors.py serviceit_b2b_dossier_v11.py
+            serviceit_vps_b2b_dossier_v11_worker.py)
+          for name in "${files[@]}"; do
+            hash="$(docker exec "$core" sha256sum "/app/leadpilot/$name")"
+            hash="${hash%% *}"
+            [[ "$hash" =~ ^[a-f0-9]{64}$ ]]
+            printf 'B2B_BASELINE_%s=%s\n' "$name" "$hash"
+          done
+          [[ "$(docker inspect --format '{{.Image}}' "$core")" == "$id" ]]
+          REMOTE
+          file="$RUNNER_TEMP/b2b-exact-receipt/baseline"
+          [[ "$(wc -l < "$file")" == 6 ]]
+          grep -xE 'B2B_BASELINE_IMAGE=sha256:[a-f0-9]{64}|B2B_BASELINE_(serviceit_vps_worker|serviceit_vps_b2b_deep_research|serviceit_b2b_public_mirrors|serviceit_b2b_dossier_v11|serviceit_vps_b2b_dossier_v11_worker)\.py=[a-f0-9]{64}' "$file"
       - name: Read exact V11 blockers and recent CRM without writes
         shell: bash
         run: |

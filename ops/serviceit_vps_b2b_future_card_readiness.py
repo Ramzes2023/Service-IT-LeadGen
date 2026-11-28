@@ -30,10 +30,52 @@ def say(key: str, value) -> None:
     print("FUTURE_B2B_" + key + "=" + raw, flush=True)
 
 
+def provider_key_diagnostics(env, secret_reader, exact_environment, budget_factory):
+    """Return only fixed statuses; never log secret values or issue HTTP requests."""
+    flags = {}
+    for label, name in (
+        ("BITRIX_MOUNTED_KEY_PRESENT", "SERVICEIT_BITRIX_WEBHOOK"),
+        ("ROUTERAI_MOUNTED_KEY_PRESENT", "SERVICEIT_ROUTERAI_API_KEY"),
+    ):
+        try:
+            flags[label] = "YES" if secret_reader(env, name) else "NO"
+        except Exception:
+            flags[label] = "NO"
+
+    flags["BRAVE_EXACT_ENV_DISABLED"] = "UNKNOWN"
+    flags["BRAVE_BLOCKED_BY_OWNER_POLICY"] = "UNKNOWN"
+    aggregate = False
+    try:
+        exact = exact_environment(env)
+        flags["BRAVE_EXACT_ENV_DISABLED"] = (
+            "YES" if not exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY")
+            and not exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY_FILE") else "NO")
+        aggregate = (
+            bool(exact.get("SERVICEIT_BITRIX_WEBHOOK")) and
+            bool(exact.get("ROUTERAI_API_KEY")) and
+            bool(exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY")))
+    except Exception:
+        pass
+
+    # Exercise only the local policy hook, with an eligible budget. This
+    # constructs a request object but never sends it to Brave or any host.
+    try:
+        budget = budget_factory()
+        with budget.for_card(True):
+            budget.check(httpx.Request("GET", "https://api.search.brave.com/"))
+        flags["BRAVE_BLOCKED_BY_OWNER_POLICY"] = "NO"
+    except httpx.RequestError as exc:
+        if str(exc) == "BRAVE_DISABLED_BY_OWNER":
+            flags["BRAVE_BLOCKED_BY_OWNER_POLICY"] = "YES"
+    except Exception:
+        pass
+    return flags, aggregate
+
+
 def checks(env, client):
     from leadpilot.serviceit_vps_worker import (
         live_permitted, exact_environment, readonly_preflight, poll_new,
-        INTERVAL_SECONDS,
+        INTERVAL_SECONDS, SearchBudget,
     )
     from leadpilot.serviceit_vps_pg_queue import db, secret_file
     from leadpilot.serviceit_b2b_dossier_v11 import compose
@@ -69,15 +111,13 @@ def checks(env, client):
     ))
     say("FIVE_MINUTE_LIVE_GATES", "YES" if flags else "NO")
 
-    secrets_ok = False
-    try:
-        exact = exact_environment(env)
-        secrets_ok = (
-            bool(exact.get("SERVICEIT_BITRIX_WEBHOOK")) and
-            bool(exact.get("ROUTERAI_API_KEY")) and
-            bool(exact.get("SERVICEIT_BRAVE_SEARCH_API_KEY")))
-    except Exception:
-        pass
+    # Separate mounted-file presence from the intentional owner policy.
+    # Keep the original aggregate/readiness gate unchanged until a live
+    # provider-policy and actual E2E acceptance audit supports a revision.
+    diagnostics, secrets_ok = provider_key_diagnostics(
+        env, secret_file, exact_environment, SearchBudget)
+    for label, status in diagnostics.items():
+        say(label, status)
     say("BITRIX_ROUTERAI_BRAVE_KEYS", "YES" if secrets_ok else "NO")
 
     try:

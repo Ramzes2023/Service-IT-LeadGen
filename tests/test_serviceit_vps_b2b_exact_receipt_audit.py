@@ -147,3 +147,25 @@ def test_predecessor_diagnostics_only_for_verified_cards_without_v11():
     src = Path("ops/serviceit_vps_b2b_exact_receipt_audit.py").read_text("utf-8")
     assert 'if row[0] == "VERIFIED" and row[2] is None:' in src
     assert "V11_PREDECESSOR_GATE" in src
+
+
+def test_sparse_preflight_reports_only_booleans_and_preserves_input():
+    from ops.serviceit_vps_b2b_exact_receipt_audit import sparse_preflight
+    keys = {"status", "report", *("f"+str(i) for i in range(7))}
+    notice = {"source_url": "private"}
+    item = {"status": "prior", "f0": None}
+    def safe(n, card, source, value):
+        assert n == notice and card == 259 and source == "B2B-CENTER-4700472"
+        assert value is item
+        return "private", "safe title"
+    assert sparse_preflight(item, notice, 259, "B2B-CENTER-4700472",
+                            safe, "status", keys, "report") == (True, True, True)
+    assert item == {"status": "prior", "f0": None}
+    def no_title(*args):
+        return "private", ""
+    assert sparse_preflight({"status": " "}, notice, 259, "source",
+                            no_title, "status", keys, "report") == (False, False, False)
+    def bad_source(*args):
+        raise ValueError("private")
+    assert sparse_preflight({"status": "prior", "f0": 123}, notice, 259, "source",
+                            bad_source, "status", keys, "report") == (True, False, False)

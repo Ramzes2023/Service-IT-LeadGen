@@ -246,3 +246,47 @@ def test_native_init_trace_missing_tables_or_receipts():
         "INIT_QUEUE_PRESENT": False, "INIT_NATIVE_PRESENT": False,
         "RESEARCH_V4_PRESENT": False,
     }
+
+
+def test_bootstrap_pg_preflight_is_select_only_and_exact():
+    from ops.serviceit_vps_b2b_exact_receipt_audit import bootstrap_pg_preflight
+
+    class Conn:
+        def __init__(self, allowed):
+            self.allowed = allowed
+        def execute(self, sql, params):
+            assert sql.strip().startswith("SELECT EXISTS")
+            assert params == (259, "B2B-CENTER-4700472")
+            for gate in ("q.last_result='EXACT_WORKER_REVIEW'", "q.attempts=1",
+                         "q.status='REVIEW'", "b.state='VERIFIED'",
+                         "n.status='HOLD'", "n.field_names IS NULL",
+                         "n.digest_salt IS NULL", "n.expected_digest IS NULL",
+                         "'WRITE_INTENT'", "'UNCERTAIN'",
+                         "serviceit_vps_b2b_dossier_v11_receipts"):
+                assert gate in sql
+            return self
+        def fetchone(self):
+            return (self.allowed,)
+
+    assert bootstrap_pg_preflight(Conn(True), 259, "B2B-CENTER-4700472")
+    assert not bootstrap_pg_preflight(Conn(False), 259, "B2B-CENTER-4700472")
+
+
+def test_bootstrap_crm_preflight_fixed_booleans_only(capsys):
+    from ops.serviceit_vps_b2b_exact_receipt_audit import bootstrap_crm_preflight
+    fields = {"status", "quote", "report"}
+    all_fields = fields | {"commercial"}
+    item = {"status": None, "quote": "sensitive-placeholder", "report": None,
+            "commercial": None}
+    def preflight(value):
+        return bootstrap_crm_preflight(value, fields, all_fields, "status",
+                                       lambda _: {"quote": "sensitive-placeholder"})
+    assert all(preflight(item).values())
+    assert all(type(v) is bool for v in preflight(item).values())
+    assert item["quote"] == "sensitive-placeholder"
+    assert not preflight({**item, "quote": "unknown"})["BOOTSTRAP_PRELIMINARY_EQUAL"]
+    assert not preflight({**item, "report": "another"})["BOOTSTRAP_MINIMAL"]
+    assert not preflight({**item, "commercial": "value"})["BOOTSTRAP_COMMERCIAL_EMPTY"]
+    assert not preflight({**item, "status": "HOLD"})["BOOTSTRAP_STATUS_EMPTY"]
+    assert not preflight({k: v for k, v in item.items() if k != "report"})["BOOTSTRAP_FIELDS_READABLE"]
+    assert capsys.readouterr().out == ""

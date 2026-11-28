@@ -331,7 +331,7 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
             "entityTypeId": 1062, "id": card, "useOriginalUfNames": "Y",
         })["item"])
         validate_identity(first, card)
-        old = original_nine(first)
+        old = original_nine(first, allow_sparse=True)
         source_url, title = safe_notice(notice, card, source, first)
         need(bool(title) and source_url == notice["source_url"],
              "ORIGINAL_TENDER_IDENTITY_UNVERIFIED")
@@ -393,7 +393,8 @@ def worker_once(env, client, connection, *, preview=False, search_scope=None):
                 ]}
             report, deadline_conflicts = withhold_conflicting_deadlines(report)
             fields, coverage = compose(
-                notice, first, {**findings, "indexed_candidates": []}, report)
+                notice, first, {**findings, "indexed_candidates": []}, report,
+                allow_sparse=True)
             registry_note = registry_buyer_note(findings)
             if registry_note and len(fields[REPORT]) + len(registry_note) <= 12000:
                 fields[REPORT] += registry_note

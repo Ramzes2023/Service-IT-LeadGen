@@ -60,11 +60,26 @@ def tidy(value, limit=240):
     return value[:limit]
 
 
-def original_nine(item):
+def original_nine(item, *, allow_sparse=False):
+    """Snapshot all nine values, including null/empty fields, without inventing status.
+
+    Only the source-verified native V11 worker opts into sparse input.
+    The final nine-field output remains subject to the full strict validation.
+    """
     value = {key: item.get(key) for key in AI_FIELDS}
-    need(len(value) == 9 and all(type(v) is str and v.strip()
-         and len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT)
-         for k, v in value.items()), "NINE_AI_FIELDS_MISSING")
+    need(len(value) == 9, "NINE_AI_FIELDS_MISSING")
+    if allow_sparse:
+        # AI_STATUS is provenance from the earlier research, not ours to infer.
+        status = value[STATUS]
+        need(type(status) is str and bool(status.strip()),
+             "ORIGINAL_AI_STATUS_MISSING")
+        need(all(v is None or (type(v) is str and
+                 len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT))
+                 for k, v in value.items()), "ORIGINAL_AI_FIELDS_INVALID")
+    else:
+        need(all(type(v) is str and v.strip()
+             and len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT)
+             for k, v in value.items()), "NINE_AI_FIELDS_MISSING")
     return value
 
 
@@ -246,13 +261,13 @@ def confirmed_passport_values(findings, investigation):
     return values
 
 
-def compose(notice, old_item, findings, investigation):
+def compose(notice, old_item, findings, investigation, *, allow_sparse=False):
     """Nine legible fields with sourced deadlines/participation and routing.
 
     Never label a supplier-email deadline as independently verified.
     Never claim missing public evidence means that the tender doesn't exist.
     """
-    old = original_nine(old_item)
+    old = original_nine(old_item, allow_sparse=allow_sparse)
     need(type(notice) is dict and notice.get("source") == "B2B-Center",
          "SIGNED_NOTICE_REQUIRED")
     tid = notice.get("tender_id")

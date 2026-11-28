@@ -75,3 +75,45 @@ def test_v11_digest_is_stable_and_versioned_receipt_not_old():
         {**PREVIOUS,PREFIX+"AI_SUMMARY":"Новая проверка"},
         b"0123456789abcdef")
     assert old!=changed
+
+
+def test_v11_native_sparse_snapshot_preserves_prior_values_and_composes_nine():
+    from leadpilot.serviceit_b2b_dossier_v11 import original_nine, STATUS
+
+    sparse = {STATUS: "PUBLIC_RESEARCH_ROUTERAI_CITED",
+              PREFIX + "AI_SUMMARY": "", PREFIX + "AI_QUOTE": None}
+    archived = original_nine(sparse, allow_sparse=True)
+    assert set(archived) == AI_FIELDS
+    assert archived[PREFIX + "AI_SUMMARY"] == ""
+    assert archived[PREFIX + "AI_QUOTE"] is None
+    assert archived[STATUS] == sparse[STATUS]
+    assert sum(bool(v and v.strip()) for v in archived.values()) == 1
+    fields, _ = compose(NOTICE, sparse, PAGES, FACTS, allow_sparse=True)
+    assert set(fields) == AI_FIELDS and all(v.strip() for v in fields.values())
+    assert fields[STATUS] == sparse[STATUS]
+    assert archived[PREFIX + "AI_SUMMARY"] == ""
+    assert archived[PREFIX + "AI_QUOTE"] is None
+
+
+def test_v11_sparse_input_still_fails_closed_on_missing_status_or_bad_type():
+    import pytest
+    from leadpilot.serviceit_b2b_dossier_v11 import (
+        DossierV11Blocked, original_nine, STATUS,
+    )
+
+    for invalid in ({}, {STATUS: " "}, {STATUS: "OK", PREFIX+"AI_SUMMARY": 123},
+                    {STATUS: "OK", PREFIX+"AI_SUMMARY": "x"*4097}):
+        with pytest.raises(DossierV11Blocked):
+            original_nine(invalid, allow_sparse=True)
+    with pytest.raises(DossierV11Blocked, match="NINE_AI_FIELDS_MISSING"):
+        original_nine({STATUS: "OK"})
+    with pytest.raises(DossierV11Blocked, match="NINE_AI_FIELDS_MISSING"):
+        compose(NOTICE, {STATUS: "OK"}, PAGES, FACTS)
+
+
+def test_native_v11_uses_same_sparse_snapshot_for_archive_and_compose():
+    src = Path("leadpilot/serviceit_vps_b2b_dossier_v11_worker.py").read_text("utf8")
+    assert "old = original_nine(first, allow_sparse=True)" in src
+    assert "report,\n                allow_sparse=True)" in src
+    assert "all(fresh.get(k) == old[k] for k in AI_FIELDS)" in src
+    assert "observed == fields" in src

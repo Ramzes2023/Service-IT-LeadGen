@@ -140,6 +140,23 @@ def v11_prerequisites(conn, card):
     return tuple(results)
 
 
+def sparse_preflight(item, notice, card, source, safe_notice, status_key, fields, report_key):
+    """Evaluate proposed sparse snapshot and signed source without calls or writes."""
+    values = {key: item.get(key) for key in fields}
+    status = values.get(status_key)
+    status_present = isinstance(status, str) and bool(status.strip())
+    valid = len(values) == 9 and status_present and all(
+        v is None or (type(v) is str and len(v) <= (12000 if k == report_key else 4000))
+        for k, v in values.items()
+    )
+    try:
+        url, title = safe_notice(notice, card, source, item)
+        source_ok = bool(title and url == notice["source_url"])
+    except Exception:
+        source_ok = False
+    return status_present, valid, source_ok
+
+
 def main():
     emit("COORDINATOR_START", "YES")
     exact = len(sys.argv) == 2 and exact_file("serviceit_vps_b2b_dossier_v11_worker.py", sys.argv[1])
@@ -148,7 +165,9 @@ def main():
         return 2
     import httpx
     from leadpilot.serviceit_vps_pg_queue import db, secret_file
-    from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest
+    from leadpilot.serviceit_vps_b2b_dossier_v11_worker import compute_digest, eligible_one
+    from leadpilot.serviceit_b2b_dossier_v11 import STATUS, REPORT
+    from leadpilot.serviceit_vps_b2b_deep_research import safe_notice
     from leadpilot.serviceit_enrichment_worker import Rest, normalized, validate_identity
     from leadpilot.serviceit_b2b_hold_ai_fields import AI_FIELDS, PREFIX
     emit("COORDINATOR_IMPORTS", "YES")
@@ -172,6 +191,9 @@ def main():
             emit(f"BLOCKER_{i}_STORED_PROOF", proof(fields, salt, digest, compute_digest))
         data = {}
         revisions = {}
+        notices = {}
+        candidate = eligible_one(conn)
+        emit("V11_NEXT_ELIGIBLE_CARD", int(candidate[0]) if candidate else 0)
         for tender in TARGETS:
             source = f"B2B-CENTER-{tender}"
             row = conn.execute("""
@@ -221,6 +243,11 @@ def main():
                 emit(f"TENDER_{tender}_V11_SOURCE_MATCH", "YES" if source_matches(source, row[3]) else "NO")
                 emit(f"TENDER_{tender}_V12_PRESENT", "YES" if row[7] else "NO")
                 if row[0] == "VERIFIED" and row[2] is None:
+                    notices[tender] = conn.execute(
+                        "SELECT notice_json FROM serviceit_vps_b2b_inbox "
+                        "WHERE source_id=%s AND card_id=%s AND state='VERIFIED'",
+                        (source, row[1]),
+                    ).fetchone()[0]
                     v10, research = v11_prerequisites(conn, row[1])
                     emit(f"TENDER_{tender}_V10_GATE", v10)
                     emit(f"TENDER_{tender}_RESEARCH_V4_GATE", research)
@@ -266,6 +293,13 @@ def main():
                 current = {key: item.get(key) for key in AI_FIELDS}
                 emit(label+"AI_FIELDS_NONEMPTY", sum(isinstance(v, str) and bool(v.strip()) for v in current.values()))
                 emit(label+"AI_FIELDS_TOTAL", len(AI_FIELDS))
+                if same and tender in notices:
+                    status_ok, sparse_ok, source_ok = sparse_preflight(
+                        item, notices[tender], card, source, safe_notice,
+                        STATUS, AI_FIELDS, REPORT)
+                    emit(label+"AI_STATUS_PRESENT", "YES" if status_ok else "NO")
+                    emit(label+"SPARSE_SNAPSHOT_VALID", "YES" if sparse_ok else "NO")
+                    emit(label+"SIGNED_NOTICE_CARD_MATCH", "YES" if source_ok else "NO")
                 if row and row[2] == "VERIFIED" and same:
                     emit(label+"V11_CURRENT_FIELDS_EQUAL", "YES" if current == row[4] else "NO")
                     # Later legitimate revisions may supersede raw V11 fields.

@@ -147,3 +147,42 @@ def test_predecessor_diagnostics_only_for_verified_cards_without_v11():
     src = Path("ops/serviceit_vps_b2b_exact_receipt_audit.py").read_text("utf-8")
     assert 'if row[0] == "VERIFIED" and row[2] is None:' in src
     assert "V11_PREDECESSOR_GATE" in src
+
+
+def test_sparse_preflight_reports_only_booleans_and_preserves_input():
+    from ops.serviceit_vps_b2b_exact_receipt_audit import sparse_preflight
+    keys = {"status", "report", *("f"+str(i) for i in range(7))}
+    notice = {"source_url": "private"}
+    item = {"status": "prior", "f0": None}
+    def safe(n, card, source, value):
+        assert n == notice and card == 259 and source == "B2B-CENTER-4700472"
+        assert value is item
+        return "private", "safe title"
+    assert sparse_preflight(item, notice, 259, "B2B-CENTER-4700472",
+                            safe, "status", keys, "report", 4096, 12000) == (True, True, True)
+    assert item == {"status": "prior", "f0": None}
+    def no_title(*args):
+        return "private", ""
+    assert sparse_preflight({"status": " "}, notice, 259, "source",
+                            no_title, "status", keys, "report", 4096, 12000) == (False, False, False)
+    def bad_source(*args):
+        raise ValueError("private")
+    assert sparse_preflight({"status": "prior", "f0": 123}, notice, 259, "source",
+                            bad_source, "status", keys, "report", 4096, 12000) == (True, False, False)
+
+    assert sparse_preflight({"status": "prior", "f0": "x"*4096}, notice, 259,
+                            "B2B-CENTER-4700472", safe, "status", keys, "report",
+                            4096, 12000)[:2] == (True, True)
+    assert sparse_preflight({"status": "prior", "f0": "x"*4097}, notice, 259,
+                            "B2B-CENTER-4700472", safe, "status", keys, "report",
+                            4096, 12000)[:2] == (True, False)
+
+
+def test_preflight_baseline_read_only_and_sanitized():
+    from pathlib import Path
+    src = Path(".github/workflows/serviceit-vps-b2b-exact-receipt-readonly.yml").read_text("utf-8")
+    step = src.split("Read current coordinator image and five immutable source fingerprints", 1)[1].split("Read exact V11 blockers", 1)[0]
+    assert "docker inspect" in step and "docker image inspect" in step
+    assert "sha256sum" in step and "wc -l" in step
+    assert "docker build" not in step and "docker tag" not in step and "docker compose" not in step
+    assert "B2B_BASELINE_IMAGE=sha256:[a-f0-9]{64}" in step

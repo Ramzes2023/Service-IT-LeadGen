@@ -67,7 +67,7 @@ def original_nine(item, *, allow_sparse=False, bootstrap=False):
     if allow_sparse:
         need(all(k in item for k in AI_FIELDS), "UNREADABLE_ANALYSIS")
         need(all(v is None or (type(v) is str and
-                 len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT)
+                 len(v) <= (LIMIT_REPORT if k == REPORT else LIMIT_TEXT))
                  for k, v in value.items()), "ORIGINAL_AI_FIELDS_INVALID")
         if bootstrap:
             need(value[STATUS] in (None, ""), "BOOTSTRAP_STATUS_ALREADY_PRESENT")

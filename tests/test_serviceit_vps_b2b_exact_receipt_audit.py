@@ -159,13 +159,20 @@ def test_sparse_preflight_reports_only_booleans_and_preserves_input():
         assert value is item
         return "private", "safe title"
     assert sparse_preflight(item, notice, 259, "B2B-CENTER-4700472",
-                            safe, "status", keys, "report") == (True, True, True)
+                            safe, "status", keys, "report", 4096, 12000) == (True, True, True)
     assert item == {"status": "prior", "f0": None}
     def no_title(*args):
         return "private", ""
     assert sparse_preflight({"status": " "}, notice, 259, "source",
-                            no_title, "status", keys, "report") == (False, False, False)
+                            no_title, "status", keys, "report", 4096, 12000) == (False, False, False)
     def bad_source(*args):
         raise ValueError("private")
     assert sparse_preflight({"status": "prior", "f0": 123}, notice, 259, "source",
-                            bad_source, "status", keys, "report") == (True, False, False)
+                            bad_source, "status", keys, "report", 4096, 12000) == (True, False, False)
+
+    assert sparse_preflight({"status": "prior", "f0": "x"*4096}, notice, 259,
+                            "B2B-CENTER-4700472", safe, "status", keys, "report",
+                            4096, 12000)[:2] == (True, True)
+    assert sparse_preflight({"status": "prior", "f0": "x"*4097}, notice, 259,
+                            "B2B-CENTER-4700472", safe, "status", keys, "report",
+                            4096, 12000)[:2] == (True, False)

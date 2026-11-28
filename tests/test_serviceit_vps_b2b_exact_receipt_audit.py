@@ -186,3 +186,63 @@ def test_preflight_baseline_read_only_and_sanitized():
     assert "sha256sum" in step and "wc -l" in step
     assert "docker build" not in step and "docker tag" not in step and "docker compose" not in step
     assert "B2B_BASELINE_IMAGE=sha256:[a-f0-9]{64}" in step
+
+
+@pytest.mark.parametrize("init,v4,expected_init,expected_v4", [
+    (("NEEDS_REVIEW", False), ("HOLD", False), "NEEDS_REVIEW", "HOLD"),
+    (("HOLD_9_WRITTEN", True), ("VERIFIED", True), "HOLD_9_WRITTEN", "VERIFIED"),
+    (("UNCERTAIN", True), ("HOLD", False), "UNCERTAIN", "HOLD"),
+])
+def test_native_init_trace_distinguishes_review_and_write_checkpoint(init, v4, expected_init, expected_v4, capsys):
+    from ops.serviceit_vps_b2b_exact_receipt_audit import native_init_trace
+
+    class Result:
+        def __init__(self, row):
+            self.row = row
+        def fetchone(self):
+            return self.row
+
+    class Connection:
+        def execute(self, sql, params):
+            assert sql.strip().startswith("SELECT ")
+            if "to_regclass" in sql:
+                return Result((True,))
+            if "serviceit_vps_new_cards" in sql:
+                assert params == (259,)
+                return Result(("REVIEW", 1))
+            assert "serviceit_vps_native_receipts" in sql
+            assert params in ((259, "AI_NINE_V1"), (259, "B2B_RESEARCH_V4"))
+            return Result(init if params[1] == "AI_NINE_V1" else v4)
+
+    result = native_init_trace(Connection(), 259)
+    assert result["INIT_QUEUE_REVIEW"] is True
+    assert result["INIT_QUEUE_ATTEMPTS"] == 1
+    assert result["INIT_NATIVE_"+expected_init] is True
+    assert result["RESEARCH_V4_"+expected_v4] is True
+    assert result["INIT_NATIVE_CHECKPOINT_PRESENT"] is init[1]
+    assert result["RESEARCH_V4_CHECKPOINT_PRESENT"] is v4[1]
+    assert all(type(value) in (bool, int) for value in result.values())
+    assert capsys.readouterr().out == ""
+
+
+def test_native_init_trace_missing_tables_or_receipts():
+    from ops.serviceit_vps_b2b_exact_receipt_audit import native_init_trace
+
+    class Result:
+        def __init__(self, row):
+            self.row = row
+        def fetchone(self):
+            return self.row
+
+    class Connection:
+        def __init__(self, exists):
+            self.exists = exists
+        def execute(self, sql, params):
+            assert sql.strip().startswith("SELECT ")
+            return Result((self.exists,) if "to_regclass" in sql else None)
+
+    assert native_init_trace(Connection(False), 259) == {}
+    assert native_init_trace(Connection(True), 259) == {
+        "INIT_QUEUE_PRESENT": False, "INIT_NATIVE_PRESENT": False,
+        "RESEARCH_V4_PRESENT": False,
+    }
